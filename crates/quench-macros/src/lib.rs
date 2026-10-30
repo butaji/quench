@@ -85,17 +85,17 @@ fn derive_native_exports(
     let marker = format!("quench_native_js_abi_v{version}_{hash:016x}");
     Ok(quote! {
         #operations
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         pub(crate) const NATIVE_JS_OPERATION_PREFIX: &str = #prefix;
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
         /// Image header word zero is the link-time ABI marker's address.
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 1;
 
         /// Export the derived semantic helpers for one host in an executable.
         /// Invoke once, using a host type path and a module name for the exports.
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         #[macro_export]
         macro_rules! export_native_js_operations {
             ($host:ty, $module:ident) => {

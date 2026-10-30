@@ -448,9 +448,9 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         return Ok(());
     }
     if let Some(entry) = context.host_mut().commonjs_entry.clone() {
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         let filename = context.host_mut().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
-        #[cfg(not(feature = "aot"))]
+        #[cfg(not(feature = "native-execution"))]
         let filename = std::fs::canonicalize(entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         load(context, &filename, None, entry.goal)?;
     } else {
@@ -2296,7 +2296,7 @@ fn resolve_filename_in(
 ) -> Result<PathBuf, RootedError> {
     let filename = get(context, parent, "filename")?;
     let filename = context.string_text(filename)?;
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     if lookup.is_none() {
         if let Some(target) = filename.as_deref().and_then(|parent| context.host_mut().embedded_resolution(Path::new(parent), specifier)) {
             return Ok(target);
@@ -2350,7 +2350,7 @@ fn resolve_filename_from_host(
         None
     };
     if let Some(path) = virtual_path {
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if context.host_mut().embedded_module(&path).is_some() { return Ok(path); }
         if !path.is_file() {
             if let Some((canonical, _)) =
@@ -2807,7 +2807,7 @@ pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootI
 }
 
 fn module_is_file(context: &mut Context<'_>, path: &Path) -> bool {
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     if context.host_mut().embedded_module(path).is_some() { return true; }
     let _ = context;
     path.is_file()
@@ -2815,9 +2815,9 @@ fn module_is_file(context: &mut Context<'_>, path: &Path) -> bool {
 
 /// Read a module's original bytes through the selected module input provider.
 fn module_file_bytes(context: &mut Context<'_>, path: &Path, kind: quench_runtime::SourceKind) -> std::io::Result<Vec<u8>> {
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     { context.host_mut().module_bytes(path, kind) }
-    #[cfg(not(feature = "aot"))]
+    #[cfg(not(feature = "native-execution"))]
     { let _ = (context, kind); std::fs::read(path) }
 }
 
@@ -2876,9 +2876,9 @@ fn load_with_resolution(
     // only a wrapper that does not compile asks the text for ES module syntax, so a CommonJS
     // file is parsed once, not again for detection (typescript.js: a 9 MB text's tree and
     // tables, the peak of loading it).
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     let archived_kind = context.host_mut().embedded_module(filename).map(|file| file.kind);
-    #[cfg(not(feature = "aot"))]
+    #[cfg(not(feature = "native-execution"))]
     let archived_kind: Option<quench_runtime::SourceKind> = None;
     let declared = match goal {
         EntryGoal::Node if archived_kind.is_some() => archived_kind,
@@ -2920,14 +2920,14 @@ fn load_with_resolution(
                 .ok_or_else(|| RootedError::host(error.to_string()))?
                 .into(),
         };
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         let prepared = context.host_mut().embedded_module(filename).and_then(|file| file.prepared);
-        #[cfg(not(feature = "aot"))]
+        #[cfg(not(feature = "native-execution"))]
         let prepared: Option<()> = None;
         let file_text: std::borrow::Cow<'static, str> = match prepared {
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             Some(crate::aot::PreparedModuleSource::Original) => file_text,
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
             _ => match library_relative {
             Some(path) if path == Path::new("lib/internal/child_process.js") =>

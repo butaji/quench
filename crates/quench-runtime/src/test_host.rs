@@ -36,11 +36,11 @@ pub(crate) struct TestHost {
     resolve: Option<Resolve>,
     module_source: Option<fn(&ModuleSource) -> bool>,
     state: Rc<dyn Any>,
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     native_lookup: Option<Rc<NativeLookup>>,
 }
 
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 type NativeLookup = dyn Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, String>;
 
 impl Default for TestHost {
@@ -53,7 +53,7 @@ impl Default for TestHost {
             resolve: None,
             module_source: None,
             state: Rc::new(()),
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             native_lookup: None,
         }
     }
@@ -120,7 +120,7 @@ impl TestHost {
 }
 
 impl Host for TestHost {
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram<Self>>, String> {
         match &self.native_lookup {
             Some(lookup) => lookup(name, parts),

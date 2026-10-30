@@ -9,7 +9,11 @@ license = "MIT"
 # No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
 doctest = false
 
+[features]
+default = ["jit"]
+jit = ["quench-runtime/jit"]
+
 [dependencies]
-quench-runtime = { path = "../quench-runtime" }
+quench-runtime = { path = "../quench-runtime", default-features = false }
 wasmparser = "0.247"
 wast = "247"

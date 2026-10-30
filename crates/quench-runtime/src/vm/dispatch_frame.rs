@@ -1641,7 +1641,7 @@ impl<H: Host> Vm<H> {
             // constructor unwind path. Guard misses leave pc at zero.
             let mut native_step = None;
             let resumed = std::mem::take(&mut resumes_lane_exit);
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             if let Some(step) = self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls) {
                 pc = step.next_pc;
                 native_step = Some(step);
@@ -1973,7 +1973,7 @@ impl<H: Host> Vm<H> {
             // A lane of another program can leave in a linked callee's frame.
             // Enter that frame's native body at the top instead of interpreting
             // the first instruction at the lane's exit PC.
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             if native_step.is_none() && self.programs.native_js_code(self.frames[frame].program).is_some() {
                 continue;
             }

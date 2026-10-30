@@ -1,6 +1,8 @@
 //! Frozen module inputs. These are loader assets, not a replacement filesystem.
 use quench_runtime::SourceKind;
-use std::{cell::RefCell, collections::BTreeMap, path::{Path, PathBuf}, rc::Rc};
+#[cfg(feature = "aot")]
+use std::cell::RefCell;
+use std::{collections::BTreeMap, path::{Path, PathBuf}, rc::Rc};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PreparedModuleSource<T> {
@@ -24,6 +26,7 @@ pub struct ModuleAssets {
     pub entry: Option<PathBuf>,
 }
 
+#[cfg(feature = "aot")]
 impl ModuleAssets {
     pub(super) fn extend(&mut self, other: Self) -> Result<(), String> {
         for (path, file) in &other.files {
@@ -91,6 +94,7 @@ impl EmbeddedModules {
 pub(crate) enum ModuleAssetState {
     #[default]
     Filesystem,
+    #[cfg(feature = "aot")]
     Capture(Rc<RefCell<ModuleAssets>>),
     Embedded(&'static EmbeddedModules),
 }
@@ -117,23 +121,25 @@ impl crate::NodeHost {
         std::fs::canonicalize(path)
     }
 
-    pub(crate) fn module_bytes(&mut self, path: &Path, kind: SourceKind) -> std::io::Result<Vec<u8>> {
+    pub(crate) fn module_bytes(&mut self, path: &Path, _kind: SourceKind) -> std::io::Result<Vec<u8>> {
         if let Some(file) = self.embedded_module(path) { return Ok(file.bytes.to_vec()); }
         let bytes = std::fs::read(path).or_else(|error| {
+            #[cfg(feature = "aot")]
             if matches!(self.module_assets, ModuleAssetState::Capture(_)) {
                 return crate::node_sources::source(path, &self.node_library_root)
                     .map(|source| source.as_bytes().to_vec()).ok_or(error);
             }
             Err(error)
         })?;
+        #[cfg(feature = "aot")]
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();
             match assets.files.entry(path.to_owned()) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(ModuleFile { bytes: Rc::from(bytes.as_slice()), kind, prepared: None });
+                    entry.insert(ModuleFile { bytes: Rc::from(bytes.as_slice()), kind: _kind, prepared: None });
                 },
                 std::collections::btree_map::Entry::Occupied(entry) => {
-                    if entry.get().bytes.as_ref() != bytes.as_slice() || entry.get().kind != kind {
+                    if entry.get().bytes.as_ref() != bytes.as_slice() || entry.get().kind != _kind {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("module changed during source capture: {}", path.display())));
                     }
                 },
@@ -142,6 +148,7 @@ impl crate::NodeHost {
         Ok(bytes)
     }
 
+    #[cfg(feature = "aot")]
     pub(crate) fn record_prepared_module(&mut self, path: &Path, text: &str) -> Result<(), String> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();
@@ -163,6 +170,7 @@ impl crate::NodeHost {
         }
     }
 
+    #[cfg(feature = "aot")]
     pub(crate) fn record_module_resolution(&mut self, parent: &Path, specifier: &str, target: &Path) -> Result<(), String> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();

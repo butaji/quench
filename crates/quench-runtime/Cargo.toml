@@ -16,9 +16,11 @@ name = "quench"
 path = "src/bin/quench.rs"
 
 [features]
-default = []
+default = ["jit"]
+jit = ["dep:cranelift-native", "cranelift-codegen/host-arch"]
+native-execution = []
 # Build-time native object publication; not needed by the execution-only host.
-aot = ["dep:cranelift-object", "dep:cranelift-module"]
+aot = ["native-execution", "dep:cranelift-native", "cranelift-codegen/host-arch", "dep:cranelift-object", "dep:cranelift-module"]
 profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
@@ -65,9 +67,9 @@ quench-temporal = { path = "../quench-temporal" }
 wasmparser = "0.247"
 # The compiled execution mode: Cranelift is the code generator the generating
 # extension emits into; libc maps the resulting code executable.
-cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std", "host-arch"] }
+cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std"] }
 cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
-cranelift-native = { version = "=0.134.3", default-features = false }
+cranelift-native = { version = "=0.134.3", default-features = false, optional = true }
 cranelift-object = { version = "=0.134.3", default-features = false, optional = true }
 cranelift-module = { version = "=0.134.3", default-features = false, features = ["std"], optional = true }
 libc = "0.2"

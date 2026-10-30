@@ -23,7 +23,7 @@ fn run() -> Result<std::process::ExitCode, String> {
         .with_native_programs(move |name, parts| {
             // SAFETY: this catalog and its objects are emitted from one CompiledSources.
             let image = unsafe { resolve(name, parts) }?.ok_or_else(|| format!("source outside native manifest: {name}"))?;
-            observed.borrow_mut().insert(quench_runtime::NativeSourceKey::new(name, parts)?);
+            observed.borrow_mut().insert((name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>()));
             Ok(Some(image))
         });
     let host = host.with_embedded_modules(assets);
@@ -35,7 +35,7 @@ fn run() -> Result<std::process::ExitCode, String> {
         return Err(format!("expected {expected} native source keys, saw {}", loaded.borrow().len()));
     }
     if let Some(application) = application {
-        if !loaded.borrow().iter().any(|key| key.name() == application) {
+        if !loaded.borrow().iter().any(|key| key.0 == application) {
             return Err("application did not enter its native source image".into());
         }
     } else {

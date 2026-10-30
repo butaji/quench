@@ -817,7 +817,7 @@ impl std::ops::Deref for Residual {
 
 struct ProgramEntry {
     residual: Residual,
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
@@ -1069,7 +1069,7 @@ impl ProgramStore {
     /// Linked functions have native entries instead of interpreter lane views.
     fn lane_entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
         let entry = self.entry(id)?;
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if entry.native_js.is_some() { return None; }
         Some(entry)
     }
@@ -1439,7 +1439,7 @@ impl ProgramStore {
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             native_js: None,
             wasm_signatures: None,
             constants: Vec::new(),
@@ -3280,7 +3280,7 @@ impl ProgramStore {
             .map_or(&[], |entry| entry.constants.as_slice())
     }
 
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>) -> Result<(), String> {
         let entry = self.entry_mut(id).ok_or("native JS program is missing")?;
         if entry.native_js.is_some() {
@@ -3294,7 +3294,7 @@ impl ProgramStore {
         Ok(())
     }
 
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub(super) fn native_js_code(&self, id: ProgramId) -> Option<&Rc<super::native_program::NativeJsCode>> {
         self.entry(id)?.native_js.as_ref()
     }

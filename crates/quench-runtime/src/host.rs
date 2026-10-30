@@ -125,7 +125,7 @@ pub trait Host {
     /// Native code for the same exact source-shaping key as the compile cache.
     /// Returning an image commits to its atom IDs and host ABI; an incompatible
     /// image fails admission rather than recompiling behind the host's back.
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     fn kept_native_program(
         &mut self, _name: &str, _parts: &[&str],
     ) -> Result<Option<crate::NativeJsProgram<Self>>, String>

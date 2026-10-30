@@ -2871,7 +2871,7 @@ pub enum ExecutionMode {
     Compiled,
     /// Require linked guest code at every entry; reject interpreter/JIT fallback.
     /// This execution check does not itself remove compiler code from the binary.
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     NativeOnly,
 }
 
@@ -2879,7 +2879,7 @@ impl ExecutionMode {
     pub(super) fn allows_dynamic_execution(self) -> bool {
         match self {
             Self::Interpreted | Self::Compiled => true,
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             Self::NativeOnly => false,
         }
     }
@@ -5837,7 +5837,7 @@ struct JsStepDispatch {
     frame: usize,
     allow_inline_calls: bool,
     start_pc: usize,
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     stop_pc: Option<usize>,
     native_registers: *mut Value,
     register_count: usize,
@@ -5920,7 +5920,7 @@ impl JsStepDispatch {
         let activation = &mut vm.frames[frame];
         let mut dispatch = Self {
             program_id, frame, allow_inline_calls, start_pc,
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             stop_pc: None,
             native_registers: activation.registers.as_mut_ptr(),
             register_count: activation.registers.len(),
@@ -5996,14 +5996,14 @@ struct StaticJsOperation<H: Host> {
 }
 
 /// A statically selected semantic helper's C ABI. Operands use `NativeJsOperands`.
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub type NativeJsOperationEntry = unsafe extern "C" fn(
     *mut std::ffi::c_void, u64, *const u64, *mut u64,
 ) -> i64;
 
 /// Resolve a compiler opcode identity to its derived semantic helper. The opcode
 /// inventory generates this mapping; linked entries never dispatch an opcode.
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub fn native_js_operation_entry_for<H: Host>(opcode: usize) -> Option<NativeJsOperationEntry> {
     Op::from_index(opcode).map(Op::native_semantic_entry::<H>)
 }
@@ -6046,7 +6046,7 @@ pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir:
 /// point to a writable result word. `arguments` must point to an aligned,
 /// live `NativeJsOperands` from this compiler build, matching the instruction
 /// at the supplied PC. Operand structure is resolved before native execution.
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>(
     context: *mut std::ffi::c_void,
     pc: u64,
@@ -6088,7 +6088,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
         let body = program
             .function_get(vm.frames[dispatch.frame].function as usize)
             .ok_or_else(|| JsError::validation("native JS function is missing".into()))?;
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if SINGLE_OPERATION && dispatch.stop_pc == Some(pc) {
             let frame = &mut vm.frames[dispatch.frame];
             frame.pc = pc;
@@ -14777,7 +14777,7 @@ pub(super) enum TierCaptures {
     Environment(Value),
 }
 
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 impl<H: Host> Vm<H> {
     /// A registered program always yields a completed transition or an error;
     /// a malformed native exit must never select interpreter execution.
@@ -15112,7 +15112,7 @@ mod tests {
         assert!(vm.lookup_atom("effect").is_none());
     }
 
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     #[test]
     fn native_only_rejects_unlinked_roots_before_guest_effects() {
         let program = crate::Engine::specialize("globalThis.effect = 1;", "unlinked.js").unwrap();

@@ -61,7 +61,7 @@ pub(super) fn leaf_budget(mode: crate::ExecutionMode, module_operators: impl FnO
             INTERPRETED_LEAF_OPERATORS
         }
         crate::ExecutionMode::Compiled => RETAIN_CALLS,
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         crate::ExecutionMode::NativeOnly => RETAIN_CALLS,
     }
 }

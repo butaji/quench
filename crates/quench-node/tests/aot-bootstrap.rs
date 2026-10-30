@@ -130,7 +130,7 @@ fn node_bootstrap_manifest_compiles_to_native_objects_before_application_entry()
     assert!(object_bytes > 0);
 }
 
-/// Set both rlib paths from Cargo's exact aot-enabled build artifacts.
+/// Set both rlib paths from Cargo's exact execution-only build artifacts.
 #[test]
 #[ignore = "explicit native executable link check"]
 fn bootstrap_images_link_and_execute_in_node_host() {
@@ -166,12 +166,34 @@ fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path, 
     let report = fs::read_to_string(std::env::var_os("QUENCH_NATIVE_BUILD_REPORT").expect("Cargo artifact report")).unwrap();
     for line in report.lines() {
         let artifact: serde_json::Value = serde_json::from_str(line).unwrap();
+        if artifact["reason"] == "compiler-artifact" {
+            assert!(!matches!(artifact["target"]["name"].as_str(), Some("cranelift_native" | "cranelift_object" | "cranelift_module")), "execution-only support contains a native compiler dependency");
+            if artifact["target"]["name"] == "cranelift_codegen" {
+                let features = artifact["features"].as_array().expect("Cargo feature list");
+                assert!(!features.iter().any(|feature| matches!(feature.as_str(), Some("host-arch" | "all-arch" | "all-native-arch" | "x86" | "arm64" | "riscv64" | "s390x" | "pulley"))), "execution-only support contains an architecture code generator");
+            }
+        }
+        if artifact["reason"] == "compiler-artifact" && matches!(artifact["target"]["name"].as_str(), Some("quench_runtime" | "quench_node")) {
+            let features = artifact["features"].as_array().expect("Cargo feature list");
+            assert!(features.iter().any(|feature| feature == "native-execution"), "linked support artifact must support native execution");
+            assert!(!features.iter().any(|feature| matches!(feature.as_str(), Some("jit" | "aot"))), "linked support artifact must exclude dynamic and object-generation backends");
+        }
         if artifact["reason"] == "build-script-executed" {
             for path in artifact["linked_paths"].as_array().unwrap() {
                 command.arg("-L").arg(path.as_str().unwrap());
             }
         }
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let link_map = {
+        let mut path = executable.as_os_str().to_owned();
+        path.push(".link-map");
+        std::path::PathBuf::from(path)
+    };
+    #[cfg(target_os = "macos")]
+    command.arg("-C").arg(format!("link-arg=-Wl,-map,{}", link_map.display()));
+    #[cfg(target_os = "linux")]
+    command.arg("-C").arg(format!("link-arg=-Wl,-Map={}", link_map.display()));
     for object in inputs.objects() { command.arg("-C").arg(format!("link-arg={}", object.display())); }
     command.env_remove("QUENCH_NATIVE_APPLICATION");
     if let Some(application) = application { command.env("QUENCH_NATIVE_APPLICATION", application); }
@@ -188,6 +210,12 @@ fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path, 
             (fields.len() >= 2 && fields[fields.len() - 2] == "T" && symbol.starts_with("quench_js_op_"))
                 .then(|| symbol.to_owned())
         }).collect();
+        let all_symbols = Command::new("nm").arg(executable).output().unwrap();
+        assert!(all_symbols.status.success(), "{}", String::from_utf8_lossy(&all_symbols.stderr));
+        let all_symbols = String::from_utf8(all_symbols.stdout).unwrap();
+        for producer in ["cranelift_native", "cranelift_object", "cranelift_module", "target_isa_for"] {
+            assert!(!all_symbols.lines().any(|line| line.split_whitespace().last().is_some_and(|symbol| symbol.contains(producer))), "linked binary retained native compiler symbol: {producer}");
+        }
         let expected: BTreeSet<String> = fs::read_to_string(inputs.required_exports()).unwrap().lines()
             .filter(|symbol| symbol.starts_with("quench_js_op_")).map(str::to_owned).collect();
         assert_eq!(actual, expected, "linked binary retained an unrequested semantic helper export");

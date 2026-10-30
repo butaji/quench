@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
         // caller context, private names or Annex B restrictions.
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if host_script
             && let Some(native) = self.host.kept_native_program(source_name, &[mode, source]).map_err(JsError::validation)?
         {
@@ -413,14 +413,14 @@ impl<H: Host> Vm<H> {
         &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
         let parts = [self.specialization_part(), prefix, &*body, suffix];
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if let Some(native) = self.host.kept_native_program(name, &parts).map_err(JsError::validation)? {
             return self.prepare_native_script(native);
         }
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
             && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name, self.specialized)
         {
-            return Ok(crate::PreparedScript { program: Rc::new(program), #[cfg(feature = "aot")] native: None });
+            return Ok(crate::PreparedScript { program: Rc::new(program), #[cfg(feature = "native-execution")] native: None });
         }
         let prepared = self.prepare_embedding_library_body(prefix, body.clone(), suffix, name)?;
         if let Some(bytes) = self.encode_cached_program(&prepared.program) {
@@ -514,7 +514,7 @@ impl<H: Host> Vm<H> {
             source.line_offset = line_offset;
             source.column_offset = column_offset;
         }
-        Some(crate::PreparedScript { program: Rc::new(kept), #[cfg(feature = "aot")] native: None })
+        Some(crate::PreparedScript { program: Rc::new(kept), #[cfg(feature = "native-execution")] native: None })
     }
 
     pub(crate) fn prepare_embedding_specialized_script(
@@ -537,7 +537,7 @@ impl<H: Host> Vm<H> {
         // its program: its origin and whether its functions keep their records.
         let options = crate::compile::HostScriptOptions { origin, keep_records, typescript };
         let cache_key = retained.is_none().then(|| options.cache_goal());
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if let Some(goal) = &cache_key {
             let parts = [self.specialization_part(), goal, source];
             if let Some(native) = self.host.kept_native_program(name, &parts).map_err(JsError::validation)? {
@@ -605,12 +605,12 @@ impl<H: Host> Vm<H> {
         if !retain_profile_records {
             residual.release_replayable_records();
         }
-        Ok(crate::PreparedScript { program: Rc::new(residual), #[cfg(feature = "aot")] native: None })
+        Ok(crate::PreparedScript { program: Rc::new(residual), #[cfg(feature = "native-execution")] native: None })
     }
 
     fn store_prepared_script(&mut self, prepared: &crate::PreparedScript) -> Result<Option<ProgramId>, JsError> {
         let Some(id) = self.store_dynamic_program_shared(prepared.program.clone()) else { return Ok(None); };
-        #[cfg(feature = "aot")]
+        #[cfg(feature = "native-execution")]
         if let Some(code) = &prepared.native {
             self.programs.attach_native_js(id, code.clone()).map_err(JsError::validation)?;
         }
@@ -649,7 +649,7 @@ impl<H: Host> Vm<H> {
                 let Some(id) = self.store_dynamic_program_shared(script.state.program.clone()) else {
                     return Err(self.type_error(&context, "dynamic program store is full".into()));
                 };
-                #[cfg(feature = "aot")]
+                #[cfg(feature = "native-execution")]
                 if let Some(code) = self.programs.native_js_code(script.state.source).cloned() {
                     self.programs.attach_native_js(id, code).map_err(JsError::validation)?;
                 }

@@ -31,13 +31,13 @@ impl InlineSource {
     }
 }
 
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, String>;
 
 pub struct NodeHost {
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub(crate) module_assets: crate::aot::ModuleAssetState,
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
     #[cfg(feature = "aot")]
     pub(crate) native_source_staging: Option<crate::aot::HostSourceDemands>,
@@ -69,7 +69,7 @@ pub struct NodeHost {
 
 impl NodeHost {
     /// Resolve linked code by the loader's exact name, source and shaping inputs.
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, String> + 'static) -> Self {
         self.native_program_resolver = Some(Box::new(resolver));
         self
@@ -455,11 +455,11 @@ impl NodeHost {
         let process_control = crate::modules::process_state::ProcessControl::new();
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             module_assets: Default::default(),
             node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
-            #[cfg(feature = "aot")]
+            #[cfg(feature = "native-execution")]
             native_program_resolver: None,
             #[cfg(feature = "aot")]
             native_source_staging: None,

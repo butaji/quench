@@ -13,16 +13,18 @@ name = "quench-node"
 path = "src/bin/quench-node.rs"
 
 [features]
-default = []
-aot = ["quench-runtime/aot"]
+default = ["jit"]
+jit = ["quench-runtime/jit", "quench-wasm/jit"]
+native-execution = ["quench-runtime/native-execution"]
+aot = ["native-execution", "quench-runtime/aot"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 profile-allocator = ["quench-runtime/profile-allocator"]
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
-quench-runtime = { path = "../quench-runtime" }
-quench-wasm = { path = "../quench-wasm" }
+quench-runtime = { path = "../quench-runtime", default-features = false }
+quench-wasm = { path = "../quench-wasm", default-features = false }
 serde_json = "1"
 regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
 sha1 = "0.10"

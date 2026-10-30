@@ -1,11 +1,11 @@
 mod native_operands;
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
 pub(crate) mod native_object;
 #[cfg(feature = "aot")]
 pub(crate) mod native_graph;
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
 mod compiled;
 mod js_compiled;
@@ -3491,5 +3491,5 @@ enum StringConstantKey<'a> {
     Units(&'a [u16]),
 }
 
-#[cfg(feature = "aot")]
+#[cfg(feature = "native-execution")]
 pub use compiled::{NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for};

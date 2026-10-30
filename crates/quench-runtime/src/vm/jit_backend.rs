@@ -4,9 +4,13 @@
 //! target ISA from this cache and publish code through the same W^X memory
 //! implementation in `compiled.rs`.
 
+#[cfg(any(feature = "jit", feature = "aot"))]
 use cranelift_codegen::settings::{self, Configurable};
+#[cfg(any(feature = "jit", feature = "aot"))]
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
+#[cfg(any(feature = "jit", feature = "aot"))]
+use std::sync::{Mutex, OnceLock};
 
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
@@ -15,20 +19,27 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// Whether Cranelift verifies the IR of every compile: in debug builds, where tests check
 /// each lowering, and not in release, where the verifier cost about a quarter of every JIT
 /// compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
+#[cfg(any(feature = "jit", feature = "aot"))]
 const VERIFY_IR: bool = cfg!(debug_assertions);
 
 /// Publication determines relocation policy, not language semantics or lowering.
+#[cfg(any(feature = "jit", feature = "aot"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum CodePublication {
+    #[cfg(feature = "jit")]
     ExecutableMemory,
     #[cfg(feature = "aot")]
     RelocatableObject,
 }
 
-pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
-    target_isa_for(opt_level, CodePublication::ExecutableMemory)
+pub(super) fn target_isa(_opt_level: &str) -> Option<Arc<TargetIsa>> {
+    #[cfg(feature = "jit")]
+    { target_isa_for(_opt_level, CodePublication::ExecutableMemory) }
+    #[cfg(not(feature = "jit"))]
+    { None }
 }
 
+#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn target_isa_for(
     opt_level: &str,
     publication: CodePublication,
@@ -48,6 +59,7 @@ pub(super) fn target_isa_for(
         .set(
             "is_pic",
             match publication {
+                #[cfg(feature = "jit")]
                 CodePublication::ExecutableMemory => "false",
                 #[cfg(feature = "aot")]
                 CodePublication::RelocatableObject => "true",
@@ -69,9 +81,14 @@ pub(super) fn target_isa_for(
 /// and publication failures belong to the consumer, not Cranelift lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NativeCompileRejection {
+    #[cfg(any(feature = "jit", feature = "aot"))]
     Cranelift,
+    #[cfg(not(any(feature = "jit", feature = "aot")))]
+    BackendUnavailable,
     Relocations,
+    #[cfg(any(feature = "jit", feature = "aot"))]
     EmptyCode,
+    #[cfg(any(feature = "jit", feature = "aot"))]
     CodeSizeBudget,
     Publish,
 }
@@ -79,9 +96,14 @@ pub(super) enum NativeCompileRejection {
 impl NativeCompileRejection {
     pub(super) const fn reason(self) -> &'static str {
         match self {
+            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::Cranelift => "cranelift-compile-error",
+            #[cfg(not(any(feature = "jit", feature = "aot")))]
+            Self::BackendUnavailable => "native-backend-unavailable",
             Self::Relocations => "unresolved-relocations",
+            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::EmptyCode => "empty-code",
+            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::CodeSizeBudget => "code-size-budget",
             Self::Publish => "code-publication-failed",
         }
@@ -91,6 +113,7 @@ impl NativeCompileRejection {
 /// Lower once, retaining relocations and their symbolic name table until the
 /// consumer has linked or published the artifact. This avoids an extra code copy.
 /// A missing size limit preserves the Wasm compiler's existing admission policy.
+#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn compile_function<T>(
     function: cranelift_codegen::ir::Function,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
@@ -124,7 +147,18 @@ pub(super) fn compile_function<T>(
     )
 }
 
-#[cfg(test)]
+#[cfg(not(any(feature = "jit", feature = "aot")))]
+pub(super) fn compile_function<T>(
+    _function: cranelift_codegen::ir::Function,
+    _isa: &dyn cranelift_codegen::isa::TargetIsa,
+    _max_code_bytes: Option<usize>,
+    _consume: impl FnOnce(&cranelift_codegen::CompiledCode, &cranelift_codegen::ir::Function)
+        -> Result<T, NativeCompileRejection>,
+) -> Result<T, NativeCompileRejection> {
+    Err(NativeCompileRejection::BackendUnavailable)
+}
+
+#[cfg(all(test, feature = "jit"))]
 mod tests {
     use super::*;
     use cranelift_codegen::ir::{self, AbiParam, InstBuilder, types};
@@ -208,5 +242,15 @@ mod tests {
             Err::<(), _>(NativeCompileRejection::Publish)
         });
         assert_eq!(result, Err(NativeCompileRejection::Publish));
+    }
+}
+
+#[cfg(all(test, not(feature = "jit")))]
+mod execution_only_tests {
+    #[test]
+    fn executable_code_publication_is_unavailable_without_jit() {
+        for level in ["none", "speed", "speed_and_size"] {
+            assert!(super::target_isa(level).is_none());
+        }
     }
 }

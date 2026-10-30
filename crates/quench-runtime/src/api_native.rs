@@ -7,7 +7,7 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone)]
 pub struct PreparedScript {
     pub(crate) program: std::rc::Rc<crate::ResidualProgram>,
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub(crate) native: Option<std::rc::Rc<crate::vm::native_program::NativeJsCode>>,
 }
 
