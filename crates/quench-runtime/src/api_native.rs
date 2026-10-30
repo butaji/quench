@@ -1031,6 +1031,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Compile a host-owned TypeScript Script with an explicit source origin.
+    /// This is distinct from eval, whose grammar remains JavaScript.
+    pub fn evaluate_typescript_script_with_origin_rooted(
+        &mut self, source: &str, name: &str, line_offset: u32, column_offset: u32,
+        keep_records: bool,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_typescript_script_with_origin(
+            source, name, Some((line_offset, column_offset)), keep_records,
+        );
+        self.completion(result)
+    }
+
     /// `evaluate_specialized_script_with_origin_rooted` for an application's entry, whose
     /// functions keep their compiled records instead of compiling again on first call.
     pub fn evaluate_entry_script_with_origin_rooted(

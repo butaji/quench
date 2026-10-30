@@ -41,6 +41,11 @@ impl FunctionCompiler<'_, '_> {
         // nested operand starts unmarked.
         let last_operand = std::mem::take(&mut self.last_operand);
         match expression {
+            Expression::TSAsExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSSatisfiesExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSTypeAssertion(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSNonNullExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSInstantiationExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
             Expression::BigIntLiteral(value) => self.bigint_literal(value),

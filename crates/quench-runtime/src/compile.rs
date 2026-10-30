@@ -45,6 +45,7 @@ mod sequence;
 pub(crate) mod stack;
 mod string;
 mod template;
+mod typescript;
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
 pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
@@ -657,6 +658,26 @@ impl Engine {
         lazy_bodies::syntax_valid(source, source_type)
     }
 
+    /// Parse TypeScript directly: annotations remain available to analysis and
+    /// replay. They do not establish runtime representation invariants.
+    pub fn specialize_typescript(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode(
+            source, name, SpecializationMode::Enabled, &NoAtomPrefix,
+            SourceType::script().with_typescript(true), false, false, false,
+        )
+    }
+
+    pub(crate) fn specialize_typescript_script_with_atom_prefix(
+        source: &str, name: &str, atom_prefix: &dyn AtomPrefix,
+        keep_records: bool, released: ReleasedRecords,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_script_shaped(
+            source, name, atom_prefix,
+            if keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any },
+            released, SourceType::script().with_typescript(true),
+        )
+    }
+
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(
             source,
@@ -676,7 +697,7 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script())
     }
 
     /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
@@ -686,7 +707,7 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
     }
 
     fn specialize_script_shaped(
@@ -695,13 +716,14 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         shape: ParsedProgramShape,
         released: ReleasedRecords,
+        source_type: SourceType,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
             SpecializationMode::of(atom_prefix),
             atom_prefix,
-            SourceType::script(),
+            source_type,
             false,
             true,
             false,
@@ -941,7 +963,10 @@ impl Engine {
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
         // not compile with them compiles eagerly, which reports its own diagnostics.
+        // TypeScript admission currently validates runtime-changing syntax over the
+        // complete AST, including declarations inside functions, before execution.
         if matches!(expected_shape, ParsedProgramShape::Any)
+            && !source_type.is_typescript()
             && lazy_bodies::enabled()
             && let Ok(program) = compile(true)
         {
@@ -986,6 +1011,13 @@ impl Engine {
                 .collect());
         }
         stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
+        if source_type.is_typescript()
+            && let Some((span, message)) = typescript::unsupported_runtime_syntax(&parsed.program)
+        {
+            let mut diagnostic = Diagnostic::unsupported(name, message);
+            diagnostic.span = span;
+            return Err(vec![diagnostic]);
+        }
         if let Some(error) = early::regexp_early_error(&parsed.program) {
             return Err(vec![match error {
                 early::RegExpEarlyError::StackExhausted => Diagnostic::stack_exhausted(name),
@@ -1011,7 +1043,7 @@ impl Engine {
         if capture_script_completion {
             // CommonJS provides OXC's inherited new.target parsing context;
             // eval still has Script semantics for declarations and scopes.
-            parsed.program.source_type = SourceType::script();
+            parsed.program.source_type = SourceType::script().with_typescript(source_type.is_typescript());
         }
         if let Some(span) = annex_b_targets::invalid_target(&parsed.program) {
             return Err(vec![Diagnostic {

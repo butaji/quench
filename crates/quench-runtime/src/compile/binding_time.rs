@@ -28,6 +28,11 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
         Expression::BooleanLiteral(value) => BindingTime::Static(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => BindingTime::Static(Constant::Null),
         Expression::ParenthesizedExpression(value) => expression(&value.expression),
+        Expression::TSAsExpression(value) => expression(&value.expression),
+        Expression::TSSatisfiesExpression(value) => expression(&value.expression),
+        Expression::TSTypeAssertion(value) => expression(&value.expression),
+        Expression::TSNonNullExpression(value) => expression(&value.expression),
+        Expression::TSInstantiationExpression(value) => expression(&value.expression),
         Expression::UnaryExpression(value) => unary(value),
         _ => BindingTime::Dynamic,
     }

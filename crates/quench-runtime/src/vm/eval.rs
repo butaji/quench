@@ -355,6 +355,15 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
+    pub(crate) fn evaluate_embedding_typescript_script_with_origin(
+        &mut self, source: &str, name: &str, origin: Option<(u32, u32)>, keep_records: bool,
+    ) -> Result<Value, JsError> {
+        let prepared = self.prepare_embedding_specialized_script_retaining(
+            source, name, origin, None, keep_records, true,
+        )?;
+        self.evaluate_embedding_prepared_script(&prepared)
+    }
+
     /// `evaluate_embedding_specialized_script_with_origin` for a program whose functions keep
     /// their compiled records instead of compiling again on first call: an application's
     /// entry, whose own functions mostly run.
@@ -365,7 +374,7 @@ impl<H: Host> Vm<H> {
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
         let prepared =
-            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true)?;
+            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true, false)?;
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
@@ -380,7 +389,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
-        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true, false)
     }
 
     /// `prepare_embedding_library_body` through the host's compile cache
@@ -493,7 +502,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
-        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false)
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false, false)
     }
 
     /// `retained` names static text the program keeps in place of its compiled source, and
@@ -502,6 +511,7 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(crate::bytecode::SourceText, u32)>,
         keep_records: bool,
+        typescript: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
         // A script compiled from its own text (a package's module, an application's entry) goes
@@ -509,7 +519,7 @@ impl<H: Host> Vm<H> {
         // its program: its origin and whether its functions keep their records.
         let cache_key = retained.is_none().then(|| {
             let (line, column) = origin.unwrap_or_default();
-            format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}")
+            format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}{}", if typescript { ":typescript" } else { "" })
         });
         if let Some(goal) = &cache_key
             && let Some(kept) = self.kept_script(source, name, goal, origin)
@@ -518,7 +528,10 @@ impl<H: Host> Vm<H> {
         }
         // A program keeping only static text cannot compile its functions again from it. One
         // the host's compile cache keeps encodes each record its load releases.
-        let compiled = if keep_records {
+        let compiled = if typescript {
+            let released = self.released_records(cache_key.is_some());
+            crate::Engine::specialize_typescript_script_with_atom_prefix(source, name, &*self, keep_records, released)
+        } else if keep_records {
             crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
         } else {
             let released = self.released_records(cache_key.is_some());

@@ -23,7 +23,9 @@ impl FunctionCompiler<'_, '_> {
 
     fn statement_at_current_position(&mut self, statement: &Statement<'_>) {
         match statement {
-            Statement::EmptyStatement(_) => {}
+            Statement::EmptyStatement(_)
+            | Statement::TSTypeAliasDeclaration(_)
+            | Statement::TSInterfaceDeclaration(_) => {}
             Statement::FunctionDeclaration(function) => {
                 if !self.strict
                     && super::early::annex_b_function_eligible(function)

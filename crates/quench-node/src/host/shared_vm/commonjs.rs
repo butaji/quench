@@ -176,7 +176,7 @@ fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
-        Some("cjs" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
+        Some("cjs" | "cts" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
         Some(extension) if extension != "js" => return Ok(None),
         _ => {}
     }
@@ -3007,7 +3007,11 @@ const getLinkedBinding = () => ({});
                         wrapper_source.reserve_exact(prefix.len() + suffix.len());
                         wrapper_source.replace_range(..body_start, &prefix);
                         wrapper_source.push_str(&suffix);
-                        let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main) {
+                        let typescript = matches!(
+                            filename.extension().and_then(|extension| extension.to_str()),
+                            Some("cts" | "ts"),
+                        );
+                        let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main, typescript) {
                             Ok(wrapper) => wrapper,
                             Err(_) if declared.is_none()
                                 && detect_source_kind(&wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
@@ -3155,10 +3159,17 @@ fn evaluate_wrapper(
     source: &str,
     filename: &str,
     entry: bool,
+    typescript: bool,
 ) -> Result<RootId, RootedError> {
     let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix)
         .ok_or_else(|| RootedError::host("CommonJS wrapper origin exceeds compiler positions"))?;
-    if entry {
+    if typescript {
+        if super::esm_errors::node_modules_typescript(Path::new(filename)) {
+            let error = super::esm_errors::type_stripping_unsupported(filename);
+            return Err(throw_module_load_error(context, error)?);
+        }
+        context.evaluate_typescript_script_with_origin_rooted(source, filename, line_offset, column_offset, entry)
+    } else if entry {
         context.evaluate_entry_script_with_origin_rooted(source, filename, line_offset, column_offset)
     } else {
         context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
@@ -3173,7 +3184,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let text = content.as_str();
     let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
     let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
-    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false)?;
+    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false, false)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(super::operation("require"), module)?;
     install_resolve(context, require, module)?;
