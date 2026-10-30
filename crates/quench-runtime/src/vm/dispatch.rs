@@ -316,10 +316,11 @@ impl<H: Host> Vm<H> {
         if function == super::ROOT_FUNCTION_ID || owner.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let plan = owner.function_get(function as usize)?.call_plan(owner);
+        let body = owner.function_get(function as usize)?;
+        let plan = body.call_plan(owner);
         let push = if plan.in_loop {
             super::InLoopPush::Body
-        } else if plan.settles_in_loop {
+        } else if plan.settles_in_loop || suspends_in_loop(body) {
             super::InLoopPush::Settles
         } else {
             return None;
@@ -1909,4 +1910,18 @@ impl<H: Host> Vm<H> {
             ),
         }))
     }
+}
+
+/// Whether an async body that may suspend, which `CallPlan::settles_in_loop` leaves out, is
+/// pushed in place as a settling call too: the general loop's `Await` of its frame makes the
+/// continuation and returns its promise to the caller (`run_general_loop`), as
+/// `call_user_maybe_async` does for a call it runs apart. The lane keeps activating only the
+/// bodies that never suspend.
+fn suspends_in_loop(body: &crate::bytecode::Function) -> bool {
+    body.is_async
+        && !body.is_generator
+        && !body.is_class_constructor
+        && !body.derived_constructor
+        && !body.parameter_eval_arguments_error
+        && body.suspends()
 }

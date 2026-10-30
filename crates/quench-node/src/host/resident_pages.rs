@@ -340,9 +340,17 @@ pub fn release_read_only_code_and_data() {}
 /// RegExp).
 pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     match phase {
+        // The entry's analysis and code generation release whatever the pace says
+        // (`EntryCompile`); other compilations' analyses run on the parser's pages.
+        quench_runtime::CompilePhase::Analysis => {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            if EntryCompile::Analysis.advance() {
+                release_read_only_code_and_data();
+            }
+        }
         quench_runtime::CompilePhase::CodeGeneration => {
             #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            if ENTRY_CODE_GENERATION_DUE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if EntryCompile::CodeGeneration.advance() {
                 return release_read_only_code_and_data();
             }
             release_once_per_interval(CompileRelease::CodeGeneration, release_read_only_code_and_data)
@@ -557,13 +565,47 @@ fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 pub fn release_before_entry_compile() {
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    ENTRY_CODE_GENERATION_DUE.store(true, std::sync::atomic::Ordering::Relaxed);
+    ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Set before the entry's compilation: its code generation boundary releases whatever the
-/// pace says (`release_before_entry_compile`).
+/// The entry compilation's boundaries still due to release, in order (`ENTRY_COMPILE`). The
+/// parser's pages leave before the analysis as the analyser's do before code generation: a
+/// cold entry's parse and analysis had run without a release, and their code (870 KB of file
+/// pages) stayed resident beside the parse tree and the analysis tables at the run's peak
+/// (V8-v7 Crypto, entry not cached, memory-first, 2026-10-29: 1860 KiB of heap beside
+/// 916 KiB of file pages, against a warm run's 2724 KiB peak).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static ENTRY_CODE_GENERATION_DUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum EntryCompile {
+    /// No entry compilation is under way.
+    Done,
+    /// The entry's analysis boundary has yet to come.
+    Analysis,
+    /// The entry's code generation boundary has yet to come.
+    CodeGeneration,
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl EntryCompile {
+    /// Passes the entry compilation's boundary `self`: whether it was still due. Code
+    /// generation is due from either open state, so a compilation without an analysis
+    /// boundary still releases there.
+    fn advance(self) -> bool {
+        let (due, next): (&[Self], Self) = match self {
+            Self::Analysis => (&[Self::Analysis], Self::CodeGeneration),
+            Self::CodeGeneration => (&[Self::Analysis, Self::CodeGeneration], Self::Done),
+            Self::Done => (&[], Self::Done),
+        };
+        let ordering = std::sync::atomic::Ordering::Relaxed;
+        due.iter().any(|&open| ENTRY_COMPILE.compare_exchange(open as u8, next as u8, ordering, ordering).is_ok())
+    }
+}
+
+/// The entry compilation's state (`EntryCompile`), opened before it starts
+/// (`release_before_entry_compile`).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static ENTRY_COMPILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(EntryCompile::Done as u8);
 
 /// Whether the read-only pages left, by any release, less than `interval` ago.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

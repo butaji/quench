@@ -3566,12 +3566,13 @@ script_handler! {
     }
 }
 
-/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol key's proof gives
-/// for the site's next read (`Vm::site_symbol_own_read`). Out of line: the site's hits skip it.
+/// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol or index key's proof
+/// gives for the site's next read (`Vm::site_keyed_own_read`). Out of line: the site's hits
+/// skip it.
 #[inline(never)]
 fn lane_site_keyed_get<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_keyed_get(base, key)?;
-    vm.record_site_symbol_read(ip.addr(), base, key);
+    vm.record_site_keyed_read(ip.addr(), base, key);
     Some(value)
 }
 
@@ -3592,13 +3593,14 @@ lane_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
+        let key = vm.canonical_index_key(key);
         let Some(value) = vm
             .dense_array_element(base, key)
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
-            .or_else(|| vm.string_index_element(base, key))
+            .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
         };
@@ -3628,7 +3630,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let (base, key) = (r.get(i.b), r.get(i.c));
         // A symbol-keyed read this site made of the same shape and key reads its own slot.
-        if let Some(value) = vm.site_symbol_own_read(ip.addr(), base, key) {
+        if let Some(value) = vm.site_keyed_own_read(ip.addr(), base, key) {
             r.set(i.a, value);
             next!(cx, r, following(ip), Carried::script(cx))
         }
@@ -3685,12 +3687,13 @@ fn lane_get_index_beside_activations<H: Host>(
 /// element. Out of line, as `lane_set_index_slot_store`.
 #[inline(never)]
 fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
+    let key = vm.canonical_index_key(key);
     vm.dense_array_element(base, key)
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
         .or_else(|| vm.plain_typed_element(base, key))
         .or_else(|| lane_string_element(vm, base, key))
-        .or_else(|| vm.string_index_element(base, key))
+        .or_else(|| vm.keyed_array_length(base, key))
 }
 
 script_handler! {
@@ -5719,6 +5722,12 @@ script_handler! {
     fn lane_define_field<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let object = r.get(i.b);
+        // An object record, which is never a proxy, takes its site's proved define inline.
+        if vm.proved_field_define_hit(object, i.imm(), r.get(i.a), i.c) {
+            // Adding a property can allocate.
+            note_allocation(vm);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         if !vm.lane_stack.activations.is_empty() && vm.proxy_parts(object).is_some() {
             return exit(ip);
         }
@@ -5940,8 +5949,9 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
-        // A receiver outside the object records (a RegExp's or a function's cell) never hits
-        // the own-record store, so its site takes the general cached write from now on.
+        // A receiver outside the object records (a RegExp's or a function's cell) hits the
+        // own store's logged path (`Vm::primary_cell_field_store_hit`) only at one shape, so
+        // a polymorphic site of one takes the general cached write from now on.
         let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
         // A private field's store takes the private element path (`lane_set_field`).
         let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
@@ -5950,7 +5960,7 @@ script_handler! {
             Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
         } else if polymorphic && !adds && !cell_receiver {
             Some(lane_set_field_polymorphic::<H, THIS>)
-        } else if adds || polymorphic || cell_receiver {
+        } else if adds || polymorphic {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else {
             None
@@ -6288,15 +6298,10 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 
 /// Whether `value` is strictly equal to `constant`, a constant that is no Number: a boolean,
 /// null or undefined is equal only to itself, a heap constant (a string or BigInt) also to
-/// a value of equal contents (`Vm::strict_equal`), where two `typeof` names are equal only
-/// when identical (`Vm::typeof_name`).
+/// a value of equal contents (`Vm::heap_values_strictly_equal`).
 #[inline(always)]
 fn strictly_equal_constant<H: Host>(vm: &Vm<H>, value: Value, constant: Value) -> bool {
-    value == constant
-        || (constant.is_heap()
-            && value.is_heap()
-            && !(vm.is_typeof_name(value) && vm.is_typeof_name(constant))
-            && vm.strict_equal(value, constant))
+    value == constant || (constant.is_heap() && value.is_heap() && vm.heap_values_strictly_equal(value, constant))
 }
 
 lane_handler! {
@@ -7049,10 +7054,11 @@ fn lane_loop_entry<H: Host>(
         }?;
         entry.push_field_store(pointer);
     }
-    if region.has_dynamic_field_reads() && region.inlining.is_none() {
+    if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap.native_property_values();
-        entry.push_native_field_heap(object_base, properties_base, properties_len);
+        let array_base = vm.heap.array_record_base().unwrap_or(std::ptr::null());
+        entry.push_native_heap(object_base, properties_base, properties_len, array_base);
     }
     if let Some(inlining) = &region.inlining {
         // Leaving at an inlined instruction makes its callee's activation as the call would:
@@ -9686,6 +9692,30 @@ impl<H: Host> Vm<H> {
             .unwrap_or(false)
     }
 
+    /// Whether `native` called on `receiver` runs beside activations as the natives of
+    /// `runs_beside_activations` do: `%IteratorPrototype%.next` of an array, string, map or set
+    /// iterator, whose step reads its source alone. A generator's step resumes its frame and an
+    /// iterator helper's may step one, so those take frames first.
+    fn steps_beside_activations(&self, native: Native, receiver: Value) -> bool {
+        use crate::heap::IteratorKind;
+        native == Native::IteratorNext
+            && self.heap.iterator(receiver).is_some_and(|iterator| {
+                matches!(
+                    iterator.kind,
+                    IteratorKind::Array
+                        | IteratorKind::ArrayKeys
+                        | IteratorKind::ArrayValues
+                        | IteratorKind::ArrayEntries
+                        | IteratorKind::String
+                        | IteratorKind::MapKeys
+                        | IteratorKind::MapValues
+                        | IteratorKind::MapEntries
+                        | IteratorKind::SetValues
+                        | IteratorKind::SetEntries
+                )
+            })
+    }
+
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
@@ -12109,7 +12139,9 @@ fn lane_call_native<H: Host>(
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // A native that observes frames only through the points `materialize_deferred_lane`
     // guards runs beside the activations; the first such point makes them frames.
-    if !vm.lane_stack.activations.is_empty() && vm.runs_beside_activations(native, callee) {
+    if !vm.lane_stack.activations.is_empty()
+        && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
+    {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
         let result = vm.call_native_guarded(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
         note_allocation(vm);

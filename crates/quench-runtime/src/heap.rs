@@ -63,6 +63,12 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) elements_header_offset: usize,
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
+    /// The backing's owner count, one where no other array shares it.
+    pub(crate) header_owners_offset: usize,
+    /// The record's object part, whose meta and payload words `NATIVE_OBJECT_LAYOUT` names.
+    pub(crate) object_offset: usize,
+    /// The meta bit of a frozen array.
+    pub(crate) frozen_mask: u32,
 }
 
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
@@ -74,6 +80,9 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     elements_header_offset: array_elements::NATIVE_HEADER_POINTER_OFFSET,
     header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
+    header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
+    object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
+    frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
 
 /// The native reader's view of an ordinary object record and its out-of-line property words.
@@ -519,6 +528,12 @@ pub(crate) struct Heap {
     /// The next minor collection logs and traces them with the barriers' own log; one not
     /// written since then points at nothing young after it, so it is not carried again.
     carried_owners: Vec<Value>,
+    /// Bytes of reclaimable programs installed since the last full collection
+    /// (`charge_reclaimable_program`).
+    reclaimable_program_bytes_since_full: usize,
+    /// Bytes of the reclaimable programs that stayed at the last full collection, which the
+    /// next one's program growth is measured against.
+    reclaimable_program_bytes_after_full: usize,
     young: Vec<u32>,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
@@ -803,6 +818,8 @@ impl Heap {
             remembered_marks: Vec::with_capacity(12),
             remembered: Vec::with_capacity(384),
             carried_owners: Vec::new(),
+            reclaimable_program_bytes_since_full: 0,
+            reclaimable_program_bytes_after_full: 0,
             young: Vec::with_capacity(384),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
@@ -1706,6 +1723,8 @@ impl Heap {
         self.allocated = 0;
         self.allocated_at_collection = 0;
         self.allocated_at_full = 0;
+        self.reclaimable_program_bytes_since_full = 0;
+        self.reclaimable_program_bytes_after_full = 0;
         self.live_after_full = 0;
         self.live_at_environment_trim = None;
         self.full_due = false;
@@ -1803,6 +1822,25 @@ impl Heap {
                 self.allocated_since_full(),
                 self.pacing_state.cap_backoff,
             )
+            || self.pacing().old_growth_reached(
+                self.reclaimable_program_bytes_after_full / payload_unit(),
+                self.reclaimable_program_bytes_since_full / payload_unit(),
+            )
+    }
+    /// Charges a reclaimable program (dynamic code: `eval`, `new Function`, scripts) of
+    /// `bytes` (`ProgramFootprint`) as old growth of the programs the last full collection
+    /// kept: only a full collection finds a program unreferenced and reclaims it, and minor
+    /// collections, which free the heap garbage that made it, never would. Without it, a loop
+    /// of `new Function` under Throughput ran two full collections in 80K programs and held
+    /// every program. Measured against the programs that stay (`ProgramStore::
+    /// settled_reclaimable_bytes`), a large program a process keeps raises its own threshold,
+    /// while a stream of short-lived ones keeps the minimum.
+    pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
+        self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
+    }
+    /// Records the footprints of the reclaimable programs that stay, after a full collection.
+    pub(crate) fn set_reclaimable_programs_after_full(&mut self, bytes: usize) {
+        self.reclaimable_program_bytes_after_full = bytes;
     }
     /// Every collection may be minor, so the legacy young list and barrier are always kept.
     fn tracks_young_cells(&self) -> bool {
@@ -2308,6 +2346,7 @@ impl Heap {
         self.external_collection_budget = self.external_bytes.max(self.pacing().minimum_external_budget);
         if full {
             self.allocated_at_full = self.allocated;
+            self.reclaimable_program_bytes_since_full = 0;
             self.old_live = legacy_live;
             self.young.clear();
             self.remembered.clear();
@@ -3396,32 +3435,35 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        // As `property_get_flat`: arena values without extras need no other decoding.
-        if let Some(start) = data.plain_storage_start() {
-            debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
-            // SAFETY: the caller proves that the property slot exists outside dictionary
-            // storage.
-            unsafe { self.properties.set_flat_at(start, slot, value) };
-            return true;
+        store_exact_slot::<LOGS>(data, &mut self.properties, slot, value)
+    }
+
+    /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
+    /// RegExp, Map, Date or any other object without a record) whose exact shape is `shape`:
+    /// one owner lookup; `false` leaves any other value to the caller unchanged.
+    ///
+    /// # Safety
+    /// `shape` is a shape outside dictionary storage holding a property at `slot`.
+    #[inline(always)]
+    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value) -> bool {
+        let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
+            return false;
+        };
+        let index = index as usize;
+        let Self { slots, properties, .. } = &mut *self;
+        let Some(data) = slots.get_mut(index).and_then(|slot| slot.cell.as_mut()).and_then(Cell::object_mut) else {
+            return false;
+        };
+        if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
+            return false;
         }
-        if data.properties().has_inline_property_storage() {
-            if !data.store_inline_narrow(slot, value) {
-                // Without `LOGS` the widening, which changes nothing before it, is left to the
-                // caller's logged store too, so this path makes no call at all.
-                if !LOGS {
-                    return false;
-                }
-                let length = self.properties.len(data.properties());
-                widen_inline_storage(data, &mut self.properties, data.shape(), length, slot, value);
-            }
-            return true;
+        store_exact_slot::<true>(data, properties, slot, value);
+        if value.heap_index().is_some() {
+            self.remember(index);
         }
-        let vector = data.properties();
-        debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
-        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
-        unsafe { self.properties.set_flat_unchecked(vector, slot, value) };
         true
     }
+
     /// Appends `value` as the next property of `object`, which moves to `shape`, whose
     /// storage length is one more than the object's: inline while the values fit, otherwise
     /// in the arena, into which the add that outgrows the inline values moves them. One owner
@@ -4191,4 +4233,33 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
         data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
     }
     data.set_shape(shape);
+}
+
+/// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
+/// arena values without extras need no other decoding (as `property_get_flat`), and inline
+/// values that cannot take `value` move to the arena, which without `LOGS` is left to the
+/// caller's logged store (`false`, with nothing changed).
+#[inline(always)]
+fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value) -> bool {
+    if let Some(start) = data.plain_storage_start() {
+        debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
+        // SAFETY: the caller proves that the property slot exists outside dictionary storage.
+        unsafe { properties.set_flat_at(start, slot, value) };
+        return true;
+    }
+    if data.properties().has_inline_property_storage() {
+        if !data.store_inline_narrow(slot, value) {
+            if !LOGS {
+                return false;
+            }
+            let length = properties.len(data.properties());
+            widen_inline_storage(data, properties, data.shape(), length, slot, value);
+        }
+        return true;
+    }
+    let vector = data.properties();
+    debug_assert!(!vector.is_dictionary(), "the caller matched an exact shape");
+    // SAFETY: the caller proves that the property slot exists outside dictionary storage.
+    unsafe { properties.set_flat_unchecked(vector, slot, value) };
+    true
 }

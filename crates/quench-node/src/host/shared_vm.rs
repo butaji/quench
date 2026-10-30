@@ -1056,6 +1056,8 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "bufferBindingLatin1Slice",
     "bufferBindingUcs2Slice",
     "bufferBindingUtf8Slice",
+    "bufferBindingUtf8Write",
+    "utilTypeCheck",
     "nextTick",
     "httpResponseGetHeader",
     "httpResponseGetHeaders",

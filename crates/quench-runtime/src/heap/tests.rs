@@ -1447,3 +1447,18 @@ fn a_rope_flattened_and_freed_between_collections_leaves_the_payload_ledger_bala
     collect_minor(&mut heap, [kept]);
     assert_eq!(heap.payload_bytes, before);
 }
+
+#[test]
+fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
+    for policy in crate::MemoryPolicy::ALL {
+        let mut heap = Heap::new();
+        heap.set_memory_policy(policy);
+        collect_minor(&mut heap, []);
+        assert!(!heap.should_full_collect());
+        let growth = heap.pacing().minimum_old_growth;
+        heap.charge_reclaimable_program(growth * payload_unit());
+        assert!(heap.should_full_collect());
+        heap.collect_with_object_roots([], |_, _, _, _, _| {}, None, None, true);
+        assert!(!heap.should_full_collect());
+    }
+}

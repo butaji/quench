@@ -57,8 +57,15 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
     }
 
     pub(super) fn clear(&self) {
+        self.retain(|_| false);
+    }
+
+    /// Keeps the recorded entries `keep` accepts and empties the rest.
+    pub(super) fn retain(&self, keep: impl Fn(&T) -> bool) {
         for entry in self.entries.get().into_iter().flat_map(|entries| entries.iter()) {
-            entry.set(None);
+            if entry.get().is_some_and(|value| !keep(&value)) {
+                entry.set(None);
+            }
         }
     }
 }

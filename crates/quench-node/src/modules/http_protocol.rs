@@ -126,6 +126,10 @@ pub(crate) fn valid_header_unit(unit: u16, lenient: bool) -> bool {
 }
 
 pub(crate) fn valid_header_value(value: &str) -> bool {
+    // An ASCII value's bytes are its UTF-16 code units.
+    if value.is_ascii() {
+        return value.bytes().all(|byte| valid_header_unit(u16::from(byte), false));
+    }
     value
         .encode_utf16()
         .all(|unit| valid_header_unit(unit, false))

@@ -49,6 +49,7 @@ pub(crate) struct ArrayElements {
 pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
 pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
+pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, owners);
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
@@ -82,15 +83,20 @@ impl ArrayElements {
 
     /// `len` copies of `value`, allocated at their final size with no intermediate buffer.
     pub(crate) fn filled(len: usize, value: Value) -> Self {
+        Self::from_fn(len, |_| value)
+    }
+
+    /// The `len` values `value` gives for each index in order, written straight into a
+    /// backing allocated at its final size, with no intermediate buffer.
+    pub(crate) fn from_fn(len: usize, mut value: impl FnMut(usize) -> Value) -> Self {
         if len == 0 {
             return Self::new();
         }
         let elements = Self::allocate(len, len);
-        // SAFETY: the new allocation holds `len` slots after the header.
-        unsafe {
-            for slot in 0..len {
-                elements.values().add(slot).write(value);
-            }
+        for slot in 0..len {
+            let written = value(slot);
+            // SAFETY: the new allocation holds `len` slots after the header.
+            unsafe { elements.values().add(slot).write(written) };
         }
         elements
     }

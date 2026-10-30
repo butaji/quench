@@ -306,6 +306,7 @@ impl<H: Host> Vm<H> {
             shared_async_waiters,
             programs,
             program_cache_layouts: _,
+            free_cache_layouts: _,
             active_registers: _,
             lane_raised,
             lane_returned,
@@ -369,6 +370,7 @@ impl<H: Host> Vm<H> {
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
+            instanceof_inheriting_holders: _,
             closure_shapes: _,
             resolver_function_shape: _,
             iterator_result_header: _,
@@ -690,6 +692,7 @@ impl<H: Host> Vm<H> {
     /// Every program's cache layout, in id order, with empty caches.
     fn rebuild_program_cache_layouts(&mut self) {
         self.program_cache_layouts.clear();
+        self.free_cache_layouts.clear();
         self.field_caches.clear();
         self.megamorphic_field_indices.clear();
         self.field_add_indices.clear();
@@ -704,6 +707,7 @@ impl<H: Host> Vm<H> {
             match self.programs.cache_site_counts(id) {
                 Some(sites) => self.append_cache_layout(id, sites),
                 None => self.program_cache_layouts.push(ProgramCacheLayout {
+                    sites: Default::default(),
                     field_base: self.field_caches.len(),
                     method_base: self.method_caches.len(),
                     object_base: self.object_shapes.len(),

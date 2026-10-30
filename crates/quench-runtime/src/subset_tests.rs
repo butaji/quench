@@ -902,6 +902,145 @@ print(out.join(" "));
 }
 
 #[test]
+fn strict_compares_against_heap_constants_keep_their_results() {
+    // A lane strict (in)equality against a string or BigInt constant
+    // (`lane_jump_strict_constant_false`) is identity or equal contents: `typeof` names
+    // against built strings of the same text, one-unit and empty strings, composed and
+    // decomposed text, BigInts of equal value and values of other types. Node 26 prints the
+    // same.
+    let source = r#"
+(function () {
+const values = [1, "1", "number", "num" + "ber", ["str", "ing"].join(""), "string", undefined, null, 1n, 10n ** 20n, Symbol.iterator, {}, "/", "a/".slice(1), "", "é", "é".normalize(), true];
+const counts = [0, 0, 0, 0, 0, 0, 0];
+for (let r = 0; r < 200; r++) {
+  for (const v of values) {
+    if (v === "number") counts[0]++;
+    if (typeof v === "number") counts[1]++;
+    if (v !== "string") counts[2]++;
+    if (v === "/") counts[3]++;
+    if (v === 100000000000000000000n) counts[4]++;
+    if (v === "é") counts[5]++;
+    if (typeof v !== "bigint" && v !== "") counts[6]++;
+  }
+}
+print(counts.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["400 200 3200 400 200 400 3000"]);
+}
+
+#[test]
+fn own_field_stores_into_slot_cells_keep_their_semantics() {
+    // An own-field store into an object without a record (a RegExp's `lastIndex`, a Map's,
+    // a Date's or a function's property) takes the own store's cell path
+    // (`Heap::cell_property_set_exact`): reference and primitive values, a non-writable
+    // `lastIndex` in strict code, frozen and non-extensible receivers, a shape changed by a
+    // delete and many fresh RegExps. Node 26 prints the same.
+    let source = r#"
+(function () {
+"use strict";
+const out = [];
+function put(o, v) { o.lastIndex = v; return o.lastIndex; }
+function tag(o, v) { o.tag = v; return o.tag; }
+const re = /a/g;
+let s = 0; for (let i = 0; i < 300; i++) s += put(re, i); out.push(s);
+out.push(put(re, "x"), typeof put(re, {}), put(re, 7));
+Object.defineProperty(re, "lastIndex", { writable: false });
+let e = ""; try { put(re, 9); } catch (x) { e = x.constructor.name; } out.push(e, re.lastIndex);
+const m = new Map(); m.tag = 0; const d = new Date(0); d.tag = 0; const f = function () {}; f.tag = 0;
+let t = 0; for (let i = 0; i < 300; i++) t += tag(m, i) + tag(d, 1) + tag(f, 2); out.push(t);
+Object.freeze(m); let e2 = ""; try { tag(m, 5); } catch (x) { e2 = x.constructor.name; } out.push(e2, m.tag);
+const r2 = /b/y; Object.preventExtensions(r2); out.push(put(r2, 3));
+const r3 = /c/; r3.extra = 1; delete r3.extra; out.push(put(r3, 4), Object.keys(r3).join());
+const big = []; for (let i = 0; i < 300; i++) { const r = new RegExp("q"); big.push(put(r, { i })); } out.push(big[299].i);
+out.push(JSON.stringify(Object.getOwnPropertyDescriptor(re, "lastIndex")));
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["44850 x object 7 TypeError 7 45750 TypeError 299 3 4  299 {\"value\":7,\"writable\":false,\"enumerable\":false,\"configurable\":false}"]);
+}
+
+#[test]
+fn regexp_tests_through_a_proved_builtin_exec_keep_exec_lookups() {
+    // `test` calls the builtin exec in place while a proof for the RegExp's shape names the
+    // prototype's `exec` slot (`RegExpExecProof`): a patched, restored, own, deleted and
+    // accessor `exec`, a RegExp with another prototype and a prototype without `exec`.
+    // Node 26 prints the same.
+    let source = r#"
+(function () {
+const out = [];
+const re = /b/y;
+function run(r, s) { let n = 0; for (let i = 0; i < 200; i++) { r.lastIndex = 1; if (r.test(s)) n++; } return n; }
+out.push(run(re, "abc"));
+const proto = RegExp.prototype, exec = proto.exec;
+let calls = 0;
+proto.exec = function (s) { calls++; return exec.call(this, s); };
+out.push(run(re, "abc"), calls);
+proto.exec = exec; calls = 0;
+out.push(run(re, "abc"), calls);
+const own = /b/y; own.exec = function () { calls++; return null; };
+out.push(run(own, "abc"), calls); calls = 0;
+delete own.exec; out.push(run(own, "abc"));
+Object.defineProperty(proto, "exec", { get() { calls++; return exec; }, configurable: true });
+out.push(run(re, "abc"), calls);
+Object.defineProperty(proto, "exec", { value: exec, writable: true, configurable: true }); calls = 0;
+out.push(run(re, "abc"));
+const sub = /b/y; Object.setPrototypeOf(sub, Object.create(proto, { exec: { value() { calls++; return {}; } } }));
+out.push(run(sub, "abc"), calls); calls = 0;
+delete proto.exec;
+let threw = ""; try { run(/b/y, "abc"); } catch (e) { threw = e.constructor.name; } out.push(threw);
+proto.exec = exec;
+out.push(run(/b/y, "abc"), run(/c/y, "abc"));
+print(out.join(" "));
+})();
+"#;
+    assert_eq!(output(source), ["200 200 200 200 0 0 200 200 200 200 200 200 200  200 0"]);
+}
+
+#[test]
+fn sticky_searches_their_start_set_excludes_keep_their_matches() {
+    // A sticky search whose one position admits no match start is refused before the
+    // subject is prepared (`Regex::excludes_search`): starts in and past the subject, the
+    // subject's start and end edges, multiline and caseless patterns, non-ASCII and astral
+    // units, empty matches, lookbehind and a global sticky regexp. Node 26 prints the same.
+    let source = r#"
+(function () {
+const cases = [
+  [/[a-z]+/y, "12abc def", [0, 1, 2, 5, 6, 9, 10]],
+  [/^a|b/y, "ab ab", [0, 1, 2, 3, 4, 5]],
+  [/^a|b/my, "a\nab", [0, 1, 2, 3, 4]],
+  [/x*$/y, "abc", [0, 2, 3]],
+  [/$|q/y, "aq", [0, 1, 2]],
+  [/ét/y, "étét", [0, 1, 2]],
+  [/\u{1F600}x|a/uy, "a\u{1F600}x", [0, 1, 3]],
+  [/[^a]/y, "aéb", [0, 1, 2, 3]],
+  [/(?:)/y, "ab", [0, 1, 2, 3]],
+  [/A/iy, "xa", [0, 1, 2]],
+  [/\bfoo/y, "a foo", [0, 2]],
+  [/(?<=a)b/y, "ab", [0, 1]],
+  [/\s*\d/gy, " 1x2", [0, 1, 2, 3]],
+];
+const rounds = [];
+for (let round = 0; round < 300; round++) {
+  let line = "";
+  for (const [re, s, starts] of cases) {
+    for (const at of starts) {
+      re.lastIndex = at;
+      const m = re.exec(s);
+      line += (m ? m.index + m[0] : "-") + re.lastIndex;
+      re.lastIndex = at;
+      line += (re.test(s) ? "t" : "f") + re.lastIndex + " ";
+    }
+  }
+  rounds.push(line);
+}
+print(rounds[0] === rounds[299] ? rounds[0] : "unsteady");
+})();
+"#;
+    assert_eq!(output(source), ["-0f0 -0f0 2abc5t5 -0f0 6def9t9 -0f0 -0f0 0a1t1 1b2t2 -0f0 -0f0 4b5t5 -0f0 0a1t1 -0f0 2a3t3 3b4t4 -0f0 -0f0 -0f0 33t3 -0f0 1q2t2 22t2 0ét2t2 -0f0 2ét4t4 0a1t1 1😀x4t4 -0f0 -0f0 1é2t2 2b3t3 -0f0 00t0 11t1 22t2 -0f0 -0f0 1a2t2 -0f0 -0f0 2foo5t5 -0f0 1b2t2 0 12t2 112t2 -0f0 324t4 "]);
+}
+
+#[test]
 fn for_of_steps_that_read_done_and_value_in_place_keep_iteration_semantics() {
     // A for-of step over a plain array writes its `done` and `value` registers itself
     // (`lane_iterator_step_reads`): arrays with holes, growing and shrinking under the loop,
@@ -930,6 +1069,37 @@ print(out.join(" "));
 })();
 "#;
     assert_eq!(output(source), ["6 304 0 9 012 333 1,2,10,20,100,200 3 2 a1b2 0x1y 15 3 3 40 t1 6"]);
+}
+
+#[test]
+fn async_calls_pushed_in_place_suspend_at_their_first_await_in_order() {
+    // A plain call of an async body that may suspend is pushed in place by the general loop
+    // (`Vm::try_settling_call`), and its first `await` suspends that frame into the
+    // continuation its promise's reaction resumes while the caller continues with the
+    // promise (`run_general_loop`'s `Await`): calls nested three deep, a call whose
+    // caller logs before the callee resumes, a throw before and after the first await
+    // into a `try`/`finally`, loops of awaited calls, recursion and an `arguments` read,
+    // interleaved with plain reactions. Node 26 prints the same.
+    let source = r#"
+(function () {
+const log = [];
+async function leaf(x) { log.push("l" + x); const v = await x; log.push("L" + v); return v * 2; }
+async function mid(x) { log.push("m" + x); const a = await leaf(x); log.push("M" + a); const b = await Promise.resolve(a + 1); return b; }
+async function early(x) { if (x > 1) throw new Error("e" + x); await null; throw new Error("late" + x); }
+async function guarded(x) { try { await early(x); } catch (e) { return "caught " + e.message; } finally { log.push("f" + x); } }
+async function loop(n) { let s = 0; for (let i = 0; i < n; i++) s += await mid(i); return s; }
+async function recurse(n) { if (n === 0) return 0; const r = await recurse(n - 1); return r + n; }
+async function args() { const a = arguments.length; await 0; return a + arguments.length; }
+function sync() { const p = mid(7); log.push("sync after mid"); return p; }
+const runs = [mid(1), sync(), guarded(1), guarded(2), loop(5), recurse(20), args(1, 2, 3)];
+Promise.resolve().then(() => log.push("t1")).then(() => log.push("t2")).then(() => log.push("t3")).then(() => log.push("t4"));
+Promise.all(runs).then((values) => { print(values.join(" ") + " | " + log.join(",")); });
+})();
+"#;
+    assert_eq!(
+        output(source),
+        ["3 15 caught late1 caught e2 25 210 6 | m1,l1,m7,l7,sync after mid,m0,l0,L1,L7,f2,L0,t1,M2,M14,f1,M0,t2,t3,m1,l1,t4,L1,M2,m2,l2,L2,M4,m3,l3,L3,M6,m4,l4,L4,M8"]
+    );
 }
 
 #[test]

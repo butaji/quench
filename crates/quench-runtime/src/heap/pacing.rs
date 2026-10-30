@@ -431,9 +431,14 @@ impl GenerationalPacing {
     }
 
     pub(super) fn full_due(&self, live_after_full: usize, live: usize, since_full: usize, cap_backoff: u32) -> bool {
-        live.saturating_sub(live_after_full)
-            >= self.old_growth.of(live_after_full).max(self.minimum_old_growth)
+        self.old_growth_reached(live_after_full, live.saturating_sub(live_after_full))
             || self.allocation_cap_reached(live_after_full, since_full, cap_backoff)
+    }
+
+    /// Whether `growth` past what the last full collection kept is enough old growth to make
+    /// the next collection full.
+    pub(super) fn old_growth_reached(&self, live_after_full: usize, growth: usize) -> bool {
+        growth >= self.old_growth.of(live_after_full).max(self.minimum_old_growth)
     }
 
     pub(super) fn weight_growth_due(&self, after_full: usize, live_weight: usize) -> bool {

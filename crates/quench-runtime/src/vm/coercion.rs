@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
 
     /// The one string `typeof` yields for values of `kind`: every result and every string
     /// constant spelling one (`Vm::materialize_constant`) is this value, so `===` between two
-    /// of them is identity (`Vm::is_typeof_name`).
+    /// of them is identity.
     fn typeof_name(&mut self, kind: crate::ValueType) -> Value {
         // `null` and objects share one name, kept in the object kind's slot.
         let kind = if kind == crate::ValueType::Null { crate::ValueType::Object } else { kind };
@@ -84,12 +84,6 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .find(|kind| typeof_text(*kind) == text)
             .map(|kind| self.typeof_name(kind))
-    }
-
-    /// Whether `value` is one of the `typeof` names (`Vm::typeof_name`).
-    #[inline(always)]
-    pub(super) fn is_typeof_name(&self, value: Value) -> bool {
-        self.typeof_names.contains(&value)
     }
 
     pub(super) fn to_numeric(
@@ -400,9 +394,13 @@ impl<H: Host> Vm<H> {
         if let (Some(left), Some(right)) = (a.as_number(), b.as_number()) {
             return left == right;
         }
-        if a == b {
-            return true;
-        }
+        a == b || self.heap_values_strictly_equal(a, b)
+    }
+
+    /// `strict_equal` of two values that are no Numbers and not identical: equal strings or
+    /// BigInts, of equal contents.
+    #[inline(always)]
+    pub(super) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
         if let (Some(a), Some(b)) = (self.heap.string(a), self.heap.string(b)) {
             return a == b;
         }

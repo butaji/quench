@@ -1,5 +1,5 @@
-//! `QUENCH_MEMORY` attribution of a compiled program's owned bytes, one JSON line per
-//! program: the function records and each per-function and program-wide table at capacity.
+//! A compiled program's owned bytes (`ProgramFootprint`): what the collector weighs a
+//! reclaimable program by, and what `QUENCH_MEMORY` attributes, one JSON line per program.
 use crate::bytecode::{
     Atom, BindingSite, Constant, EnvironmentClone, FieldSite, Function, FunctionSlot, Handler,
     Instr,
@@ -51,38 +51,90 @@ fn layout_bytes(function: &Function) -> usize {
         + slice_bytes::<EnvironmentClone>(&function.environment_clones)
 }
 
-pub(super) fn report(program: &ResidualProgram) {
-    let slots = &program.functions;
-    let records = || slots.iter().filter_map(FunctionSlot::record);
-    let sum = |field: fn(&Function) -> usize| records().map(field).sum::<usize>();
-    eprintln!(
-        "{{\"kind\":\"quench-program-memory\",\"name\":{:?},\"source_bytes\":{},\"functions\":{},\
-         \"function_record_size\":{},\"function_records\":{},\"code\":{},\"wide\":{},\
-         \"positions\":{},\"handlers\":{},\"atom_lists\":{},\"layout\":{},\"constants\":{},\
-         \"sites\":{},\"register_roots\":{}}}",
-        program.source_name,
-        program.source.as_ref().map_or(0, |source| source.text.len()),
-        slots.len(),
-        size_of::<Function>(),
-        slots.capacity() * size_of::<FunctionSlot>() + records().count() * size_of::<Function>(),
-        sum(|function| bytes::<Instr>(&function.code)),
-        sum(|function| bytes::<WideInstruction>(&function.wide)),
-        sum(|function| function.source_positions.capacity_bytes()),
-        sum(|function| slice_bytes::<Handler>(&function.handlers)),
-        sum(atom_bytes),
-        sum(layout_bytes),
-        bytes::<Constant>(&program.constants),
-        bytes::<MethodSite>(&program.method_sites)
-            + bytes::<Register>(&program.method_arguments)
-            + bytes::<FieldSite>(&program.field_sites)
-            + bytes::<ObjectSite>(&program.object_sites)
-            + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
-            + program
-                .literal_templates
-                .iter()
-                .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
-                .sum::<usize>()
-            + bytes::<Superinstruction>(&program.superinstructions),
-        sum(|function| function.register_roots.capacity_bytes()),
-    );
+/// A compiled program's owned bytes by part: its function records and each per-function and
+/// program-wide table at capacity. The collector weighs a reclaimable program by its total
+/// (`Heap::charge_reclaimable_program`); `QUENCH_MEMORY` reports the parts.
+pub(crate) struct ProgramFootprint {
+    source: usize,
+    function_records: usize,
+    code: usize,
+    wide: usize,
+    positions: usize,
+    handlers: usize,
+    atom_lists: usize,
+    layout: usize,
+    constants: usize,
+    sites: usize,
+    register_roots: usize,
+}
+
+impl ProgramFootprint {
+    pub(crate) fn of(program: &ResidualProgram) -> Self {
+        let slots = &program.functions;
+        let records = || slots.iter().filter_map(FunctionSlot::record);
+        let sum = |field: fn(&Function) -> usize| records().map(field).sum::<usize>();
+        Self {
+            source: program.source.as_ref().map_or(0, |source| source.text.len()),
+            function_records: slots.capacity() * size_of::<FunctionSlot>()
+                + records().count() * size_of::<Function>(),
+            code: sum(|function| bytes::<Instr>(&function.code)),
+            wide: sum(|function| bytes::<WideInstruction>(&function.wide)),
+            positions: sum(|function| function.source_positions.capacity_bytes()),
+            handlers: sum(|function| slice_bytes::<Handler>(&function.handlers)),
+            atom_lists: sum(atom_bytes),
+            layout: sum(layout_bytes),
+            constants: bytes::<Constant>(&program.constants),
+            sites: bytes::<MethodSite>(&program.method_sites)
+                + bytes::<Register>(&program.method_arguments)
+                + bytes::<FieldSite>(&program.field_sites)
+                + bytes::<ObjectSite>(&program.object_sites)
+                + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
+                + program
+                    .literal_templates
+                    .iter()
+                    .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
+                    .sum::<usize>()
+                + bytes::<Superinstruction>(&program.superinstructions),
+            register_roots: sum(|function| function.register_roots.capacity_bytes()),
+        }
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.source
+            + self.function_records
+            + self.code
+            + self.wide
+            + self.positions
+            + self.handlers
+            + self.atom_lists
+            + self.layout
+            + self.constants
+            + self.sites
+            + self.register_roots
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn report(program: &ResidualProgram) {
+        let footprint = Self::of(program);
+        eprintln!(
+            "{{\"kind\":\"quench-program-memory\",\"name\":{:?},\"source_bytes\":{},\"functions\":{},\
+             \"function_record_size\":{},\"function_records\":{},\"code\":{},\"wide\":{},\
+             \"positions\":{},\"handlers\":{},\"atom_lists\":{},\"layout\":{},\"constants\":{},\
+             \"sites\":{},\"register_roots\":{}}}",
+            program.source_name,
+            footprint.source,
+            program.functions.len(),
+            size_of::<Function>(),
+            footprint.function_records,
+            footprint.code,
+            footprint.wide,
+            footprint.positions,
+            footprint.handlers,
+            footprint.atom_lists,
+            footprint.layout,
+            footprint.constants,
+            footprint.sites,
+            footprint.register_roots,
+        );
+    }
 }

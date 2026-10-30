@@ -376,7 +376,7 @@ impl Heap {
         self.get_mut(value)?.object_mut()
     }
 
-    /// `object_mut` for a store of `stored`: a record skips the write barrier unless `stored`
+    /// `object_mut` for a store of `stored`: the write barrier applies only when `stored`
     /// is a heap reference.
     #[inline(always)]
     pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
@@ -407,7 +407,21 @@ impl Heap {
                     .object,
             );
         }
-        self.get_mut(value)?.object_mut()
+        self.get_mut_storing(value, stored)?.object_mut()
+    }
+
+    /// `get_mut` for a store of `stored` into the cell: as for a record
+    /// (`get_live_mut_storing`), only a heap reference passes the write barrier, as no other
+    /// value adds an edge from the cell.
+    #[inline(always)]
+    fn get_mut_storing(&mut self, value: Value, stored: Value) -> Option<&mut Cell> {
+        if stored.heap_index().is_some() {
+            return self.get_mut(value);
+        }
+        let HeapReference::LegacySlot(index) = value.heap_reference()? else {
+            return None;
+        };
+        self.slots.get_mut(index as usize)?.cell.as_mut()
     }
 
     /// `record_array_mut` for a store of `stored` into the array's elements.

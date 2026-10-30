@@ -2469,6 +2469,55 @@ impl<H: Host> Vm<H> {
                     self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                 }
                 Ok(StepResult::Await { value, destination }) => {
+                    // An async call the loop pushed in place (`Vm::try_settling_call`) suspends
+                    // here: its frame becomes the continuation its promise's reaction resumes,
+                    // and its caller continues with the promise, as `call_user_maybe_async`
+                    // makes both for a call it runs apart.
+                    if pending_calls.last().is_some_and(|pending| {
+                        pending.settles.is_some() && pending.generator.is_none() && !pending.returns && pending.caller + 1 == frame
+                    }) {
+                        let mut pending = pending_calls.pop().expect("the awaiting frame's pending call");
+                        self.frames[frame].pc = pc;
+                        self.frames[frame].pc_is_resume = true;
+                        let mut suspended = self.frames.pop().expect("the awaiting frame is the innermost");
+                        suspended.with_objects = self.with_stack.split_off(suspended.with_base);
+                        let promise = self.release_settled_call_root(pending.settles.take().expect("a settling call"));
+                        // SAFETY: as for `p` at the top of the loop.
+                        let callee_code = unsafe { &*executing_residual };
+                        self.persist_global_lexical_bindings(callee_code, &suspended);
+                        let continuation = self.suspend_activation(
+                            suspended,
+                            super::activation::Completion::Await(value),
+                            Some(destination),
+                            promise,
+                        );
+                        let enqueued = self.enqueue_async_resume(callee_code, Some(continuation), promise, None, value, false);
+                        frame = pending.caller;
+                        if let Some(saved) = pending.caller_program.take() {
+                            executing_program = saved.id;
+                            current_program = saved.retained;
+                            executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                            self.set_active_program(executing_program);
+                        }
+                        self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                        pc = self.frames[frame].pc;
+                        cursor = pending.caller_cursor.unwrap_or_else(|| {
+                            self.general_cursor(
+                                executing_program,
+                                // SAFETY: as for `p` at the top of the loop.
+                                unsafe { &*executing_residual },
+                                self.frames[frame].function,
+                                fast_lane,
+                            )
+                        });
+                        published_pc = &mut self.frames[frame].pc;
+                        drop(pending.call_guard);
+                        match enqueued {
+                            Ok(()) => self.write(frame, pending.destination, promise),
+                            Err(error) => unwind_at!(pending.call_pc, error),
+                        }
+                        continue;
+                    }
                     debug_assert!(pending_calls.is_empty());
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;

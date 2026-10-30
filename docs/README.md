@@ -74,7 +74,9 @@ CommonJS entry path the V8-v7 runs take nor mark `quench_entry_compiled`, so the
 profiles were not split from start-up. With CommonJS scripts and the packages, pinned max RSS
 matched the qualified layout on every V8-v7 row checked (RayTrace, Crypto, RegExp,
 NavierStokes, DeltaBlue, Richards, 2026-10-29); without the packages it was 50-190 KiB higher
-on five of them.
+on five of them. Every profile runs under the memory-first policy the board measures; under the
+throughput policy's collector and JS tiers the hot text was 2.79 MB against 2.10, and worst
+runs up to 236 KiB higher (Crypto `--jit` 2840 against 2604 KiB, 2026-10-29).
 A PGO layout becomes the qualification binary only once it passes both columns. Every
 mode keeps the repository's
 `.cargo/config.toml` rustflags (`-D warnings`, the function alignment): the script

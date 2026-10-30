@@ -665,6 +665,10 @@ pub(crate) fn really_exit(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    // A memory census of the process as it exits (`QUENCH_MEMORY`), whose allocation counts
+    // after a known amount of work give that work's allocations.
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("process_exit");
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let mask = context.number(-1.0);
     // Node's native Int32Value boundary exits with zero when coercion throws.

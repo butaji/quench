@@ -338,27 +338,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The present dense element `base[key]` for a non-negative integer key: a data property.
-    #[inline(always)]
-    /// What a keyed read of `base` gives for a string key naming an array index (`"0"`), as
-    /// the integer key reads it (`dense_array_element`, `absent_array_element`,
-    /// `plain_index_get`), or an array's `"length"`: `None` for any other key or read, which the
-    /// caller's other paths decide.
-    pub(super) fn string_index_element(&self, base: Value, key: Value) -> Option<Value> {
-        let atom = self.lookup_string_atom(key)?;
-        if atom == self.length_atom {
-            return self.own_array_length(base).map(Value::length);
-        }
-        if !self.atom_class(atom).intersects(super::object::AtomClass::ARRAY_INDEX) {
+    /// An array's `"length"` read by a string key (`base["length"]`); `None` for any other
+    /// key or base. Index-named string keys reach the integer-keyed reads instead
+    /// (`canonical_index_key`).
+    pub(super) fn keyed_array_length(&self, base: Value, key: Value) -> Option<Value> {
+        if self.lookup_string_atom(key)? != self.length_atom {
             return None;
         }
-        let index = self.array_index_key(key)?;
-        let integer = Value::number(f64::from(index));
-        self.dense_array_element(base, integer)
-            .or_else(|| self.absent_array_element(base, integer))
-            .or_else(|| self.plain_index_get(base, index as usize))
+        self.own_array_length(base).map(Value::length)
     }
 
+    /// The present dense element `base[key]` for a non-negative integer key: a data property.
+    #[inline(always)]
     pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
         let Some(object) = self.heap.array(base) else {
@@ -572,6 +563,24 @@ impl<H: Host> Vm<H> {
             None => self.intern_js_atom(&key),
         };
         self.set_property_with_program_mode(p, object, atom, value, strict)
+    }
+
+    /// `key`, or the integer naming the same property when `key` is a flat string holding
+    /// an array index in canonical decimal form (`object_static::array_index`), so the
+    /// integer-keyed element reads answer `base["0"]` as they answer `base[0]`.
+    #[inline(always)]
+    pub(super) fn canonical_index_key(&self, key: Value) -> Value {
+        let Some(text) = self.heap.string(key) else {
+            return key;
+        };
+        let leads_with_digit =
+            text.existing_flat().and_then(|units| units.unit(0)).is_some_and(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(&unit));
+        if !leads_with_digit {
+            return key;
+        }
+        super::object_static::array_index(text.host_string())
+            .and_then(|index| i32::try_from(index).ok())
+            .map_or(key, Value::integer)
     }
 
     pub(super) fn array_index_key(&self, key: Value) -> Option<u32> {

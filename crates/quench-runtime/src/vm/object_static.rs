@@ -976,7 +976,9 @@ impl<H: Host> Vm<H> {
     }
 }
 
-pub(super) fn array_index(name: &str) -> Option<u32> {
+/// The array index `name` holds in canonical decimal form: the property keys that name
+/// array elements (an integer below 2^32 - 1, without leading zeros).
+pub(crate) fn array_index(name: &str) -> Option<u32> {
     if name.is_empty() || name != "0" && name.starts_with('0') {
         return None;
     }

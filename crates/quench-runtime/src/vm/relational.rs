@@ -250,7 +250,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let (shape, slot) = self.instanceof_constructor_layouts[instanceof_layout_index(object.shape())]?;
-        if shape != object.shape() || object.proto_link() != self.instanceof_has_instance_link {
+        if shape != object.shape()
+            || object.proto_link() != self.instanceof_has_instance_link && !self.remembers_inheriting_holder(object.proto())
+        {
             return None;
         }
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
@@ -260,15 +262,16 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let target = ProtoLink::object_record(prototype.direct_object_index()?);
-        let Some(record) = value.direct_object_index() else {
+        let mut object = match value.direct_object_index() {
+            Some(record) => self.heap.object_record_by_id(record),
             // A primitive has no prototype chain to hold the prototype: a value outside the
-            // heap, or a string. Any other value takes the walk, whose object test makes a
-            // call this steady case leaves out.
-            return (value.heap_index().is_none() || self.heap.is_string(value))
-                .then_some(false);
+            // heap, or a string.
+            None if value.heap_index().is_none() || self.heap.is_string(value) => return Some(false),
+            // Another object kind (an array, a function, a typed array, a Buffer) starts from
+            // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
+            None => self.ordinary_link_holder(value)?,
         };
         // The walk compares encoded links; only a link outside the object records decodes.
-        let mut object = self.heap.object_record_by_id(record);
         loop {
             let link = object.proto_link();
             if link == target {
@@ -279,9 +282,19 @@ impl<H: Host> Vm<H> {
             }
             object = match link.object_record_id() {
                 Some(id) => self.heap.object_record_by_id(id),
-                None => self.heap.object_record(object.proto())?,
+                None => self.ordinary_link_holder(object.proto())?,
             };
         }
+    }
+
+    /// The object of `value`, a heap object other than a proxy, whose prototype link
+    /// `[[GetPrototypeOf]]` reads without running guest code.
+    #[inline(always)]
+    fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
+        if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
+            return None;
+        }
+        self.heap.object(value)
     }
 
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
@@ -402,12 +415,16 @@ impl<H: Host> Vm<H> {
     /// with an own `@@hasInstance` holds it, and no proxy precedes it. A subclass constructor
     /// inherits it through its parent constructors.
     fn inherits_native_has_instance(&mut self, holder: Value) -> bool {
+        if self.remembers_inheriting_holder(holder) {
+            return true;
+        }
         let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::HasInstance) else {
             return false;
         };
         let mut current = holder;
         loop {
             if current == self.instanceof_has_instance_holder {
+                self.remember_inheriting_holder(holder);
                 return true;
             }
             if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
@@ -427,6 +444,29 @@ impl<H: Host> Vm<H> {
                 return false;
             }
         }
+    }
+
+    /// Whether `holder` holds a current proof that it inherits the native `@@hasInstance`
+    /// (`Vm::instanceof_inheriting_holders`).
+    #[inline(always)]
+    fn remembers_inheriting_holder(&self, holder: Value) -> bool {
+        self.instanceof_inheriting_holders[instanceof_holder_index(holder)]
+            == Some((holder, crate::heap::prototype_layout_epoch()))
+    }
+
+    /// Records that `holder` inherits the remembered native `@@hasInstance` holder, after
+    /// marking each link up to it a prototype so a change to any retires the record.
+    fn remember_inheriting_holder(&mut self, holder: Value) {
+        let mut current = holder;
+        while current != self.instanceof_has_instance_holder {
+            self.heap.mark_prototype(current);
+            let Some(object) = self.heap.object(current) else {
+                return;
+            };
+            current = object.proto();
+        }
+        self.instanceof_inheriting_holders[instanceof_holder_index(holder)] =
+            Some((holder, crate::heap::prototype_layout_epoch()));
     }
 
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
@@ -609,4 +649,9 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
 #[inline(always)]
 fn instanceof_layout_index(shape: u32) -> usize {
     shape as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS
+}
+
+/// The `Vm::instanceof_inheriting_holders` entry of `holder`, by its cell.
+fn instanceof_holder_index(holder: Value) -> usize {
+    holder.heap_index().map_or(0, |index| index as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS)
 }

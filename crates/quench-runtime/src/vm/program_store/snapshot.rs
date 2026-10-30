@@ -66,7 +66,7 @@ impl ProgramStore {
         let count = reader.len()?;
         let mut programs = Vec::with_capacity(count);
         for _ in 0..count {
-            programs.push(if reader.bool()? { Some(ProgramEntry::read_snapshot(reader, bytes, atoms)?) } else { None });
+            programs.push(if reader.bool()? { Some(Box::new(ProgramEntry::read_snapshot(reader, bytes, atoms)?)) } else { None });
         }
         let global_eval_programs = read_list(reader, |reader| {
             Ok((JsString::read_snapshot(reader)?, ProgramId::from_raw(reader.u32()?)))
@@ -171,7 +171,7 @@ impl ProgramEntry {
             }
         }
         script_or_module.snap(writer)?;
-        writer.bool(*reclaimable);
+        reclaimable.snap(writer)?;
         writer.u64(*pass);
         Ok(())
     }
@@ -216,7 +216,7 @@ impl ProgramEntry {
             _ => return Err(SnapshotError("invalid snapshot program origin".into())),
         };
         let script_or_module = Snap::unsnap(reader)?;
-        let reclaimable = reader.bool()?;
+        let reclaimable: Option<usize> = Snap::unsnap(reader)?;
         let pass = reader.u64()?;
         Ok(Self {
             regexp_literals: vec![None; regexp_literal_sites],

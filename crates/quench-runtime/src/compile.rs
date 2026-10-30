@@ -36,8 +36,7 @@ pub(crate) mod liveness;
 mod locals;
 mod numeric;
 pub(crate) mod regexp;
-#[cfg(feature = "profile-memory")]
-mod program_profile;
+pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
@@ -1061,6 +1060,8 @@ impl Engine {
                 "SyntaxError: invalid dynamic Function source shape",
             )]);
         }
+        // Parsing is done; the semantic analysis starts here.
+        compile_phase_boundary(CompilePhase::Analysis);
         let semantic = oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
             .build(&parsed.program);
@@ -1249,6 +1250,8 @@ impl Engine {
 /// the next phase does not touch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompilePhase {
+    /// A compilation has parsed its source; its semantic analysis starts.
+    Analysis,
     /// A compilation has parsed and analysed its source; its code generation starts.
     CodeGeneration,
     /// A function compiles, or decodes from its program's kept bytes, on its first call: code
@@ -3322,7 +3325,7 @@ impl<'a> Compiler<'a> {
         debug_assert!(crate::profile::instruction_word_domains_fit(&program));
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
-            program_profile::report(&program);
+            program_profile::ProgramFootprint::report(&program);
         }
         Ok(program)
     }

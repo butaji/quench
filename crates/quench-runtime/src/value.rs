@@ -96,6 +96,25 @@ const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
     words
 };
 const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
+/// `NARROW_UPPER_WORDS` at a fixed address, which compiled code indexes by code.
+static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
+
+/// The narrow-value facts compiled code decodes an inline property slot with, as
+/// `Value::from_narrow` does: an integer below the flag, else an upper word by code with the
+/// lower word above the code.
+pub(crate) struct NarrowLayout;
+
+impl NarrowLayout {
+    pub(crate) const INTEGER_FLAG: u32 = NARROW_INTEGER_FLAG;
+    pub(crate) const CODE_SHIFT: u32 = NARROW_CODE_SHIFT;
+    pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
+    pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
+
+    /// The address of the upper words by code, which lives as long as the process.
+    pub(crate) fn upper_words() -> *const u64 {
+        NARROW_UPPER_WORD_TABLE.as_ptr()
+    }
+}
 /// The position of `tag` in tag order from `FIRST_TAG`.
 const fn tag_index(tag: u64) -> usize {
     ((tag - FIRST_TAG) >> TAG_SHIFT) as usize

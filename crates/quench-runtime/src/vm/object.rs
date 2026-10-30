@@ -1120,7 +1120,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
         if self.specialized && program.specialized {
             let cache_site = self.object_cache_index(site);
-            if self.object_shapes.get(cache_site) != u32::MAX {
+            if self.object_shapes.get(cache_site) != NO_OBJECT_SHAPE {
                 return self.object_shapes.get(cache_site);
             }
         }
@@ -1378,14 +1378,12 @@ impl<H: Host> Vm<H> {
         unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
-    /// The primary holderless shape and out-of-line slot the field cache proves for this
-    /// bytecode site, when generated code can read that slot without a VM helper.
+    /// The primary holderless shape and slot the field cache proves for this bytecode site,
+    /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
     pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<(u32, u16)> {
         let cache = self.field_cache_entry(site);
-        (cache.holder == NO_FIELD_HOLDER
-            && cache.receiver != NO_FIELD_RECEIVER
-            && usize::from(cache.slot) >= crate::value_vec::INLINE_PROPERTY_COUNT)
+        (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
             .then_some((cache.receiver, cache.slot))
     }
 
@@ -1425,7 +1423,8 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let Some(record_id) = object.direct_object_index() else {
-            return false;
+            // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
+            return LOGS && self.primary_cell_field_store_hit(object, value, site);
         };
         let receiver = self.heap.object_record_by_id(record_id);
         if receiver.is_module_namespace() || receiver.is_arguments_object() {
@@ -1443,6 +1442,20 @@ impl<H: Host> Vm<H> {
         }
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
+    /// own entry (`Heap::cell_property_set_exact`).
+    #[inline(never)]
+    fn primary_cell_field_store_hit(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let cache = self.field_cache_entry(site);
+        let (shape, slot) = (cache.receiver, cache.slot as usize);
+        // SAFETY: a recorded own entry names a non-dictionary shape holding `slot`.
+        cache.holder == NO_FIELD_HOLDER && unsafe { self.heap.cell_property_set_exact(object, shape, slot, value) }
+            && {
+                self.profile.field_cache_hit(0, 0);
+                true
+            }
     }
 
     /// `primary_own_field_store_hit` at a site past one shape (`field_site_polymorphic`): the
@@ -1552,6 +1565,41 @@ impl<H: Host> Vm<H> {
             || !receiver.admits_cached_add()
             || self.method_caches_may_name(atom)
         {
+            return false;
+        }
+        if !(receiver.admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
+        {
+            self.heap.record_property_add_moving(object, slot, value, target_shape);
+        }
+        self.profile.field_cache_hit(0, 0);
+        true
+    }
+
+    /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
+    /// exact shape and `atom` proves the key absent, and a define never consults the
+    /// prototype chain, so no chain proof applies; the receiver admits it as
+    /// `class_field_define_target` does. A plain append makes no call, as in
+    /// `proved_field_add_hit`. `false` changes nothing and leaves the define to
+    /// `define_field_cached`.
+    #[inline(always)]
+    pub(super) fn proved_field_define_hit(&mut self, object: Value, atom: Atom, value: Value, site: u16) -> bool {
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        let receiver = self.heap.object_record_by_id(record_id);
+        if !receiver.admits_cached_add()
+            || receiver.boxed_primitive().is_some()
+            || receiver.stack_data().is_some()
+            || receiver.has_error_data()
+        {
+            return false;
+        }
+        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
+            return false;
+        };
+        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        if self.method_caches_may_name(atom) {
             return false;
         }
         if !(receiver.admits_plain_append(slot, value)

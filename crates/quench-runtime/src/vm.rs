@@ -180,6 +180,7 @@ mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
+pub(crate) use object_static::array_index;
 pub(crate) use program_store::ProgramId;
 pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
@@ -957,6 +958,8 @@ impl FieldAddCacheSet {
 }
 const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
+/// `object_shapes` entry of an object literal site that has recorded no shape.
+const NO_OBJECT_SHAPE: u32 = u32::MAX;
 /// The share of all cache sites, as a divisor, up to which an invalidation resets the
 /// written sites one by one: each costs four scattered stores against a sequential fill of
 /// every site's entries (Node's library wires prototypes hundreds of times at load, each an
@@ -1000,6 +1003,8 @@ struct ProgramCacheLayout {
     field_base: usize,
     method_base: usize,
     object_base: usize,
+    /// How many sites of each kind the program's ranges hold from those bases.
+    sites: crate::bytecode::CacheSiteCounts,
     /// The field cache index of the program's shared overflow site, when its sites
     /// outnumber the 16-bit site space (`SHARED_UNCACHED_SITE`); nothing is cached there.
     shared_uncached_field: Option<usize>,
@@ -1139,8 +1144,9 @@ struct InLoopCallTarget {
 enum InLoopPush {
     /// An ordinary body (`CallPlan::in_loop`), whose return is the call's value.
     Body,
-    /// An async body that never suspends (`CallPlan::settles_in_loop`), whose completion
-    /// settles the promise the call returns; only a plain call pushes it.
+    /// An async body (`CallPlan::settles_in_loop`, or one that may suspend), whose completion
+    /// settles the promise the call returns and whose first suspension returns that promise
+    /// to the caller; only a plain call pushes it.
     Settles,
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
@@ -1385,10 +1391,12 @@ impl ShapeTransition {
         }
     }
 }
-/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`): a
-/// power of two that holds the few constructors a request's `instanceof` sites test
-/// (`Uint8Array`, `ReadableStream`, `Headers`, `Error`) without evicting one another.
-pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 4;
+/// Constructor layouts `instanceof` remembers (`Vm::instanceof_constructor_layouts`), and the
+/// parent constructors proved to inherit the native `@@hasInstance`
+/// (`Vm::instanceof_inheriting_holders`): a power of two that holds the constructors a
+/// program's `instanceof` sites test (`Uint8Array`, `Buffer`, `Array`, `Map`,
+/// `ReadableStream`, `Headers`, `Error`, a framework's classes) without evicting one another.
+pub(crate) const INSTANCEOF_CONSTRUCTOR_LAYOUTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
@@ -1851,6 +1859,10 @@ pub(crate) struct Vm<H> {
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
+    /// The cache-site ranges of reclaimed programs, by their site counts, which the next
+    /// program with the same counts takes over (`append_cache_layout`): a loop of `eval` or
+    /// `new Function` makes programs alike, and each had appended ranges that never shrink.
+    free_cache_layouts: FxHashMap<crate::bytecode::CacheSiteCounts, Vec<ProgramCacheLayout>>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
@@ -1993,6 +2005,12 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
     /// field-cache invalidation clears them.
     instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
+    /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
+    /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
+    /// a prototype, so any change to one, and every collection, retires it. Direct-mapped by
+    /// the holder's cell.
+    instanceof_inheriting_holders: [Option<(Value, u64)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -3003,6 +3021,7 @@ impl<H: Host> Vm<H> {
         self.private_homes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
@@ -3017,6 +3036,7 @@ impl<H: Host> Vm<H> {
         self.regexp_symbol_layouts.clear();
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
+        self.free_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
             ..ProgramCacheLayout::default()
@@ -3105,7 +3125,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn store_dynamic_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
-        let id = self.programs.insert_reclaimable_shared(program)?;
+        let footprint = crate::compile::program_profile::ProgramFootprint::of(&program).total();
+        self.heap.charge_reclaimable_program(footprint);
+        let id = self.programs.insert_reclaimable_shared(program, footprint)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
@@ -3121,7 +3143,13 @@ impl<H: Host> Vm<H> {
     /// the programs before it.
     pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
+        if let Some(layout) = self.free_cache_layouts.get_mut(&sites).and_then(Vec::pop) {
+            self.empty_cache_ranges(layout);
+            self.program_cache_layouts.push(layout);
+            return;
+        }
         self.program_cache_layouts.push(ProgramCacheLayout {
+            sites,
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
@@ -3135,6 +3163,35 @@ impl<H: Host> Vm<H> {
         self.inherited_field_indices.extend_empty(fields);
         self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; 2]);
         self.object_shapes.extend_empty(sites.objects);
+    }
+
+    /// Empties every cache entry in `layout`'s ranges, which a reclaimed program left, for
+    /// the program taking them over.
+    fn empty_cache_ranges(&mut self, layout: ProgramCacheLayout) {
+        let fields = layout.field_base..layout.field_base + usize::from(layout.sites.fields);
+        for site in fields {
+            self.field_caches.set(site, EMPTY_CACHE);
+            self.field_add_indices.set(site, NO_FIELD_ADD_SET);
+            self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
+            self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
+            self.accessor_field_caches.remove(&site);
+        }
+        self.method_caches[layout.method_base..layout.method_base + layout.sites.methods]
+            .fill([EMPTY_METHOD_CACHE; 2]);
+        for site in layout.object_base..layout.object_base + layout.sites.objects {
+            self.object_shapes.set(site, NO_OBJECT_SHAPE);
+        }
+    }
+
+    /// Files the cache-site ranges of reclaimed `programs` for programs with the same site
+    /// counts to take over (`free_cache_layouts`).
+    pub(super) fn free_cache_layouts_of(&mut self, programs: impl IntoIterator<Item = ProgramId>) {
+        for program in programs {
+            let Some(&layout) = self.program_cache_layouts.get(program.raw() as usize) else { continue };
+            if layout.sites != crate::bytecode::CacheSiteCounts::default() {
+                self.free_cache_layouts.entry(layout.sites).or_default().push(layout);
+            }
+        }
     }
     /// Makes `program` the executing program and caches its layout, the projection every cache
     /// index reads. A program's layout is appended before the program can run.
