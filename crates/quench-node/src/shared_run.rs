@@ -103,7 +103,7 @@ pub(crate) fn process_memory_policy() -> Option<MemoryPolicy> {
 
 /// Selects the process's memory policy once: the CLI's `chosen` name, else
 /// `MEMORY_POLICY_ENV`, else the default. An unknown name is an error.
-fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
+pub(crate) fn select_memory_policy(chosen: Option<&str>) -> Result<MemoryPolicy, String> {
     if let Some(policy) = PROCESS_MEMORY_POLICY.get() {
         return Ok(*policy);
     }
@@ -148,7 +148,8 @@ pub enum SharedCompletion {
 }
 
 impl SharedCompletion {
-    fn exit_code(self) -> ExitCode {
+    /// Process status shared by source and native executable entry points.
+    pub fn exit_code(self) -> ExitCode {
         match self {
             Self::Completed => ExitCode::SUCCESS,
             Self::PendingTopLevelAwait => ExitCode::from(UNSETTLED_TOP_LEVEL_AWAIT_EXIT),
@@ -409,8 +410,17 @@ fn execute_shared_on_worker(
     } else {
         runtime.execute_deferred_jobs(&program)
     };
+    finish_shared_execution(&mut runtime, &program, execution)
+}
+
+/// Shared Node job/exit/error lifecycle for source and native entry publication.
+pub(crate) fn finish_shared_execution(
+    runtime: &mut Runtime<NodeHost>, program: &quench_runtime::ResidualProgram,
+    execution: Result<(), quench_runtime::JsError>,
+) -> Result<SharedCompletion, String> {
+    let shared_state = runtime.host_mut().shared_state();
     let completion = match execution {
-        Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),
+        Ok(()) => crate::modules::process_shared_vm::finish_execution(runtime, program),
         Err(error) => {
             if shared_state
                 .borrow()
@@ -418,20 +428,20 @@ fn execute_shared_on_worker(
                 .requested_exit_code()
                 .is_some()
             {
-                crate::modules::process_shared_vm::finish_requested_exit(&mut runtime, &program)
+                crate::modules::process_shared_vm::finish_requested_exit(runtime, program)
             } else {
                 let exception = error.thrown_value().map(|value| runtime.root(value));
                 let mut failure = quench_runtime::RootedError { error, exception };
                 let exit = crate::modules::process_shared_vm::finish_after_uncaught_error(
-                    &mut runtime,
-                    &program,
+                    runtime,
+                    program,
                     &failure.error,
                 );
                 let outcome = match exit {
                     Ok(true) => Ok(()),
                     Ok(false) => Err(crate::modules::process_shared_vm::format_uncaught_error(
-                        &mut runtime,
-                        &program,
+                        runtime,
+                        program,
                         &mut failure,
                     )),
                     Err(exit_error) => Err(exit_error),
@@ -452,7 +462,7 @@ fn execute_shared_on_worker(
         Ok(())
     } else {
         runtime
-            .finish_deferred_execution(&program)
+            .finish_deferred_execution(program)
             .map_err(|error| error.to_string())
     };
     if let Err(error) = completion {
@@ -474,7 +484,7 @@ fn execute_shared_on_worker(
         return Ok(SharedCompletion::GuestExit { code });
     }
     match runtime
-        .module_evaluation_pending(&program)
+        .module_evaluation_pending(program)
         .map_err(|error| error.to_string())?
     {
         true => Ok(SharedCompletion::PendingTopLevelAwait),

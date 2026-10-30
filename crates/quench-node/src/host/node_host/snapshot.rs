@@ -13,6 +13,8 @@ impl NodeHost {
             compile_cache: _,
             #[cfg(feature = "aot")]
             native_program_resolver: _,
+            #[cfg(feature = "aot")]
+            native_source_staging: _,
             shared_state,
             commonjs_entry: _,
             inline_source: _,

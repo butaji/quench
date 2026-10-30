@@ -1646,6 +1646,14 @@ impl<H: Host> Vm<H> {
                 pc = step.next_pc;
                 native_step = Some(step);
             }
+            if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
+                && !(STOPS && stop_pc == Some(pc))
+            {
+                return Err(JsError::validation(format!(
+                    "native guest code required: {} function {} at {}",
+                    p.source_name, self.frames[frame].function, pc,
+                )));
+            }
             if native_step.is_none() && !resumed && pc == 0 {
                 match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
                     super::compiled::JsTierFrameEntry::Interpreter => {}

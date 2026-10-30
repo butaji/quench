@@ -32,11 +32,13 @@ impl InlineSource {
 }
 
 #[cfg(feature = "aot")]
-pub type NativeProgramResolver = fn(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, String>;
+pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, String>;
 
 pub struct NodeHost {
     #[cfg(feature = "aot")]
-    pub(crate) native_program_resolver: Option<NativeProgramResolver>,
+    pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
+    #[cfg(feature = "aot")]
+    pub(crate) native_source_staging: Option<crate::aot::HostSourceDemands>,
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
@@ -66,8 +68,8 @@ pub struct NodeHost {
 impl NodeHost {
     /// Resolve linked code by the loader's exact name, source and shaping inputs.
     #[cfg(feature = "aot")]
-    pub fn with_native_programs(mut self, resolver: NativeProgramResolver) -> Self {
-        self.native_program_resolver = Some(resolver);
+    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, String> + 'static) -> Self {
+        self.native_program_resolver = Some(Box::new(resolver));
         self
     }
 
@@ -455,6 +457,8 @@ impl NodeHost {
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             #[cfg(feature = "aot")]
             native_program_resolver: None,
+            #[cfg(feature = "aot")]
+            native_source_staging: None,
             bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,

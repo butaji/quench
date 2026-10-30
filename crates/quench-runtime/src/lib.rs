@@ -86,5 +86,5 @@ pub use vm::{
 };
 
 #[cfg(feature = "aot")]
-pub use compile::NativeJsCompiler;
+pub use compile::{NativeJsCompiler, NativeSourceKey};
 pub use compile::HostScriptOptions;

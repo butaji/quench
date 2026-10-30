@@ -1139,7 +1139,7 @@ impl quench_runtime::Host for NodeHost {
 
     #[cfg(feature = "aot")]
     fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, String> {
-        match self.native_program_resolver {
+        match self.native_program_resolver.as_mut() {
             Some(resolve) => resolve(name, parts),
             None => Ok(None),
         }

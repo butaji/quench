@@ -2859,8 +2859,8 @@ fn append_js_general_constant_key(
     Some(())
 }
 
-/// How the shared VM executes JavaScript and Wasm functions. Compiled code is
-/// lazy and falls back to the interpreter; both modes use the same VM, heap,
+/// How the shared VM executes guest functions. The dynamic modes share the
+/// interpreter/JIT; NativeOnly requires linked code. All use the same heap,
 /// frames and host APIs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -2869,6 +2869,20 @@ pub enum ExecutionMode {
     Interpreted,
     /// Hot supported JavaScript functions and Wasm functions run as native code.
     Compiled,
+    /// Require linked guest code at every entry; reject interpreter/JIT fallback.
+    /// This execution check does not itself remove compiler code from the binary.
+    #[cfg(feature = "aot")]
+    NativeOnly,
+}
+
+impl ExecutionMode {
+    pub(super) fn allows_dynamic_execution(self) -> bool {
+        match self {
+            Self::Interpreted | Self::Compiled => true,
+            #[cfg(feature = "aot")]
+            Self::NativeOnly => false,
+        }
+    }
 }
 
 /// A value's width inside compiled code. Each register has an integer and a
@@ -15096,6 +15110,44 @@ mod tests {
         };
         assert!(error.to_string().contains("broken linked image"));
         assert!(vm.lookup_atom("effect").is_none());
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_only_rejects_unlinked_roots_before_guest_effects() {
+        let program = crate::Engine::specialize("globalThis.effect = 1;", "unlinked.js").unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute(&program).unwrap_err();
+        assert!(error.to_string().contains("native guest code required"));
+        let atom = vm.lookup_atom("effect").unwrap();
+        assert_eq!(vm.own_property(vm.realm.globals, atom), None);
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_only_runs_linked_calls_but_rejects_dynamic_function_bodies() {
+        let (native, counts, _) = linked_test_program("function answer(x) { return x + 1; } throw answer(41);", false);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)));
+        assert!(counts.iter().all(|count| count.get() > 0));
+
+        let (native, _, _) = linked_test_program("globalThis.effect = 0; (new Function(globalThis.body))();", false);
+        let host = crate::test_host::TestHost::default().with_install(|context| {
+            let global = context.global_root()?;
+            let key = context.string_rooted("body");
+            let body = context.string_rooted("globalThis.effect = 1;");
+            context.set_property_rooted(global, key, body, global)?;
+            Ok(())
+        });
+        let mut vm = Vm::new(host);
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert!(error.to_string().contains("native guest code required"));
+        let atom = vm.lookup_atom("effect").unwrap();
+        assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(0.0)));
     }
 
     #[cfg(feature = "aot")]

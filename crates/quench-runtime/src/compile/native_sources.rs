@@ -6,6 +6,46 @@ use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
+/// Exact host source identity, including the compilation shape. Hashes may index
+/// this key, but equality always checks the original strings.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NativeSourceKey {
+    name: String,
+    parts: Vec<String>,
+}
+
+impl NativeSourceKey {
+    pub fn new(name: &str, parts: &[&str]) -> Result<Self, String> {
+        match parts {
+            ["specialized" | "unspecialized", _] => {},
+            ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
+            ["specialized" | "unspecialized", _, _, _] => {},
+            _ => return Err("unknown native host source key".into()),
+        }
+        Ok(Self { name: name.into(), parts: parts.iter().map(|part| (*part).into()).collect() })
+    }
+
+    pub fn name(&self) -> &str { &self.name }
+    pub fn parts(&self) -> impl ExactSizeIterator<Item = &str> { self.parts.iter().map(String::as_str) }
+}
+
+fn script_options(goal: &str) -> Result<HostScriptOptions, String> {
+    let invalid = || "invalid native host Script goal".to_owned();
+    let fields: Vec<_> = goal.strip_prefix("specialized-script:").ok_or_else(invalid)?.split(':').collect();
+    let (line, column, kept, typescript) = match fields.as_slice() {
+        [line, column, kept] => (line, column, kept, false),
+        [line, column, kept, "typescript"] => (line, column, kept, true),
+        _ => return Err(invalid()),
+    };
+    let options = HostScriptOptions {
+        origin: Some((line.parse().map_err(|_| invalid())?, column.parse().map_err(|_| invalid())?)),
+        keep_records: kept.parse().map_err(|_| invalid())?,
+        typescript,
+    };
+    if options.cache_goal() != goal { return Err(invalid()); }
+    Ok(options)
+}
+
 /// A compilation's append-only namespace. All emitted images use these IDs;
 /// `finish` seeds the entry with the full namespace before the host can add names.
 pub struct NativeJsCompiler {
@@ -20,6 +60,22 @@ impl NativeJsCompiler {
             atoms: Rc::new(AtomSequence::new(AtomTable::default())),
             index: FxHashMap::default(),
             specialized,
+        }
+    }
+
+    /// Compile a captured loader input without executing its guest code.
+    pub fn compile_source(&mut self, key: &NativeSourceKey) -> Result<ResidualProgram, String> {
+        let parts: Vec<_> = key.parts().collect();
+        let expected = if self.specialized { "specialized" } else { "unspecialized" };
+        if parts.first().copied() != Some(expected) {
+            return Err("native source specialization does not match compiler".into());
+        }
+        match parts.as_slice() {
+            [_, source] => self.compile_host_script(source, key.name()).map_err(|errors| format!("{errors:?}")),
+            [_, goal, source] => self.compile_script(source, key.name(), script_options(goal)?)
+                .map_err(|errors| format!("{errors:?}")),
+            [_, prefix, body, suffix] => self.compile_library_body(prefix, std::sync::Arc::from(*body), suffix, key.name()),
+            _ => Err("unknown native host source key".into()),
         }
     }
 

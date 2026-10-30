@@ -5,6 +5,8 @@
 
 #[macro_use]
 mod undici_bindings;
+#[cfg(feature = "aot")]
+pub mod aot;
 pub mod esm_imports;
 pub mod host;
 pub mod modules;

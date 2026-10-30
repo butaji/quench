@@ -46,7 +46,7 @@ thread_local! {
     static COMMONJS_RESOLVER: oxc_resolver::Resolver = new_commonjs_resolver();
 }
 
-pub(super) fn with_commonjs_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
+pub(crate) fn with_commonjs_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::Resolver) -> R) -> R {
     COMMONJS_RESOLVER.with(use_resolver)
 }
 
@@ -73,7 +73,7 @@ pub(crate) fn with_import_resolver<R>(use_resolver: impl FnOnce(&oxc_resolver::R
 /// Resolves through a kept resolver. One that finds nothing clears its cache and resolves
 /// again, so a file created since a lookup cached its absence is found: Node keeps resolved
 /// requests, never failed ones.
-pub(super) fn resolve_kept<T, E>(
+pub(crate) fn resolve_kept<T, E>(
     resolver: &oxc_resolver::Resolver,
     resolve: impl Fn(&oxc_resolver::Resolver) -> Result<T, E>,
 ) -> Result<T, E> {
@@ -419,6 +419,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
+    #[cfg(feature = "aot")]
+    if let Some(demands) = context.host_mut().native_source_staging.take() {
+        return crate::aot::stage_host_sources(context, demands);
+    }
     if let Some(kind) = context.host_mut().building_snapshot {
         return crate::host::startup_snapshot::preload(context, kind);
     }
@@ -655,7 +659,7 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
 /// The globals each web polyfill defines, in definition order. They are lazy data properties
 /// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
 /// A member materializes writable, so a polyfill defining one read-only says so explicitly.
-const WEB_STREAM_GLOBALS: &[&str] = &[
+pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &[
     "ReadableStream",
     "WritableStream",
     "TransformStream",
@@ -676,12 +680,12 @@ const WEB_STREAM_GLOBALS: &[&str] = &[
 ];
 // Blob/File are independent of Fetch. Importing buffer must not recursively
 // load undici while the public Buffer binding is still being initialized.
-const WEB_API_GLOBALS: &[&str] = &[
+pub(crate) const WEB_API_GLOBALS: &[&str] = &[
     "__quenchBlobEnsureReadable",
     "Blob",
     "File",
 ];
-const FETCH_API_GLOBALS: &[&str] = &[
+pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
     "FormData",
     "Headers",
     "Request",
@@ -3141,13 +3145,32 @@ fn load_es_module(
 
 /// A CommonJS module's executed text: its file without a byte-order mark or a leading
 /// `#!` line, which keeps the line terminator so positions stay on their lines.
-fn script_body(text: &str) -> &str {
+pub(crate) fn script_body(text: &str) -> &str {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     if text.starts_with("#!") {
         text.find('\n').map_or("", |end| &text[end..])
     } else {
         text
     }
+}
+
+/// Native compilation uses the ordinary loader's wrapper and source admission.
+#[cfg(feature = "aot")]
+pub(crate) fn native_commonjs_source(
+    filename: &Path, bytes: &[u8], entry: bool,
+) -> Result<quench_runtime::NativeSourceKey, String> {
+    let decoded = source_text(bytes);
+    let body = script_body(&decoded);
+    let typescript = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
+    if typescript && super::esm_errors::node_modules_typescript(filename) {
+        return Err(format!("TypeScript in node_modules is not supported: {}", filename.display()));
+    }
+    let options = quench_runtime::HostScriptOptions {
+        origin: Some(quench_runtime::wrapper_origin(WRAPPER_PREFIX).ok_or("CommonJS wrapper origin exceeds compiler positions")?),
+        keep_records: entry, typescript,
+    };
+    let source = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
+    quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])
 }
 
 /// Compiles and evaluates a CommonJS wrapper. An entry module's functions keep their compiled

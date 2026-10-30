@@ -40,7 +40,7 @@ mod atoms;
 #[cfg(feature = "aot")]
 mod native_sources;
 #[cfg(feature = "aot")]
-pub use native_sources::NativeJsCompiler;
+pub use native_sources::{NativeJsCompiler, NativeSourceKey};
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
