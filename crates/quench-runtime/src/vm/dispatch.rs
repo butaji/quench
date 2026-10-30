@@ -495,6 +495,7 @@ impl<H: Host> Vm<H> {
         (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
     }
 
+    #[quench_macros::operation_semantics(resolve_step_operation)]
     #[inline(always)]
     pub(super) fn step(
         &mut self,
@@ -1558,36 +1559,35 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), value);
             }
-            Op::CallKnown
+            Op::CallKnown => {
                 if allow_inline_calls
                     && p.kind == crate::bytecode::ProgramKind::Wasm
-                    && !i.returns_from_frame() =>
-            {
-                self.profile.call_source(1);
-                if let Some(result) =
-                    self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
+                    && !i.returns_from_frame()
                 {
-                    let value = result?;
-                    self.write(f, i.result_register(), value);
-                    return Ok(StepResult::Continue);
+                    self.profile.call_source(1);
+                    if let Some(result) =
+                        self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
+                    {
+                        let value = result?;
+                        self.write(f, i.result_register(), value);
+                        return Ok(StepResult::Continue);
+                    }
+                    self.frames[f].pc = *pc;
+                    self.frames[f].pc_is_resume = true;
+                    let call_guard = self.push_wasm_frame(
+                        p,
+                        f,
+                        u32::from(i.known_function_index()),
+                        i.call_window(),
+                    )?;
+                    return Ok(StepResult::PushFrame {
+                        destination: i.result_register(),
+                        call_guard,
+                        construct_this: None,
+                        settles: None,
+                        generator: None,
+                    });
                 }
-                self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
-                let call_guard = self.push_wasm_frame(
-                    p,
-                    f,
-                    u32::from(i.known_function_index()),
-                    i.call_window(),
-                )?;
-                return Ok(StepResult::PushFrame {
-                    destination: i.result_register(),
-                    call_guard,
-                    construct_this: None,
-                    settles: None,
-                    generator: None,
-                });
-            }
-            Op::CallKnown => {
                 self.profile.call_source(1);
                 let window = i.call_window();
                 let function_index = i.known_function_index();

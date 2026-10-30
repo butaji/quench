@@ -6139,7 +6139,8 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     next,
                 ) {
                     Some(step) => step,
-                    None => vm.step(
+                    None => (Vm::<H>::resolve_step_operation(current_instruction.op()))(
+                        vm,
                         &program,
                         dispatch.frame,
                         current_instruction,
@@ -6164,7 +6165,8 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     *destination = value;
                     Ok(super::StepResult::Continue)
                 } else {
-                    vm.step(
+                    (Vm::<H>::resolve_step_operation(current_instruction.op()))(
+                        vm,
                         &program,
                         dispatch.frame,
                         current_instruction,
@@ -6173,7 +6175,8 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     )
                 }
             } else {
-                vm.step(
+                (Vm::<H>::resolve_step_operation(current_instruction.op()))(
+                    vm,
                     &program,
                     dispatch.frame,
                     current_instruction,

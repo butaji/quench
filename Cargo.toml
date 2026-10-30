@@ -7,6 +7,7 @@ exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression"]
 members = [
     "quench-bench",
     "crates/quench-js-check",
+    "crates/quench-macros",
     "crates/quench-node",
     "crates/quench-node-test",
     "crates/quench-runtime",
