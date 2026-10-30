@@ -7,7 +7,7 @@ use std::{
     process::{Child, ChildStderr, Command, ExitCode, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Mutex,
+        Mutex, RwLock,
     },
     thread,
     time::Duration,
@@ -29,6 +29,7 @@ const DEFAULT_REPORT: &str = "target/test262-report.json";
 /// A compiled run's report, kept beside the interpreter's so neither overwrites the other.
 const DEFAULT_JIT_REPORT: &str = "target/test262-report-jit.json";
 const DEFAULT_AOT_REPORT: &str = "target/test262-report-aot.json";
+const AOT_SERIAL_SOURCE_BYTES_ENV: &str = "TEST262_AOT_SERIAL_SOURCE_BYTES";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
     "length.js",
@@ -178,6 +179,10 @@ fn run_parallel_cases(
     let completed = AtomicUsize::new(0);
     let outcomes = Mutex::new((0..files.len()).map(|_| None).collect::<Vec<_>>());
     let jobs = worker_jobs().min(files.len().max(1));
+    let serial_source_bytes = if mode == ExecutionMode::NativeOnly { aot_serial_source_bytes()? } else { None };
+    // Large native compilations need the host's memory alone. Admission precedes
+    // process creation, so time spent waiting never consumes a case's deadline.
+    let compilation_admission = RwLock::new(());
     let mut panicked = false;
     thread::scope(|scope| {
         let handles = (0..jobs)
@@ -185,12 +190,20 @@ fn run_parallel_cases(
                 let cursor = &cursor;
                 let completed = &completed;
                 let outcomes = &outcomes;
+                let compilation_admission = &compilation_admission;
                 scope.spawn(move || loop {
                     let index = cursor.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = files.get(index) else {
                         break;
                     };
-                    let result = run_case_process(executable, root, path, timeout, mode);
+                    let exclusive = serial_source_bytes.is_some_and(|threshold| fs::metadata(path).map_or(true, |metadata| metadata.len() >= threshold));
+                    let result = if exclusive {
+                        let _admission = compilation_admission.write().expect("compilation admission poisoned");
+                        run_case_process(executable, root, path, timeout, mode)
+                    } else {
+                        let _admission = compilation_admission.read().expect("compilation admission poisoned");
+                        run_case_process(executable, root, path, timeout, mode)
+                    };
                     outcomes.lock().expect("case results poisoned")[index] = Some(result);
                     let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     if count % 100 == 0 || count == files.len() {
@@ -242,6 +255,15 @@ fn collect_report(
         }
     }
     report
+}
+
+fn aot_serial_source_bytes() -> Result<Option<u64>, String> {
+    match env::var(AOT_SERIAL_SOURCE_BYTES_ENV) {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Ok(value) => value.parse::<u64>().ok().filter(|value| *value > 0).map(Some)
+            .ok_or_else(|| format!("{AOT_SERIAL_SOURCE_BYTES_ENV} must be a positive byte count")),
+        Err(error) => Err(format!("{AOT_SERIAL_SOURCE_BYTES_ENV}: {error}")),
+    }
 }
 
 fn worker_jobs() -> usize {
@@ -493,6 +515,7 @@ fn write_report(
             "host": format!("{}-{}", env::consts::OS, env::consts::ARCH),
             "timeout_ms": timeout.as_millis(),
             "jobs": worker_jobs(),
+            "aot_serial_source_bytes": if mode == ExecutionMode::NativeOnly { aot_serial_source_bytes()? } else { None },
             "execution_mode": execution_mode_name(mode),
         },
         "variant_counts": variant_counts,
