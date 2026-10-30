@@ -142,7 +142,7 @@ fn bootstrap_images_link_and_execute_in_node_host() {
     fs::create_dir(&directory).unwrap();
     let inputs = manifest.compile().unwrap().emit(&directory.join("images")).unwrap();
     let executable = directory.join("native-node-bootstrap");
-    link_images(&inputs, &executable, count, None);
+    link_images(&inputs, &executable);
     let output = Command::new(&executable).env_clear()
         .current_dir(&directory).output().unwrap();
     assert!(output.status.success(), "stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -150,77 +150,128 @@ fn bootstrap_images_link_and_execute_in_node_host() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path, count: usize, application: Option<&Path>) {
-    use std::{fs, process::Command};
-    let node = std::path::PathBuf::from(std::env::var_os("QUENCH_NATIVE_NODE_RLIB").expect("Node rlib"));
-    let runtime = std::path::PathBuf::from(std::env::var_os("QUENCH_NATIVE_RUNTIME_RLIB").expect("runtime rlib"));
-    let mut command = Command::new("rustc");
-    command.args(["--edition=2024", "--crate-name=native_node_bootstrap", "-C", "opt-level=1", "-C", "debuginfo=0", "-C", "codegen-units=256"])
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/driver.rs"))
-        .arg("--extern").arg(format!("quench_node={}", node.display()))
-        .arg("--extern").arg(format!("quench_runtime={}", runtime.display()))
-        .arg("-L").arg(format!("dependency={}", node.parent().unwrap().display()))
-        .arg("-o").arg(&executable)
-        .env("QUENCH_NATIVE_CATALOG", inputs.catalog())
-        .env("QUENCH_NATIVE_SOURCE_COUNT", count.to_string());
+fn pinned_support_report() -> String {
+    use std::fs;
     let report = fs::read_to_string(std::env::var_os("QUENCH_NATIVE_BUILD_REPORT").expect("Cargo artifact report")).unwrap();
-    for line in report.lines() {
-        let artifact: serde_json::Value = serde_json::from_str(line).unwrap();
+    // The producer rebuild can replace Cargo's top-level copy after the SDK
+    // report was captured. The harness pins its exact dependency artifacts.
+    report.lines().map(|line| {
+        let mut artifact: serde_json::Value = serde_json::from_str(line).unwrap();
         if artifact["reason"] == "compiler-artifact" {
-            assert!(!matches!(artifact["target"]["name"].as_str(), Some("cranelift_native" | "cranelift_object" | "cranelift_module")), "execution-only support contains a native compiler dependency");
-            if artifact["target"]["name"] == "cranelift_codegen" {
-                let features = artifact["features"].as_array().expect("Cargo feature list");
-                assert!(!features.iter().any(|feature| matches!(feature.as_str(), Some("host-arch" | "all-arch" | "all-native-arch" | "x86" | "arm64" | "riscv64" | "s390x" | "pulley"))), "execution-only support contains an architecture code generator");
+            let variable = match artifact["target"]["name"].as_str() {
+                Some("quench_node") => Some("QUENCH_NATIVE_NODE_RLIB"),
+                Some("quench_runtime") => Some("QUENCH_NATIVE_RUNTIME_RLIB"),
+                _ => None,
+            };
+            if let Some(variable) = variable {
+                artifact["filenames"] = serde_json::json!([std::env::var(variable).unwrap()]);
             }
         }
-        if artifact["reason"] == "compiler-artifact" && matches!(artifact["target"]["name"].as_str(), Some("quench_runtime" | "quench_node")) {
-            let features = artifact["features"].as_array().expect("Cargo feature list");
-            assert!(features.iter().any(|feature| feature == "native-execution"), "linked support artifact must support native execution");
-            assert!(!features.iter().any(|feature| matches!(feature.as_str(), Some("jit" | "aot" | "bundled-sources"))), "linked support artifact must exclude dynamic/object-generation backends and the full SDK source table");
-        }
-        if artifact["reason"] == "build-script-executed" {
-            for path in artifact["linked_paths"].as_array().unwrap() {
-                command.arg("-L").arg(path.as_str().unwrap());
-            }
-        }
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let link_map = {
-        let mut path = executable.as_os_str().to_owned();
-        path.push(".link-map");
-        std::path::PathBuf::from(path)
-    };
-    #[cfg(target_os = "macos")]
-    command.arg("-C").arg(format!("link-arg=-Wl,-map,{}", link_map.display()));
-    #[cfg(target_os = "linux")]
-    command.arg("-C").arg(format!("link-arg=-Wl,-Map={}", link_map.display()));
-    for object in inputs.objects() { command.arg("-C").arg(format!("link-arg={}", object.display())); }
-    command.env_remove("QUENCH_NATIVE_APPLICATION");
-    if let Some(application) = application { command.env("QUENCH_NATIVE_APPLICATION", application); }
-    let link = command.output().unwrap();
-    assert!(link.status.success(), "{}", String::from_utf8_lossy(&link.stderr));
-    #[cfg(unix)]
-    {
-        use std::collections::BTreeSet;
-        let symbols = Command::new("nm").arg("-g").arg(executable).output().unwrap();
-        assert!(symbols.status.success(), "{}", String::from_utf8_lossy(&symbols.stderr));
-        let actual: BTreeSet<String> = String::from_utf8(symbols.stdout).unwrap().lines().filter_map(|line| {
-            let fields: Vec<_> = line.split_whitespace().collect();
-            let symbol = fields.last()?.trim_start_matches('_');
-            (fields.len() >= 2 && fields[fields.len() - 2] == "T" && symbol.starts_with("quench_js_op_"))
-                .then(|| symbol.to_owned())
-        }).collect();
-        let all_symbols = Command::new("nm").arg(executable).output().unwrap();
-        assert!(all_symbols.status.success(), "{}", String::from_utf8_lossy(&all_symbols.stderr));
-        let all_symbols = String::from_utf8(all_symbols.stdout).unwrap();
-        for producer in ["cranelift_native", "cranelift_object", "cranelift_module", "target_isa_for"] {
-            assert!(!all_symbols.lines().any(|line| line.split_whitespace().last().is_some_and(|symbol| symbol.contains(producer))), "linked binary retained native compiler symbol: {producer}");
-        }
-        let expected: BTreeSet<String> = fs::read_to_string(inputs.required_exports()).unwrap().lines()
-            .filter(|symbol| symbol.starts_with("quench_js_op_")).map(str::to_owned).collect();
-        assert_eq!(actual, expected, "linked binary retained an unrequested semantic helper export");
-    }
+        serde_json::to_string(&artifact).unwrap()
+    }).collect::<Vec<_>>().join("\n")
+}
 
+fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path) {
+    let support = quench_node::aot::NativeSupport::from_cargo_report(&pinned_support_report()).unwrap();
+    support.link(inputs, &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/driver.rs"), executable).unwrap();
+}
+
+#[test]
+#[ignore = "explicit compile-command framework qualification"]
+fn compile_command_builds_source_independent_framework_js_and_ts() {
+    qualify_compile_command_frameworks("iteration", Some(pinned_support_report()));
+}
+
+#[test]
+#[ignore = "explicit default production framework compile/link qualification"]
+fn production_compile_command_builds_source_independent_framework_js_and_ts() {
+    qualify_compile_command_frameworks("production", None);
+}
+
+fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
+    use std::{fs, process::Command};
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/npm-perf/workloads");
+    let app_root = fixtures.parent().unwrap().canonicalize().unwrap();
+    let node = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).args(["-p", "process.execPath"]).output().unwrap();
+    assert!(node.status.success());
+    let node = String::from_utf8(node.stdout).unwrap().trim().to_owned();
+    // Exercise spaces and commas through rustc and the platform linker.
+    let directory = std::env::temp_dir().join(format!("quench cli, frameworks-{profile}-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk_report = directory.join("support.jsonl");
+    if let Some(support) = &support { fs::write(&sdk_report, support).unwrap(); }
+    for fixture in ["react-ssr.cjs", "react-ssr.cts", "next-route-generate.cjs", "next-route-generate.cts"] {
+        let original = fixtures.join(fixture).canonicalize().unwrap();
+        let mut manifest = SourceManifest::default();
+        let graph = manifest.add_commonjs_graph(&original).unwrap();
+        let sources = directory.join(format!("{fixture}-sources"));
+        copy_graph_sources(&graph, &app_root, &sources);
+        let entry = sources.join(original.strip_prefix(&app_root).unwrap());
+        let executable = directory.join(fixture);
+        let report = directory.join(format!("{fixture}.json"));
+        let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        compiler.arg("compile").arg(&entry).arg("-o").arg(&executable).arg("--report").arg(&report)
+            .env_remove(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV);
+        if support.is_some() { compiler.args(["--profile", profile]).arg("--sdk-report").arg(&sdk_report); }
+        let compiled = compiler.output().unwrap();
+        assert!(compiled.status.success(), "compile {fixture}: {}", String::from_utf8_lossy(&compiled.stderr));
+        let run = |command: &mut Command| {
+            let result = command.env_clear().env("NODE_ENV", "production")
+                .env("QUENCH_BENCH_ROUNDS", "20").env("QUENCH_BENCH_WARMUPS", "5")
+                .current_dir(&directory).output().unwrap();
+            assert!(result.status.success(), "{fixture}: {}", String::from_utf8_lossy(&result.stderr));
+            assert!(result.stderr.is_empty(), "{fixture}: {}", String::from_utf8_lossy(&result.stderr));
+            let mut value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+            value.as_object_mut().unwrap().remove("elapsedMs");
+            value.as_object_mut().unwrap().remove("operationsPerSecond");
+            value
+        };
+        let oracle = run(Command::new(&node).arg(&entry));
+        fs::remove_dir_all(&sources).unwrap();
+        assert_eq!(run(&mut Command::new(&executable)), oracle);
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(report["status"], "compiled");
+        assert_eq!(report["execution_mode"], "native_only");
+        assert_eq!(report["requested_support_profile"], profile);
+        assert_eq!(report["payload_minimal"], false);
+        assert!(!report["retained_support"].as_array().unwrap().is_empty());
+        eprintln!("compile command {fixture}: Node parity after source removal; executable={}", executable.display());
+    }
+}
+
+#[test]
+#[ignore = "explicit default production compile/link qualification"]
+fn production_compile_preserves_typescript_values_arguments_and_exit_lifecycle() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-cli-production-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("sound.cts");
+    fs::write(&entry, r#"
+function add(value: number): number { return value + 1; }
+const input = "7" as unknown as number;
+console.log(JSON.stringify([typeof input, add(input), Number.isNaN(input), process.argv.slice(2)]));
+process.on("exit", (code: number) => console.log("exit", code));
+process.exitCode = 7;
+"#).unwrap();
+    let executable = directory.join("program");
+    let report = directory.join("report.json");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&executable)
+        .arg("--report").arg(&report)
+        .env_remove(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+        .arg(&entry).arg("guest value, spaces").output().unwrap();
+    fs::remove_file(entry).unwrap();
+    let native = Command::new(&executable).arg("guest value, spaces").env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(native.status.code(), oracle.status.code());
+    assert_eq!(native.stdout, oracle.stdout);
+    assert_eq!(native.stderr, oracle.stderr);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(report["requested_support_profile"], "production");
+    assert_eq!(report["support_artifacts"]["rust_lto"], true);
+    assert_eq!(report["payload_minimal"], false);
+    eprintln!("production compile: sound TS values, argv and exit lifecycle matched Node; executable={}", executable.display());
 }
 
 #[test]
@@ -256,10 +307,9 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         let graph = manifest.add_commonjs_graph(&entry).unwrap();
         manifest.extend(SourceManifest::capture_for_graph(&sdk_root, &graph).unwrap()).unwrap();
         eprintln!("native {fixture}: {} files, {} source units, {} requirements", graph.files.len(), manifest.units().len(), graph.requirements.len());
-        let count = manifest.units().len();
         let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images"))).unwrap();
         let executable = directory.join(fixture);
-        link_images(&inputs, &executable, count, Some(&entry));
+        link_images(&inputs, &executable);
         let run = |command: &mut Command| {
             let output = command.env_clear()
                 .env("NODE_ENV", "production").env("QUENCH_BENCH_ROUNDS", "20").env("QUENCH_BENCH_WARMUPS", "5")

@@ -25,6 +25,7 @@ macro_rules! linked_native_sources {
      resolver $resolve:ident {
          $($symbol:ident => ($link:literal, $metadata:literal, $name:literal, [$($part:literal),*]),)*
      }) => {
+        pub const NATIVE_SOURCE_COUNT: usize = (&[$(stringify!($symbol)),*] as &[&str]).len();
         /// # Safety
         /// Metadata, host ABI and all entry tables must be emitted together by
         /// this compiler, linked unmodified, and kept alive for the process.
@@ -75,9 +76,28 @@ macro_rules! linked_module_assets {
 pub fn execute_native(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
-    let mut runtime = Runtime::new(host);
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free)
+}
+
+pub fn execute_native_process_entry(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit)
+}
+
+fn execute_native_with_teardown(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, teardown: crate::shared_run::Teardown,
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.set_memory_policy(crate::shared_run::select_memory_policy(None)?);
     let execution = runtime.execute_native_deferred_jobs(program);
     crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)
 }
+
+#[cfg(feature = "aot")]
+mod link;
+#[cfg(feature = "aot")]
+pub use link::NativeSupport;
+#[cfg(feature = "aot")]
+pub mod cli;

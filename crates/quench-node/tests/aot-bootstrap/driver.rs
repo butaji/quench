@@ -1,5 +1,7 @@
 //! Link-only adapter; bootstrap guest bodies come from native object files.
 use quench_node::NodeHost;
+
+const _: () = assert!(quench_node::NATIVE_SUPPORT_IS_EXECUTION_ONLY && quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY, "native images require execution-only support artifacts");
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::atomic::{AtomicUsize, Ordering}};
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
@@ -31,7 +33,7 @@ fn run() -> Result<std::process::ExitCode, String> {
         });
     let host = host.with_embedded_modules(assets);
     let completion = quench_node::aot::execute_native(host, &entry)?;
-    let expected: usize = env!("QUENCH_NATIVE_SOURCE_COUNT").parse().unwrap();
+    let expected = NATIVE_SOURCE_COUNT;
     if application.is_none() && loaded.borrow().len() != expected {
         return Err(format!("expected {expected} native source keys, saw {}", loaded.borrow().len()));
     }

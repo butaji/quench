@@ -195,7 +195,7 @@ pub fn execute_shared_with_execution_mode(
 
 /// What becomes of an entry's runtime once the entry finishes.
 #[derive(Clone, Copy)]
-enum Teardown {
+pub(crate) enum Teardown {
     /// Dropped: an embedding or a Worker's thread goes on after the entry.
     Free,
     /// Ended for the exit that follows (`Runtime::end_for_process_exit`): the CLI's process
@@ -204,9 +204,15 @@ enum Teardown {
 }
 
 /// An entry's runtime, ended by its `Teardown` on every path out of the entry.
-struct EntryRuntime {
+pub(crate) struct EntryRuntime {
     runtime: std::mem::ManuallyDrop<Runtime<NodeHost>>,
     teardown: Teardown,
+}
+
+impl EntryRuntime {
+    pub(crate) fn new(runtime: Runtime<NodeHost>, teardown: Teardown) -> Self {
+        Self { runtime: std::mem::ManuallyDrop::new(runtime), teardown }
+    }
 }
 
 impl std::ops::Deref for EntryRuntime {
@@ -239,6 +245,13 @@ fn execute_shared_with_teardown(
     mode: quench_runtime::ExecutionMode,
     teardown: Teardown,
 ) -> Result<SharedCompletion, String> {
+    run_node_worker(move || execute_shared_on_worker(input, argv, None, mode, teardown))
+}
+
+/// Node entry worker lifecycle, including the platform signal-mask transition.
+pub fn run_node_worker<T: Send + 'static>(
+    execute: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     #[cfg(target_os = "linux")]
     let (_parent_mask, worker_mask) =
         crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
@@ -251,7 +264,7 @@ fn execute_shared_with_teardown(
             worker_mask
                 .restore()
                 .map_err(|error| format!("runtime execution signal mask: {error}"))?;
-            execute_shared_on_worker(input, argv, None, mode, teardown)
+            execute()
         })
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
@@ -376,10 +389,7 @@ fn execute_shared_on_worker(
     };
     let snapshot_path = crate::host::startup_snapshot::snapshot_path(&host, snapshot_entry, in_worker);
     let snapshot = snapshot_path.as_deref().and_then(crate::host::startup_snapshot::load_or_schedule);
-    let mut runtime = EntryRuntime {
-        runtime: std::mem::ManuallyDrop::new(Runtime::new(host)),
-        teardown,
-    };
+    let mut runtime = EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(mode);
     runtime.set_memory_policy(memory_policy);
     let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;

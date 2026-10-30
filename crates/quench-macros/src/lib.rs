@@ -86,7 +86,7 @@ fn derive_native_exports(
     Ok(quote! {
         #operations
         #[cfg(feature = "native-execution")]
-        pub(crate) const NATIVE_JS_OPERATION_PREFIX: &str = #prefix;
+        pub const NATIVE_JS_OPERATION_PREFIX: &str = #prefix;
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
         /// Image header word zero is the link-time ABI marker's address.

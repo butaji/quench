@@ -1,6 +1,40 @@
 use quench_runtime::{Engine, Runtime, SystemHost};
 
+const USAGE: &str = "usage: quench [--generic] [-e CODE|SCRIPT]\n       quench compile ENTRY -o BINARY (quench compile --help for options)";
+
 fn main() {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|argument| argument == "--help" || argument == "-h")
+    {
+        println!("{USAGE}");
+        return;
+    }
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|argument| argument == "compile")
+    {
+        let result: Result<std::process::ExitStatus, String> = std::env::current_exe().map_err(|error| error.to_string()).and_then(|executable| {
+            let compiler = executable.with_file_name(if cfg!(windows) { "quench-node.exe" } else { "quench-node" });
+            let mut command = std::process::Command::new(&compiler);
+            command.args(std::env::args_os().skip(1));
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let error = command.exec();
+                Err(format!("Node compiler companion {}: {error}; build quench-node with --features aot", compiler.display()))
+            }
+            #[cfg(not(unix))]
+            command.status().map_err(|error| format!("Node compiler companion {}: {error}; build quench-node with --features aot", compiler.display()))
+        });
+        match result {
+            Ok(status) => std::process::exit(status.code().unwrap_or(libc::EXIT_FAILURE)),
+            Err(error) => {
+                eprintln!("quench: {error}");
+                std::process::exit(libc::EXIT_FAILURE);
+            }
+        }
+    }
     let result = std::thread::Builder::new()
         .name("quench".into())
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
@@ -13,15 +47,13 @@ fn main() {
         });
     if let Err(error) = result {
         eprintln!("quench: {error}");
-        std::process::exit(1);
+        std::process::exit(libc::EXIT_FAILURE);
     }
 }
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let first = args
-        .next()
-        .ok_or("usage: quench [--generic] [-e CODE|SCRIPT]")?;
+    let first = args.next().ok_or(USAGE)?;
     let generic = first == "--generic";
     let source_arg = if generic { args.next() } else { Some(first) };
     let source = match source_arg.as_deref() {

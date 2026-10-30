@@ -18,6 +18,20 @@ pub enum GraphRequirement {
     Wasm { path: PathBuf },
 }
 
+impl GraphRequirement {
+    pub fn report(&self) -> serde_json::Value {
+        use serde_json::json;
+        match self {
+            Self::DynamicRequire { from, offset } => json!({"kind": "dynamic_require", "from": from, "offset": offset}),
+            Self::DynamicImport { from, offset } => json!({"kind": "dynamic_import", "from": from, "offset": offset}),
+            Self::Unresolved { from, specifier, diagnostic } => json!({"kind": "unresolved", "from": from, "specifier": specifier, "diagnostic": diagnostic}),
+            Self::EsModule { path } => json!({"kind": "es_module", "path": path}),
+            Self::NativeAddon { path } => json!({"kind": "native_addon", "path": path}),
+            Self::Wasm { path } => json!({"kind": "wasm", "path": path}),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct DependencyGraph {
     pub files: BTreeMap<PathBuf, ModuleFile>,

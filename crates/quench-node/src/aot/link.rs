@@ -1,0 +1,392 @@
+use super::NativeImageInputs;
+use serde_json::Value;
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
+/// Cargo's exact execution-only support artifacts and their native search paths.
+pub struct NativeSupport {
+    node: PathBuf,
+    runtime: PathBuf,
+    native_paths: BTreeSet<PathBuf>,
+    optimization: String,
+    rust_lto: bool,
+}
+
+impl NativeSupport {
+    pub fn from_cargo_report(report: &str) -> Result<Self, String> {
+        let mut node = None;
+        let mut runtime = None;
+        let mut native_paths = BTreeSet::new();
+        let mut optimization = None;
+        let mut completed = false;
+        for line in report.lines() {
+            let artifact: Value = serde_json::from_str(line).map_err(|error| error.to_string())?;
+            match artifact["reason"].as_str() {
+                Some("compiler-artifact") => {
+                    let name = artifact["target"]["name"]
+                        .as_str()
+                        .ok_or("Cargo artifact has no target name")?;
+                    let features = artifact["features"]
+                        .as_array()
+                        .ok_or("Cargo artifact has no feature list")?;
+                    if matches!(
+                        name,
+                        "cranelift_native" | "cranelift_object" | "cranelift_module"
+                    ) {
+                        return Err(format!(
+                            "native support includes compiler dependency {name}"
+                        ));
+                    }
+                    if name == "cranelift_codegen"
+                        && features.iter().any(|feature| {
+                            matches!(
+                                feature.as_str(),
+                                Some(
+                                    "host-arch"
+                                        | "all-arch"
+                                        | "all-native-arch"
+                                        | "x86"
+                                        | "arm64"
+                                        | "riscv64"
+                                        | "s390x"
+                                        | "pulley"
+                                )
+                            )
+                        })
+                    {
+                        return Err("native support includes an architecture code generator".into());
+                    }
+                    if matches!(name, "quench_node" | "quench_runtime") {
+                        if !features.iter().any(|feature| feature == "native-execution")
+                            || features.iter().any(|feature| {
+                                matches!(feature.as_str(), Some("jit" | "aot" | "bundled-sources"))
+                            })
+                        {
+                            return Err(format!("{name} is not execution-only native support"));
+                        }
+                        let files = artifact["filenames"]
+                            .as_array()
+                            .ok_or("Cargo artifact has no files")?;
+                        let file = files
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .find(|file| {
+                                Path::new(file)
+                                    .extension()
+                                    .is_some_and(|extension| extension == "rlib")
+                            })
+                            .ok_or_else(|| format!("Cargo did not emit {name}'s rlib"))?;
+                        let file = exact_dependency(Path::new(file), name)?;
+                        if name == "quench_node" {
+                            if node.replace(file).is_some() {
+                                return Err("ambiguous Node support artifacts".into());
+                            }
+                            optimization = Some(
+                                artifact["profile"]["opt_level"]
+                                    .as_str()
+                                    .ok_or("Cargo artifact has no optimization level")?
+                                    .to_owned(),
+                            );
+                        } else if runtime.replace(file).is_some() {
+                            return Err("ambiguous runtime support artifacts".into());
+                        }
+                    }
+                }
+                Some("build-finished") => {
+                    if artifact["success"] != true {
+                        return Err("support build did not complete successfully".into());
+                    }
+                    completed = true;
+                }
+                Some("build-script-executed") => {
+                    for path in artifact["linked_paths"]
+                        .as_array()
+                        .ok_or("Cargo build script has no native search paths")?
+                    {
+                        native_paths.insert(PathBuf::from(
+                            path.as_str().ok_or("invalid Cargo native search path")?,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !completed {
+            return Err("Cargo support report is incomplete".into());
+        }
+        let node = node.ok_or("Cargo report has no Node support library")?;
+        let rust_lto = requires_rust_lto(&node)?;
+        Ok(Self {
+            node,
+            rust_lto,
+            runtime: runtime.ok_or("Cargo report has no runtime support library")?,
+            native_paths,
+            optimization: optimization.ok_or("Cargo report has no support optimization level")?,
+        })
+    }
+
+    pub fn report(&self) -> Value {
+        serde_json::json!({ "node_library": self.node, "runtime_library": self.runtime,
+            "optimization_level": self.optimization, "native_search_paths": self.native_paths,
+            "driver_panic_strategy": "abort", "rust_lto": self.rust_lto })
+    }
+
+    pub fn link(
+        &self,
+        inputs: &NativeImageInputs,
+        driver: &Path,
+        executable: &Path,
+    ) -> Result<BTreeSet<String>, String> {
+        let mut command = Command::new("rustc");
+        command
+            .args([
+                "--edition=2024",
+                "--crate-name=quench_native_image",
+                "-C",
+                "debuginfo=0",
+                "-C",
+                "panic=abort",
+            ])
+            .arg("-C")
+            .arg(format!("opt-level={}", self.optimization))
+            .arg(driver)
+            .arg("--extern")
+            .arg(format!("quench_node={}", self.node.display()))
+            .arg("--extern")
+            .arg(format!("quench_runtime={}", self.runtime.display()))
+            .arg("-L")
+            .arg(format!(
+                "dependency={}",
+                self.node
+                    .parent()
+                    .ok_or("support library has no parent")?
+                    .display()
+            ))
+            .arg("-L")
+            .arg(format!(
+                "dependency={}",
+                self.runtime
+                    .parent()
+                    .ok_or("runtime library has no parent")?
+                    .display()
+            ))
+            .arg("-o")
+            .arg(executable)
+            .env("QUENCH_NATIVE_CATALOG", inputs.catalog());
+        if self.rust_lto {
+            command.args(["-C", "lto=thin"]);
+        }
+        for path in &self.native_paths {
+            command.arg("-L").arg(path);
+        }
+        for object in inputs.objects() {
+            command
+                .arg("-C")
+                .arg(format!("link-arg={}", object.display()));
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let map = {
+            let mut path = executable.as_os_str().to_owned();
+            path.push(".link-map");
+            PathBuf::from(path)
+        };
+        #[cfg(target_os = "macos")]
+        command
+            .args([
+                "-C",
+                "link-arg=-Xlinker",
+                "-C",
+                "link-arg=-map",
+                "-C",
+                "link-arg=-Xlinker",
+            ])
+            .arg("-C")
+            .arg(format!("link-arg={}", map.display()));
+        #[cfg(target_os = "linux")]
+        command
+            .args([
+                "-C",
+                "link-arg=-Xlinker",
+                "-C",
+                "link-arg=-Map",
+                "-C",
+                "link-arg=-Xlinker",
+            ])
+            .arg("-C")
+            .arg(format!("link-arg={}", map.display()));
+        checked_output(&mut command, "native image link")?;
+        audit(inputs, executable)
+    }
+}
+
+// LLVM's raw and wrapper bitcode signatures (BitCodeFormat.html). Detect
+// actual archive contents instead of inferring LTO from a profile's name.
+const LLVM_RAW_BITCODE_MAGIC: [u8; size_of::<u32>()] = *b"BC\xc0\xde";
+const LLVM_WRAPPED_BITCODE_MAGIC: [u8; size_of::<u32>()] = 0x0B17_C0DEu32.to_le_bytes();
+
+fn requires_rust_lto(library: &Path) -> Result<bool, String> {
+    use std::io::Read;
+    let members = checked_output(
+        Command::new("ar").arg("t").arg(library),
+        "support archive inspection",
+    )?;
+    let members = String::from_utf8(members).map_err(|error| error.to_string())?;
+    let member = members
+        .lines()
+        .find(|name| name.ends_with(".rcgu.o"))
+        .ok_or("support archive has no Rust code object")?;
+    let mut child = Command::new("ar")
+        .arg("p")
+        .arg(library)
+        .arg(member)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let mut body = child.stdout.take().ok_or("archive reader has no output")?;
+    let mut magic = [0; size_of::<u32>()];
+    let header = body.read_exact(&mut magic);
+    // Drain rather than allocating a potentially large bitcode member.
+    let drained = std::io::copy(&mut body, &mut std::io::sink());
+    let result = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if !result.status.success() {
+        return Err(format!(
+            "support archive inspection: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    header.map_err(|error| error.to_string())?;
+    drained.map_err(|error| error.to_string())?;
+    Ok(matches!(
+        magic,
+        LLVM_RAW_BITCODE_MAGIC | LLVM_WRAPPED_BITCODE_MAGIC
+    ))
+}
+
+fn exact_dependency(file: &Path, name: &str) -> Result<PathBuf, String> {
+    let parent = file.parent().ok_or("Cargo rlib has no parent")?;
+    if parent.file_name().is_some_and(|name| name == "deps") {
+        fs::metadata(file).map_err(|error| error.to_string())?;
+        return Ok(file.to_owned());
+    }
+    // Cargo's top-level copy can be replaced by the producer build. Resolve it
+    // immediately to the exact dependency artifact, comparing bytes, not hashes.
+    let bytes = fs::read(file).map_err(|error| error.to_string())?;
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(parent.join("deps")).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path
+            .file_name()
+            .is_some_and(|file| file.to_string_lossy().starts_with(&format!("lib{name}-")))
+            && path
+                .extension()
+                .is_some_and(|extension| extension == "rlib")
+            && fs::metadata(&path)
+                .map_err(|error| error.to_string())?
+                .len()
+                == bytes.len() as u64
+            && fs::read(&path).map_err(|error| error.to_string())? == bytes
+        {
+            matches.push(path);
+        }
+    }
+    if matches.len() != 1 {
+        return Err(format!(
+            "cannot identify one exact {name} dependency artifact"
+        ));
+    }
+    Ok(matches.remove(0))
+}
+
+pub(super) fn checked_output(command: &mut Command, operation: &str) -> Result<Vec<u8>, String> {
+    let output = command
+        .output()
+        .map_err(|error| format!("{operation}: {error}"))?;
+    if !output.status.success() {
+        let diagnostics = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let message: Value = serde_json::from_str(line).ok()?;
+                message["message"]["rendered"].as_str().map(str::to_owned)
+            })
+            .collect::<String>();
+        return Err(format!(
+            "{operation} failed ({}):\n{}{}",
+            output.status,
+            diagnostics,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output.stdout)
+}
+
+fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<String>, String> {
+    let bytes = checked_output(Command::new("nm").arg(executable), "native symbol audit")?;
+    let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+    let mut exports = BTreeSet::new();
+    for line in symbols.lines() {
+        let mut fields = line.split_whitespace().rev();
+        let Some(symbol) = fields.next() else {
+            continue;
+        };
+        if [
+            "cranelift_native",
+            "cranelift_object",
+            "cranelift_module",
+            "target_isa_for",
+        ]
+        .iter()
+        .any(|name| symbol.contains(name))
+        {
+            return Err(format!("native image retained a compiler symbol: {symbol}"));
+        }
+        let symbol = symbol.trim_start_matches('_');
+        if fields.next() == Some("T")
+            && symbol.starts_with(quench_runtime::NATIVE_JS_OPERATION_PREFIX)
+        {
+            exports.insert(symbol.to_owned());
+        }
+    }
+    let expected: BTreeSet<_> = fs::read_to_string(inputs.required_exports())
+        .map_err(|error| error.to_string())?
+        .lines()
+        .filter(|name| name.starts_with(quench_runtime::NATIVE_JS_OPERATION_PREFIX))
+        .map(str::to_owned)
+        .collect();
+    if exports != expected {
+        return Err("native semantic helper exports do not match object imports".into());
+    }
+    Ok(exports)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn support_reports_reject_dynamic_backends_and_the_full_sdk_bundle() {
+        for (name, features) in [
+            ("quench_node", vec!["native-execution", "bundled-sources"]),
+            ("quench_runtime", vec!["native-execution", "jit"]),
+            ("quench_node", vec!["native-execution", "aot"]),
+            ("cranelift_codegen", vec!["std", "arm64"]),
+            ("cranelift_native", vec![]),
+        ] {
+            let report = serde_json::json!({"reason": "compiler-artifact", "target": {"name": name}, "features": features}).to_string();
+            let error = NativeSupport::from_cargo_report(&report).err().expect("unsupported SDK accepted");
+            assert!(error.contains("execution-only") || error.contains("compiler dependency") || error.contains("architecture code generator"), "{error}");
+        }
+    }
+
+    #[test]
+    fn unsuccessful_and_incomplete_support_build_reports_are_rejected() {
+        assert!(NativeSupport::from_cargo_report("{\"reason\":\"build-finished\",\"success\":false}").err().unwrap().contains("successfully"));
+        assert!(NativeSupport::from_cargo_report("").err().unwrap().contains("incomplete"));
+    }
+}

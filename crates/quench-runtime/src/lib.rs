@@ -73,7 +73,7 @@ pub mod owned_clone;
 pub mod shared_backing;
 
 #[cfg(feature = "native-execution")]
-pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NativeProgramNamespace};
+pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
 #[cfg(feature = "native-execution")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,
@@ -91,3 +91,6 @@ pub use vm::{
 #[cfg(feature = "aot")]
 pub use compile::{NativeJsCompiler, NativeSourceKey};
 pub use compile::HostScriptOptions;
+
+#[cfg(feature = "native-execution")]
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !cfg!(any(feature = "jit", feature = "aot"));
