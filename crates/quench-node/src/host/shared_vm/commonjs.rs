@@ -448,8 +448,10 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         return Ok(());
     }
     if let Some(entry) = context.host_mut().commonjs_entry.clone() {
-        let filename = std::fs::canonicalize(entry.path)
-            .map_err(|error| RootedError::host(error.to_string()))?;
+        #[cfg(feature = "aot")]
+        let filename = context.host_mut().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
+        #[cfg(not(feature = "aot"))]
+        let filename = std::fs::canonicalize(entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         load(context, &filename, None, entry.goal)?;
     } else {
         let filename = inline_directory(context)?.join(context.host_mut().inline_source.label());
@@ -2293,8 +2295,29 @@ fn resolve_filename_in(
     lookup: Option<&[PathBuf]>,
 ) -> Result<PathBuf, RootedError> {
     let filename = get(context, parent, "filename")?;
-    let directory = match context.string_text(filename)? {
-        Some(filename) => Path::new(&filename).parent().unwrap_or(Path::new(".")).to_owned(),
+    let filename = context.string_text(filename)?;
+    #[cfg(feature = "aot")]
+    if lookup.is_none() {
+        if let Some(target) = filename.as_deref().and_then(|parent| context.host_mut().embedded_resolution(Path::new(parent), specifier)) {
+            return Ok(target);
+        }
+    }
+    let resolved = resolve_filename_from_host(context, specifier, parent, lookup, filename.as_deref());
+    #[cfg(feature = "aot")]
+    if lookup.is_none() {
+        if let (Some(parent), Ok(target)) = (filename.as_deref(), &resolved) {
+            context.host_mut().record_module_resolution(Path::new(parent), specifier, target).map_err(RootedError::host)?;
+        }
+    }
+    resolved
+}
+
+fn resolve_filename_from_host(
+    context: &mut Context<'_>, specifier: &str, parent: RootId,
+    lookup: Option<&[PathBuf]>, filename: Option<&str>,
+) -> Result<PathBuf, RootedError> {
+    let directory = match filename {
+        Some(filename) => Path::new(filename).parent().unwrap_or(Path::new(".")).to_owned(),
         None => {
             let directory = get(context, parent, "path")?;
             let directory = context.string_text(directory)?
@@ -2307,17 +2330,14 @@ fn resolve_filename_in(
     let node_internal = (internal_specifier.starts_with("internal/")
         && (internal_specifier != "internal/timers" || internals_exposed(context)))
         || (internal_specifier.starts_with('_')
-            && node_lib
-                .join(internal_specifier)
-                .with_extension("js")
-                .is_file());
+            && module_is_file(context, &node_lib.join(internal_specifier).with_extension("js")));
     if node_internal {
         if let Some((_, relative)) = crate::node_sources::BUNDLED_DEPENDENCIES
             .iter().find(|(name, _)| *name == internal_specifier)
         {
             let root = context.host_mut().node_library_root.clone();
             let path = root.join(relative);
-            if path.is_file() || crate::node_sources::source(&path, &root).is_some() {
+            if module_is_file(context, &path) || crate::node_sources::source(&path, &root).is_some() {
                 return Ok(path);
             }
         }
@@ -2330,6 +2350,8 @@ fn resolve_filename_in(
         None
     };
     if let Some(path) = virtual_path {
+        #[cfg(feature = "aot")]
+        if context.host_mut().embedded_module(&path).is_some() { return Ok(path); }
         if !path.is_file() {
             if let Some((canonical, _)) =
                 crate::node_sources::resolve(&path, &context.host_mut().node_library_root)
@@ -2756,7 +2778,7 @@ pub(crate) fn node_library_present(context: &mut Context<'_>) -> bool {
 fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
     let root = context.host_mut().node_library_root.clone();
     let path = root.join("lib/internal/per_context/primordials.js");
-    (path.is_file() || crate::node_sources::source(&path, &root).is_some()).then_some(path)
+    (module_is_file(context, &path) || crate::node_sources::source(&path, &root).is_some()).then_some(path)
 }
 
 /// Node's primordials snapshot, which only Node's internal modules and their host
@@ -2782,6 +2804,21 @@ pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootI
     context.release_root(exports);
     state.borrow_mut().primordials_module = Some(retained);
     Ok(Some(retained))
+}
+
+fn module_is_file(context: &mut Context<'_>, path: &Path) -> bool {
+    #[cfg(feature = "aot")]
+    if context.host_mut().embedded_module(path).is_some() { return true; }
+    let _ = context;
+    path.is_file()
+}
+
+/// Read a module's original bytes through the selected module input provider.
+fn module_file_bytes(context: &mut Context<'_>, path: &Path, kind: quench_runtime::SourceKind) -> std::io::Result<Vec<u8>> {
+    #[cfg(feature = "aot")]
+    { context.host_mut().module_bytes(path, kind) }
+    #[cfg(not(feature = "aot"))]
+    { let _ = (context, kind); std::fs::read(path) }
 }
 
 fn load(
@@ -2839,7 +2876,12 @@ fn load_with_resolution(
     // only a wrapper that does not compile asks the text for ES module syntax, so a CommonJS
     // file is parsed once, not again for detection (typescript.js: a 9 MB text's tree and
     // tables, the peak of loading it).
+    #[cfg(feature = "aot")]
+    let archived_kind = context.host_mut().embedded_module(filename).map(|file| file.kind);
+    #[cfg(not(feature = "aot"))]
+    let archived_kind: Option<quench_runtime::SourceKind> = None;
     let declared = match goal {
+        EntryGoal::Node if archived_kind.is_some() => archived_kind,
         EntryGoal::Node => declared_source_kind(&real_path_for_kind(filename).map_err(RootedError::host)?)
             .map_err(RootedError::host)?,
         _ => Some(quench_runtime::SourceKind::Script),
@@ -2870,7 +2912,7 @@ fn load_with_resolution(
             set(context, module, "loaded", loaded)?;
             return Ok(exports);
         }
-        let file_text: std::borrow::Cow<'static, str> = match std::fs::read(filename) {
+        let file_text: std::borrow::Cow<'static, str> = match module_file_bytes(context, filename, declared.unwrap_or(quench_runtime::SourceKind::Script)) {
             Ok(bytes) => String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
                 .into(),
@@ -2878,7 +2920,16 @@ fn load_with_resolution(
                 .ok_or_else(|| RootedError::host(error.to_string()))?
                 .into(),
         };
-        let file_text: std::borrow::Cow<'static, str> = match library_relative {
+        #[cfg(feature = "aot")]
+        let prepared = context.host_mut().embedded_module(filename).and_then(|file| file.prepared);
+        #[cfg(not(feature = "aot"))]
+        let prepared: Option<()> = None;
+        let file_text: std::borrow::Cow<'static, str> = match prepared {
+            #[cfg(feature = "aot")]
+            Some(crate::aot::PreparedModuleSource::Original) => file_text,
+            #[cfg(feature = "aot")]
+            Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
+            _ => match library_relative {
             Some(path) if path == Path::new("lib/internal/child_process.js") =>
                 super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?.into(),
             Some(path) if path == Path::new("lib/net.js") =>
@@ -2892,7 +2943,12 @@ fn load_with_resolution(
             Some(_) if is_primordials =>
                 crate::modules::primordials_shared_vm::project_primordials(&file_text)?.into(),
             _ => file_text,
-        };
+        }, };
+        #[cfg(feature = "aot")]
+        if library_relative.is_some() {
+            context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
+        }
+
         // An embedded library file is static text the compiled program can retain as is;
         // a projected one is new text.
         let embedded = match file_text {
@@ -3389,7 +3445,13 @@ pub(crate) fn node_library_module_in_realm(
 ) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let path = root.join("lib").join(relative);
-    let source = match std::fs::read_to_string(&path) {
+    let source = match module_file_bytes(context, &path, quench_runtime::SourceKind::Script)
+        .and_then(|bytes| String::from_utf8(bytes).map_err(|error| {
+            // Preserve read_to_string's InvalidData error without copying valid input.
+            let mut invalid = error.as_bytes();
+            std::io::Read::read_to_string(&mut invalid, &mut String::new())
+                .expect_err("invalid UTF-8 cannot decode as module text")
+        })) {
         Ok(source) => source,
         Err(error) => crate::node_sources::source(&path, &root)
             .map(str::to_owned)

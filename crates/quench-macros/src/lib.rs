@@ -43,6 +43,7 @@ fn derive_native_exports(
     let prefix = layout.prefix;
     let mut hash = FNV1A_OFFSET_BASIS;
     let mut exports = Vec::new();
+    let mut export_arms = Vec::new();
     for (index, variant) in operations.variants.iter().enumerate() {
         if !matches!(variant.fields, syn::Fields::Unit) || variant.discriminant.is_some() {
             return Err(syn::Error::new_spanned(
@@ -68,7 +69,7 @@ fn derive_native_exports(
         {
             hash = (hash ^ u64::from(byte)).wrapping_mul(FNV1A_PRIME);
         }
-        exports.push(quote! {
+        let export = quote! {
             #[unsafe(export_name = #symbol)]
             pub unsafe extern "C" fn #name(
                 context: *mut ::std::ffi::c_void, pc: u64,
@@ -77,7 +78,9 @@ fn derive_native_exports(
                 // SAFETY: forwarded from the generated native entry ABI.
                 unsafe { $crate::native_js_operation_entry::<$host, #index>(context, pc, operands, result) }
             }
-        });
+        };
+        export_arms.push(quote! { (@operation $host:ty, #symbol) => { #export }; });
+        exports.push(export);
     }
     let marker = format!("quench_native_js_abi_v{version}_{hash:016x}");
     Ok(quote! {
@@ -105,6 +108,19 @@ fn derive_native_exports(
                     #(#exports)*
                 }
             };
+            ($host:ty, $module:ident, [$($operation:tt),* $(,)?]) => {
+                #[allow(non_snake_case)]
+                mod $module {
+                    #[allow(unused_imports)]
+                    use super::*;
+                    $( $crate::export_native_js_operations!(@operation $host, $operation); )*
+                }
+            };
+            (@operation $host:ty, #marker) => {
+                #[unsafe(export_name = #marker)]
+                pub extern "C" fn abi_marker() {}
+            };
+            #(#export_arms)*
         }
     })
 }

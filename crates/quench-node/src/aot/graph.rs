@@ -1,16 +1,12 @@
 //! Conservative, syntax-owned module discovery. Unresolved edges are retained;
 //! discovery never executes module initialization or promises a closed graph.
 
-use super::SourceManifest;
+use super::{SourceManifest, ModuleFile};
 use crate::host::shared_vm::commonjs;
 use oxc_ast::ast::{CallExpression, Expression, IdentifierReference, ImportExpression};
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
 use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
-
-pub struct ModuleFile {
-    pub bytes: Vec<u8>,
-}
 
 #[derive(Debug)]
 pub enum GraphRequirement {
@@ -25,6 +21,7 @@ pub enum GraphRequirement {
 #[derive(Default)]
 pub struct DependencyGraph {
     pub files: BTreeMap<PathBuf, ModuleFile>,
+    pub resolutions: BTreeMap<(PathBuf, String), PathBuf>,
     pub builtins: BTreeSet<String>,
     pub host_globals: BTreeSet<String>,
     pub requirements: Vec<GraphRequirement>,
@@ -87,12 +84,14 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         if graph.files.contains_key(&path) { continue; }
         let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let extension = path.extension().and_then(|name| name.to_str());
+        let mut file_kind = quench_runtime::SourceKind::Script;
         match extension {
             Some("json") => {},
             Some("node") => graph.requirements.push(GraphRequirement::NativeAddon { path: path.clone() }),
-            Some("wasm") => graph.requirements.push(GraphRequirement::Wasm { path: path.clone() }),
+            Some("wasm") => { file_kind = quench_runtime::SourceKind::Module; graph.requirements.push(GraphRequirement::Wasm { path: path.clone() }); },
             _ => {
                 let kind = commonjs::source_kind(&path)?;
+                file_kind = kind;
                 if kind == quench_runtime::SourceKind::Script {
                     manifest.insert_key(commonjs::native_commonjs_source(&path, &bytes, path == entry)?);
                 } else {
@@ -130,7 +129,11 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
                         commonjs::with_commonjs_resolver(|resolver| commonjs::resolve_kept(resolver, resolve))
                     } else { commonjs::with_import_resolver(|resolver| commonjs::resolve_kept(resolver, resolve)) };
                     match resolved {
-                        Ok(resolved) => { pending.insert(resolved.full_path().canonicalize().map_err(|error| error.to_string())?); },
+                        Ok(resolved) => {
+                            let target = resolved.full_path().canonicalize().map_err(|error| error.to_string())?;
+                            graph.resolutions.insert((path.clone(), specifier), target.clone());
+                            pending.insert(target);
+                        },
                         Err(error) => graph.requirements.push(GraphRequirement::Unresolved {
                             from: path.clone(), specifier, diagnostic: error.to_string(),
                         }),
@@ -138,7 +141,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
                 }
             },
         }
-        graph.files.insert(path, ModuleFile { bytes });
+        graph.files.insert(path, ModuleFile { bytes: std::rc::Rc::from(bytes), kind: file_kind, prepared: None });
     }
     Ok(graph)
 }

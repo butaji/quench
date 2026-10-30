@@ -3,7 +3,6 @@ use quench_node::NodeHost;
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::atomic::{AtomicUsize, Ordering}};
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
-quench_runtime::export_native_js_operations!(NodeHost, semantic_exports);
 
 static COMPILER_PHASES: AtomicUsize = AtomicUsize::new(0);
 
@@ -16,7 +15,8 @@ fn observe_compile(phase: quench_runtime::CompilePhase) {
 fn run() -> Result<std::process::ExitCode, String> {
     let loaded = Rc::new(RefCell::new(BTreeSet::new()));
     let observed = loaded.clone();
-    let application = option_env!("QUENCH_NATIVE_APPLICATION");
+    let assets = embedded_modules();
+    let application = assets.entry;
     let mut argv = vec!["quench".into()];
     if let Some(application) = application { argv.push(application.into()); }
     let host = NodeHost::new(argv).with_exec_argv(Vec::new())?
@@ -26,10 +26,7 @@ fn run() -> Result<std::process::ExitCode, String> {
             observed.borrow_mut().insert(quench_runtime::NativeSourceKey::new(name, parts)?);
             Ok(Some(image))
         });
-    let host = match application {
-        Some(application) => host.with_commonjs_entry(application.into()),
-        None => host,
-    };
+    let host = host.with_embedded_modules(assets);
     // SAFETY: the same compiler invocation emits the entry metadata and object.
     let entry = unsafe { bind_entry() }?;
     let completion = quench_node::aot::execute_native(host, &entry)?;

@@ -8,6 +8,8 @@ use quench_runtime::{SnapshotReader, SnapshotWriter};
 impl NodeHost {
     pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         let Self {
+            #[cfg(feature = "aot")]
+            module_assets: _,
             // The installation and the process's own entry and environment.
             node_library_root: _,
             compile_cache: _,

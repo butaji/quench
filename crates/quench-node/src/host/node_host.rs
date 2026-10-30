@@ -36,6 +36,8 @@ pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quenc
 
 pub struct NodeHost {
     #[cfg(feature = "aot")]
+    pub(crate) module_assets: crate::aot::ModuleAssetState,
+    #[cfg(feature = "aot")]
     pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
     #[cfg(feature = "aot")]
     pub(crate) native_source_staging: Option<crate::aot::HostSourceDemands>,
@@ -453,6 +455,8 @@ impl NodeHost {
         let process_control = crate::modules::process_state::ProcessControl::new();
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
+            #[cfg(feature = "aot")]
+            module_assets: Default::default(),
             node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             #[cfg(feature = "aot")]

@@ -5,6 +5,24 @@ use quench_runtime::{HostScriptOptions, NativeJsCompiler, NativeSourceKey, emit_
 use std::path::Path;
 
 #[test]
+fn frozen_module_inputs_reject_conflicting_entries_without_changing_the_manifest() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench-assets-conflict-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, "throw 1;").unwrap();
+    let mut first = SourceManifest::default();
+    first.add_commonjs_graph(&entry).unwrap();
+    fs::write(&entry, "throw 2;").unwrap();
+    let mut second = SourceManifest::default();
+    second.add_commonjs_graph(&entry).unwrap();
+    assert!(first.extend(second).unwrap_err().contains("conflicting module input"));
+    assert_eq!(first.assets().files[&entry.canonicalize().unwrap()].bytes.as_ref(), b"throw 1;");
+    assert_eq!(first.units().len(), 1);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn source_keys_reject_unknown_or_noncanonical_shapes() {
     for parts in [
         vec!["specialized", "script", ""],
@@ -53,7 +71,7 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     let graph = manifest.add_commonjs_graph(&entry).unwrap();
     assert_eq!(graph.files.len(), 3);
     assert_eq!(manifest.units().len(), 2);
-    assert_eq!(graph.files[&entry.canonicalize().unwrap()].bytes, text.as_bytes());
+    assert_eq!(graph.files[&entry.canonicalize().unwrap()].bytes.as_ref(), text.as_bytes());
     assert!(graph.builtins.contains("node:path"));
     assert!(graph.requirements.iter().any(|edge| matches!(edge, GraphRequirement::DynamicRequire { .. })));
     assert_eq!(manifest.compile().unwrap().units.len(), 2);
@@ -126,7 +144,6 @@ fn bootstrap_images_link_and_execute_in_node_host() {
     let executable = directory.join("native-node-bootstrap");
     link_images(&inputs, &executable, count, None);
     let output = Command::new(&executable).env_clear()
-        .env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, &root)
         .current_dir(&directory).output().unwrap();
     assert!(output.status.success(), "stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8(output.stdout).unwrap(), format!("native Node bootstrap passed: {count} sources\n"));
@@ -160,6 +177,22 @@ fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path, 
     if let Some(application) = application { command.env("QUENCH_NATIVE_APPLICATION", application); }
     let link = command.output().unwrap();
     assert!(link.status.success(), "{}", String::from_utf8_lossy(&link.stderr));
+    #[cfg(unix)]
+    {
+        use std::collections::BTreeSet;
+        let symbols = Command::new("nm").arg("-g").arg(executable).output().unwrap();
+        assert!(symbols.status.success(), "{}", String::from_utf8_lossy(&symbols.stderr));
+        let actual: BTreeSet<String> = String::from_utf8(symbols.stdout).unwrap().lines().filter_map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            let symbol = fields.last()?.trim_start_matches('_');
+            (fields.len() >= 2 && fields[fields.len() - 2] == "T" && symbol.starts_with("quench_js_op_"))
+                .then(|| symbol.to_owned())
+        }).collect();
+        let expected: BTreeSet<String> = fs::read_to_string(inputs.required_exports()).unwrap().lines()
+            .filter(|symbol| symbol.starts_with("quench_js_op_")).map(str::to_owned).collect();
+        assert_eq!(actual, expected, "linked binary retained an unrequested semantic helper export");
+    }
+
 }
 
 #[test]
@@ -175,17 +208,32 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
     let directory = std::env::temp_dir().join(format!("quench-native-frameworks-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     for fixture in ["react-ssr.cjs", "react-ssr.cts", "next-route-generate.cjs", "next-route-generate.cts"] {
-        let entry = fixtures.join(fixture).canonicalize().unwrap();
+        let original_entry = fixtures.join(fixture).canonicalize().unwrap();
+        let mut original = SourceManifest::default();
+        let original_graph = original.add_commonjs_graph(&original_entry).unwrap();
+        let sdk = SourceManifest::capture_for_graph(&root, &original_graph).unwrap();
+        let source_directory = directory.join(format!("{fixture}-sources"));
+        let app_root = source_directory.join("app");
+        let sdk_root = source_directory.join("sdk");
+        fs::create_dir_all(&sdk_root).unwrap();
+        let original_app_root = fixtures.parent().unwrap().canonicalize().unwrap();
+        copy_graph_sources(&original_graph, &original_app_root, &app_root);
+        for (path, file) in &sdk.assets().files {
+            let copy = sdk_root.join(path.strip_prefix(&root).expect("SDK staging loaded an external application module"));
+            fs::create_dir_all(copy.parent().unwrap()).unwrap();
+            fs::write(copy, file.bytes.as_ref()).unwrap();
+        }
+        let entry = app_root.join(original_entry.strip_prefix(&original_app_root).unwrap()).canonicalize().unwrap();
         let mut manifest = SourceManifest::default();
         let graph = manifest.add_commonjs_graph(&entry).unwrap();
-        manifest.extend(SourceManifest::capture_for_graph(&root, &graph).unwrap());
+        manifest.extend(SourceManifest::capture_for_graph(&sdk_root, &graph).unwrap()).unwrap();
         eprintln!("native {fixture}: {} files, {} source units, {} requirements", graph.files.len(), manifest.units().len(), graph.requirements.len());
         let count = manifest.units().len();
         let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images"))).unwrap();
         let executable = directory.join(fixture);
         link_images(&inputs, &executable, count, Some(&entry));
         let run = |command: &mut Command| {
-            let output = command.env_clear().env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, &root)
+            let output = command.env_clear()
                 .env("NODE_ENV", "production").env("QUENCH_BENCH_ROUNDS", "20").env("QUENCH_BENCH_WARMUPS", "5")
                 .current_dir(&directory).output().unwrap();
             assert!(output.status.success(), "{fixture}: stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -194,9 +242,32 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
             json.as_object_mut().unwrap().remove("operationsPerSecond");
             json
         };
-        let native = run(&mut Command::new(&executable));
         let oracle = run(Command::new(&node).arg(&entry));
+        fs::remove_dir_all(&source_directory).unwrap();
+        assert!(!entry.exists() && !sdk_root.exists());
+        let native = run(&mut Command::new(&executable));
         assert_eq!(native, oracle, "{fixture}");
         eprintln!("native {fixture}: Node parity passed; executable={}", executable.display());
+    }
+}
+
+fn copy_graph_sources(graph: &quench_node::aot::DependencyGraph, original_root: &Path, target_root: &Path) {
+    use std::{collections::BTreeSet, fs};
+    let mut packages = BTreeSet::new();
+    for (path, file) in &graph.files {
+        let target = target_root.join(path.strip_prefix(original_root).unwrap());
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, file.bytes.as_ref()).unwrap();
+        let mut directory = path.parent();
+        while let Some(parent) = directory.filter(|parent| parent.starts_with(original_root)) {
+            let package = parent.join("package.json");
+            if package.is_file() { packages.insert(package); }
+            directory = parent.parent();
+        }
+    }
+    for package in packages {
+        let target = target_root.join(package.strip_prefix(original_root).unwrap());
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::copy(package, target).unwrap();
     }
 }
