@@ -650,6 +650,12 @@ macro_rules! opcodes {
         impl Op {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
+            #[cfg(feature = "aot")]
+            pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
+                match self {
+                    $(Self::$name => crate::native_js_operation_entry::<H, { Self::$name as usize }>),+
+                }
+            }
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
             const RESULT_LAYOUTS: [ResultLayout; Self::COUNT] = [$(
                 opcodes!(@result $result)),+

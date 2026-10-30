@@ -30,6 +30,13 @@ impl NativeJsOperands {
         &self.registers
     }
 
+    /// The host-native object representation; object emission targets this host.
+    #[cfg(feature = "aot")]
+    pub(super) fn append_native_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.registers.to_ne_bytes());
+        bytes.extend_from_slice(&self.immediate.to_ne_bytes());
+    }
+
     pub(super) fn instruction(&self, opcode: Op) -> WideInstruction {
         WideInstruction::new(
             opcode,

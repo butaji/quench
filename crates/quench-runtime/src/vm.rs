@@ -3,6 +3,8 @@ mod native_operands;
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
 pub(crate) mod native_object;
+#[cfg(feature = "aot")]
+pub(crate) mod native_graph;
 mod compiled;
 mod js_compiled;
 mod jit_backend;
@@ -3488,4 +3490,4 @@ enum StringConstantKey<'a> {
 }
 
 #[cfg(feature = "aot")]
-pub use compiled::native_js_operation_entry;
+pub use compiled::{NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for};

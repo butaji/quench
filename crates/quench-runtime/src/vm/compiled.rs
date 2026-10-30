@@ -1795,7 +1795,7 @@ pub(super) fn compile_js_general_dispatch(
     builder.switch_to_block(stopped_block);
     // A nonzero callout status has a rooted `JsStepDispatch` result in the
     // adapter payload. The status itself only tells the outer entry to stop.
-    let stopped = builder.ins().iconst(types::I32, 1);
+    let stopped = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
     builder.ins().return_(&[stopped]);
 
     builder.switch_to_block(invalid_pc);
@@ -1805,7 +1805,7 @@ pub(super) fn compile_js_general_dispatch(
         result_pointer,
         0,
     );
-    let out_of_range = builder.ins().iconst(types::I32, 2);
+    let out_of_range = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
     builder.ins().return_(&[out_of_range]);
 
     let register_offset = |register: u16| -> Option<i32> {
@@ -4642,7 +4642,7 @@ type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u
 
 /// The shared native-entry ABI used by compiled Wasm functions and JS OSR regions:
 /// (context, memory base, memory length, arguments or region inputs, result word) -> status.
-fn native_entry_signature(
+pub(super) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
@@ -5910,6 +5910,48 @@ struct StaticJsOperation<H: Host> {
         -> Result<StepResult, JsError>,
 }
 
+/// A statically selected semantic helper's C ABI. Operands use `NativeJsOperands`.
+#[cfg(feature = "aot")]
+pub type NativeJsOperationEntry = unsafe extern "C" fn(
+    *mut std::ffi::c_void, u64, *const u64, *mut u64,
+) -> i64;
+
+/// Resolve a compiler opcode identity to its derived semantic helper. The opcode
+/// inventory generates this mapping; linked entries never dispatch an opcode.
+#[cfg(feature = "aot")]
+pub fn native_js_operation_entry_for<H: Host>(opcode: usize) -> Option<NativeJsOperationEntry> {
+    Op::from_index(opcode).map(Op::native_semantic_entry::<H>)
+}
+
+#[cfg(feature = "aot")]
+pub(super) fn native_js_operation_signature(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+) -> Signature {
+    let pointer = isa.pointer_type();
+    let mut signature = Signature::new(isa.default_call_conv());
+    for parameter in [pointer, types::I64, pointer, pointer] {
+        signature.params.push(AbiParam::new(parameter));
+    }
+    signature.returns.push(AbiParam::new(types::I64));
+    signature
+}
+
+pub(super) const NATIVE_JS_STOPPED: u32 = 1;
+pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
+
+#[cfg(feature = "aot")]
+pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
+    let pointer = builder.func.signature.params[0].value_type;
+    let payload = builder.ins().load(
+        pointer, MemFlagsData::trusted(), context,
+        std::mem::offset_of!(CallContext, adapter_payload) as i32,
+    );
+    builder.ins().load(
+        types::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, start_pc) as i32,
+    )
+}
+
 /// Execute one compile-time-selected semantic operation and return its exact
 /// continuation. This entry never batches subsequent bytecodes.
 ///
@@ -6794,14 +6836,14 @@ impl CompiledJsFunction {
             }));
         }
         match status {
-            1 => {
+            NATIVE_JS_STOPPED => {
                 #[cfg(test)]
                 self.native_entries
                     .set(self.native_entries.get().saturating_add(1));
                 unsafe { (*payload.cast::<JsStepDispatch>()).outcome.take() }
                     .map(JsNativeDispatchResult::Step)
             }
-            2 => {
+            NATIVE_JS_INVALID_PC => {
                 let vm = unsafe { &mut *vm.cast::<Vm<H>>() };
                 let frame = vm.frames.get_mut(dispatch_frame)?;
                 if frame.registers.len() != register_count
@@ -14720,6 +14762,11 @@ mod tests {
     #[cfg(feature = "aot")]
     fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
         let program = crate::Engine::specialize(source, "semantic-entry.js").unwrap();
+        semantic_program(program)
+    }
+
+    #[cfg(feature = "aot")]
+    fn semantic_program(program: ResidualProgram) -> Vm<crate::test_host::TestHost> {
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         vm.initialize_for_snapshot(&program).unwrap();
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
@@ -14748,6 +14795,23 @@ mod tests {
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         entry: unsafe extern "C" fn(*mut std::ffi::c_void, u64, *const u64, *mut u64) -> i64,
     ) -> (i64, u64, Option<JsNativeStep>) {
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let body = program.function(0);
+        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let operands = super::super::NativeJsOperands::new(
+            instruction.a(), instruction.b(), instruction.c(), instruction.imm(),
+        );
+        with_semantic_context(vm, pc, |context, result| {
+            // SAFETY: the context owner roots the frame; operands and result live through this call.
+            unsafe { entry(context.cast(), pc as u64, operands.as_ptr(), result) }
+        })
+    }
+
+    #[cfg(feature = "aot")]
+    fn with_semantic_context(
+        vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
+        run: impl FnOnce(*mut CallContext, *mut u64) -> i64,
+    ) -> (i64, u64, Option<JsNativeStep>) {
         let frame = &mut vm.frames[0];
         let mut dispatch = JsStepDispatch {
             program_id: ProgramId::MAIN, frame: 0, allow_inline_calls: false, start_pc: pc,
@@ -14765,17 +14829,86 @@ mod tests {
         );
         context.vm = (vm as *mut Vm<crate::test_host::TestHost>).cast();
         context.program = ProgramId::MAIN;
-        let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let body = program.function(0);
-        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
-        let operands = super::super::NativeJsOperands::new(
-            instruction.a(), instruction.b(), instruction.c(), instruction.imm(),
-        );
         let mut result = 0;
-        // SAFETY: this test owns the initialized frame, VM, payload and result
-        // for the entire call, just as a linked native entry does.
-        let status = unsafe { entry((&mut context as *mut CallContext).cast(), pc as u64, operands.as_ptr(), &mut result) };
+        let status = run(&mut context, &mut result);
         (status, result, dispatch.outcome)
+    }
+
+    #[cfg(feature = "aot")]
+    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>) {
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let function = program.function(0);
+        let operands: Vec<_> = function.code.iter().copied().map(|packed| {
+            let instruction = super::super::dispatch_fast::decoded_instruction(function, packed);
+            super::super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
+        }).collect();
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut signature = None;
+        let native = super::super::native_graph::lower_function(function, 0, &*isa,
+            |builder, op, pc, context, result| {
+                let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
+                let target = op.native_semantic_entry::<crate::test_host::TestHost>() as usize;
+                let target = builder.ins().iconst(isa.pointer_type(), target as i64);
+                let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
+                let pc = builder.ins().iconst(types::I64, pc as i64);
+                let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
+                builder.inst_results(call)[0]
+            }).unwrap();
+        // No code size budget is needed by this focused publication check; the
+        // production object backend handles relocations instead of live addresses.
+        let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX)
+            .expect("native semantic graph compiles");
+        (memory, entry, operands)
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_semantic_graph_runs_root_branches_and_loops() {
+        let mut vm = semantic_vm("globalThis.count = 0; while (globalThis.count < 4) { globalThis.count++; } throw globalThis.count;");
+        let (_memory, entry, _operands) = live_native_graph(&vm);
+        let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
+            // SAFETY: the shared context, native code and operand data outlive this entry.
+            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+        });
+        assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
+        let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
+        assert_eq!(error.thrown_value(), Some(Value::number(4.0)));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_semantic_graph_rejects_full_width_invalid_resume_pc_before_effects() {
+        let mut vm = semantic_vm("globalThis.effect = 1;");
+        let (_memory, entry, _operands) = live_native_graph(&vm);
+        let invalid = (u64::from(u32::MAX) + 1) as usize;
+        let (status, word, outcome) = with_semantic_context(&mut vm, invalid, |context, result| {
+            // SAFETY: as above; the out-of-range PC is data, not a pointer.
+            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+        });
+        assert_eq!(status, i64::from(NATIVE_JS_INVALID_PC));
+        assert_eq!(word, invalid as u64);
+        assert!(outcome.is_none());
+        let effect = vm.lookup_atom("effect").unwrap();
+        assert_eq!(vm.own_property(vm.realm.globals, effect), None);
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_semantic_graph_does_not_trust_typescript_assertions() {
+        let program = crate::Engine::specialize_typescript(
+            "(globalThis as any).input = 'x' as unknown as number; throw (globalThis as any).input + 1;",
+            "native-assertion.cts",
+        ).unwrap();
+        let mut vm = semantic_program(program);
+        let (_memory, entry, _operands) = live_native_graph(&vm);
+        let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
+            // SAFETY: the rooted frame, compiled entry and operands live through the call.
+            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+        });
+        assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
+        let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
+        let value = error.thrown_value().expect("original thrown value");
+        assert_eq!(vm.heap.string(value).expect("JS string concatenation").to_string(), "x1");
     }
 
     #[cfg(feature = "aot")]

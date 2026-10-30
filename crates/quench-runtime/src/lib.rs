@@ -74,7 +74,8 @@ pub mod shared_backing;
 
 #[cfg(feature = "aot")]
 pub use vm::{
-    NativeJsOperands, native_js_operation_entry,
+    NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,
+    native_graph::{NativeJsModule, lower_native_js_module},
     native_object::{
         NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction,
         emit_native_module, emit_native_object,
