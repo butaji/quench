@@ -83,9 +83,9 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     let directory = std::env::temp_dir().join(format!("quench-native-graph-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("entry.cts");
-    let text = "\u{feff}#!/usr/bin/env node\nrequire('./dep'); require('./data.json'); const load = require; load('unknown'); const x: number = 42; console.error(x); throw x;";
+    let text = "\u{feff}require('./dep'); require('./data.json'); const load = require; load('unknown'); const x: number = 42; console.error(x); throw x;";
     fs::write(&entry, text).unwrap();
-    fs::write(directory.join("dep.js"), "require('./entry.cts'); module.exports = require('node:path');").unwrap();
+    fs::write(directory.join("dep.js"), "#!/usr/bin/env node\nrequire('./entry.cts'); module.exports = require('node:path');").unwrap();
     fs::write(directory.join("data.json"), "{\"answer\":42}").unwrap();
     let mut manifest = SourceManifest::default();
     let graph = manifest.add_commonjs_graph(&entry).unwrap();
@@ -96,6 +96,41 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     assert!(graph.builtins.contains("node:console"));
     assert!(graph.requirements.iter().any(|edge| matches!(edge, GraphRequirement::DynamicRequire { .. })));
     assert_eq!(manifest.compile().unwrap().units.len(), 2);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn commonjs_hashbang_and_bom_sources_match_node() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench source admission, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sources = ["\u{feff}module.exports=42;", "#!node\nmodule.exports=42;",
+        "#!node\rmodule.exports=42;", "#!node\r\nmodule.exports=42;",
+        "#!node\u{2028}module.exports=42;", "#!node\u{2029}module.exports=42;",
+        "\u{feff}#!node\nmodule.exports=42;"];
+    for (index, source) in sources.iter().enumerate() {
+        fs::write(directory.join(format!("input{index}.cjs")), source).unwrap();
+    }
+    let entry = directory.join("runner.cjs");
+    fs::write(&entry, format!(r#"
+const Module = require('module');
+const sources = {sources};
+function outcome(action) {{ try {{ return ['ok',action()]; }} catch(error) {{ return [error.name,error.message]; }} }}
+console.log(JSON.stringify({{
+  compiled: sources.map(source => outcome(() => {{ const module=new Module(); module._compile(source,__filename); return module.exports; }})),
+  loaded: sources.map((source,index) => outcome(() => require('./input'+index+'.cjs')))
+}}));
+"#, sources = serde_json::to_string(&sources).unwrap())).unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    for jit in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        if jit { command.arg("--jit"); }
+        let actual = command.arg(&entry).output().unwrap();
+        assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, oracle.stdout);
+        assert_eq!(actual.stderr, oracle.stderr);
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -333,6 +368,34 @@ main().catch(error => {{ console.error(error); process.exitCode = 1; }});
     assert_eq!(report["bytecode_interpreter"], false);
     assert_eq!(report["js_source_frontend"], false);
     eprintln!("Wasm validation/module metadata matched Node after source removal: {}", binary.display());
+}
+
+#[test]
+#[ignore = "explicit pooled source identity and reflection qualification"]
+fn compile_command_preserves_pooled_source_reflection() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench pooled sources, {}", std::process::id()));
+    let sources = directory.join("sources");
+    fs::create_dir_all(&sources).unwrap();
+    let entry = sources.join("entry.cjs");
+    fs::write(&entry, "\u{feff}const fn = require('./dep.cjs');\r\nconsole.log(JSON.stringify({text:fn.toString(),name:fn.name,length:fn.length,value:fn('x'),json:require('./data.json')}));\r\n").unwrap();
+    fs::write(sources.join("dep.cjs"), "#!/usr/bin/env node\r\nmodule.exports = function λ(value) { /* 🦀 */\r\n  return value + 'λ';\r\n};\r\n").unwrap();
+    fs::write(sources.join("data.json"), "\u{feff}{\"λ\":\"🦀\"}\r\n").unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let binary = directory.join("program");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&binary)
+        .args(["--profile", "iteration", "--sdk-report"]).arg(sdk).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    fs::remove_dir_all(sources).unwrap();
+    let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, oracle.stdout);
+    assert_eq!(native.stderr, oracle.stderr);
+    eprintln!("Pooled UTF-8, BOM, CRLF, function reflection and JSON matched Node after source removal: {}", binary.display());
 }
 
 fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path) {

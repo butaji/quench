@@ -3977,6 +3977,11 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// Original compiler text used by diagnostics and Function.prototype.toString.
+    pub fn source_text(&self) -> Option<&str> {
+        self.source.as_ref().map(|source| source.text.as_ref())
+    }
+
     /// Resolve source-derived native error descriptions before publication.
     #[cfg(feature = "aot")]
     pub fn freeze_native_diagnostics(&self) {

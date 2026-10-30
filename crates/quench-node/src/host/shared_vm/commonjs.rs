@@ -2979,13 +2979,13 @@ fn load_with_resolution(
             std::borrow::Cow::Borrowed(text) => Some(script_body(text)),
             std::borrow::Cow::Owned(_) => None,
         };
-        let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
+        let text = file_text.as_ref();
         match filename
             .extension()
             .and_then(|extension| extension.to_str())
         {
             Some("json") => {
-                let exports = context.parse_json_rooted(text)?;
+                let exports = context.parse_json_rooted(text.strip_prefix('\u{feff}').unwrap_or(text))?;
                 set(context, module, "exports", exports)?;
             }
             Some("mjs") => {
@@ -3223,12 +3223,11 @@ fn load_es_module(
     Ok(exports)
 }
 
-/// A CommonJS module's executed text: its file without a byte-order mark or a leading
-/// `#!` line, which keeps the line terminator so positions stay on their lines.
+/// A CommonJS module's executed text without its initial hashbang comment. Keep
+/// terminators and BOM whitespace: a BOM before `#!` is not a hashbang in Node.
 pub(crate) fn script_body(text: &str) -> &str {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     if text.starts_with("#!") {
-        text.find('\n').map_or("", |end| &text[end..])
+        text.find(oxc_syntax::line_terminator::is_line_terminator).map_or("", |end| &text[end..])
     } else {
         text
     }
@@ -3284,8 +3283,7 @@ pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[
     let filename = args.get(1).copied().unwrap_or_else(|| context.undefined());
     let content = context.string_text(content)?.ok_or_else(|| RootedError::host("Module._compile content must be a string"))?;
     let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
-    let text = content.as_str();
-    let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
+    let text = script_body(content.as_str());
     let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false, false)?;
     let exports = get(context, module, "exports")?;

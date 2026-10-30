@@ -17,13 +17,24 @@ pub use compiler::{SourceManifest, CompiledSource, CompiledSources, NativeImageI
 #[cfg(feature = "aot")]
 pub(crate) use compiler::{HostSourceDemands, stage_host_sources};
 
+/// One compiler-owned UTF-8 pool; all ranges retain their exact original text.
+#[macro_export]
+macro_rules! linked_source_pool {
+    ($lookup:ident, $path:literal) => {
+        const fn $lookup(start: usize, len: usize) -> &'static str {
+            const TEXT: &str = include_str!($path);
+            TEXT.split_at(start).1.split_at(len).0
+        }
+    };
+}
+
 /// Bind the compiler's metadata and static entry tables for NodeHost. The
 /// generated invocation contains only data; this macro owns the loading rules.
 #[macro_export]
 macro_rules! linked_native_sources {
     (entry $entry:ident: $entry_symbol:ident => ($entry_link:literal, $entry_metadata:literal);
      resolver $resolve:ident {
-         $($symbol:ident => ($link:literal, $metadata:literal, $name:literal, [$($part:literal),*]),)*
+         $($symbol:ident => ($link:literal, $metadata:literal, $name:literal, [$($part:expr),*] $(, source $source:expr)?),)*
      }) => {
         pub const NATIVE_SOURCE_COUNT: usize = (&[$(stringify!($symbol)),*] as &[&str]).len();
         /// # Safety
@@ -42,13 +53,15 @@ macro_rules! linked_native_sources {
             $(if name == $name && parts == [$($part),*] {
                 unsafe extern "C" { #[link_name = $link] static $symbol: u8; }
                 let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($metadata)[..]);
-                let program = namespace.decode(bytes)?;
+                let program = $crate::linked_native_sources!(@decode namespace, bytes $(, $source)?)?;
                 // SAFETY: as above, including the compiler-wide atom namespace.
                 return unsafe { quench_runtime::NativeJsProgram::from_linked_image(program, std::ptr::addr_of!($symbol)) }.map(Some);
             })*
             Ok(None)
         }
     };
+    (@decode $namespace:ident, $bytes:ident) => { $namespace.decode($bytes) };
+    (@decode $namespace:ident, $bytes:ident, $source:expr) => { $namespace.decode_with_static_source($bytes, $source) };
 }
 
 /// Derive a static loader archive from compiler-owned raw inputs and edges.
@@ -61,14 +74,31 @@ macro_rules! linked_module_assets {
     } views {
         $(($view_path:literal, $view_key:literal) => $view_source:literal,)*
     }) => {
+        $crate::linked_module_assets! {
+            values $factory; root $root; entry $entry; files {
+                $($path => (bytes include_bytes!($bytes), $kind, $prepared),)*
+            } resolutions {
+                $(($parent, $specifier) => $target,)*
+            } views {
+                $(($view_path, $view_key) => source include_str!($view_source),)*
+            }
+        }
+    };
+    (values $factory:ident; root $root:expr; entry $entry:expr; files {
+        $($path:literal => (bytes $bytes:expr, $kind:ident, $prepared:expr),)*
+    } resolutions {
+        $(($parent:literal, $specifier:literal) => $target:literal,)*
+    } views {
+        $(($view_path:literal, $view_key:literal) => source $view_source:expr,)*
+    }) => {
         pub fn $factory() -> &'static $crate::aot::EmbeddedModules {
             static MODULES: $crate::aot::EmbeddedModules = $crate::aot::EmbeddedModules {
                 node_root: $root, entry: $entry,
                 files: &[$($crate::aot::EmbeddedModuleFile {
-                    path: $path, bytes: include_bytes!($bytes), kind: quench_runtime::SourceKind::$kind, prepared: $prepared,
+                    path: $path, bytes: $bytes, kind: quench_runtime::SourceKind::$kind, prepared: $prepared,
                 },)*],
                 resolutions: &[$($crate::aot::EmbeddedModuleResolution { parent: $parent, specifier: $specifier, target: $target },)*],
-                views: &[$($crate::aot::EmbeddedSourceView { path: $view_path, key: $view_key, source: include_str!($view_source) },)*],
+                views: &[$($crate::aot::EmbeddedSourceView { path: $view_path, key: $view_key, source: $view_source },)*],
             };
             &MODULES
         }
