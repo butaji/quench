@@ -5902,15 +5902,15 @@ fn run_js_native_entry<H: Host>(
 }
 
 impl JsStepDispatch {
-    fn new<H: Host>(vm: &Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize, allow_inline_calls: bool) -> Self {
-        let activation = &vm.frames[frame];
+    fn new<H: Host>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize, allow_inline_calls: bool) -> Self {
+        let activation = &mut vm.frames[frame];
         let mut dispatch = Self {
             program_id, frame, allow_inline_calls, start_pc,
             #[cfg(feature = "aot")]
             stop_pc: None,
-            native_registers: activation.registers.as_ptr().cast_mut(),
+            native_registers: activation.registers.as_mut_ptr(),
             register_count: activation.registers.len(),
-            native_locals: activation.locals.as_ptr().cast_mut(),
+            native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0,
             array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
@@ -14985,6 +14985,21 @@ mod tests {
         let value = error.thrown_value().unwrap();
         assert_eq!(vm.heap.string(value).unwrap().to_string(), "pbr");
         assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_terminal_calls_preserve_constructor_results_and_order() {
+        for typescript in [false, true] {
+            let (native, counts, _) = linked_test_program(
+                "let trace = ''; function add(x) { trace += 'a'; return x + 1; } function wrap(x) { trace += 'w'; return add(x); } function Box(x) { trace += 'b'; this.value = wrap(x); } let box = new Box(41); if (Object.getPrototypeOf(box) !== Box.prototype || box.value !== 42 || trace !== 'bwa') throw 'bad construction'; throw box.value;",
+                typescript,
+            );
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected result throw") };
+            assert_eq!(error.thrown_value(), Some(Value::number(42.0)));
+            assert!(counts.iter().all(|count| count.get() > 0));
+        }
     }
 
     #[cfg(feature = "aot")]
