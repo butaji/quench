@@ -2876,8 +2876,11 @@ pub enum ExecutionMode {
 }
 
 impl ExecutionMode {
+    // Expose the build capability to callers in host crates, so unavailable
+    // fallback branches cannot retain an interpreter or source compiler.
+    #[inline(always)]
     pub(super) fn allows_dynamic_execution(self) -> bool {
-        match self {
+        crate::DYNAMIC_EXECUTION_ENABLED && match self {
             Self::Interpreted | Self::Compiled => true,
             #[cfg(feature = "native-execution")]
             Self::NativeOnly => false,

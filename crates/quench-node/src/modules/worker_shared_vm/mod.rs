@@ -11,6 +11,9 @@ mod js;
 mod ports;
 mod thread;
 
+#[cfg(feature = "native-execution")]
+pub(crate) const NATIVE_ENTRY_UNAVAILABLE: &str = "native worker entry is not linked into this image";
+
 use crate::host::NodeHost;
 use ports::{Endpoint, Message};
 use quench_runtime::{NativeContext, RootId, RootedError};

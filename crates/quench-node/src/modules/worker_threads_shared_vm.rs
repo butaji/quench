@@ -538,6 +538,10 @@ pub(crate) fn construct(
         .spawn(move || {
             let report = up_tx.clone();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                #[cfg(feature = "native-execution")]
+                if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+                    return Err(Failure::host(super::worker_shared_vm::NATIVE_ENTRY_UNAVAILABLE.into()));
+                }
                 let mut host = NodeHost::new(argv);
                 host.node_library_root = child_library;
                 let (program_source, program_name, kind, eval_script) = if let Some(path) =

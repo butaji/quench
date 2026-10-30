@@ -176,6 +176,10 @@ impl<H: Host> Runtime<H> {
         &mut self,
         request: ExecutionRequest<'_>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED {
+            return Err(vec![Diagnostic::unsupported(request.name,
+                "native guest code required: entry source compilation is unavailable")]);
+        }
         let goal = match request.kind {
             SourceKind::Script => "script",
             SourceKind::Module => "module",

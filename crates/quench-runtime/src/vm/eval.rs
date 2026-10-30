@@ -61,8 +61,9 @@ fn only_trivia(source: &str) -> bool {
 
 
 impl<H: Host> Vm<H> {
+    #[inline(always)]
     pub(super) fn require_source_compilation(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        if crate::SOURCE_COMPILATION_ENABLED && self.execution_mode.allows_dynamic_execution() {
+        if self.execution_mode.allows_dynamic_execution() {
             Ok(())
         } else {
             Err(self.type_error(p, "native guest code required: source compilation is unavailable".into()))

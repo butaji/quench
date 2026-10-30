@@ -326,6 +326,20 @@ pub(super) fn checked_output(command: &mut Command, operation: &str) -> Result<V
     Ok(output.stdout)
 }
 
+const BACKEND_COMPILER_SYMBOLS: &[&str] = &[
+    "cranelift_native", "cranelift_object", "cranelift_module", "target_isa_for",
+];
+const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
+    "FunctionCompiler", "specialize_host_script", "specialize_with_mode",
+    "specialize_module_with_atom_prefix", "specialize_eval_with_context",
+    "specialize_function_constructor",
+];
+
+fn is_compiler_symbol(symbol: &str) -> bool {
+    BACKEND_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name))
+        || (symbol.contains("quench_runtime") && JS_SOURCE_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name)))
+}
+
 fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<String>, String> {
     let bytes = checked_output(Command::new("nm").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
@@ -335,15 +349,7 @@ fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<Strin
         let Some(symbol) = fields.next() else {
             continue;
         };
-        if [
-            "cranelift_native",
-            "cranelift_object",
-            "cranelift_module",
-            "target_isa_for",
-        ]
-        .iter()
-        .any(|name| symbol.contains(name))
-        {
+        if is_compiler_symbol(symbol) {
             return Err(format!("native image retained a compiler symbol: {symbol}"));
         }
         let symbol = symbol.trim_start_matches('_');
@@ -368,6 +374,26 @@ fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiler_audit_distinguishes_source_lowering_from_execution_analysis() {
+        for symbol in [
+            "quench_runtime::compile::Engine::specialize_host_script",
+            "quench_runtime::compile::ast::FunctionCompiler::compile",
+            "quench_runtime::compile::Engine::specialize_module_with_atom_prefix",
+            "cranelift_native::target_isa_for",
+        ] {
+            assert!(is_compiler_symbol(symbol), "{symbol}");
+        }
+        for symbol in [
+            "quench_runtime::compile::liveness::register_roots",
+            "quench_runtime::compile::regexp::validate_pattern_text",
+            "quench_runtime::compile::program_profile::ProgramFootprint",
+            "quench_node::specialize_host_script",
+        ] {
+            assert!(!is_compiler_symbol(symbol), "{symbol}");
+        }
+    }
 
     #[test]
     fn support_reports_reject_dynamic_backends_and_the_full_sdk_bundle() {

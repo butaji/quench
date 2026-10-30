@@ -92,11 +92,11 @@ pub use vm::{
 pub use compile::{NativeJsCompiler, NativeSourceKey};
 pub use compile::HostScriptOptions;
 
-/// Execution may invoke the source compiler in ordinary builds and producers.
-/// Execution-only native support consumes complete archived records instead.
-pub(crate) const SOURCE_COMPILATION_ENABLED: bool = cfg!(any(
+/// Ordinary builds and producers support dynamic compilation and execution.
+/// Execution-only native support requires linked code and archived records.
+pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
     not(feature = "native-execution"), feature = "jit", feature = "aot"
 ));
 
 #[cfg(feature = "native-execution")]
-pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !SOURCE_COMPILATION_ENABLED;
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;

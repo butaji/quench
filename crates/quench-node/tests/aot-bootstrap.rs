@@ -191,6 +191,38 @@ fn pinned_support_report() -> String {
     }).collect::<Vec<_>>().join("\n")
 }
 
+#[test]
+#[ignore = "explicit execution-only SDK admission check"]
+fn execution_only_support_rejects_source_and_unlinked_code_in_every_mode() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-sdk-admission-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let program = directory.join("unlinked.qbc");
+    quench_runtime::Engine::specialize("print('UNLINKED_EXECUTED');", "unlinked.js")
+        .unwrap().write_binary(&program).unwrap();
+    let support = quench_node::aot::NativeSupport::from_cargo_report(&pinned_support_report()).unwrap().report();
+    let runtime = Path::new(support["runtime_library"].as_str().unwrap());
+    let executable = directory.join("sdk-admission");
+    let mut compiler = Command::new("rustc");
+    compiler.args(["--edition=2024", "-C", "panic=abort", "-C", "debuginfo=0"])
+        .arg("-C").arg(format!("opt-level={}", support["optimization_level"].as_str().unwrap()))
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/execution-only.rs"))
+        .arg("--extern").arg(format!("quench_runtime={}", runtime.display()))
+        .arg("-L").arg(format!("dependency={}", runtime.parent().unwrap().display()))
+        .arg("-o").arg(&executable);
+    if support["rust_lto"] == true { compiler.arg("-C").arg("lto=thin"); }
+    for path in support["native_search_paths"].as_array().unwrap() {
+        compiler.arg("-L").arg(path.as_str().unwrap());
+    }
+    let output = compiler.output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let output = Command::new(executable).arg(program).env_clear().output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout, b"execution-only support rejects source and unlinked code in every mode\n");
+    assert!(output.stderr.is_empty());
+    fs::remove_dir_all(directory).unwrap();
+}
+
 fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path) {
     let support = quench_node::aot::NativeSupport::from_cargo_report(&pinned_support_report()).unwrap();
     support.link(inputs, &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/driver.rs"), executable).unwrap();
@@ -252,6 +284,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
         assert_eq!(report["status"], "compiled");
         assert_eq!(report["execution_mode"], "native_only");
+        assert_eq!(report["source_compilation"], false);
         assert_eq!(report["requested_support_profile"], profile);
         assert_eq!(report["payload_minimal"], false);
         assert!(report["sdk_source_views"].as_u64().unwrap() > 0);
