@@ -17,6 +17,8 @@ path = "src/bin/quench.rs"
 
 [features]
 default = []
+# Build-time native object publication; not needed by the execution-only host.
+aot = ["dep:cranelift-object", "dep:cranelift-module"]
 profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
@@ -65,6 +67,8 @@ wasmparser = "0.247"
 cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std", "host-arch"] }
 cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
 cranelift-native = { version = "=0.134.3", default-features = false }
+cranelift-object = { version = "=0.134.3", default-features = false, optional = true }
+cranelift-module = { version = "=0.134.3", default-features = false, features = ["std"], optional = true }
 libc = "0.2"
 # fdlibm atan is part of the shared binary64 Math rounding policy.
 libm = "=0.2.16"

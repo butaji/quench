@@ -71,3 +71,6 @@ mod subset_tests;
 pub mod owned_clone;
 
 pub mod shared_backing;
+
+#[cfg(feature = "aot")]
+pub use vm::native_object::{NativeFunction, NATIVE_FUNCTION_NAMESPACE, emit_native_object};

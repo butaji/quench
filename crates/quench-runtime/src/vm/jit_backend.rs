@@ -17,11 +17,26 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
 const VERIFY_IR: bool = cfg!(debug_assertions);
 
+/// Publication determines relocation policy, not language semantics or lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum CodePublication {
+    ExecutableMemory,
+    #[cfg(feature = "aot")]
+    RelocatableObject,
+}
+
 pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
-    type IsaCache = HashMap<String, Arc<TargetIsa>>;
+    target_isa_for(opt_level, CodePublication::ExecutableMemory)
+}
+
+pub(super) fn target_isa_for(
+    opt_level: &str,
+    publication: CodePublication,
+) -> Option<Arc<TargetIsa>> {
+    type IsaCache = HashMap<(String, CodePublication), Arc<TargetIsa>>;
     static CACHE: OnceLock<Mutex<IsaCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = opt_level.to_owned();
+    let key = (opt_level.to_owned(), publication);
     let mut entries = cache.lock().ok()?;
     if let Some(isa) = entries.get(&key) {
         return Some(Arc::clone(isa));
@@ -29,6 +44,16 @@ pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
 
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
+    flags
+        .set(
+            "is_pic",
+            match publication {
+                CodePublication::ExecutableMemory => "false",
+                #[cfg(feature = "aot")]
+                CodePublication::RelocatableObject => "true",
+            },
+        )
+        .ok()?;
     flags
         .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })
         .ok()?;
@@ -72,7 +97,7 @@ pub(super) fn compile_function<T>(
     max_code_bytes: Option<usize>,
     consume: impl FnOnce(
         &cranelift_codegen::CompiledCode,
-        &cranelift_codegen::ir::function::FunctionParameters,
+        &cranelift_codegen::ir::Function,
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
     let mut context = cranelift_codegen::Context::for_function(function);
@@ -95,7 +120,7 @@ pub(super) fn compile_function<T>(
     }
     consume(
         context.compiled_code().expect("successful compilation"),
-        &context.func.params,
+        &context.func,
     )
 }
 
@@ -139,7 +164,7 @@ mod tests {
     #[test]
     fn symbolic_calls_survive_compilation() {
         let isa = target_isa("speed").expect("host target");
-        compile_function(function(&*isa, true), &*isa, None, |compiled, params| {
+        compile_function(function(&*isa, true), &*isa, None, |compiled, function| {
             assert!(!compiled.buffer.relocs().is_empty());
             assert!(compiled.buffer.relocs().iter().any(|relocation| {
                 let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
@@ -148,7 +173,8 @@ mod tests {
                 else {
                     return false;
                 };
-                params
+                function
+                    .params
                     .user_named_funcs()
                     .get(name)
                     .is_some_and(|name| name.namespace == 0 && name.index == 1)

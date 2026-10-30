@@ -513,10 +513,48 @@ pub(super) fn compile_js_numeric_region(
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
     int32_bitwise: bool,
 ) -> Option<super::js_compiled::JsJitArtifact> {
+    let isa = super::jit_backend::target_isa("speed")?;
+    let native = lower_js_numeric_region(
+        program,
+        function_id,
+        captures,
+        numeric_field_inputs,
+        int32_bitwise,
+        &*isa,
+    )?;
+    let params = usize::from(program.function_get(function_id as usize)?.params);
+    let code = compile_native_function(
+        native,
+        &*isa,
+        super::js_compiled::MAX_CODE_BYTES,
+        |code| Some(code.to_vec()),
+    )
+    .ok()?;
+    Some(super::js_compiled::JsJitArtifact {
+        code,
+        params,
+        requires_signed_int32_arguments: int32_bitwise,
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
+        field_argument,
+        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
+        capture_arguments: captures.to_vec(),
+        general_dispatch_native_pcs: Vec::new(),
+    })
+}
+
+/// Residualize numeric semantics without choosing executable-memory or object
+/// publication. Callers establish the argument/capture guards before entry.
+pub(super) fn lower_js_numeric_region(
+    program: &ResidualProgram,
+    function_id: u32,
+    captures: &[super::js_compiled::JsJitCaptureArgument],
+    numeric_field_inputs: Option<&[super::js_compiled::JsJitNumericFieldInput]>,
+    int32_bitwise: bool,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+) -> Option<ir::Function> {
     let function = program.function_get(function_id as usize)?;
     let (reachable, predecessors) = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed")?;
 
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
@@ -902,40 +940,7 @@ pub(super) fn compile_js_numeric_region(
 
     body.builder.seal_all_blocks();
     body.into_builder().finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = match context.compile(
-        &*isa,
-        &mut cranelift_codegen::control::ControlPlane::default(),
-    ) {
-        Ok(compiled) => compiled,
-        Err(_error) => {
-            #[cfg(test)]
-            eprintln!("general JS dispatch Cranelift rejection: {_error:?}");
-            return None;
-        }
-    };
-    if !compiled.buffer.relocs().is_empty() {
-        #[cfg(test)]
-        eprintln!("general JS dispatch has unresolved relocations");
-        return None;
-    }
-    let code = compiled.code_buffer();
-    if code.is_empty() || code.len() > super::js_compiled::MAX_CODE_BYTES {
-        #[cfg(test)]
-        eprintln!("general JS dispatch code exceeds its size budget");
-        return None;
-    }
-    let code = code.to_vec();
-    Some(super::js_compiled::JsJitArtifact {
-        code,
-        params,
-        requires_signed_int32_arguments: int32_bitwise,
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
-        field_argument,
-        numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
-        capture_arguments: captures.to_vec(),
-        general_dispatch_native_pcs: Vec::new(),
-    })
+    Some(native)
 }
 
 /// Compile a general JavaScript native dispatch loop. It carries the validated
@@ -10856,9 +10861,9 @@ fn compile_built(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     func: ir::Function,
 ) -> Option<(Vec<u8>, Vec<Call>)> {
-    super::jit_backend::compile_function(func, isa, None, |compiled, params| {
+    super::jit_backend::compile_function(func, isa, None, |compiled, function| {
         let code = compiled.code_buffer().to_vec();
-        let names = params.user_named_funcs();
+        let names = function.params.user_named_funcs();
         let calls = compiled.buffer
             .relocs()
             .iter()

@@ -1,3 +1,5 @@
+#[cfg(feature = "aot")]
+pub(crate) mod native_object;
 mod compiled;
 mod js_compiled;
 mod jit_backend;
