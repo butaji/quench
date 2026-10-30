@@ -139,6 +139,20 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Execute an entry whose known functions are already native, retaining its
+    /// code owner for closures and jobs that outlive this call.
+    #[cfg(feature = "aot")]
+    pub fn execute_native(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        self.vm.execute_native_program(program, true).map(drop)
+    }
+
+    /// Run a native entry while leaving jobs queued for the host event loop's
+    /// checkpoints, just as `execute_deferred_jobs` does for a residual entry.
+    #[cfg(feature = "aot")]
+    pub fn execute_native_deferred_jobs(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        self.vm.execute_native_program(program, false).map(drop)
+    }
+
     /// Evaluate each `(source, name)` as a global Script of the entry's realm,
     /// in order, then execute the entry. A module entry and the modules it
     /// loads observe the scripts' global bindings, as with host-run harnesses.

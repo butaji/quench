@@ -5823,6 +5823,8 @@ struct JsStepDispatch {
     frame: usize,
     allow_inline_calls: bool,
     start_pc: usize,
+    #[cfg(feature = "aot")]
+    stop_pc: Option<usize>,
     native_registers: *mut Value,
     register_count: usize,
     native_locals: *mut Value,
@@ -5853,7 +5855,76 @@ struct JsStepDispatch {
     outcome: Option<JsNativeStep>,
 }
 
+/// The frame/register/root and exception boundary shared by JIT and linked entries.
+fn run_js_native_entry<H: Host>(
+    entry: Entry, vm: *mut Vm<H>, program: ProgramId, payload: *mut (),
+    interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
+    native_pcs: &[u8],
+) -> Option<(u32, u64)> {
+    let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
+    context.vm = vm.cast();
+    context.program = program;
+    context.callout = js_step_callout::<H> as Callout as usize;
+    let constants = unsafe { &(*vm.cast::<Vm<H>>()).programs }.constants(program);
+    context.js_constants = constants.as_ptr();
+    context.js_constant_count = constants.len();
+    let (native_registers, native_locals, local_count) = unsafe {
+        let dispatch = &mut *payload.cast::<JsStepDispatch>();
+        dispatch.native_pcs = native_pcs.as_ptr();
+        dispatch.native_pc_count = native_pcs.len();
+        (dispatch.native_registers, dispatch.native_locals, dispatch.local_count)
+    };
+    // Frame registers and locals are the canonical tagged homes and remain
+    // rooted while native code runs. Callouts keep only raw pointers; they
+    // must not hold a Rust slice across `Vm::step` or re-entrant calls.
+    let locals = native_locals.cast::<u64>();
+    let arguments = native_registers.cast::<u64>();
+    let mut word = 0u64;
+    // SAFETY: the function's bytecode, frame and adapter payload outlive
+    // the native dispatch. The callout writes only `word` and its payload.
+    let status = unsafe {
+        enter_native(
+            &mut context,
+            locals as u64,
+            u64::try_from(local_count).unwrap_or(u64::MAX),
+            arguments,
+            &mut word,
+            NativeEntryMode::Resumable,
+            entry,
+        )
+    };
+    match context.raised.take() {
+        Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
+        Some(Raised::Error(_)) => return None,
+        None => {}
+    }
+    Some((status, word))
+}
+
 impl JsStepDispatch {
+    fn new<H: Host>(vm: &Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize, allow_inline_calls: bool) -> Self {
+        let activation = &vm.frames[frame];
+        let mut dispatch = Self {
+            program_id, frame, allow_inline_calls, start_pc,
+            #[cfg(feature = "aot")]
+            stop_pc: None,
+            native_registers: activation.registers.as_ptr().cast_mut(),
+            register_count: activation.registers.len(),
+            native_locals: activation.locals.as_ptr().cast_mut(),
+            local_count: activation.locals.len(),
+            native_pcs: std::ptr::null(), native_pc_count: 0,
+            array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
+            field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            stores_specialized: 0,
+            #[cfg(test)]
+            island_steps: 0,
+            #[cfg(test)]
+            global_name_cache_hits: 0,
+            outcome: None,
+        };
+        dispatch.refresh_heap_bases(vm);
+        dispatch
+    }
     /// Reads the heap bases generated code uses again, after anything that may have grown,
     /// compacted or replaced them.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
@@ -6003,6 +6074,15 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
         let body = program
             .function_get(vm.frames[dispatch.frame].function as usize)
             .ok_or_else(|| JsError::validation("native JS function is missing".into()))?;
+        #[cfg(feature = "aot")]
+        if SINGLE_OPERATION && dispatch.stop_pc == Some(pc) {
+            let frame = &mut vm.frames[dispatch.frame];
+            frame.pc = pc;
+            frame.pc_is_resume = true;
+            return Ok(JsCalloutStep::Stop(JsNativeStep {
+                instruction_pc: pc, next_pc: pc, result: Ok(StepResult::Continue),
+            }));
+        }
         let packed = *body
             .code
             .get(pc)
@@ -6755,52 +6835,12 @@ impl CompiledJsFunction {
         let CompiledJsEntry::GeneralDispatch(entry) = self.entry else {
             return None;
         };
-        let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
-        context.vm = vm.cast();
-        context.program = program;
-        context.callout = js_step_callout::<H> as Callout as usize;
-        let constants = unsafe { &(*vm.cast::<Vm<H>>()).programs }.constants(program);
-        context.js_constants = constants.as_ptr();
-        context.js_constant_count = constants.len();
-        let dispatch_frame = unsafe { (*payload.cast::<JsStepDispatch>()).frame };
-        let (native_registers, register_count, native_locals, local_count) = unsafe {
-            let vm = &mut *vm.cast::<Vm<H>>();
-            let frame = vm.frames.get_mut(dispatch_frame)?;
-            (
-                frame.registers.as_mut_ptr(),
-                frame.registers.len(),
-                frame.locals.as_mut_ptr(),
-                frame.locals.len(),
-            )
-        };
-        unsafe {
-            let dispatch = &mut *payload.cast::<JsStepDispatch>();
-            dispatch.native_registers = native_registers;
-            dispatch.register_count = register_count;
-            dispatch.native_locals = native_locals;
-            dispatch.local_count = local_count;
-            dispatch.native_pcs = self.general_dispatch_native_pcs.as_ptr();
-            dispatch.native_pc_count = self.general_dispatch_native_pcs.len();
-        }
-        // Frame registers and locals are the canonical tagged homes and remain
-        // rooted while native code runs. Callouts keep only raw pointers; they
-        // must not hold a Rust slice across `Vm::step` or re-entrant calls.
-        let locals = native_locals.cast::<u64>();
-        let arguments = native_registers.cast::<u64>();
-        let mut word = 0u64;
-        // SAFETY: the function's bytecode, frame and adapter payload outlive
-        // the native dispatch. The callout writes only `word` and its payload.
-        let status = unsafe {
-            enter_native(
-                &mut context,
-                locals as u64,
-                u64::try_from(local_count).unwrap_or(u64::MAX),
-                arguments,
-                &mut word,
-                NativeEntryMode::Resumable,
-                entry,
-            )
-        };
+        let (status, word) = run_js_native_entry(entry, vm, program, payload, interrupt, poll_page, &self.general_dispatch_native_pcs)?;
+        // The payload retains the pre-entry register homes for storage-change recovery.
+        let dispatch = unsafe { &*payload.cast::<JsStepDispatch>() };
+        let dispatch_frame = dispatch.frame;
+        let register_count = dispatch.register_count;
+        let native_registers = dispatch.native_registers;
         #[cfg(test)]
         self.general_dispatch_island_steps.set(
             self.general_dispatch_island_steps
@@ -6815,12 +6855,6 @@ impl CompiledJsFunction {
                     (*payload.cast::<JsStepDispatch>()).global_name_cache_hits
                 }),
         );
-        if let Some(Raised::Panic(panic)) = context.raised.take() {
-            std::panic::resume_unwind(panic);
-        }
-        if let Some(Raised::Error(_)) = context.raised.take() {
-            return None;
-        }
         if let Some(instruction_pc) = status
             .checked_sub(JS_GENERAL_RETURN_STATUS_BASE)
             .and_then(|pc| usize::try_from(pc).ok())
@@ -12348,32 +12382,7 @@ impl<H: Host> Vm<H> {
             }
         }?;
 
-        let mut dispatch = JsStepDispatch {
-            program_id,
-            frame,
-            allow_inline_calls,
-            start_pc,
-            native_registers: std::ptr::null_mut(),
-            register_count: 0,
-            native_locals: std::ptr::null_mut(),
-            local_count: 0,
-            native_pcs: std::ptr::null(),
-            native_pc_count: 0,
-            array_record_base: 0,
-            object_record_base: 0,
-            property_values: 0,
-            property_len: 0,
-            field_entries: 0,
-            method_cache_atoms: 0,
-            method_cache_atom_words: 0,
-            stores_specialized: 0,
-            #[cfg(test)]
-            island_steps: 0,
-            #[cfg(test)]
-            global_name_cache_hits: 0,
-            outcome: None,
-        };
-        dispatch.refresh_heap_bases(self);
+        let mut dispatch = JsStepDispatch::new(self, program_id, frame, start_pc, allow_inline_calls);
         // Native dispatch starts at the next unexecuted bytecode. Callouts
         // overwrite this with the exact failing PC before invoking VM semantics.
         self.frames[frame].pc = start_pc;
@@ -14754,6 +14763,47 @@ pub(super) enum TierCaptures {
     Environment(Value),
 }
 
+#[cfg(feature = "aot")]
+impl<H: Host> Vm<H> {
+    /// A registered program always yields a completed transition or an error;
+    /// a malformed native exit must never select interpreter execution.
+    pub(super) fn js_linked_frame_entry(
+        &mut self, frame: usize, start_pc: usize, stop_pc: Option<usize>, allow_inline_calls: bool,
+    ) -> Option<JsNativeStep> {
+        let program = self.frames[frame].program;
+        let function = self.frames[frame].function;
+        let code = self.programs.native_js_code(program)?.clone();
+        if stop_pc == Some(start_pc) {
+            return Some(JsNativeStep {
+                instruction_pc: start_pc, next_pc: start_pc, result: Ok(StepResult::Continue),
+            });
+        }
+        let failure = |message: String| JsNativeStep {
+            instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
+        };
+        let Some(entry) = code.entries.get(function as usize).copied() else {
+            return Some(failure("linked native function is missing".into()));
+        };
+        let mut dispatch = JsStepDispatch::new(self, program, frame, start_pc, allow_inline_calls);
+        dispatch.stop_pc = stop_pc;
+        self.frames[frame].pc = start_pc;
+        self.frames[frame].pc_is_resume = false;
+        // SAFETY: NativeJsProgram's constructor binds this function to H and the
+        // shared ABI; the opaque and internal context pointers have the same ABI.
+        let entry = unsafe { std::mem::transmute::<super::native_program::NativeJsFunctionEntry, Entry>(entry) };
+        let interrupt = self.execution_interrupt.atomic_flag() as *const _;
+        let poll_page = self.compiled_poll_page();
+        let exited = run_js_native_entry(entry, self as *mut Self, program,
+            (&mut dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page, &[]);
+        match exited {
+            Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
+                failure("linked native function stopped without a transition".into()))),
+            Some((status, word)) => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
+            None => Some(failure("linked native entry failed".into())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -14812,17 +14862,7 @@ mod tests {
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         run: impl FnOnce(*mut CallContext, *mut u64) -> i64,
     ) -> (i64, u64, Option<JsNativeStep>) {
-        let frame = &mut vm.frames[0];
-        let mut dispatch = JsStepDispatch {
-            program_id: ProgramId::MAIN, frame: 0, allow_inline_calls: false, start_pc: pc,
-            native_registers: frame.registers.as_mut_ptr(), register_count: frame.registers.len(),
-            native_locals: frame.locals.as_mut_ptr(), local_count: frame.locals.len(),
-            native_pcs: std::ptr::null(), native_pc_count: 0,
-            array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
-            field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
-            stores_specialized: 0, island_steps: 0, global_name_cache_hits: 0, outcome: None,
-        };
-        dispatch.refresh_heap_bases(vm);
+        let mut dispatch = JsStepDispatch::new(vm, ProgramId::MAIN, 0, pc, false);
         let mut context = CallContext::native_adapter(
             (&mut dispatch as *mut JsStepDispatch).cast(),
             vm.execution_interrupt.atomic_flag(), None,
@@ -14837,15 +14877,28 @@ mod tests {
     #[cfg(feature = "aot")]
     fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let function = program.function(0);
+        live_native_function(&program, 0, None)
+    }
+
+    #[cfg(feature = "aot")]
+    fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
+        -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>)
+    {
+        let function = program.function(function_id as usize);
         let operands: Vec<_> = function.code.iter().copied().map(|packed| {
             let instruction = super::super::dispatch_fast::decoded_instruction(function, packed);
             super::super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
         }).collect();
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut signature = None;
-        let native = super::super::native_graph::lower_function(function, 0, &*isa,
+        let native = super::super::native_graph::lower_function(function, function_id, &*isa,
             |builder, op, pc, context, result| {
+                if pc == 0 && let Some(entries) = entries {
+                    let pointer = builder.ins().iconst(isa.pointer_type(), entries as i64);
+                    let previous = builder.ins().load(types::I64, MemFlagsData::trusted(), pointer, 0);
+                    let count = builder.ins().iadd_imm_s(previous, 1);
+                    builder.ins().store(MemFlagsData::trusted(), count, pointer, 0);
+                }
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
                 let target = op.native_semantic_entry::<crate::test_host::TestHost>() as usize;
                 let target = builder.ins().iconst(isa.pointer_type(), target as i64);
@@ -14873,6 +14926,153 @@ mod tests {
         assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
         let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
         assert_eq!(error.thrown_value(), Some(Value::number(4.0)));
+    }
+
+    #[cfg(feature = "aot")]
+    fn linked_test_program(source: &str, typescript: bool) -> (
+        crate::NativeJsProgram<crate::test_host::TestHost>, Rc<[std::cell::Cell<u64>]>,
+        std::rc::Weak<dyn std::any::Any>,
+    ) {
+        let program = if typescript {
+            crate::Engine::specialize_typescript(source, "linked.cts")
+        } else {
+            crate::Engine::specialize(source, "linked.cjs")
+        }.unwrap();
+        let counts: Rc<[std::cell::Cell<u64>]> = (0..program.function_count())
+            .map(|_| std::cell::Cell::new(0)).collect();
+        let mut owners = Vec::new();
+        let mut entries = Vec::new();
+        for id in 0..program.function_count() {
+            let (memory, entry, operands) = live_native_function(&program, id as u32, Some(counts[id].as_ptr()));
+            // SAFETY: the public and internal native entries differ only in the
+            // Rust spelling of their opaque first pointer parameter.
+            entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
+            owners.push((memory, operands));
+        }
+        let owner: Rc<dyn std::any::Any> = Rc::new((owners, counts.clone()));
+        let weak = Rc::downgrade(&owner);
+        // SAFETY: every function was lowered from this program for TestHost;
+        // owner retains the code, operands and counter storage it addresses.
+        let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }.unwrap();
+        (native, counts, weak)
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_frames_call_return_and_unwind_without_replaying_effects() {
+        for typescript in [false, true] {
+            let (native, counts, _) = linked_test_program(
+                "let trace = ''; function fail() { trace += 't'; throw 7; } function recover() { try { fail(); } catch (e) { trace += 'c'; return e + 1; } finally { trace += 'f'; } } if (recover() !== 8) throw 'bad return'; throw trace;",
+                typescript,
+            );
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected trace throw") };
+            let value = error.thrown_value().unwrap();
+            assert_eq!(vm.heap.string(value).unwrap().to_string(), "tcf");
+            assert!(counts.iter().all(|count| count.get() > 0), "every called function enters native code");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_generator_stops_after_parameters_and_resumes_yield() {
+        let (native, counts, _) = linked_test_program(
+            "let trace = ''; function* values(x = (trace += 'p', 1)) { trace += 'b'; yield x; trace += 'r'; return 2; } let g = values(); if (trace !== 'p') throw 'body ran during parameters'; let first = g.next(); let last = g.next(); if (first.value !== 1 || first.done || last.value !== 2 || !last.done) throw 'bad yield'; throw trace;",
+            false,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected trace throw") };
+        let value = error.thrown_value().unwrap();
+        assert_eq!(vm.heap.string(value).unwrap().to_string(), "pbr");
+        assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_async_frame_resumes_after_await_and_finishes_jobs() {
+        let (native, counts, _) = linked_test_program(
+            "globalThis.answer = 0; async function work() { try { globalThis.answer = await Promise.resolve(7); } finally { globalThis.finished = true; } } work();",
+            false,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.execute_native_program(&native, true).unwrap();
+        for (name, expected) in [("answer", Value::number(7.0)), ("finished", Value::TRUE)] {
+            let atom = vm.lookup_atom(name).unwrap();
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(expected));
+        }
+        assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_typed_call_preserves_an_asserted_strings_actual_value() {
+        let (native, counts, _) = linked_test_program(
+            "function add(x: number): number { return x + 1; } throw add('x' as unknown as number);", true,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected throw") };
+        assert_eq!(vm.heap.string(error.thrown_value().unwrap()).unwrap().to_string(), "x1");
+        assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_generator_preserves_parameter_errors_before_body_entry() {
+        let (native, counts, _) = linked_test_program(
+            "function* values({x}) { throw 'body ran'; } let caught = false; try { values(null); } catch (e) { caught = e instanceof TypeError; } if (!caught) throw 'missing parameter error'; throw 'parameter';", false,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected throw") };
+        assert_eq!(vm.heap.string(error.thrown_value().unwrap()).unwrap().to_string(), "parameter");
+        assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_callbacks_collect_and_preserve_object_identity() {
+        let (native, counts, _) = linked_test_program(
+            "const keep = {id: 7}; const values = [keep, keep].map(x => { $262.gc(); return x; }); if (values[0] !== keep || values[1] !== keep) throw 'identity changed'; throw values[0].id;", false,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+        let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected throw") };
+        assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
+        assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_code_owner_survives_the_program_handle_until_vm_reset() {
+        let (native, counts, weak) = linked_test_program("globalThis.saved = () => 42;", false);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.execute_native_program(&native, true).unwrap();
+        drop(native);
+        assert!(weak.upgrade().is_some());
+        let atom = vm.lookup_atom("saved").unwrap();
+        let saved = vm.own_property(vm.realm.globals, atom).unwrap();
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        assert_eq!(vm.call_value(&program, saved, Value::UNDEFINED, &[]).unwrap(), Value::number(42.0));
+        assert!(counts.iter().all(|count| count.get() > 0));
+        let replacement = crate::Engine::specialize("0;", "replacement.js").unwrap();
+        vm.execute(&replacement).unwrap();
+        assert!(weak.upgrade().is_none(), "reset releases code with the old program");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_deferred_jobs_keep_their_code_until_the_host_checkpoint() {
+        let (native, counts, weak) = linked_test_program(
+            "globalThis.answer = 0; Promise.resolve().then(() => { globalThis.answer = 42; });", false,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.execute_native_program(&native, false).unwrap();
+        drop(native);
+        assert!(weak.upgrade().is_some());
+        let atom = vm.lookup_atom("answer").unwrap();
+        assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(0.0)));
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        vm.drain_jobs(&program).unwrap();
+        assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(42.0)));
+        assert!(counts.iter().all(|count| count.get() > 0));
     }
 
     #[cfg(feature = "aot")]

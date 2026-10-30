@@ -1641,7 +1641,12 @@ impl<H: Host> Vm<H> {
             // constructor unwind path. Guard misses leave pc at zero.
             let mut native_step = None;
             let resumed = std::mem::take(&mut resumes_lane_exit);
-            if !resumed && pc == 0 {
+            #[cfg(feature = "aot")]
+            if let Some(step) = self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls) {
+                pc = step.next_pc;
+                native_step = Some(step);
+            }
+            if native_step.is_none() && !resumed && pc == 0 {
                 match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
                     super::compiled::JsTierFrameEntry::Interpreter => {}
                     super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
@@ -1654,7 +1659,7 @@ impl<H: Host> Vm<H> {
                         native_step = Some(step);
                     }
                 }
-            } else if !resumed {
+            } else if native_step.is_none() && !resumed {
                 // A compiled caller resumes at the bytecode after a callout or
                 // at a hot loop header. Re-enter its shared CFG from that exact
                 // PC instead of sending the rest of the activation through the
@@ -1957,7 +1962,16 @@ impl<H: Host> Vm<H> {
             // The lane may have left in another program's frame (above).
             // SAFETY: as for `p` at the top of the loop.
             let p = unsafe { &*executing_residual };
-            if STOPS && stop_pc == Some(pc) {
+            // A lane of another program can leave in a linked callee's frame.
+            // Enter that frame's native body at the top instead of interpreting
+            // the first instruction at the lane's exit PC.
+            #[cfg(feature = "aot")]
+            if native_step.is_none() && self.programs.native_js_code(self.frames[frame].program).is_some() {
+                continue;
+            }
+            if STOPS && stop_pc == Some(pc)
+                && native_step.as_ref().is_none_or(|step| step.instruction_pc == pc)
+            {
                 self.frames[frame].pc = pc;
                 self.frames[frame].pc_is_resume = true;
                 return Ok(FrameOutcome::ParameterInitializationComplete);

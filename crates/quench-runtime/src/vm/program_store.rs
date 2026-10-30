@@ -817,6 +817,8 @@ impl std::ops::Deref for Residual {
 
 struct ProgramEntry {
     residual: Residual,
+    #[cfg(feature = "aot")]
+    native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<crate::heap::ArrayElements>>,
@@ -1062,6 +1064,14 @@ impl ProgramStore {
 
     fn entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
         self.programs.get(id.index())?.as_deref()
+    }
+
+    /// Linked functions have native entries instead of interpreter lane views.
+    fn lane_entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
+        let entry = self.entry(id)?;
+        #[cfg(feature = "aot")]
+        if entry.native_js.is_some() { return None; }
+        Some(entry)
     }
 
     /// Every mutation goes through here, so it also marks the program's roots pending.
@@ -1429,6 +1439,8 @@ impl ProgramStore {
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
+            #[cfg(feature = "aot")]
+            native_js: None,
             wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
@@ -3191,7 +3203,7 @@ impl ProgramStore {
         &self,
         id: ProgramId,
     ) -> Option<&[LaneViewCell]> {
-        let entry = self.entry(id)?;
+        let entry = self.lane_entry(id)?;
         Some(entry.lane_views.of(&entry.residual))
     }
 
@@ -3213,7 +3225,7 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.entry(id)?;
+        let entry = self.lane_entry(id)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view.as_ptr());
@@ -3230,7 +3242,7 @@ impl ProgramStore {
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
-        let Some(entry) = self.entry(id) else {
+        let Some(entry) = self.lane_entry(id) else {
             return false;
         };
         let derived = entry.lane_views.derived(function).is_some();
@@ -3253,7 +3265,7 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.entry(id)?;
+        let entry = self.lane_entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(derive_lane_view(entry, function, code, view, derive))
@@ -3266,6 +3278,25 @@ impl ProgramStore {
     pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
         self.entry(id)
             .map_or(&[], |entry| entry.constants.as_slice())
+    }
+
+    #[cfg(feature = "aot")]
+    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>) -> Result<(), String> {
+        let entry = self.entry_mut(id).ok_or("native JS program is missing")?;
+        if entry.native_js.is_some() {
+            return Err("native JS program already has code".into());
+        }
+        if code.entries.len() != entry.residual.function_count() {
+            return Err("native entry count does not match program functions".into());
+        }
+        entry.lane_views = LaneViews::default();
+        entry.native_js = Some(code);
+        Ok(())
+    }
+
+    #[cfg(feature = "aot")]
+    pub(super) fn native_js_code(&self, id: ProgramId) -> Option<&Rc<super::native_program::NativeJsCode>> {
+        self.entry(id)?.native_js.as_ref()
     }
 
     pub(crate) fn const_array(
