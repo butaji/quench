@@ -30,10 +30,7 @@ pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).ok()?;
     flags
-        .set(
-            "enable_verifier",
-            if VERIFY_IR { "true" } else { "false" },
-        )
+        .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })
         .ok()?;
     let isa = cranelift_native::builder()
         .ok()?
@@ -41,4 +38,149 @@ pub(super) fn target_isa(opt_level: &str) -> Option<Arc<TargetIsa>> {
         .ok()?;
     entries.insert(key, Arc::clone(&isa));
     Some(isa)
+}
+
+/// Compilation failures shared by the native publishers. Relocation admission
+/// and publication failures belong to the consumer, not Cranelift lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NativeCompileRejection {
+    Cranelift,
+    Relocations,
+    EmptyCode,
+    CodeSizeBudget,
+    Publish,
+}
+
+impl NativeCompileRejection {
+    pub(super) const fn reason(self) -> &'static str {
+        match self {
+            Self::Cranelift => "cranelift-compile-error",
+            Self::Relocations => "unresolved-relocations",
+            Self::EmptyCode => "empty-code",
+            Self::CodeSizeBudget => "code-size-budget",
+            Self::Publish => "code-publication-failed",
+        }
+    }
+}
+
+/// Lower once, retaining relocations and their symbolic name table until the
+/// consumer has linked or published the artifact. This avoids an extra code copy.
+/// A missing size limit preserves the Wasm compiler's existing admission policy.
+pub(super) fn compile_function<T>(
+    function: cranelift_codegen::ir::Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    max_code_bytes: Option<usize>,
+    consume: impl FnOnce(
+        &cranelift_codegen::CompiledCode,
+        &cranelift_codegen::ir::function::FunctionParameters,
+    ) -> Result<T, NativeCompileRejection>,
+) -> Result<T, NativeCompileRejection> {
+    let mut context = cranelift_codegen::Context::for_function(function);
+    let compiled = context
+        .compile(
+            isa,
+            &mut cranelift_codegen::control::ControlPlane::default(),
+        )
+        .map_err(|_error| {
+            #[cfg(test)]
+            eprintln!("shared native compile rejected by Cranelift: {_error:?}");
+            NativeCompileRejection::Cranelift
+        })?;
+    let size = compiled.code_buffer().len();
+    if size == 0 {
+        return Err(NativeCompileRejection::EmptyCode);
+    }
+    if max_code_bytes.is_some_and(|limit| size > limit) {
+        return Err(NativeCompileRejection::CodeSizeBudget);
+    }
+    consume(
+        context.compiled_code().expect("successful compilation"),
+        &context.func.params,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_codegen::ir::{self, AbiParam, InstBuilder, types};
+    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+
+    fn function(isa: &TargetIsa, calls_import: bool) -> ir::Function {
+        let mut signature = ir::Signature::new(isa.default_call_conv());
+        signature.returns.push(AbiParam::new(types::I32));
+        let mut function =
+            ir::Function::with_name_signature(ir::UserFuncName::user(0, 0), signature.clone());
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let block = builder.create_block();
+        builder.switch_to_block(block);
+        builder.seal_block(block);
+        let result = if calls_import {
+            let signature = builder.import_signature(signature);
+            let name = builder
+                .func
+                .declare_imported_user_function(ir::UserExternalName::new(0, 1));
+            let callee = builder.import_function(ir::ExtFuncData {
+                name: ir::ExternalName::user(name),
+                signature,
+                colocated: false,
+                patchable: false,
+            });
+            let call = builder.ins().call(callee, &[]);
+            builder.inst_results(call)[0]
+        } else {
+            builder.ins().iconst(types::I32, 0)
+        };
+        builder.ins().return_(&[result]);
+        builder.finalize(isa.frontend_config());
+        function
+    }
+
+    #[test]
+    fn symbolic_calls_survive_compilation() {
+        let isa = target_isa("speed").expect("host target");
+        compile_function(function(&*isa, true), &*isa, None, |compiled, params| {
+            assert!(!compiled.buffer.relocs().is_empty());
+            assert!(compiled.buffer.relocs().iter().any(|relocation| {
+                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                    name,
+                )) = relocation.target
+                else {
+                    return false;
+                };
+                params
+                    .user_named_funcs()
+                    .get(name)
+                    .is_some_and(|name| name.namespace == 0 && name.index == 1)
+            }));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn code_budget_is_checked_before_publication_and_admits_exact_size() {
+        let isa = target_isa("speed").expect("host target");
+        let size = compile_function(function(&*isa, false), &*isa, None, |code, _| {
+            Ok(code.code_buffer().len())
+        })
+        .unwrap();
+        let rejected = compile_function(function(&*isa, false), &*isa, Some(size - 1), |_, _| {
+            panic!("oversized code must not be published")
+        });
+        assert_eq!(
+            rejected,
+            Err::<(), _>(NativeCompileRejection::CodeSizeBudget)
+        );
+        compile_function(function(&*isa, false), &*isa, Some(size), |_, _| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn publication_failure_is_preserved() {
+        let isa = target_isa("speed").expect("host target");
+        let result = compile_function(function(&*isa, false), &*isa, None, |_, _| {
+            Err::<(), _>(NativeCompileRejection::Publish)
+        });
+        assert_eq!(result, Err(NativeCompileRejection::Publish));
+    }
 }

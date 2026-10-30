@@ -5629,58 +5629,22 @@ fn compile_and_publish_entry(
     .ok()
 }
 
-#[derive(Clone, Copy, Debug)]
-enum NativeCompileRejection {
-    Cranelift,
-    Relocations,
-    EmptyCode,
-    CodeSizeBudget,
-    Publish,
-}
+use super::jit_backend::NativeCompileRejection;
 
-impl NativeCompileRejection {
-    const fn reason(self) -> &'static str {
-        match self {
-            Self::Cranelift => "cranelift-compile-error",
-            Self::Relocations => "unresolved-relocations",
-            Self::EmptyCode => "empty-code",
-            Self::CodeSizeBudget => "code-size-budget",
-            Self::Publish => "code-publication-failed",
-        }
-    }
-}
-
-/// Compile a relocation-free native function under the shared code-size policy, then
-/// consume its machine-code view through the frontend's artifact representation.
+/// Publication policy for relocation-free JIT entries. Compilation itself keeps
+/// symbolic references for consumers that link functions before publication.
 fn compile_native_function<T>(
     function: ir::Function,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     max_code_bytes: usize,
     publish: impl FnOnce(&[u8]) -> Option<T>,
 ) -> Result<T, NativeCompileRejection> {
-    let mut context = cranelift_codegen::Context::for_function(function);
-    let compiled = match context.compile(
-        isa,
-        &mut cranelift_codegen::control::ControlPlane::default(),
-    ) {
-        Ok(compiled) => compiled,
-        Err(_error) => {
-            #[cfg(test)]
-            eprintln!("shared native compile rejected by Cranelift: {_error:?}");
-            return Err(NativeCompileRejection::Cranelift);
+    super::jit_backend::compile_function(function, isa, Some(max_code_bytes), |compiled, _| {
+        if !compiled.buffer.relocs().is_empty() {
+            return Err(NativeCompileRejection::Relocations);
         }
-    };
-    if !compiled.buffer.relocs().is_empty() {
-        return Err(NativeCompileRejection::Relocations);
-    }
-    let code = compiled.code_buffer();
-    if code.is_empty() {
-        return Err(NativeCompileRejection::EmptyCode);
-    }
-    if code.len() > max_code_bytes {
-        return Err(NativeCompileRejection::CodeSizeBudget);
-    }
-    publish(code).ok_or(NativeCompileRejection::Publish)
+        publish(compiled.code_buffer()).ok_or(NativeCompileRejection::Publish)
+    })
 }
 
 /// A guarded JavaScript numeric function compiled from a narrow residual
@@ -10826,32 +10790,32 @@ fn compile_built(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     func: ir::Function,
 ) -> Option<(Vec<u8>, Vec<Call>)> {
-    let mut context = cranelift_codegen::Context::for_function(func);
-    let compiled = context
-        .compile(isa, &mut cranelift_codegen::control::ControlPlane::default())
-        .ok()?;
-    let code = compiled.code_buffer().to_vec();
-    let relocations = compiled.buffer.relocs().to_vec();
-    let names = context.func.params.user_named_funcs();
-    let calls = relocations
-        .iter()
-        .map(|relocation| {
-            let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
-                name,
-            )) = relocation.target
-            else {
-                return None;
-            };
-            let name = names.get(name)?;
-            (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
-                offset: relocation.offset as usize,
-                kind: relocation.kind,
-                addend: relocation.addend,
-                callee: name.index as usize,
+    super::jit_backend::compile_function(func, isa, None, |compiled, params| {
+        let code = compiled.code_buffer().to_vec();
+        let names = params.user_named_funcs();
+        let calls = compiled.buffer
+            .relocs()
+            .iter()
+            .map(|relocation| {
+                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                    name,
+                )) = relocation.target
+                else {
+                    return None;
+                };
+                let name = names.get(name)?;
+                (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
+                    offset: relocation.offset as usize,
+                    kind: relocation.kind,
+                    addend: relocation.addend,
+                    callee: name.index as usize,
+                })
             })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((code, calls))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(NativeCompileRejection::Relocations)?;
+        Ok((code, calls))
+    })
+    .ok()
 }
 
 /// Built functions queued for each compile worker: one compiling and one ready keeps every

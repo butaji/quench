@@ -1102,11 +1102,12 @@ impl StartRanges {
         if let Some(found) = haystack[..near].iter().position(admits) {
             return Some(found);
         }
-        let mut offset = near;
+        let offset = near;
         #[cfg(target_arch = "x86_64")]
         // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads a whole block
         // inside `haystack`.
-        unsafe {
+        let offset = unsafe {
+            let mut offset = offset;
             use std::arch::x86_64::{
                 __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_max_epu8, _mm_min_epu8, _mm_movemask_epi8,
                 _mm_or_si128, _mm_set1_epi8, _mm_setzero_si128,
@@ -1128,7 +1129,8 @@ impl StartRanges {
                 }
                 offset += SCAN_BLOCK;
             }
-        }
+            offset
+        };
         haystack[offset..].iter().position(admits).map(|found| offset + found)
     }
 }
