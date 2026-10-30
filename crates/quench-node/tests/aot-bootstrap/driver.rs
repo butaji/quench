@@ -19,16 +19,17 @@ fn run() -> Result<std::process::ExitCode, String> {
     let application = assets.entry;
     let mut argv = vec!["quench".into()];
     if let Some(application) = application { argv.push(application.into()); }
+    // SAFETY: the same compiler invocation emits the entry metadata and object.
+    let entry = unsafe { bind_entry() }?;
+    let namespace = quench_runtime::NativeProgramNamespace::from_entry(entry.residual())?;
     let host = NodeHost::new(argv).with_exec_argv(Vec::new())?
         .with_native_programs(move |name, parts| {
             // SAFETY: this catalog and its objects are emitted from one CompiledSources.
-            let image = unsafe { resolve(name, parts) }?.ok_or_else(|| format!("source outside native manifest: {name}"))?;
+            let image = unsafe { resolve(&namespace, name, parts) }?.ok_or_else(|| format!("source outside native manifest: {name}"))?;
             observed.borrow_mut().insert((name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>()));
             Ok(Some(image))
         });
     let host = host.with_embedded_modules(assets);
-    // SAFETY: the same compiler invocation emits the entry metadata and object.
-    let entry = unsafe { bind_entry() }?;
     let completion = quench_node::aot::execute_native(host, &entry)?;
     let expected: usize = env!("QUENCH_NATIVE_SOURCE_COUNT").parse().unwrap();
     if application.is_none() && loaded.borrow().len() != expected {

@@ -4233,6 +4233,10 @@ impl ResidualProgram {
     }
 }
 mod binary;
+#[cfg(feature = "native-execution")]
+mod native_metadata;
+#[cfg(feature = "native-execution")]
+pub use native_metadata::NativeProgramNamespace;
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};

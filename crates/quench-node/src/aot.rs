@@ -37,11 +37,11 @@ macro_rules! linked_native_sources {
         }
         /// # Safety
         /// Every catalog record must meet the linked-image contract above.
-        pub unsafe fn $resolve(name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<$crate::NodeHost>>, String> {
+        pub unsafe fn $resolve(namespace: &quench_runtime::NativeProgramNamespace, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<$crate::NodeHost>>, String> {
             $(if name == $name && parts == [$($part),*] {
                 unsafe extern "C" { #[link_name = $link] static $symbol: u8; }
                 let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($metadata)[..]);
-                let program = quench_runtime::ResidualProgram::from_binary_bytes(bytes)?;
+                let program = namespace.decode(bytes)?;
                 // SAFETY: as above, including the compiler-wide atom namespace.
                 return unsafe { quench_runtime::NativeJsProgram::from_linked_image(program, std::ptr::addr_of!($symbol)) }.map(Some);
             })*

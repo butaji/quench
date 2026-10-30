@@ -45,7 +45,8 @@ impl CompiledSources {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut required_exports = BTreeSet::new();
-        let mut write = |program: &ResidualProgram, name: &str| -> Result<(PathBuf, String), String> {
+        let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
+        let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
             let module = lower_native_js_module(program, &format!("quench_{name}"))?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
@@ -56,15 +57,18 @@ impl CompiledSources {
             let object = emit_native_module(name, module.functions, module.data)?;
             fs::write(directory.join(format!("{name}.o")), object).map_err(|error| error.to_string())?;
             let metadata = directory.join(format!("{name}.bin"));
-            program.write_binary(&metadata)?;
+            match namespace {
+                Some(namespace) => fs::write(&metadata, namespace.encode(program)?).map_err(|error| error.to_string())?,
+                None => program.write_binary(&metadata)?,
+            }
             Ok((metadata, symbol))
         };
-        let (entry, entry_symbol) = write(&self.entry, "entry")?;
+        let (entry, entry_symbol) = write(&self.entry, "entry", None)?;
         let mut catalog = fs::File::create(directory.join("catalog.rs")).map_err(|error| error.to_string())?;
         writeln!(catalog, "quench_node::linked_native_sources! {{\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         for (index, unit) in self.units.iter().enumerate() {
-            let (metadata, symbol) = write(&unit.program, &format!("unit_{index}"))?;
+            let (metadata, symbol) = write(&unit.program, &format!("unit_{index}"), Some(&namespace))?;
             let parts: Vec<_> = unit.key.parts().collect();
             writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, {:?}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name(), parts)
                 .map_err(|error| error.to_string())?;

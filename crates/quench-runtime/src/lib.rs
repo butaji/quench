@@ -73,7 +73,7 @@ pub mod owned_clone;
 pub mod shared_backing;
 
 #[cfg(feature = "native-execution")]
-pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS};
+pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NativeProgramNamespace};
 #[cfg(feature = "native-execution")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,

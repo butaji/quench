@@ -80,7 +80,7 @@ pub(super) fn write_program(
     program: &super::ResidualProgram,
     path: &std::path::Path,
 ) -> Result<(), String> {
-    let (bytes, _) = encode_program(program, AtomEncoding::Program);
+    let (bytes, _) = encode_program(program, AtomEncoding::Program, SourceEncoding::Included);
     std::fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
@@ -88,14 +88,14 @@ pub(super) fn write_program(
 /// order its table names them (`decode_compact_program` maps each name to its reader's id).
 /// The source text is left out: whoever decodes it supplies the same text.
 pub(super) fn encode_compact_program(program: &super::ResidualProgram) -> (Vec<u8>, Vec<u32>) {
-    let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()));
+    let (bytes, order) = encode_program(program, AtomEncoding::Compact(Default::default()), SourceEncoding::External);
     (sealed(bytes), order)
 }
 
 /// An entry program's cached form (`ResidualProgram::encode_trusted`): the lossless encoding
 /// under the program's own atom ids, which seed the VM's, followed by its checksum.
 pub(super) fn encode_trusted_program(program: &super::ResidualProgram) -> Vec<u8> {
-    sealed(encode_program(program, AtomEncoding::Program).0)
+    sealed(encode_program(program, AtomEncoding::Program, SourceEncoding::Included).0)
 }
 
 /// `bytes`, an encoding, followed by the checksum of its body: everything but the region of
@@ -185,9 +185,12 @@ fn compact_checksum(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec<u8>, Vec<u32>) {
-    // A compact or shared encoding leaves the source out: its reader supplies the text.
-    let compact = matches!(atoms, AtomEncoding::Compact(_) | AtomEncoding::Shared);
+enum SourceEncoding {
+    Included,
+    External,
+}
+
+fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_encoding: SourceEncoding) -> (Vec<u8>, Vec<u32>) {
     let mut out = BinaryWriter::new();
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
@@ -195,7 +198,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
     out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
     match &program.source {
-        Some(_) if compact => out.u8(OPTIONAL_STRING_ELIDED),
+        Some(_) if matches!(source_encoding, SourceEncoding::External) => out.u8(OPTIONAL_STRING_ELIDED),
         source => write_optional_string(&mut out, source.as_ref().map(|source| source.text.as_ref())),
     }
     if let Some(source) = &program.source {
@@ -420,10 +423,15 @@ pub(super) fn decode_compact_program(
     decode_program(&bytes, encoding, ReadAtoms::Compact(intern), Some(text))
 }
 
+#[cfg(feature = "aot")]
+pub(super) fn encode_native_program(program: &super::ResidualProgram) -> Vec<u8> {
+    sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::Included).0)
+}
+
 /// A snapshot's encoding of `program` (`crate::snapshot`): the program's own atom ids, which
 /// its VM's restored atom table keeps, and no source text, which the snapshot writes apart.
 pub(super) fn encode_snapshot_program(program: &super::ResidualProgram) -> Vec<u8> {
-    sealed(encode_program(program, AtomEncoding::Shared).0)
+    sealed(encode_program(program, AtomEncoding::Shared, SourceEncoding::External).0)
 }
 
 /// Checks that `bytes` are an `encode_snapshot_program` encoding whose checksum holds, as
