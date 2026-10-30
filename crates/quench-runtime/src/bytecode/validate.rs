@@ -516,6 +516,7 @@ impl ResidualProgram {
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {
+        if let Some(source) = &self.source { source.validate_call_sites()?; }
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }

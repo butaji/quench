@@ -114,6 +114,8 @@ mod boolean;
 mod builtins;
 mod call_arguments;
 mod call_printer;
+#[cfg(feature = "aot")]
+pub(crate) use call_printer::freeze_call_sites;
 mod coercion;
 mod collections;
 mod construction;

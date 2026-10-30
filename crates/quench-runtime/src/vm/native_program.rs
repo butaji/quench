@@ -94,6 +94,9 @@ impl<H: Host> NativeJsProgram<H> {
     }
 
     fn bind(program: ResidualProgram, code: NativeJsCode) -> Result<Self, String> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
+            return Err("native program has no frozen call-site descriptions".into());
+        }
         if program.kind == crate::bytecode::ProgramKind::Wasm {
             return Err("native JavaScript entries require a JS or TS program".into());
         }

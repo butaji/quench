@@ -54,6 +54,7 @@ mod lazy_bodies;
 #[cfg(feature = "verify-replay")]
 mod free_names;
 mod syntax_message;
+pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -2843,22 +2844,7 @@ impl<'a> Compiler<'a> {
     /// Locate a delimiter between OXC-owned expression boundaries. Comment text
     /// is excluded using OXC's own spans, including comments containing delimiters.
     fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
-        let mut cursor = start as usize;
-        let end = (end as usize).min(self.text.len());
-        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
-        while cursor < end {
-            if let Some(span) = self.source_comments.get(comment) {
-                if span.start as usize <= cursor && cursor < span.end as usize {
-                    cursor = span.end as usize;
-                    comment += 1;
-                    continue;
-                }
-            }
-            let Some(character) = self.text[cursor..end].chars().next() else { break; };
-            if character == delimiter { return cursor as u32; }
-            cursor += character.len_utf8();
-        }
-        start
+        source_syntax::delimiter(self.text, &self.source_comments, start, end, delimiter)
     }
 
     fn source_position(&self, offset: u32) -> SourcePosition {
@@ -3346,10 +3332,12 @@ impl<'a> Compiler<'a> {
             source_name: self.source.to_owned(),
             source: Some(crate::bytecode::ProgramSource {
                 text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
                 line_starts: Default::default(),
+                call_sites: Default::default(),
             }),
             atoms,
             constants,

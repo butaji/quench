@@ -35,6 +35,7 @@ impl NativeProgramNamespace {
         {
             return Err("native metadata belongs to a different atom namespace".into());
         }
+        program.freeze_native_diagnostics();
         let mut bytes = binary::encode_native_program(program);
         bytes.extend_from_slice(&self.fingerprint.to_le_bytes());
         Ok(bytes)
@@ -59,6 +60,9 @@ impl NativeProgramNamespace {
             return Err("native metadata names atoms its namespace lacks".into());
         }
         program.atoms = AtomTable::shared(self.atoms.clone(), atom_count);
+        if program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
+            return Err("native metadata has no frozen call-site descriptions".into());
+        }
         program.validate()?;
         Ok(program)
     }

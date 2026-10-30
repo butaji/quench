@@ -47,6 +47,7 @@ impl CompiledSources {
         let mut required_exports = BTreeSet::new();
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
         let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
+            program.freeze_native_diagnostics();
             let module = lower_native_js_module(program, &format!("quench_{name}"))?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
@@ -65,6 +66,8 @@ impl CompiledSources {
         };
         let (entry, entry_symbol) = write(&self.entry, "entry", None)?;
         let mut catalog = fs::File::create(directory.join("catalog.rs")).map_err(|error| error.to_string())?;
+        writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
+            .map_err(|error| error.to_string())?;
         writeln!(catalog, "quench_node::linked_native_sources! {{\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         for (index, unit) in self.units.iter().enumerate() {

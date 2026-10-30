@@ -3644,10 +3644,19 @@ impl std::ops::Deref for SourceText {
     }
 }
 
+/// The callee a failed call at a source byte offset names in its error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CallSiteDescription {
+    pub(crate) offset: u32,
+    pub(crate) construct: bool,
+    pub(crate) callee: String,
+}
+
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
 #[derive(Clone, Debug)]
 pub(crate) struct ProgramSource {
     pub(crate) text: SourceText,
+    pub(crate) typescript: bool,
     /// Bytes of compiled source before `text` that the program keeps no copy of: a host
     /// wrapper's prefix. With any, `text` starts at the wrapper origin, compiled line
     /// `line_offset + 1` and UTF-16 column `column_offset`.
@@ -3658,6 +3667,9 @@ pub(crate) struct ProgramSource {
     /// read a line per throw, which a scan from the top would make linear in the source.
     /// Shared, so a copy of the source (an error's captured call sites) copies no index.
     pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
+    /// Complete static call-printing facts for native images. An unset cell
+    /// leaves the dynamic error-path renderer in charge; an empty table is final.
+    pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
 }
 
 /// A static item at a fixed place in the executable image, from which a snapshot measures the
@@ -3716,21 +3728,69 @@ impl SourceText {
 impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
-        let Self { text, base, line_offset, column_offset, line_starts: _ } = self;
+        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
         text.write_snapshot(writer);
+        writer.bool(*typescript);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
+        writer.bool(call_sites.get().is_some());
+        if let Some(sites) = call_sites.get() {
+            writer.len(sites.len());
+            for site in sites.iter() {
+                writer.u32(site.offset);
+                writer.bool(site.construct);
+                writer.str(&site.callee);
+            }
+        }
     }
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(Self {
+        let mut source = Self {
             text: SourceText::read_snapshot(reader)?,
+            typescript: reader.bool()?,
             base: reader.u32()?,
             line_offset: reader.u32()?,
             column_offset: reader.u32()?,
             line_starts: std::cell::OnceCell::new(),
-        })
+            call_sites: Default::default(),
+        };
+        if reader.bool()? {
+            let count = reader.len()?;
+            let mut sites = Vec::with_capacity(count);
+            for _ in 0..count {
+                sites.push(CallSiteDescription { offset: reader.u32()?, construct: reader.bool()?, callee: reader.str()?.into() });
+            }
+            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
+            source.validate_call_sites().map_err(crate::snapshot::SnapshotError)?;
+        }
+        Ok(source)
+    }
+
+    pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
+        if let Some(sites) = self.call_sites.get() {
+            let mut previous = None;
+            for site in sites.iter() {
+                let key = (site.offset, site.construct);
+                if previous.is_some_and(|old| old >= key) || !self.text.is_char_boundary(site.offset as usize) || site.callee.is_empty() {
+                    return Err("invalid frozen call-site descriptions".into());
+                }
+                previous = Some(key);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn byte_offset(&self, position: SourcePosition) -> Option<u32> {
+        let line = self.source_line(position.line)?;
+        let column = position.column.checked_sub(1)?;
+        let line_start = line.as_ptr() as usize - self.text.as_ptr() as usize;
+        let mut units = 0;
+        for (byte, character) in line.char_indices() {
+            if units == column { return u32::try_from(line_start + byte).ok(); }
+            units += character.len_utf16() as u32;
+        }
+        (units == column).then(|| u32::try_from(line_start + line.len()).ok()).flatten()
     }
 }
 
@@ -3917,6 +3977,11 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// Resolve source-derived native error descriptions before publication.
+    #[cfg(feature = "aot")]
+    pub fn freeze_native_diagnostics(&self) {
+        crate::vm::freeze_call_sites(self);
+    }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
     #[inline(always)]
@@ -4105,7 +4170,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 111;
+    pub const FORMAT_VERSION: u8 = 112;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

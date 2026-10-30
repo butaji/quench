@@ -1,21 +1,23 @@
 //! The callee a failed call names in its TypeError, as V8's `CallPrinter` renders it
 //! ("o.a.b is not a function", "(0 , f) is not a function"): the call at the throwing
-//! position is found in the program's source on the error path, so no call site carries a
-//! description while code runs.
+//! position is found in source on the dynamic error path. Native images freeze the same
+//! descriptions before publication, so their error path needs no syntax frontend.
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrayExpressionElement, CallExpression, ChainElement, Expression, MemberExpression,
+    ArrayExpressionElement, CallExpression, ChainElement, Comment, Expression, MemberExpression,
     NewExpression, SimpleAssignmentTarget,
 };
 use oxc_ast_visit::Visit;
 use oxc_parser::{ParseOptions, Parser};
-use oxc_span::{GetSpan, SourceType};
+use oxc_span::SourceType;
 
 use super::{Host, Vm};
 use crate::bytecode::{Op, ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
+#[cfg(feature = "aot")]
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What `CallPrinter` prints for an operand it does not render.
 const INTERMEDIATE_VALUE: &str = "(intermediate value)";
@@ -26,6 +28,7 @@ const CALL_ARGUMENTS: &str = "(...)";
 /// The message templates (V8 `kCalledNonCallable`, `kNotConstructor`).
 const NOT_A_FUNCTION: &str = " is not a function";
 const NOT_A_CONSTRUCTOR: &str = " is not a constructor";
+const CALL_SOURCE_GOALS: [SourceType; 2] = [SourceType::script(), SourceType::mjs()];
 
 /// The messages the call paths give a non-callable callee before its call site is known.
 pub(super) const NOT_CALLABLE_MESSAGE: &str = "value is not callable";
@@ -93,10 +96,12 @@ impl<H: Host> Vm<H> {
             .source_position(function as u32, pc)
             .and_then(|position| {
                 let source = program.source.as_ref()?;
-                let line = source.source_line(position.line)?;
-                let line_start = line.as_ptr() as usize - source.text.as_ptr() as usize;
-                let column = utf16_column_byte(line, position.column.checked_sub(1)?)?;
-                render_call_site(&source.text, line_start + column, construct)
+                let offset = source.byte_offset(position)?;
+                if let Some(sites) = source.call_sites.get() {
+                    return sites.binary_search_by_key(&(offset, construct), |site| (site.offset, site.construct))
+                        .ok().map(|index| sites[index].callee.clone());
+                }
+                crate::DYNAMIC_EXECUTION_ENABLED.then(|| render_call_site(&source.text, source.typescript, offset as usize, construct)).flatten()
             })
             .unwrap_or_else(|| self.default_call_site(value));
         Some(rendered + template)
@@ -110,18 +115,13 @@ impl<H: Host> Vm<H> {
         construct: bool,
     ) -> Option<Callee> {
         let register = |index: u16| self.frames.get(frame)?.registers.get(usize::from(index)).copied();
+        if call_kind(instruction)? != construct { return None; }
         Some(match instruction.op() {
-            Op::Construct if construct && !instruction.is_super_construct() => {
-                Callee::Value(register(instruction.register_b())?)
-            }
-            Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments if !construct => {
-                Callee::Value(register(instruction.register_b())?)
-            }
-            Op::CallMethod if !construct => Callee::Method {
+            Op::CallMethod => Callee::Method {
                 receiver: register(instruction.register_b())?,
                 atom: program.method_sites.get(instruction.method_site_index())?.atom,
             },
-            _ => return None,
+            _ => Callee::Value(register(instruction.register_b())?),
         })
     }
 
@@ -166,36 +166,78 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The byte offset of UTF-16 column `column` (zero-based) in `line`.
-fn utf16_column_byte(line: &str, column: u32) -> Option<usize> {
-    let mut units = 0;
-    for (byte, character) in line.char_indices() {
-        if units == column {
-            return Some(byte);
-        }
-        units += character.len_utf16() as u32;
+fn call_kind(instruction: WideInstruction) -> Option<bool> {
+    match instruction.op() {
+        Op::Construct if !instruction.is_super_construct() => Some(true),
+        Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments | Op::CallMethod => Some(false),
+        _ => None,
     }
-    (units == column).then_some(line.len())
+}
+
+/// Resolve only descriptions whose positions the bytecode can observe. One
+/// parse per source goal replaces reparsing the whole source for every call.
+#[cfg(feature = "aot")]
+pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
+    let Some(source) = &program.source else { return };
+    source.call_sites.get_or_init(|| {
+        let mut positions = BTreeSet::new();
+        for function in 0..program.functions.len() {
+            for (pc, instruction) in program.function(function).instructions().enumerate() {
+                if let Some(construct) = call_kind(instruction)
+                    && let Some(position) = program.source_position(function as u32, pc as u32)
+                { positions.insert((position.line, position.column, construct)); }
+            }
+        }
+        // Sorted columns share one scan of each line. Repeated scans would be
+        // quadratic for minified modules whose calls all occupy one long line.
+        let mut positions = positions.into_iter().peekable();
+        let mut requested = BTreeSet::new();
+        while let Some(&(line_number, _, _)) = positions.peek() {
+            let line = source.source_line(line_number);
+            let mut characters = line.unwrap_or("").char_indices().peekable();
+            let mut units = 0;
+            while positions.peek().is_some_and(|position| position.0 == line_number) {
+                let (_, column, construct) = positions.next().unwrap();
+                let Some(line) = line else { continue };
+                let Some(column) = column.checked_sub(1) else { continue };
+                while units < column {
+                    let Some((_, character)) = characters.next() else { break };
+                    units += character.len_utf16() as u32;
+                }
+                if units == column {
+                    let byte = characters.peek().map_or(line.len(), |(byte, _)| *byte);
+                    let line_start = line.as_ptr() as usize - source.text.as_ptr() as usize;
+                    if let Ok(offset) = u32::try_from(line_start + byte) { requested.insert((offset, construct)); }
+                }
+            }
+        }
+        let mut search = CallSearch::All { requested, found: BTreeMap::new() };
+        for goal in CALL_SOURCE_GOALS.map(|goal| goal.with_typescript(source.typescript)) {
+            if search.complete() { break; }
+            match parse_call_sites(source.text.as_ref(), goal, search) {
+                Ok((next, valid)) => { search = next; if valid { break; } }
+                Err(previous) => { search = previous; break; }
+            }
+        }
+        let CallSearch::All { found, .. } = search else { unreachable!("all-call search changes shape") };
+        found.into_iter().map(|((offset, construct), callee)| crate::bytecode::CallSiteDescription { offset, construct, callee })
+            .collect::<Vec<_>>().into()
+    });
 }
 
 /// The callee of the call (or construction) at byte `offset` of `source`, rendered.
-fn render_call_site(source: &str, offset: usize, construct: bool) -> Option<String> {
-    let allocator = Allocator::with_capacity(source.len());
-    let options = ParseOptions { allow_return_outside_function: true, ..ParseOptions::default() };
+fn render_call_site(source: &str, typescript: bool, offset: usize, construct: bool) -> Option<String> {
     let offset = u32::try_from(offset).ok()?;
-    for source_type in [SourceType::script(), SourceType::mjs()] {
-        let parsed = Parser::new(&allocator, source, source_type).with_options(options).parse();
-        if crate::compile::stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        let mut finder = CallFinder { source, offset, construct, found: None };
-        finder.visit_program(&parsed.program);
-        if finder.found.is_some() {
-            return finder.found;
-        }
-        if parsed.diagnostics.is_empty() {
-            return None;
-        }
+    for source_type in CALL_SOURCE_GOALS.map(|goal| goal.with_typescript(typescript)) {
+        let (search, valid) = parse_call_sites(source, source_type,
+            CallSearch::One { offset, construct, found: None }).ok()?;
+        let found = match search {
+            CallSearch::One { found, .. } => found,
+            #[cfg(feature = "aot")]
+            CallSearch::All { .. } => unreachable!("single call search changes shape"),
+        };
+        if found.is_some() { return found; }
+        if valid { return None; }
     }
     None
 }
@@ -203,46 +245,74 @@ fn render_call_site(source: &str, offset: usize, construct: bool) -> Option<Stri
 /// Finds the call V8 positions at `offset`: a call of a name at the name, a non-optional
 /// call of a named property at the property name, a construction at `new`, any other call
 /// at its argument list's `(`.
+enum CallSearch {
+    One { offset: u32, construct: bool, found: Option<String> },
+    #[cfg(feature = "aot")]
+    All { requested: BTreeSet<(u32, bool)>, found: BTreeMap<(u32, bool), String> },
+}
+
+impl CallSearch {
+    fn complete(&self) -> bool {
+        match self {
+            Self::One { found, .. } => found.is_some(),
+            #[cfg(feature = "aot")]
+            Self::All { requested, found } => found.len() == requested.len(),
+        }
+    }
+
+    fn observe(&mut self, offset: u32, construct: bool, callee: &Expression<'_>) {
+        match self {
+            Self::One { offset: target, construct: target_kind, found } if (*target, *target_kind) == (offset, construct) => {
+                *found = Some(find(callee, true));
+            }
+            #[cfg(feature = "aot")]
+            Self::All { requested, found } if requested.contains(&(offset, construct)) => {
+                found.entry((offset, construct)).or_insert_with(|| find(callee, true));
+            }
+            _ => (),
+        }
+    }
+}
+
+fn parse_call_sites(source: &str, goal: SourceType, search: CallSearch) -> Result<(CallSearch, bool), CallSearch> {
+    let allocator = Allocator::with_capacity(source.len());
+    let options = ParseOptions { allow_return_outside_function: true, ..ParseOptions::default() };
+    let parsed = Parser::new(&allocator, source, goal).with_options(options).parse();
+    if crate::compile::stack::validate_parsed(&parsed).is_err() { return Err(search); }
+    let mut finder = CallFinder { source, comments: &parsed.program.comments, search };
+    finder.visit_program(&parsed.program);
+    Ok((finder.search, parsed.diagnostics.is_empty()))
+}
+
 struct CallFinder<'s> {
     source: &'s str,
-    offset: u32,
-    construct: bool,
-    found: Option<String>,
+    comments: &'s [Comment],
+    search: CallSearch,
 }
 
 impl CallFinder<'_> {
-    fn call_position(&self, call: &CallExpression<'_>) -> Option<u32> {
-        match &call.callee {
-            Expression::Identifier(name) => Some(name.span.start),
-            Expression::StaticMemberExpression(member) if !call.optional => Some(member.property.span.start),
-            callee => {
-                let end = callee.span().end as usize;
-                self.source.get(end..)?.find('(').map(|index| (end + index) as u32)
-            }
-        }
+    fn call_position(&self, call: &CallExpression<'_>) -> u32 {
+        crate::compile::source_syntax::call_offset(call, self.source, self.comments)
     }
 }
 
 impl<'a> Visit<'a> for CallFinder<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        if self.found.is_some() {
+        if self.search.complete() {
             return;
         }
-        if !self.construct && self.call_position(call) == Some(self.offset) {
-            self.found = Some(find(&call.callee, true));
-            return;
-        }
+        let offset = self.call_position(call);
+        self.search.observe(offset, false, &call.callee);
+        if self.search.complete() { return; }
         oxc_ast_visit::walk::walk_call_expression(self, call);
     }
 
     fn visit_new_expression(&mut self, new: &NewExpression<'a>) {
-        if self.found.is_some() {
+        if self.search.complete() {
             return;
         }
-        if self.construct && new.span.start == self.offset {
-            self.found = Some(find(&new.callee, true));
-            return;
-        }
+        self.search.observe(new.span.start, true, &new.callee);
+        if self.search.complete() { return; }
         oxc_ast_visit::walk::walk_new_expression(self, new);
     }
 }
@@ -256,6 +326,7 @@ fn find(expression: &Expression<'_>, print: bool) -> String {
 
 /// `CallPrinter`'s rendering of `expression`; empty when it prints nothing.
 fn render(expression: &Expression<'_>) -> String {
+    let expression = expression.get_inner_expression();
     if let Some(member) = expression.as_member_expression() {
         return render_member(member);
     }
@@ -263,7 +334,6 @@ fn render(expression: &Expression<'_>) -> String {
         Expression::Identifier(identifier) => identifier.name.to_string(),
         Expression::ThisExpression(_) => "this".into(),
         Expression::Super(_) => "super".into(),
-        Expression::ParenthesizedExpression(inner) => render(&inner.expression),
         Expression::ChainExpression(chain) => match &chain.expression {
             ChainElement::CallExpression(call) => format!("{}{CALL_ARGUMENTS}", find(&call.callee, true)),
             ChainElement::TSNonNullExpression(inner) => render(&inner.expression),
@@ -363,5 +433,86 @@ fn render_simple_target(target: &SimpleAssignmentTarget<'_>) -> String {
     match target {
         SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => identifier.name.to_string(),
         target => target.as_member_expression().map_or_else(|| INTERMEDIATE_VALUE.to_owned(), render_member),
+    }
+}
+
+#[cfg(all(test, feature = "aot"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frozen_descriptions_match_dynamic_search_and_survive_both_encodings() {
+        let body = "const marker = '😀'; function test() { missing(); new Missing(); object.deep.method(); (0, object.method)(); object['key'](); optional?.(); }";
+        for (text, typescript, retained) in [
+            (body.to_owned(), false, None),
+            (format!("const typed: number = 1; {body}"), true, None),
+            (format!("(function () {{\n  {body}\n}})"), false, Some(("(function () {\n  ", body))),
+        ] {
+            let origin = retained.map(|(prefix, _)| crate::wrapper_origin(prefix).unwrap());
+            let mut program = crate::Engine::specialize_host_script(&text, "calls.js", &crate::compile::NoAtomPrefix,
+                crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::compile::ReleasedRecords::Encoded).unwrap();
+            if let Some((prefix, body)) = retained {
+                let source = program.source.as_mut().unwrap();
+                source.text = crate::bytecode::SourceText::Shared(body.into());
+                source.base = prefix.len() as u32;
+                (source.line_offset, source.column_offset) = origin.unwrap();
+            }
+            let source = program.source.as_ref().unwrap();
+            let mut expected = BTreeMap::new();
+            for function in 0..program.function_count() {
+                for (pc, instruction) in program.function(function).instructions().enumerate() {
+                    if let Some(construct) = call_kind(instruction)
+                        && let Some(offset) = program.source_position(function as u32, pc as u32).and_then(|position| source.byte_offset(position))
+                        && let Some(callee) = render_call_site(&source.text, source.typescript, offset as usize, construct)
+                    { expected.insert((offset, construct), callee); }
+                }
+            }
+            program.freeze_native_diagnostics();
+            let actual: BTreeMap<_, _> = source.call_sites.get().unwrap().iter()
+                .map(|site| ((site.offset, site.construct), site.callee.clone())).collect();
+            assert!(!actual.is_empty(), "typescript={typescript} retained={retained:?}");
+            assert_eq!(actual, expected, "typescript={typescript} retained={retained:?}");
+            let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(program.encode_trusted())).unwrap();
+            assert_eq!(decoded.source.as_ref().unwrap().call_sites.get(), source.call_sites.get());
+            let mut writer = crate::snapshot::Writer::new();
+            source.write_snapshot(&mut writer);
+            let bytes = writer.finish();
+            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+            let restored = crate::bytecode::ProgramSource::read_snapshot(&mut reader).unwrap();
+            reader.finish().unwrap();
+            assert_eq!(restored.call_sites.get(), source.call_sites.get());
+        }
+    }
+
+    #[test]
+    fn invalid_frozen_descriptions_are_rejected_and_empty_facts_are_complete() {
+        let program = crate::Engine::specialize("42;", "empty.js").unwrap();
+        program.freeze_native_diagnostics();
+        assert!(program.source.as_ref().unwrap().call_sites.get().unwrap().is_empty());
+        for sites in [
+            vec![(0, "first"), (0, "duplicate")],
+            vec![(2, "later"), (0, "earlier")],
+            vec![(u32::MAX, "outside")],
+            vec![(0, "")],
+        ] {
+            let mut invalid = crate::Engine::specialize("42;", "invalid.js").unwrap();
+            invalid.source.as_mut().unwrap().call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.into_iter()
+                .map(|(offset, callee)| crate::bytecode::CallSiteDescription { offset, construct: false, callee: callee.into() })
+                .collect::<Vec<_>>()));
+            let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(invalid.encode_trusted())).unwrap();
+            assert!(decoded.validate().unwrap_err().contains("frozen call-site"));
+        }
+    }
+
+    #[test]
+    fn typescript_assertions_and_type_arguments_preserve_callee_identity() {
+        let program = crate::Engine::specialize_typescript(
+            "const f = 0 as unknown as {(): unknown; new(): unknown}; (f as any)(); f!(); f?.<() => void>(); new (f as any)();",
+            "typed-calls.cts",
+        ).unwrap();
+        program.freeze_native_diagnostics();
+        let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
+        assert_eq!(sites.len(), 4);
+        assert!(sites.iter().all(|site| site.callee == "f"), "{sites:?}");
     }
 }

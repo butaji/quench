@@ -21,15 +21,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call_source_offset(&self, call: &CallExpression<'_>) -> u32 {
-        if !call.optional {
-            match &call.callee {
-                Expression::Identifier(_) | Expression::Super(_) => return call.callee.span().start,
-                Expression::StaticMemberExpression(member) => return member.property.span.start,
-                _ => {}
-            }
-        }
-        let start = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
-        self.owner.source_delimiter(start, call.span.end, '(')
+        crate::compile::source_syntax::call_offset(call, self.owner.text, &self.owner.source_comments)
     }
 
     pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {

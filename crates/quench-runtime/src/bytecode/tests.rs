@@ -576,10 +576,12 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
     let source = super::ProgramSource {
         text: super::SourceText::Shared(text.into()),
+        typescript: false,
         base: 0,
         line_offset: 0,
         column_offset: 0,
         line_starts: Default::default(),
+        call_sites: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
@@ -588,10 +590,12 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     assert_eq!(source.source_line(0), None);
     let wrapped = super::ProgramSource {
         text: super::SourceText::Shared("wrapper\r\n😀first\rsecond\u{2028}third".into()),
+        typescript: false,
         base: 0,
         line_offset: 1,
         column_offset: 2,
         line_starts: Default::default(),
+        call_sites: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
@@ -602,10 +606,12 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     let (line_offset, column_offset) = crate::wrapper_origin(prefix).unwrap();
     let retained = super::ProgramSource {
         text: super::SourceText::Static(body),
+        typescript: false,
         base: prefix.len() as u32,
         line_offset,
         column_offset,
         line_starts: Default::default(),
+        call_sites: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));
     assert_eq!(retained.source_line(2), Some("second"));

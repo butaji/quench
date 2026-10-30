@@ -202,9 +202,19 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         source => write_optional_string(&mut out, source.as_ref().map(|source| source.text.as_ref())),
     }
     if let Some(source) = &program.source {
+        out.bool(source.typescript);
         out.u32(source.base);
         out.u32(source.line_offset);
         out.u32(source.column_offset);
+        out.bool(source.call_sites.get().is_some());
+        if let Some(sites) = source.call_sites.get() {
+            out.u32(sites.len() as u32);
+            for site in sites.iter() {
+                out.u32(site.offset);
+                out.bool(site.construct);
+                out.string(&site.callee);
+            }
+        }
     }
     write_module_requests(&mut out, &program.module_requests);
     out.u32(program.module_imports.len() as u32);
@@ -501,10 +511,22 @@ fn decode_program(
     let source = match text {
         Some(text) => Some(super::ProgramSource {
             text,
+            typescript: input.bool()?,
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
             line_starts: Default::default(),
+            call_sites: if input.bool()? {
+                std::cell::OnceCell::from(std::sync::Arc::from(input.list(|input| {
+                    Ok(super::CallSiteDescription {
+                        offset: input.u32()?,
+                        construct: input.bool()?,
+                        callee: input.string()?,
+                    })
+                })?))
+            } else {
+                Default::default()
+            },
         }),
         None => None,
     };
@@ -1455,6 +1477,7 @@ impl BinaryWriter {
         if op.immediate_names_atom(b) { self.atom(imm) } else { self.u32(imm) }
     }
     pub(super) fn u8(&mut self, value: u8) { self.bytes.push(value); }
+    fn bool(&mut self, value: bool) { self.u8(u8::from(value)); }
     /// A source position table as it is coded in memory, and its final entry: decoding copies
     /// the bytes instead of coding each entry again (`BinaryReader::source_positions`).
     fn source_positions(&mut self, table: &super::SourcePositions) {
@@ -1566,6 +1589,13 @@ impl<'a> BinaryReader<'a> {
         self.take(N).map(|bytes| bytes.try_into().expect("take returns N bytes"))
     }
     pub(super) fn u8(&mut self) -> Result<u8, String> { Ok(self.array::<1>()?[0]) }
+    fn bool(&mut self) -> Result<bool, String> {
+        match self.u8()? {
+            value if value == u8::from(false) => Ok(false),
+            value if value == u8::from(true) => Ok(true),
+            _ => Err("invalid residual boolean".into()),
+        }
+    }
     pub(super) fn u16(&mut self) -> Result<u16, String> { Ok(u16::from_le_bytes(self.array()?)) }
     pub(super) fn u32(&mut self) -> Result<u32, String> { Ok(u32::from_le_bytes(self.array()?)) }
     pub(super) fn u64(&mut self) -> Result<u64, String> { Ok(u64::from_le_bytes(self.array()?)) }
