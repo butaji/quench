@@ -176,7 +176,7 @@ fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path, 
         if artifact["reason"] == "compiler-artifact" && matches!(artifact["target"]["name"].as_str(), Some("quench_runtime" | "quench_node")) {
             let features = artifact["features"].as_array().expect("Cargo feature list");
             assert!(features.iter().any(|feature| feature == "native-execution"), "linked support artifact must support native execution");
-            assert!(!features.iter().any(|feature| matches!(feature.as_str(), Some("jit" | "aot"))), "linked support artifact must exclude dynamic and object-generation backends");
+            assert!(!features.iter().any(|feature| matches!(feature.as_str(), Some("jit" | "aot" | "bundled-sources"))), "linked support artifact must exclude dynamic/object-generation backends and the full SDK source table");
         }
         if artifact["reason"] == "build-script-executed" {
             for path in artifact["linked_paths"].as_array().unwrap() {

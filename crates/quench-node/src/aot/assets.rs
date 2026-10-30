@@ -132,20 +132,26 @@ impl crate::NodeHost {
             Err(error)
         })?;
         #[cfg(feature = "aot")]
+        self.record_module_bytes(path, _kind, &bytes)?;
+        Ok(bytes)
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_module_bytes(&mut self, path: &Path, kind: SourceKind, bytes: &[u8]) -> std::io::Result<()> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();
             match assets.files.entry(path.to_owned()) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(ModuleFile { bytes: Rc::from(bytes.as_slice()), kind: _kind, prepared: None });
+                    entry.insert(ModuleFile { bytes: Rc::from(bytes), kind, prepared: None });
                 },
                 std::collections::btree_map::Entry::Occupied(entry) => {
-                    if entry.get().bytes.as_ref() != bytes.as_slice() || entry.get().kind != _kind {
+                    if entry.get().bytes.as_ref() != bytes || entry.get().kind != kind {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("module changed during source capture: {}", path.display())));
                     }
                 },
             }
         }
-        Ok(bytes)
+        Ok(())
     }
 
     #[cfg(feature = "aot")]

@@ -47,10 +47,7 @@ pub(crate) fn bind_original(
 ) -> Result<RootId, RootedError> {
         let root = context.host_mut().node_library_root.clone();
         let filename = root.join("lib/internal/abort_controller.js");
-        let source = std::fs::read_to_string(&filename).or_else(|error| {
-            crate::node_sources::source(&filename, &root)
-                .map(str::to_owned).ok_or(error)
-        }).map_err(|error| RootedError::host(error.to_string()))?;
+        let source = context.host_mut().node_library_source(&filename, crate::node_sources::LibrarySource::Configured).map_err(|error| RootedError::host(error.to_string()))?;
         let allocator = oxc_allocator::Allocator::default();
         let parsed = oxc_parser::Parser::new(&allocator, &source, oxc_span::SourceType::cjs()).parse();
         if !parsed.diagnostics.is_empty() {

@@ -17,12 +17,7 @@ pub(crate) fn install(
     c.with_startup_intrinsics(|c| {
         let root = c.host_mut().node_library_root.clone();
         let filename = root.join("lib/crypto.js");
-        let source = std::fs::read_to_string(&filename)
-            .or_else(|error| {
-                crate::node_sources::source(&filename, &root)
-                    .map(str::to_owned)
-                    .ok_or(error)
-            })
+        let source = c.host_mut().node_library_source(&filename, crate::node_sources::LibrarySource::Configured)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let factory = super::crypto_hash_source::factory(&source).map_err(RootedError::host)?;
         let hash_module = commonjs::node_library_module(c, "crypto.js", "internal/crypto/hash.js")?;

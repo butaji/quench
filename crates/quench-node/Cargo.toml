@@ -13,10 +13,11 @@ name = "quench-node"
 path = "src/bin/quench-node.rs"
 
 [features]
-default = ["jit"]
+default = ["jit", "bundled-sources"]
 jit = ["quench-runtime/jit", "quench-wasm/jit"]
+bundled-sources = []
 native-execution = ["quench-runtime/native-execution"]
-aot = ["native-execution", "quench-runtime/aot"]
+aot = ["bundled-sources", "native-execution", "quench-runtime/aot"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 profile-allocator = ["quench-runtime/profile-allocator"]

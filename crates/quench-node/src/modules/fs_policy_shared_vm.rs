@@ -141,9 +141,7 @@ fn install_vfs_callbacks(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .ok_or_else(|| RootedError::host("Node filesystem policy capture missing"))?;
     let library_root = context.host_mut().node_library_root.clone();
     let filename = library_root.join("lib/fs.js");
-    let source = std::fs::read_to_string(&filename).or_else(|error| {
-        crate::node_sources::source(&filename, &library_root).map(str::to_owned).ok_or(error)
-    }).map_err(|error| RootedError::host(error.to_string()))?;
+    let source = context.host_mut().node_library_source(&filename, crate::node_sources::LibrarySource::Configured).map_err(|error| RootedError::host(error.to_string()))?;
     let source = crate::host::shared_vm::policy_projection::project(&source, &["vfsVoid", "vfsResult"])
         .map_err(RootedError::host)?;
     // Only wrapper plumbing is generated. Both policy declarations and their

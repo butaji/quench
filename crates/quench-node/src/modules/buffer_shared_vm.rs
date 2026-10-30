@@ -139,8 +139,8 @@ fn fast_buffer_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         return Ok(fast);
     }
     let root = c.host_mut().node_library_root.clone();
-    let library = crate::node_sources::source(&root.join(INTERNAL_BUFFER_LIBRARY), &root)
-        .ok_or_else(|| RootedError::host("internal/buffer.js is not embedded"))?;
+    let library = c.host_mut().node_library_source(&root.join(INTERNAL_BUFFER_LIBRARY), crate::node_sources::LibrarySource::Bundled)
+        .map_err(|_| RootedError::host("internal/buffer.js is not embedded"))?;
     let start = library
         .find(FAST_BUFFER_STATEMENT)
         .ok_or_else(|| RootedError::host("internal/buffer.js declares no FastBuffer"))?;

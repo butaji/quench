@@ -102,8 +102,7 @@ fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedEr
             .ok_or_else(|| RootedError::host("process is not initialized"))?;
         let root = context.host_mut().node_library_root.clone();
         let filename = root.join("lib").join(WARNING_MODULE);
-        let source = std::fs::read_to_string(&filename)
-            .or_else(|error| crate::node_sources::source(&filename, &root).map(str::to_owned).ok_or(error))
+        let source = context.host_mut().node_library_source(&filename, crate::node_sources::LibrarySource::Configured)
             .map_err(|error| RootedError::host(error.to_string()))?;
         // The prelude shares the wrapper's line, so the module keeps its positions.
         let prelude: Vec<&str> = PRELUDE.lines().map(str::trim).collect();

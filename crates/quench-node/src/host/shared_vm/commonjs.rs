@@ -1104,7 +1104,7 @@ pub(crate) fn require_for_module(
     } else {
         EntryGoal::Node
     };
-    if crate::node_sources::source(&filename, &context.host_mut().node_library_root).is_some() {
+    if is_node_library_source(context, &filename) {
         return load(context, &filename, Some(parent), goal);
     }
     if context.rooted_value(directory_cache).is_some_and(|value| value.is_undefined()) {
@@ -2813,6 +2813,14 @@ fn module_is_file(context: &mut Context<'_>, path: &Path) -> bool {
     path.is_file()
 }
 
+fn is_node_library_source(context: &mut Context<'_>, path: &Path) -> bool {
+    #[cfg(feature = "native-execution")]
+    if path.starts_with(&context.host_mut().node_library_root) && context.host_mut().embedded_module(path).is_some_and(|file| file.kind == quench_runtime::SourceKind::Script) {
+        return true;
+    }
+    crate::node_sources::source(path, &context.host_mut().node_library_root).is_some()
+}
+
 /// Read a module's original bytes through the selected module input provider.
 fn module_file_bytes(context: &mut Context<'_>, path: &Path, kind: quench_runtime::SourceKind) -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "native-execution")]
@@ -2862,7 +2870,7 @@ fn load_with_resolution(
     } else {
         None
     };
-    let cache = if crate::node_sources::source(filename, &context.host_mut().node_library_root).is_some() {
+    let cache = if is_node_library_source(context, filename) {
         ModuleCache::NodeLibrary
     } else { ModuleCache::CommonJs };
     let cached = cache.get(context, &key)?;

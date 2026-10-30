@@ -170,8 +170,11 @@ fn embed_node_sources() {
     embed_uv_error_constants(&root);
     embed_empty_string_list_options(&root);
     embed_legacy_binding_metadata(&root);
-    let mut pending = vec![root.join("lib")];
-    let mut files = BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>();
+    let bundled = env::var_os("CARGO_FEATURE_BUNDLED_SOURCES").is_some();
+    let mut pending = if bundled { vec![root.join("lib")] } else { Vec::new() };
+    let mut files = if bundled {
+        BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>()
+    } else { Vec::new() };
     while let Some(directory) = pending.pop() {
         println!("cargo:rerun-if-changed={}", directory.display());
         for entry in std::fs::read_dir(directory).expect("read pinned Node library") {

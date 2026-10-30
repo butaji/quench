@@ -28,9 +28,7 @@ pub(crate) fn initialize(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result
     c.with_startup_intrinsics(|c| {
         let root = c.host_mut().node_library_root.clone();
         let filename = root.join("lib/internal/fs/promises.js");
-        let source = std::fs::read_to_string(&filename).or_else(|error| {
-            crate::node_sources::source(&filename, &root).map(str::to_owned).ok_or(error)
-        }).map_err(|error| RootedError::host(error.to_string()))?;
+        let source = c.host_mut().node_library_source(&filename, crate::node_sources::LibrarySource::Configured).map_err(|error| RootedError::host(error.to_string()))?;
         let source = policy_projection::project_with_bindings(&source, &["readlink"], CAPTURES)
             .map_err(RootedError::host)?;
         let factory = c.evaluate_script_rooted(
