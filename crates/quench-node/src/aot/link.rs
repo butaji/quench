@@ -337,21 +337,25 @@ const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
 
 fn is_compiler_symbol(symbol: &str) -> bool {
     BACKEND_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name))
+        || ["oxc_parser::", "oxc_semantic::"].iter().any(|name| symbol.contains(name))
         || (symbol.contains("quench_runtime") && JS_SOURCE_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name)))
 }
 
 fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<String>, String> {
-    let bytes = checked_output(Command::new("nm").arg(executable), "native symbol audit")?;
+    let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     let mut exports = BTreeSet::new();
     for line in symbols.lines() {
+        // Demangled names omit the instantiating crate: a core generic first
+        // emitted by OXC can be required without retaining any OXC operation.
+        // Inspect the full line because Rust types may contain spaces.
+        if is_compiler_symbol(line) {
+            return Err(format!("native image retained a compiler symbol: {line}"));
+        }
         let mut fields = line.split_whitespace().rev();
         let Some(symbol) = fields.next() else {
             continue;
         };
-        if is_compiler_symbol(symbol) {
-            return Err(format!("native image retained a compiler symbol: {symbol}"));
-        }
         let symbol = symbol.trim_start_matches('_');
         if fields.next() == Some("T")
             && symbol.starts_with(quench_runtime::NATIVE_JS_OPERATION_PREFIX)
@@ -382,6 +386,8 @@ mod tests {
             "quench_runtime::compile::ast::FunctionCompiler::compile",
             "quench_runtime::compile::Engine::specialize_module_with_atom_prefix",
             "cranelift_native::target_isa_for",
+            "0000000100000000 T <oxc_parser::Parser>::parse",
+            "0000000100000000 T <oxc_semantic::SemanticBuilder as Trait>::build",
         ] {
             assert!(is_compiler_symbol(symbol), "{symbol}");
         }
@@ -390,6 +396,8 @@ mod tests {
             "quench_runtime::compile::regexp::validate_pattern_text",
             "quench_runtime::compile::program_profile::ProgramFootprint",
             "quench_node::specialize_host_script",
+            "<core::ptr::drop_glue<alloc::vec::Vec<u64>>>",
+            "_RAND_bytes",
         ] {
             assert!(!is_compiler_symbol(symbol), "{symbol}");
         }

@@ -18,15 +18,21 @@ pub(crate) fn install(
         let root = c.host_mut().node_library_root.clone();
         let filename = root.join("lib/crypto.js");
         let mut source = None;
-        let mut project = |host: &mut NodeHost, view, factory: fn(&str) -> Result<String, &'static str>| {
+        let mut project = |host: &mut NodeHost, view: crate::node_sources::SourceView<'_>| {
             host.with_source_view(&filename, view, |host| {
                 if source.is_none() {
                     source = Some(host.node_library_source(&filename, crate::node_sources::LibrarySource::Configured).map_err(|error| error.to_string())?);
                 }
-                factory(source.as_deref().unwrap()).map_err(str::to_owned)
+                let source = source.as_deref().unwrap();
+                match view {
+                    crate::node_sources::SourceView::CryptoHashFactory => super::crypto_hash_source::factory(source),
+                    crate::node_sources::SourceView::CryptoRandomAliasFactory => super::crypto_hash_source::random_alias_factory(source),
+                    crate::node_sources::SourceView::CryptoSignatureFactory => super::crypto_hash_source::signature_factory(source),
+                    _ => unreachable!("crypto projection requires a crypto source view"),
+                }.map_err(str::to_owned)
             }).map_err(RootedError::host)
         };
-        let factory = project(c.host_mut(), crate::node_sources::SourceView::CryptoHashFactory, super::crypto_hash_source::factory)?;
+        let factory = project(c.host_mut(), crate::node_sources::SourceView::CryptoHashFactory)?;
         let hash_module = commonjs::node_library_module(c, "crypto.js", "internal/crypto/hash.js")?;
         let hash = get(c, hash_module, "Hash")?;
         let hmac = get(c, hash_module, "Hmac")?;
@@ -51,7 +57,7 @@ pub(crate) fn install(
             let key = c.string_rooted(name);
             c.define_data_property_rooted(public, key, value, true, true, true)?;
         }
-        let factory = project(c.host_mut(), crate::node_sources::SourceView::CryptoRandomAliasFactory, super::crypto_hash_source::random_alias_factory)?;
+        let factory = project(c.host_mut(), crate::node_sources::SourceView::CryptoRandomAliasFactory)?;
         let factory = c.evaluate_script_rooted(&factory, &filename.to_string_lossy())?;
         let random_bytes = get(c, random, "randomBytes")?;
         let options = commonjs::node_library_export(c, "crypto.js", "internal/options.js", "getOptionValue")?;
@@ -80,7 +86,7 @@ pub(crate) fn install(
         let sign = get(c, sig, "Sign")?;
         let verify = get(c, sig, "Verify")?;
         let factory =
-            project(c.host_mut(), crate::node_sources::SourceView::CryptoSignatureFactory, super::crypto_hash_source::signature_factory)?;
+            project(c.host_mut(), crate::node_sources::SourceView::CryptoSignatureFactory)?;
         let factory = c.evaluate_script_rooted(&factory, &filename.to_string_lossy())?;
         let projected = c.call_rooted(factory, undefined, &[sign, verify, deprecate])?;
         for name in ["Sign", "Verify", "createSign", "createVerify"] {

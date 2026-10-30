@@ -13,7 +13,7 @@ const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
 const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile production|iteration] [--sdk-report FILE] [--strict-aot]";
 const RETAINED_SUPPORT: &[&str] = &[
-    "unpruned source frontend dependencies",
+    "unpruned Wasm frontend dependencies",
     "disabled interpreter",
     "unpruned Node host support",
 ];
@@ -158,7 +158,7 @@ fn compile(options: Options) -> Result<(), String> {
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
         "execution_mode": "native_only", "requested_support_profile": options.profile,
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
-        "source_compilation": false,
+        "source_compilation": false, "js_source_frontend": false,
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });

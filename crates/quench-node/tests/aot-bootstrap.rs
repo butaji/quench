@@ -208,6 +208,7 @@ fn execution_only_support_rejects_source_and_unlinked_code_in_every_mode() {
         .arg("-C").arg(format!("opt-level={}", support["optimization_level"].as_str().unwrap()))
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/execution-only.rs"))
         .arg("--extern").arg(format!("quench_runtime={}", runtime.display()))
+        .arg("--extern").arg(format!("quench_node={}", support["node_library"].as_str().unwrap()))
         .arg("-L").arg(format!("dependency={}", runtime.parent().unwrap().display()))
         .arg("-o").arg(&executable);
     if support["rust_lto"] == true { compiler.arg("-C").arg("lto=thin"); }
@@ -220,6 +221,35 @@ fn execution_only_support_rejects_source_and_unlinked_code_in_every_mode() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(output.stdout, b"execution-only support rejects source and unlinked code in every mode\n");
     assert!(output.stderr.is_empty());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit execution-only SDK metadata admission check"]
+fn bootstrap_images_reject_missing_frozen_sdk_preparation() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-sdk-missing-preparation-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, "require('node:util');").unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+    let mut manifest = SourceManifest::default();
+    let graph = manifest.add_commonjs_graph(&entry).unwrap();
+    manifest.extend(SourceManifest::capture_for_graph(&root, &graph).unwrap()).unwrap();
+    let mut compiled = manifest.compile().unwrap();
+    let (path, file) = compiled.assets.files.iter_mut()
+        .find(|(path, _)| path.ends_with("lib/internal/per_context/primordials.js"))
+        .expect("bootstrap captures primordials");
+    assert!(file.prepared.take().is_some());
+    let missing = path.display().to_string();
+    let inputs = compiled.emit(&directory.join("images")).unwrap();
+    let executable = directory.join("missing-preparation");
+    link_images(&inputs, &executable);
+    let output = Command::new(executable).env_clear().current_dir(&directory).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(&format!("SDK module has no frozen source preparation: {missing}")), "{stderr}");
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -285,6 +315,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
         assert_eq!(report["status"], "compiled");
         assert_eq!(report["execution_mode"], "native_only");
         assert_eq!(report["source_compilation"], false);
+        assert_eq!(report["js_source_frontend"], false);
         assert_eq!(report["requested_support_profile"], profile);
         assert_eq!(report["payload_minimal"], false);
         assert!(report["sdk_source_views"].as_u64().unwrap() > 0);

@@ -1,7 +1,13 @@
-use quench_runtime::{ExecutionMode, ExecutionRequest, ResidualProgram, Runtime, SystemHost};
+use quench_runtime::{ExecutionMode, ExecutionRequest, Host, ResidualProgram, Runtime, SystemHost};
 
 fn main() {
     assert!(quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY);
+    let mut host = quench_node::NodeHost::new(vec!["quench".into()]);
+    for specifier in ["node:fs", "./unlinked.mjs"] {
+        let error = host.resolve_dynamic_import("/unlinked/entry.mjs", specifier).err()
+            .expect("execution-only host admitted module source resolution");
+        assert_eq!(error.message, "native guest code required: module source resolution is unavailable");
+    }
     let program = ResidualProgram::read_binary(std::path::Path::new(
         &std::env::args().nth(1).expect("archived program path"),
     )).unwrap();

@@ -98,5 +98,5 @@ pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
     not(feature = "native-execution"), feature = "jit", feature = "aot"
 ));
 
-#[cfg(feature = "native-execution")]
+/// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;

@@ -153,11 +153,16 @@ fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String>
     Ok(std::borrow::Cow::Borrowed(path))
 }
 
+const SOURCE_KIND_DETECTION_UNAVAILABLE: &str = "native guest code required: source-kind detection is unavailable";
+
 /// `source_kind` of a path that is already its real path, as a module the loader resolved.
 pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match declared_source_kind(path)? {
         Some(kind) => Ok(kind),
         None => {
+            if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+                return Err(SOURCE_KIND_DETECTION_UNAVAILABLE.into());
+            }
             let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
             Ok(detect_source_kind(&source_text(&bytes)))
         }
@@ -167,7 +172,12 @@ pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceK
 /// `source_kind_of_real` of a file whose bytes the caller already holds: detecting from
 /// them keeps a second copy of a large file (typescript.js, 9 MB) from being read alongside.
 pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<quench_runtime::SourceKind, String> {
-    Ok(declared_source_kind(path)?.unwrap_or_else(|| detect_source_kind(&source_text(bytes))))
+    match declared_source_kind(path)? {
+        Some(kind) => Ok(kind),
+        None if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY =>
+            Err(SOURCE_KIND_DETECTION_UNAVAILABLE.into()),
+        None => Ok(detect_source_kind(&source_text(bytes))),
+    }
 }
 
 /// The goal a real path's extension or package scope declares; none when Node's syntax
@@ -2937,6 +2947,12 @@ fn load_with_resolution(
             Some(crate::aot::PreparedModuleSource::Original) => file_text,
             #[cfg(feature = "native-execution")]
             Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
+            _ if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY => {
+                if library_relative.is_some() {
+                    return Err(RootedError::host(format!("SDK module has no frozen source preparation: {}", filename.display())));
+                }
+                file_text
+            }
             _ => match library_relative {
             Some(path) if path == Path::new("lib/internal/child_process.js") =>
                 super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle"]).map_err(RootedError::host)?.into(),
@@ -3081,7 +3097,7 @@ const getLinkedBinding = () => ({});
                         );
                         let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main, typescript) {
                             Ok(wrapper) => wrapper,
-                            Err(_) if declared.is_none()
+                            Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
                                 && detect_source_kind(&wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
                                     == quench_runtime::SourceKind::Module =>
                             {

@@ -31,7 +31,7 @@ pub(crate) enum LibrarySource {
     Bundled,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, Copy, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum SourceView<'a> {
     Policy {

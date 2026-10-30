@@ -1237,6 +1237,9 @@ impl quench_runtime::Host for NodeHost {
         referrer: &str,
         specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+            return Err("native guest code required: module source resolution is unavailable".into());
+        }
         // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
         static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
             std::sync::OnceLock::new();

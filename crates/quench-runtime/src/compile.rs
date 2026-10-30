@@ -463,6 +463,10 @@ impl Engine {
 
     fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
         let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
+        // No source-derived proof is available in execution-only support.
+        // Archived analysis may still satisfy static_module_analysis_with;
+        // otherwise execution must use linked code or fail its admission guard.
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return unbounded; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
@@ -537,6 +541,7 @@ impl Engine {
     }
 
     pub(crate) fn static_module_throw(source: &str) -> Option<StaticModuleThrow> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
@@ -596,6 +601,7 @@ impl Engine {
         source: &str,
         module_name: &str,
     ) -> Option<Vec<(String, Constant)>> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
