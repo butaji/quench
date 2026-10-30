@@ -177,6 +177,7 @@ impl<H: Host> Vm<H> {
             );
         };
         let source = source.host_string().to_owned();
+        self.require_source_compilation(p)?;
         let source_is_invalid = crate::Engine::specialize_eval_with_context(
             &source,
             "<ShadowRealm>",

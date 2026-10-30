@@ -15152,6 +15152,31 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_only_rejects_source_before_parsing_and_preserves_function_argument_coercion() {
+        for source in [
+            "eval('let compilationOnly = ;');",
+            "(0, eval)('let compilationOnly = ;');",
+            "new Function({toString() { globalThis.converted = 1; return 'let compilationOnly = ;'; }});",
+        ] {
+            let (native, _, _) = linked_test_program(source, false);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert!(error.to_string().contains("source compilation is unavailable"), "{source}: {error}");
+            assert!(vm.lookup_atom("compilationOnly").is_none());
+            if source.starts_with("new Function") {
+                let atom = vm.lookup_atom("converted").unwrap();
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(1.0)));
+            }
+        }
+        let (native, _, _) = linked_test_program("throw eval(42);", false);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        assert_eq!(vm.execute_native_program(&native, true).unwrap_err().thrown_value(), Some(Value::number(42.0)));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn linked_native_frames_call_return_and_unwind_without_replaying_effects() {
         for typescript in [false, true] {
             let (native, counts, _) = linked_test_program(

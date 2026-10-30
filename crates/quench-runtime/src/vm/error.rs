@@ -1421,6 +1421,7 @@ impl<H: Host> Vm<H> {
         }
         let source = argument_strings.pop().unwrap_or_default();
         let parameters = argument_strings.join(",");
+        self.require_source_compilation(program)?;
         let kind = match native {
             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
             Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,

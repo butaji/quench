@@ -3648,6 +3648,7 @@ impl<H: Host> Vm<H> {
                 .store_module_program(program)
                 .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
+                self.require_source_compilation(p)?;
                 if let Some(message) = self.static_module_early_error(&module.source, &module.name) {
                     return self
                         .syntax_error_result(p, &message)
@@ -4219,6 +4220,7 @@ impl<H: Host> Vm<H> {
         {
             Some(program) => program,
             None => {
+                self.require_source_compilation(p)?;
                 let residual = crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
@@ -4467,6 +4469,7 @@ impl<H: Host> Vm<H> {
             nodes.insert(identity, StaticModuleNode::new(locals, plan.reexports.clone()));
             return Ok(true);
         }
+        self.require_source_compilation(p)?;
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
             let exports = exports
                 .into_iter()

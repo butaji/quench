@@ -3963,6 +3963,8 @@ impl ResidualProgram {
             }
         };
         if let Some(unlowered) = unlowered {
+            assert!(crate::SOURCE_COMPILATION_ENABLED,
+                "native function {index} of {} was not lowered before linking", self.source_name);
             let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
@@ -3978,11 +3980,15 @@ impl ResidualProgram {
             Some(decoded) => decoded.unwrap_or_else(|error| {
                 panic!("function {index} of {} does not decode: {error}", self.source_name)
             }),
-            None => crate::compile::replay::recompile(self, index as u32)
+            None => {
+                assert!(crate::SOURCE_COMPILATION_ENABLED,
+                    "native function {index} of {} has no archived record", self.source_name);
+                crate::compile::replay::recompile(self, index as u32)
                 .unwrap_or_else(|error| {
                     panic!("function {index} of {} does not compile again: {error}", self.source_name)
                 })
-                .function,
+                .function
+            },
         };
         // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
         function.decoded.prime_loop(&function.code, &function.wide);

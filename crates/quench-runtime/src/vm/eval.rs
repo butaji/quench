@@ -61,6 +61,14 @@ fn only_trivia(source: &str) -> bool {
 
 
 impl<H: Host> Vm<H> {
+    pub(super) fn require_source_compilation(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        if crate::SOURCE_COMPILATION_ENABLED && self.execution_mode.allows_dynamic_execution() {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "native guest code required: source compilation is unavailable".into()))
+        }
+    }
+
     pub(super) fn eval_script_native(
         &mut self,
         p: &ResidualProgram,
@@ -96,6 +104,7 @@ impl<H: Host> Vm<H> {
         source: &str,
         source_name: &str,
     ) -> Result<Value, JsError> {
+        self.require_source_compilation(p)?;
         if only_trivia(source) {
             return Ok(Value::UNDEFINED);
         }
@@ -161,6 +170,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.heap.string(source).is_some() {
+            self.require_source_compilation(p)?;
+        }
         if let Some(source_text) = self.heap.string(source).cloned()
             && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
         {
@@ -245,6 +257,19 @@ impl<H: Host> Vm<H> {
         cache_source: Option<JsString>,
         host_script: bool,
     ) -> Result<Value, JsError> {
+        let host_script = host_script && !self.direct_eval;
+        let mode = self.specialization_part();
+        #[cfg(feature = "native-execution")]
+        if host_script
+            && let Some(native) = self.host.kept_native_program(source_name, &[mode, source]).map_err(JsError::validation)?
+        {
+            let prepared = self.prepare_native_script(native)?;
+            let Some(id) = self.store_prepared_script(&prepared)? else {
+                return Err(self.type_error(p, "dynamic program store is full".into()));
+            };
+            return self.run_global_eval_instance(p, id, cache_source);
+        }
+        self.require_source_compilation(p)?;
         if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
             return self.run_global_eval_program(p, program);
         }
@@ -275,18 +300,6 @@ impl<H: Host> Vm<H> {
         };
         // A host script compiles from its text alone: it is no direct eval, so it has no
         // caller context, private names or Annex B restrictions.
-        let host_script = host_script && !self.direct_eval;
-        let mode = self.specialization_part();
-        #[cfg(feature = "native-execution")]
-        if host_script
-            && let Some(native) = self.host.kept_native_program(source_name, &[mode, source]).map_err(JsError::validation)?
-        {
-            let prepared = self.prepare_native_script(native)?;
-            let Some(id) = self.store_prepared_script(&prepared)? else {
-                return Err(self.type_error(p, "dynamic program store is full".into()));
-            };
-            return self.run_global_eval_instance(p, id, cache_source);
-        }
         let kept = host_script
             .then(|| self.host.kept_compiled_program(source_name, &[mode, source]))
             .flatten()
@@ -544,6 +557,7 @@ impl<H: Host> Vm<H> {
                 return self.prepare_native_script(native);
             }
         }
+        self.require_source_compilation(&program)?;
         if let Some(goal) = &cache_key
             && let Some(kept) = self.kept_script(source, name, goal, origin)
         {
