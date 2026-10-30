@@ -644,6 +644,7 @@ macro_rules! opcodes {
     ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
+        #[quench_macros::native_operation_exports(1, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         #[allow(dead_code)]
@@ -4145,6 +4146,11 @@ impl ResidualProgram {
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         binary::read_program(path)
+    }
+
+    /// Read the same validated metadata from an embedded native image asset.
+    pub fn from_binary_bytes(bytes: KeptBytes) -> Result<Self, String> {
+        binary::read_program_bytes(bytes)
     }
 
     /// The compile-cache form of this program (`binary::encode_compact_program`) and the atom

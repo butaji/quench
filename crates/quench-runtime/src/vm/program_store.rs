@@ -3286,7 +3286,7 @@ impl ProgramStore {
         if entry.native_js.is_some() {
             return Err("native JS program already has code".into());
         }
-        if code.entries.len() != entry.residual.function_count() {
+        if code.entries().len() != entry.residual.function_count() {
             return Err("native entry count does not match program functions".into());
         }
         entry.lane_views = LaneViews::default();

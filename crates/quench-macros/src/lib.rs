@@ -4,6 +4,111 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Expr, FnArg, ImplItemFn, Pat, Stmt, parse_macro_input};
 
+struct NativeExportLayout {
+    version: syn::LitInt,
+    prefix: syn::LitStr,
+}
+
+impl syn::parse::Parse for NativeExportLayout {
+    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+        let version = input.parse()?;
+        input.parse::<syn::Token![,]>()?;
+        Ok(Self {
+            version,
+            prefix: input.parse()?,
+        })
+    }
+}
+
+/// Generate host exports from the same contiguous opcode inventory as dispatch.
+/// The version owns the call-context, operand and image-table ABI; change it when
+/// those layouts change. Opcode inventory changes also change the marker.
+#[proc_macro_attribute]
+pub fn native_operation_exports(attribute: TokenStream, input: TokenStream) -> TokenStream {
+    let layout = parse_macro_input!(attribute as NativeExportLayout);
+    let operations = parse_macro_input!(input as syn::ItemEnum);
+    derive_native_exports(layout, operations)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn derive_native_exports(
+    layout: NativeExportLayout,
+    operations: syn::ItemEnum,
+) -> syn::Result<proc_macro2::TokenStream> {
+    const FNV1A_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV1A_PRIME: u64 = 0x100_0000_01b3;
+    const OPCODE_NAME_TERMINATOR: u8 = 0;
+    let version = layout.version.base10_parse::<u32>()?;
+    let prefix = layout.prefix;
+    let mut hash = FNV1A_OFFSET_BASIS;
+    let mut exports = Vec::new();
+    for (index, variant) in operations.variants.iter().enumerate() {
+        if !matches!(variant.fields, syn::Fields::Unit) || variant.discriminant.is_some() {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "native opcodes must be contiguous fieldless variants",
+            ));
+        }
+        if variant.attrs.iter().any(|attribute| {
+            attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr")
+        }) {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "native opcode inventory cannot have conditional variants",
+            ));
+        }
+        let name = &variant.ident;
+        let symbol = format!("{}{name}", prefix.value());
+        // The delimiter makes ordered opcode names unambiguous. This is an ABI
+        // compatibility fingerprint, not an adversarial integrity check.
+        for byte in symbol
+            .bytes()
+            .chain(std::iter::once(OPCODE_NAME_TERMINATOR))
+        {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(FNV1A_PRIME);
+        }
+        exports.push(quote! {
+            #[unsafe(export_name = #symbol)]
+            pub unsafe extern "C" fn #name(
+                context: *mut ::std::ffi::c_void, pc: u64,
+                operands: *const u64, result: *mut u64,
+            ) -> i64 {
+                // SAFETY: forwarded from the generated native entry ABI.
+                unsafe { $crate::native_js_operation_entry::<$host, #index>(context, pc, operands, result) }
+            }
+        });
+    }
+    let marker = format!("quench_native_js_abi_v{version}_{hash:016x}");
+    Ok(quote! {
+        #operations
+        #[cfg(feature = "aot")]
+        pub(crate) const NATIVE_JS_OPERATION_PREFIX: &str = #prefix;
+        #[cfg(feature = "aot")]
+        pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
+        /// Image header word zero is the link-time ABI marker's address.
+        #[cfg(feature = "aot")]
+        pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 1;
+
+        /// Export the derived semantic helpers for one host in an executable.
+        /// Invoke once, using a host type path and a module name for the exports.
+        #[cfg(feature = "aot")]
+        #[macro_export]
+        macro_rules! export_native_js_operations {
+            ($host:ty, $module:ident) => {
+                #[allow(non_snake_case)]
+                mod $module {
+                    #[allow(unused_imports)]
+                    use super::*;
+                    #[unsafe(export_name = #marker)]
+                    pub extern "C" fn abi_marker() {}
+                    #(#exports)*
+                }
+            };
+        }
+    })
+}
+
 /// Derive callable semantic operations and a selector from a method whose first
 /// statement matches `Op`. The remaining statements are the common completion.
 /// Interpreter dispatch calls those same bodies; native publication can resolve
@@ -107,6 +212,42 @@ fn derive_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_exports_reject_non_contiguous_or_conditional_variants() {
+        for enumeration in [
+            syn::parse_quote!(
+                enum Op {
+                    First = 7,
+                    Last,
+                }
+            ),
+            syn::parse_quote!(
+                enum Op {
+                    First,
+                    #[cfg(any())]
+                    Last,
+                }
+            ),
+            syn::parse_quote!(
+                enum Op {
+                    First(u32),
+                    Last,
+                }
+            ),
+        ] {
+            assert!(
+                derive_native_exports(
+                    NativeExportLayout {
+                        version: syn::parse_quote!(1),
+                        prefix: syn::parse_quote!("operation_"),
+                    },
+                    enumeration
+                )
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn rejects_state_dependent_dispatch_guards() {

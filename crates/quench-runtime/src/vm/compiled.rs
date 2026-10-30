@@ -14781,7 +14781,7 @@ impl<H: Host> Vm<H> {
         let failure = |message: String| JsNativeStep {
             instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
         };
-        let Some(entry) = code.entries.get(function as usize).copied() else {
+        let Some(entry) = code.entries().get(function as usize).copied() else {
             return Some(failure("linked native function is missing".into()));
         };
         let mut dispatch = JsStepDispatch::new(self, program, frame, start_pc, allow_inline_calls);

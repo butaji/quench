@@ -397,8 +397,12 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding) -> (Vec
 
 pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProgram, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    let length = bytes.len();
-    let program = decode_program(&(std::rc::Rc::new(bytes) as super::KeptBytes), length, ReadAtoms::Program, None)?;
+    read_program_bytes(std::rc::Rc::new(bytes))
+}
+
+pub(super) fn read_program_bytes(bytes: super::KeptBytes) -> Result<super::ResidualProgram, String> {
+    let length = bytes.as_ref().as_ref().len();
+    let program = decode_program(&bytes, length, ReadAtoms::Program, None)?;
     program.validate()?;
     Ok(program)
 }

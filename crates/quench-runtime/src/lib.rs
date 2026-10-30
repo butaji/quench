@@ -73,12 +73,14 @@ pub mod owned_clone;
 pub mod shared_backing;
 
 #[cfg(feature = "aot")]
+pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS};
+#[cfg(feature = "aot")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,
     native_graph::{NativeJsModule, lower_native_js_module},
     native_program::{NativeJsFunctionEntry, NativeJsProgram},
     native_object::{
-        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction,
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction, NativeFunctionAddress,
         emit_native_module, emit_native_object,
     },
 };

@@ -11,12 +11,20 @@ pub const NATIVE_FUNCTION_NAMESPACE: u32 = 0;
 /// Cranelift Module's data namespace; indices refer to data declaration order.
 pub const NATIVE_DATA_NAMESPACE: u32 = 1;
 
+/// A pointer-sized function address, resolved by the system linker.
+pub struct NativeFunctionAddress {
+    pub offset: u32,
+    /// Index in the module's function declaration order, including imports.
+    pub function: u32,
+}
+
 /// Linker-owned program constants, assets, or writable native storage.
 pub struct NativeData {
     pub name: String,
     pub bytes: Vec<u8>,
     pub alignment: u64,
     pub writable: bool,
+    pub function_addresses: Vec<NativeFunctionAddress>,
 }
 
 /// A symbol's signature has one authority: its definition, or its import.
@@ -164,9 +172,41 @@ pub fn emit_native_module(
         .map_err(|error| format!("{name}: {error}"))?;
     }
     for (id, item) in data_symbols.into_iter().zip(data) {
+        let pointer_bytes = usize::from(isa.pointer_bytes());
+        let mut offsets: Vec<_> = item
+            .function_addresses
+            .iter()
+            .map(|address| address.offset)
+            .collect();
+        offsets.sort_unstable();
+        if offsets
+            .windows(2)
+            .any(|pair| u64::from(pair[0]) + pointer_bytes as u64 > u64::from(pair[1]))
+        {
+            return Err(format!("{}: native function addresses overlap", item.name));
+        }
+        for address in &item.function_addresses {
+            if address.function as usize >= symbols.len() {
+                return Err(format!("{}: undeclared native function address", item.name));
+            }
+            if (address.offset as usize)
+                .checked_add(pointer_bytes)
+                .is_none_or(|end| end > item.bytes.len())
+            {
+                return Err(format!(
+                    "{}: native function address exceeds data",
+                    item.name
+                ));
+            }
+        }
         let mut description = DataDescription::new();
         description.define(item.bytes.into_boxed_slice());
         description.set_align(item.alignment);
+        for address in item.function_addresses {
+            let function =
+                module.declare_func_in_data(symbols[address.function as usize], &mut description);
+            description.write_function_addr(address.offset, function);
+        }
         module
             .define_data(id, &description)
             .map_err(|error| error.to_string())?;
@@ -275,6 +315,7 @@ mod tests {
                 bytes: (PROGRAM_EXIT_STATUS as u32).to_ne_bytes().to_vec(),
                 alignment: std::mem::align_of::<u32>() as u64,
                 writable: false,
+                function_addresses: Vec::new(),
             }],
         )
         .unwrap();
@@ -292,6 +333,7 @@ mod tests {
                     bytes: vec![0],
                     alignment,
                     writable: false,
+                    function_addresses: Vec::new(),
                 }],
             )
             .unwrap_err();
@@ -305,6 +347,7 @@ mod tests {
                 bytes: vec![0],
                 alignment: 1,
                 writable: false,
+                function_addresses: Vec::new(),
             }],
         )
         .unwrap_err();
@@ -332,6 +375,7 @@ mod tests {
                 bytes: vec![0],
                 alignment: 1,
                 writable: false,
+                function_addresses: Vec::new(),
             }],
         )
         .unwrap_err();
@@ -377,6 +421,54 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("duplicate native symbol"), "{error}");
+    }
+
+    #[test]
+    fn invalid_function_address_relocations_are_diagnostics() {
+        let pointer_bytes = std::mem::size_of::<usize>();
+        for (addresses, diagnostic) in [
+            (
+                vec![NativeFunctionAddress {
+                    offset: 0,
+                    function: 1,
+                }],
+                "undeclared native function address",
+            ),
+            (
+                vec![NativeFunctionAddress {
+                    offset: pointer_bytes as u32,
+                    function: 0,
+                }],
+                "exceeds data",
+            ),
+            (
+                vec![
+                    NativeFunctionAddress {
+                        offset: 0,
+                        function: 0,
+                    },
+                    NativeFunctionAddress {
+                        offset: 1,
+                        function: 0,
+                    },
+                ],
+                "overlap",
+            ),
+        ] {
+            let error = emit_native_module(
+                "bad-address",
+                vec![function("main", None)],
+                vec![NativeData {
+                    name: "table".into(),
+                    bytes: vec![0; pointer_bytes],
+                    alignment: pointer_bytes as u64,
+                    writable: false,
+                    function_addresses: addresses,
+                }],
+            )
+            .unwrap_err();
+            assert!(error.contains(diagnostic), "{error}");
+        }
     }
 
     #[test]

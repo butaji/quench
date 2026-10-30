@@ -2,6 +2,7 @@
 
 use super::native_object::{
     NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction,
+    NativeFunctionAddress,
 };
 use super::native_operands::NativeJsOperands;
 use crate::bytecode::{ControlFlowLayout, Function, Op, ProgramKind, ResidualProgram};
@@ -16,6 +17,14 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 pub struct NativeJsModule {
     pub functions: Vec<NativeFunction>,
     pub data: Vec<NativeData>,
+    entry_table: usize,
+}
+
+impl NativeJsModule {
+    /// Linker symbol for the ABI header followed by function-ID-ordered entries.
+    pub fn entry_table_symbol(&self) -> &str {
+        &self.data[self.entry_table].name
+    }
 }
 
 /// Lower every function before execution. Deferred function bodies are resolved
@@ -34,6 +43,11 @@ pub fn lower_native_js_module(
     )
     .ok_or("native target unavailable")?;
     let mut functions = Vec::new();
+    let abi_function = 0;
+    functions.push(NativeFunction::Import {
+        name: crate::NATIVE_JS_ABI_SYMBOL.into(),
+        signature: ir::Signature::new(isa.default_call_conv()),
+    });
     let mut operations = vec![None; Op::COUNT];
     for id in 0..program.function_count() {
         let body = program.function(id);
@@ -44,12 +58,18 @@ pub fn lower_native_js_module(
                     .map_err(|_| "native symbol count exceeds u32")?;
                 operations[op as usize] = Some(index);
                 functions.push(NativeFunction::Import {
-                    name: format!("quench_js_op_{}", Op::NAMES[op as usize]),
+                    name: format!(
+                        "{}{}",
+                        crate::bytecode::NATIVE_JS_OPERATION_PREFIX,
+                        Op::NAMES[op as usize]
+                    ),
                     signature: super::compiled::native_js_operation_signature(&*isa),
                 });
             }
         }
     }
+    let first_definition =
+        u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let mut data = Vec::with_capacity(program.function_count());
     for id in 0..program.function_count() {
         let body = program.function(id);
@@ -123,13 +143,48 @@ pub fn lower_native_js_module(
             bytes,
             alignment: std::mem::align_of::<NativeJsOperands>() as u64,
             writable: false,
+            function_addresses: Vec::new(),
         });
         functions.push(NativeFunction::Definition {
             name: format!("{namespace}_function_{id}"),
             function: native,
         });
     }
-    Ok(NativeJsModule { functions, data })
+    let pointer_bytes = usize::from(isa.pointer_bytes());
+    let words = program
+        .function_count()
+        .checked_add(crate::NATIVE_JS_IMAGE_HEADER_WORDS)
+        .ok_or("native entry table size overflow")?;
+    let bytes = words
+        .checked_mul(pointer_bytes)
+        .ok_or("native entry table size overflow")?;
+    let mut addresses = Vec::with_capacity(words);
+    addresses.push(NativeFunctionAddress {
+        offset: 0,
+        function: abi_function,
+    });
+    for id in 0..program.function_count() {
+        let word = id + crate::NATIVE_JS_IMAGE_HEADER_WORDS;
+        let offset = u32::try_from(word * pointer_bytes)
+            .map_err(|_| "native entry table exceeds relocation offsets")?;
+        let function = first_definition
+            .checked_add(u32::try_from(id).map_err(|_| "native function count exceeds u32")?)
+            .ok_or("native function symbol count exceeds u32")?;
+        addresses.push(NativeFunctionAddress { offset, function });
+    }
+    let entry_table = data.len();
+    data.push(NativeData {
+        name: format!("{namespace}_entries"),
+        bytes: vec![0; bytes],
+        alignment: pointer_bytes as u64,
+        writable: false,
+        function_addresses: addresses,
+    });
+    Ok(NativeJsModule {
+        functions,
+        data,
+        entry_table,
+    })
 }
 
 /// Bindings choose linker symbols or live JIT addresses; the graph and semantic
