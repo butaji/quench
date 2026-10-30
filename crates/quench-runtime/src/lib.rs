@@ -73,4 +73,10 @@ pub mod owned_clone;
 pub mod shared_backing;
 
 #[cfg(feature = "aot")]
-pub use vm::native_object::{NativeFunction, NATIVE_FUNCTION_NAMESPACE, emit_native_object};
+pub use vm::{
+    NativeJsOperands, native_js_operation_entry,
+    native_object::{
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction,
+        emit_native_module, emit_native_object,
+    },
+};

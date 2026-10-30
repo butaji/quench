@@ -1,12 +1,23 @@
 //! Object publication for the same native IR consumed by the JIT.
 
 use cranelift_codegen::ir;
-use cranelift_module::{Linkage, Module, ModuleReloc};
+use cranelift_module::{DataDescription, Linkage, Module, ModuleReloc};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 /// Cranelift Module's function namespace. Indices refer to declaration order,
 /// including imports; these are symbolic identities, never process addresses.
 pub const NATIVE_FUNCTION_NAMESPACE: u32 = 0;
+
+/// Cranelift Module's data namespace; indices refer to data declaration order.
+pub const NATIVE_DATA_NAMESPACE: u32 = 1;
+
+/// Linker-owned program constants, assets, or writable native storage.
+pub struct NativeData {
+    pub name: String,
+    pub bytes: Vec<u8>,
+    pub alignment: u64,
+    pub writable: bool,
+}
 
 /// A symbol's signature has one authority: its definition, or its import.
 pub enum NativeFunction {
@@ -26,6 +37,16 @@ pub enum NativeFunction {
 pub fn emit_native_object(
     module_name: &str,
     functions: Vec<NativeFunction>,
+) -> Result<Vec<u8>, String> {
+    emit_native_module(module_name, functions, Vec::new())
+}
+
+/// Publish native functions and data together, resolving symbolic references
+/// through their respective declaration namespaces before execution.
+pub fn emit_native_module(
+    module_name: &str,
+    functions: Vec<NativeFunction>,
+    data: Vec<NativeData>,
 ) -> Result<Vec<u8>, String> {
     let isa = super::jit_backend::target_isa_for(
         "speed",
@@ -58,6 +79,23 @@ pub fn emit_native_object(
                 .map_err(|error| error.to_string())?,
         );
     }
+    let mut data_symbols = Vec::with_capacity(data.len());
+    for item in &data {
+        if !item.alignment.is_power_of_two() {
+            return Err(format!(
+                "{}: native data alignment must be a nonzero power of two",
+                item.name
+            ));
+        }
+        if module.get_name(&item.name).is_some() {
+            return Err(format!("duplicate native symbol: {}", item.name));
+        }
+        data_symbols.push(
+            module
+                .declare_data(&item.name, Linkage::Export, item.writable, false)
+                .map_err(|error| error.to_string())?,
+        );
+    }
     for (index, definition) in functions.into_iter().enumerate() {
         let NativeFunction::Definition { name, function } = definition else {
             continue;
@@ -70,11 +108,41 @@ pub fn emit_native_object(
         {
             return Err(format!("{name}: test-only external names cannot be linked"));
         }
-        for target in function.params.user_named_funcs().values() {
-            if target.namespace != NATIVE_FUNCTION_NAMESPACE
-                || target.index as usize >= symbols.len()
+        for global in function.global_values.values() {
+            if let ir::GlobalValueData::Symbol {
+                name: target, tls, ..
+            } = global
             {
-                return Err(format!("{name}: undeclared native function {target}"));
+                if matches!(target, ir::ExternalName::TestCase(_)) {
+                    return Err(format!("{name}: test-only external names cannot be linked"));
+                }
+                if *tls {
+                    return Err(format!(
+                        "{name}: thread-local native symbols are not declared"
+                    ));
+                }
+            }
+        }
+        for target in function.params.user_named_funcs().values() {
+            let declared = match target.namespace {
+                NATIVE_FUNCTION_NAMESPACE => (target.index as usize) < symbols.len(),
+                NATIVE_DATA_NAMESPACE => (target.index as usize) < data_symbols.len(),
+                _ => false,
+            };
+            if !declared {
+                return Err(format!(
+                    "{name}: undeclared native function or data {target}"
+                ));
+            }
+        }
+        for external in function.dfg.ext_funcs.values() {
+            if let ir::ExternalName::User(reference) = external.name {
+                let target = &function.params.user_named_funcs()[reference];
+                if target.namespace != NATIVE_FUNCTION_NAMESPACE {
+                    return Err(format!(
+                        "{name}: data symbol {target} cannot be called as a function"
+                    ));
+                }
             }
         }
         let id = symbols[index];
@@ -94,6 +162,14 @@ pub fn emit_native_object(
         })
         .map_err(|error| format!("{name}: {}", error.reason()))?
         .map_err(|error| format!("{name}: {error}"))?;
+    }
+    for (id, item) in data_symbols.into_iter().zip(data) {
+        let mut description = DataDescription::new();
+        description.define(item.bytes.into_boxed_slice());
+        description.set_align(item.alignment);
+        module
+            .define_data(id, &description)
+            .map_err(|error| error.to_string())?;
     }
     module.finish().emit().map_err(|error| error.to_string())
 }
@@ -159,6 +235,107 @@ mod tests {
         )
         .unwrap();
         assert_eq!(link_and_run(object), Some(PROGRAM_EXIT_STATUS as i32));
+    }
+
+    #[test]
+    fn object_links_and_loads_relocated_program_data() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut main = ir::Function::with_name_signature(
+            ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, 0),
+            signature(),
+        );
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut main, &mut context);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let name = builder
+            .func
+            .declare_imported_user_function(ir::UserExternalName::new(NATIVE_DATA_NAMESPACE, 0));
+        let constant = builder.create_global_value(ir::GlobalValueData::Symbol {
+            name: ir::ExternalName::user(name),
+            offset: ir::immediates::Imm64::new(0),
+            colocated: false,
+            tls: false,
+        });
+        let pointer = builder.ins().symbol_value(isa.pointer_type(), constant);
+        let answer = builder
+            .ins()
+            .load(types::I32, ir::MemFlagsData::trusted(), pointer, 0);
+        builder.ins().return_(&[answer]);
+        builder.finalize(isa.frontend_config());
+        let object = emit_native_module(
+            "native-data",
+            vec![NativeFunction::Definition {
+                name: "main".into(),
+                function: main,
+            }],
+            vec![NativeData {
+                name: "answer".into(),
+                bytes: (PROGRAM_EXIT_STATUS as u32).to_ne_bytes().to_vec(),
+                alignment: std::mem::align_of::<u32>() as u64,
+                writable: false,
+            }],
+        )
+        .unwrap();
+        assert_eq!(link_and_run(object), Some(PROGRAM_EXIT_STATUS as i32));
+    }
+
+    #[test]
+    fn invalid_data_layout_and_symbol_kind_are_diagnostics() {
+        for alignment in [0, 3] {
+            let error = emit_native_module(
+                "alignment",
+                Vec::new(),
+                vec![NativeData {
+                    name: "data".into(),
+                    bytes: vec![0],
+                    alignment,
+                    writable: false,
+                }],
+            )
+            .unwrap_err();
+            assert!(error.contains("alignment"), "{error}");
+        }
+        let error = emit_native_module(
+            "duplicate",
+            vec![function("main", None)],
+            vec![NativeData {
+                name: "main".into(),
+                bytes: vec![0],
+                alignment: 1,
+                writable: false,
+            }],
+        )
+        .unwrap_err();
+        assert!(error.contains("duplicate native symbol"), "{error}");
+
+        let NativeFunction::Definition {
+            function: mut main, ..
+        } = function("main", Some(0))
+        else {
+            unreachable!()
+        };
+        let reference = main.params.user_named_funcs().keys().next().unwrap();
+        main.params.reset_user_func_name(
+            reference,
+            ir::UserExternalName::new(NATIVE_DATA_NAMESPACE, 0),
+        );
+        let error = emit_native_module(
+            "data-call",
+            vec![NativeFunction::Definition {
+                name: "main".into(),
+                function: main,
+            }],
+            vec![NativeData {
+                name: "data".into(),
+                bytes: vec![0],
+                alignment: 1,
+                writable: false,
+            }],
+        )
+        .unwrap_err();
+        assert!(error.contains("cannot be called as a function"), "{error}");
     }
 
     fn link_and_run(object: Vec<u8>) -> Option<i32> {

@@ -5897,8 +5897,50 @@ enum JsCalloutStep {
 unsafe extern "C" fn js_step_callout<H: Host>(
     context: *mut CallContext,
     function: u64,
-    _arguments: *const u64,
+    arguments: *const u64,
     result: *mut u64,
+) -> i64 {
+    // SAFETY: the native entry owns the context and result storage.
+    unsafe { js_semantic_callout::<H, false>(context, function, arguments, result, None) }
+}
+
+struct StaticJsOperation<H: Host> {
+    opcode: Op,
+    execute: fn(&mut Vm<H>, &ResidualProgram, usize, WideInstruction, &mut usize, bool)
+        -> Result<StepResult, JsError>,
+}
+
+/// Execute one compile-time-selected semantic operation and return its exact
+/// continuation. This entry never batches subsequent bytecodes.
+///
+/// # Safety
+/// `context` must be a live shared native-entry context for `H`, with its
+/// frame, program and adapter payload rooted through this call. `result` must
+/// point to a writable result word. `arguments` must point to an aligned,
+/// live `NativeJsOperands` from this compiler build, matching the instruction
+/// at the supplied PC. Operand structure is resolved before native execution.
+#[cfg(feature = "aot")]
+pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>(
+    context: *mut std::ffi::c_void,
+    pc: u64,
+    arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
+    let operation = Op::from_index(OPCODE).map(|opcode| StaticJsOperation {
+        opcode,
+        execute: Vm::<H>::resolve_step_operation(opcode),
+    });
+    // SAFETY: forwarded from this entry's native ABI contract. Invalid opcode
+    // constants are reported inside the shared exception boundary.
+    unsafe { js_semantic_callout::<H, true>(context.cast(), pc, arguments, result, operation) }
+}
+
+unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
+    context: *mut CallContext,
+    function: u64,
+    arguments: *const u64,
+    result: *mut u64,
+    operation: Option<StaticJsOperation<H>>,
 ) -> i64 {
     // The shared trampoline marks its active context while native code runs.
     // Clear it while Rust semantics and any host or guest helper run, so a
@@ -5923,17 +5965,33 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             .code
             .get(pc)
             .ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
-        let instruction = super::dispatch_fast::decoded_instruction(body, packed);
+        let source_instruction = super::dispatch_fast::decoded_instruction(body, packed);
+        let instruction = if SINGLE_OPERATION {
+            let selected = operation.as_ref().ok_or_else(||
+                JsError::validation("invalid native semantic opcode".into()))?;
+            if selected.opcode != source_instruction.op() {
+                return Err(JsError::validation("native semantic opcode does not match instruction".into()));
+            }
+            if arguments.is_null() {
+                return Err(JsError::validation("native semantic operands are missing".into()));
+            }
+            // SAFETY: linked code supplies resolved operands under the entry's
+            // ABI contract; the source opcode check precedes all guest effects.
+            unsafe { &*arguments.cast::<super::native_operands::NativeJsOperands>() }
+                .instruction(selected.opcode)
+        } else {
+            source_instruction
+        };
         let next_pc = pc
             .checked_add(1)
             .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
-        let native_pc = !dispatch.native_pcs.is_null()
+        let native_pc = !SINGLE_OPERATION && !dispatch.native_pcs.is_null()
             && pc < dispatch.native_pc_count
             // SAFETY: the compiled artifact owns this byte map for the entire
             // native callout and the PC is bounded by its recorded length.
             && unsafe { *dispatch.native_pcs.add(pc) != 0 };
-        if native_pc
+        if !SINGLE_OPERATION && native_pc
             && matches!(instruction.op(), Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof)
             && !vm.realm.global_lexical_declarations.contains(&instruction.atom_index())
             && program
@@ -5994,7 +6052,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             }));
         }
 
-        if instruction.op() == Op::GetField
+        if !SINGLE_OPERATION && instruction.op() == Op::GetField
             && (instruction.result_flags() == 0
                 || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
             && !instruction.writes_current_this()
@@ -6051,7 +6109,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
             }
         }
 
-        if instruction.op().js_denotation() == JsDenotation::FieldStore
+        if !SINGLE_OPERATION && instruction.op().js_denotation() == JsDenotation::FieldStore
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && next_pc < body.code.len()
@@ -6129,7 +6187,12 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let step = if dispatch.allow_inline_calls
+            let step = if SINGLE_OPERATION {
+                (operation.as_ref().expect("validated semantic operation").execute)(
+                    vm, &program, dispatch.frame, current_instruction, &mut next,
+                    dispatch.allow_inline_calls,
+                )
+            } else if dispatch.allow_inline_calls
                 && is_call
             {
                 match vm.try_inline_user_call(
@@ -6236,8 +6299,8 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                     frame.pc = next;
                     frame.pc_is_resume = true;
                     if !js_native_frame_storage_unchanged(frame, dispatch) {
-                        // The operation ran once. Stop native execution and resume
-                        // the interpreter at its already-computed successor.
+                        // The operation ran once. Return the transition to the
+                        // frame owner at its already-computed successor.
                         frame.js_jit_skip_entry_once = next == 0;
                         vm.active_registers = frame.registers.as_mut_ptr();
                         return Ok(JsCalloutStep::Stop(JsNativeStep {
@@ -6264,7 +6327,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
                         // SAFETY: the compiler emits one byte for every PC in
                         // this function and the artifact outlives this entry.
                         && unsafe { *dispatch.native_pcs.add(next) != 0 };
-                    if !fallthrough || resumes_native {
+                    if SINGLE_OPERATION || !fallthrough || resumes_native {
                         return Ok(JsCalloutStep::Continue(next));
                     }
 
@@ -14653,6 +14716,137 @@ pub(super) enum TierCaptures {
 mod tests {
     use super::*;
     use crate::bytecode::Op;
+
+    #[cfg(feature = "aot")]
+    fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
+        let program = crate::Engine::specialize(source, "semantic-entry.js").unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.initialize_for_snapshot(&program).unwrap();
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let body = program.function(0);
+        let mut frame = Box::new(Frame::empty(ProgramId::MAIN, 0));
+        frame.registers.resize(usize::from(body.registers), Value::UNDEFINED);
+        frame.locals.resize(usize::from(body.locals), Value::UNDEFINED);
+        frame.initialized_registers = frame.registers.len();
+        vm.frames.push(frame);
+        vm.active_registers = vm.frames[0].registers.as_mut_ptr();
+        vm
+    }
+
+    #[cfg(feature = "aot")]
+    fn semantic_instruction(vm: &Vm<crate::test_host::TestHost>, opcode: Op) -> (usize, WideInstruction) {
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let body = program.function(0);
+        body.code.iter().copied().enumerate().find_map(|(pc, packed)| {
+            let instruction = super::super::dispatch_fast::decoded_instruction(body, packed);
+            (instruction.op() == opcode).then_some((pc, instruction))
+        }).expect("test operation exists")
+    }
+
+    #[cfg(feature = "aot")]
+    fn invoke_semantic(
+        vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
+        entry: unsafe extern "C" fn(*mut std::ffi::c_void, u64, *const u64, *mut u64) -> i64,
+    ) -> (i64, u64, Option<JsNativeStep>) {
+        let frame = &mut vm.frames[0];
+        let mut dispatch = JsStepDispatch {
+            program_id: ProgramId::MAIN, frame: 0, allow_inline_calls: false, start_pc: pc,
+            native_registers: frame.registers.as_mut_ptr(), register_count: frame.registers.len(),
+            native_locals: frame.locals.as_mut_ptr(), local_count: frame.locals.len(),
+            native_pcs: std::ptr::null(), native_pc_count: 0,
+            array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
+            field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            stores_specialized: 0, island_steps: 0, global_name_cache_hits: 0, outcome: None,
+        };
+        dispatch.refresh_heap_bases(vm);
+        let mut context = CallContext::native_adapter(
+            (&mut dispatch as *mut JsStepDispatch).cast(),
+            vm.execution_interrupt.atomic_flag(), None,
+        );
+        context.vm = (vm as *mut Vm<crate::test_host::TestHost>).cast();
+        context.program = ProgramId::MAIN;
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let body = program.function(0);
+        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let operands = super::super::NativeJsOperands::new(
+            instruction.a(), instruction.b(), instruction.c(), instruction.imm(),
+        );
+        let mut result = 0;
+        // SAFETY: this test owns the initialized frame, VM, payload and result
+        // for the entire call, just as a linked native entry does.
+        let status = unsafe { entry((&mut context as *mut CallContext).cast(), pc as u64, operands.as_ptr(), &mut result) };
+        (status, result, dispatch.outcome)
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_semantic_entry_executes_one_store_and_returns_to_native_control() {
+        let mut vm = semantic_vm("globalThis.x = 1; globalThis.y = 2;");
+        let (pc, instruction) = semantic_instruction(&vm, Op::SetField);
+        vm.frames[0].registers[usize::from(instruction.register_b())] = vm.realm.globals;
+        let value = Value::number(1.0);
+        vm.frames[0].registers[usize::from(instruction.register_a())] = value;
+        let (status, next, outcome) = invoke_semantic(&mut vm, pc,
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::SetField as usize }>);
+        assert_eq!(status, 0);
+        assert_eq!(next, (pc + 1) as u64);
+        assert!(outcome.is_none());
+        assert_eq!(vm.own_property(vm.realm.globals, instruction.atom_index()), Some(value));
+        let y = vm.lookup_atom("y").unwrap();
+        assert_eq!(vm.own_property(vm.realm.globals, y), None);
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_semantic_entry_rejects_mismatched_or_invalid_opcodes_before_effects() {
+        let mut vm = semantic_vm("globalThis.x = 1;");
+        let (pc, _) = semantic_instruction(&vm, Op::SetField);
+        let before = vm.frames[0].registers.clone();
+        for entry in [
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::LoadConst as usize }>,
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::COUNT }>,
+        ] {
+            let (status, _, outcome) = invoke_semantic(&mut vm, pc, entry);
+            assert_eq!(status, 1);
+            assert!(outcome.unwrap().result.is_err());
+            assert_eq!(vm.frames[0].registers, before);
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_semantic_entry_preserves_thrown_value_and_exact_pc() {
+        let mut vm = semantic_vm("throw 7;");
+        let (pc, instruction) = semantic_instruction(&vm, Op::Throw);
+        let value = Value::number(7.0);
+        vm.frames[0].registers[usize::from(instruction.register_a())] = value;
+        let (status, _, outcome) = invoke_semantic(&mut vm, pc,
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::Throw as usize }>);
+        assert_eq!(status, 1);
+        let outcome = outcome.unwrap();
+        assert_eq!(outcome.instruction_pc, pc);
+        assert_eq!(outcome.next_pc, pc + 1);
+        let Err(error) = outcome.result else { panic!("semantic throw must be abrupt") };
+        assert_eq!(error.thrown_value(), Some(value));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_semantic_entry_checks_termination_before_guest_effects() {
+        let mut vm = semantic_vm("globalThis.x = 1;");
+        let (pc, instruction) = semantic_instruction(&vm, Op::SetField);
+        vm.frames[0].registers[usize::from(instruction.register_b())] = vm.realm.globals;
+        vm.frames[0].registers[usize::from(instruction.register_a())] = Value::number(1.0);
+        vm.execution_interrupt.request_termination();
+        let (status, _, outcome) = invoke_semantic(&mut vm, pc,
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::SetField as usize }>);
+        assert_eq!(status, 1);
+        let outcome = outcome.unwrap();
+        assert_eq!(outcome.instruction_pc, pc);
+        let Err(error) = outcome.result else { panic!("terminated entry must stop") };
+        assert!(error.is_execution_terminated());
+        assert_eq!(vm.own_property(vm.realm.globals, instruction.atom_index()), None);
+    }
 
     #[test]
     fn region_exit_words_round_trip_each_shared_handoff() {

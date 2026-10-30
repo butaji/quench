@@ -95,6 +95,7 @@ fn derive_operations(
     let visibility = &method.vis;
     let output = &method.sig.output;
     let selector_method = quote! {
+        #[inline(always)]
         #visibility fn #selector(op: Op) -> fn(#(#types),*) #output {
             match op { #(#selector_arms)* }
         }
