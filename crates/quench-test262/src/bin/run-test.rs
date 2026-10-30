@@ -37,11 +37,10 @@ fn run() -> ExitCode {
     let mut harness = HarnessCache::new(root.join("harness"));
     match runner.run_file_variants_with_cache(&path, &mut harness) {
         Ok(outcomes) => {
-            let failures = outcomes.iter().filter_map(|record| match &record.outcome {
-                TestOutcome::Pass => None,
-                TestOutcome::Fail { reason } => Some(format!("{}: {reason}", record.variant.name())),
-            }).collect::<Vec<_>>();
-            if failures.is_empty() { ExitCode::SUCCESS } else { fail(failures.join("\n")) }
+            match quench_test262::aggregate_variants(&outcomes) {
+                TestOutcome::Pass => ExitCode::SUCCESS,
+                TestOutcome::Fail { reason } => fail(reason),
+            }
         }
         Err(error) => fail(error),
     }

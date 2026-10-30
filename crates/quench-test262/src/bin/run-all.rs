@@ -281,11 +281,10 @@ fn run_case_entry() -> ExitCode {
     match runner.run_file_variants_with_cache(&path, &mut harness) {
         Ok(outcomes) => {
             if let Err(error) = quench_test262::reporting::write_variant_report(&root, &path, &outcomes) { return fail(error); }
-            let failures: Vec<_> = outcomes.iter().filter_map(|record| match &record.outcome {
-                TestOutcome::Pass => None,
-                TestOutcome::Fail { reason } => Some(format!("{}: {reason}", record.variant.name())),
-            }).collect();
-            if failures.is_empty() { ExitCode::SUCCESS } else { eprintln!("{}", failures.join("\n")); ExitCode::from(1) }
+            match quench_test262::aggregate_variants(&outcomes) {
+                TestOutcome::Pass => ExitCode::SUCCESS,
+                TestOutcome::Fail { reason } => { eprintln!("{reason}"); ExitCode::from(1) }
+            }
         }
         Err(failure) => {
             eprintln!("{failure}");

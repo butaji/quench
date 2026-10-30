@@ -2082,3 +2082,37 @@ fn native_execution_audit_retains_guest_caught_source_rejections() {
     runtime.execute_native(&native).unwrap();
     assert_eq!(runtime.native_execution_rejections(), 1);
 }
+
+#[test]
+fn strict_unresolvable_reference_defers_putvalue_error_until_after_rhs() {
+    let source = r#""use strict";
+const effects = [];
+try { absentReference = (() => { effects.push("rhs"); throw new RangeError("rhs"); })(); throw Error("missing RHS error"); }
+catch (error) { if (!(error instanceof RangeError)) throw error; }
+absentReference = (effects.push("create"), Object.defineProperty(globalThis, "absentReference", { value: 3, configurable: true, writable: true }), 9);
+if (globalThis.absentReference !== 9) throw Error("global property created during RHS was not assigned");
+delete globalThis.absentReference;
+try { absentReference = (effects.push("plain"), 1); throw Error("missing reference error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+try { absentReference += (effects.push("compound"), 1); throw Error("missing compound error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+try { absentReference ||= (effects.push("logical"), 1); throw Error("missing logical error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
+"#;
+    let program = Engine::specialize_unspecialized(source, "strict-reference-order.js").unwrap();
+    let modes = [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled].into_iter();
+    #[cfg(feature = "aot")]
+    let modes = modes.chain([crate::ExecutionMode::NativeOnly]);
+    for mode in modes {
+        let mut runtime = Runtime::new(TestHost::default());
+        runtime.set_execution_mode(mode);
+        #[cfg(feature = "aot")]
+        if mode == crate::ExecutionMode::NativeOnly {
+            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            runtime.execute_native(&native).unwrap();
+        } else { runtime.execute(&program).unwrap(); }
+        #[cfg(not(feature = "aot"))]
+        runtime.execute(&program).unwrap();
+    }
+}

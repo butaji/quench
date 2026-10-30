@@ -466,6 +466,21 @@ fn collect_js_files(directory: &Path, files: &mut Vec<std::path::PathBuf>) -> Re
     Ok(())
 }
 
+/// Project variant outcomes to the file outcome. Identical failures retain
+/// their exact reason for pinned Node-waiver matching; records retain labels.
+pub fn aggregate_variants(outcomes: &[VariantOutcome]) -> TestOutcome {
+    if outcomes.is_empty() { return TestOutcome::Fail { reason: "test variant inventory is empty".into() }; }
+    let failures: Vec<_> = outcomes.iter().filter_map(|record| match &record.outcome {
+        TestOutcome::Pass => None,
+        TestOutcome::Fail { reason } => Some((record.variant, reason)),
+    }).collect();
+    let Some((_, first)) = failures.first() else { return TestOutcome::Pass; };
+    let reason = if failures.iter().all(|(_, reason)| reason == first) {
+        (*first).clone()
+    } else { failures.iter().map(|(variant, reason)| format!("{}: {reason}", variant.name())).collect::<Vec<_>>().join("\n") };
+    TestOutcome::Fail { reason }
+}
+
 /// Runner parameterized over the engine host implementation.
 pub struct Test262Runner<H: Test262Host> {
     host: H,
@@ -769,6 +784,15 @@ impl<H: Test262Host> Test262Runner<H> {
 #[cfg(test)]
 mod tests {
     use super::TestMetadata;
+
+    #[test]
+    fn variant_aggregation_preserves_waiver_reasons_and_rejects_missing_records() {
+        use super::{aggregate_variants, TestOutcome, TestVariant, VariantOutcome};
+        let failed = |variant, reason: &str| VariantOutcome { variant, outcome: TestOutcome::Fail { reason: reason.into() }, compilation: None };
+        assert_eq!(aggregate_variants(&[failed(TestVariant::Sloppy, "known failure"), failed(TestVariant::Strict, "known failure")]), TestOutcome::Fail { reason: "known failure".into() });
+        assert!(matches!(aggregate_variants(&[failed(TestVariant::Sloppy, "known"), failed(TestVariant::Strict, "different")]), TestOutcome::Fail { reason } if reason.contains("sloppy: known") && reason.contains("strict: different")));
+        assert!(matches!(aggregate_variants(&[]), TestOutcome::Fail { .. }));
+    }
 
     #[test]
     fn metadata_selects_required_execution_variants() {

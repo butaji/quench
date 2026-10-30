@@ -1275,8 +1275,10 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         strict: bool,
     ) -> Result<Value, JsError> {
-        if strict && !self.atom_name(atom).starts_with('\0') && !self.has_name_binding(p, atom)? {
-            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
+        if strict && !self.atom_name(atom).starts_with('\0') {
+            // Resolution preserves observable binding checks. An absent name
+            // is rejected by PutValue after the RHS, rather than here.
+            let _ = self.has_name_binding(p, atom)?;
         }
         Ok(self.resolve_name_reference(p, atom)?.0)
     }
