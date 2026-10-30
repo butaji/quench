@@ -14938,6 +14938,14 @@ mod tests {
         } else {
             crate::Engine::specialize(source, "linked.cjs")
         }.unwrap();
+        linked_test_residual(program)
+    }
+
+    #[cfg(feature = "aot")]
+    fn linked_test_residual(program: crate::ResidualProgram) -> (
+        crate::NativeJsProgram<crate::test_host::TestHost>, Rc<[std::cell::Cell<u64>]>,
+        std::rc::Weak<dyn std::any::Any>,
+    ) {
         let counts: Rc<[std::cell::Cell<u64>]> = (0..program.function_count())
             .map(|_| std::cell::Cell::new(0)).collect();
         let mut owners = Vec::new();
@@ -14955,6 +14963,139 @@ mod tests {
         // owner retains the code, operands and counter storage it addresses.
         let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }.unwrap();
         (native, counts, weak)
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_host_scripts_preserve_code_through_preparation_and_compiled_handles() {
+        for typescript in [false, true] {
+            let mut compiler = crate::NativeJsCompiler::new(true);
+            let entry = compiler.compile_script("", "seed.js", crate::HostScriptOptions::default()).unwrap();
+            let source = if typescript {
+                "function answer(value: unknown): unknown { return (value as number) + 1; } answer('x');"
+            } else {
+                "function answer(value) { return value + 1; } answer('x');"
+            };
+            let options = crate::HostScriptOptions { typescript, ..Default::default() };
+            let residual = compiler.compile_script(source, "library", options).unwrap();
+            let entry = compiler.finish(entry).unwrap();
+            let (native, counts, weak) = linked_test_residual(residual);
+            let goal = options.cache_goal();
+            let host = crate::test_host::TestHost::default().with_native_programs(move |name, parts| {
+                assert_eq!(name, "library");
+                assert_eq!(parts, ["specialized", &goal, source]);
+                Ok(Some(native.clone()))
+            });
+            let mut vm = Vm::new(host);
+            vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
+            let prepared = vm.prepare_embedding_specialized_script_retaining(
+                source, "library", None, None, false, typescript,
+            ).unwrap();
+            for _ in 0..2 {
+                let result = vm.evaluate_embedding_prepared_script(&prepared).unwrap();
+                assert_eq!(vm.heap.string(result).unwrap().to_string(), "x1");
+            }
+            assert!(counts.iter().all(|count| count.get() > 0));
+            assert!(weak.upgrade().is_some());
+            if !typescript {
+                let compiled = vm.compile_embedding_host_script(source, "library", (0, 0)).unwrap();
+                let before = counts[0].get();
+                for _ in 0..2 {
+                    let result = vm.evaluate_embedding_compiled_script(&compiled).unwrap();
+                    assert_eq!(vm.heap.string(result).unwrap().to_string(), "x1");
+                }
+                assert!(counts[0].get() > before);
+                let mut context = crate::NativeContext::new(&mut vm);
+                let first = context.create_realm_rooted().unwrap();
+                let second = context.create_realm_rooted().unwrap();
+                for global in [first, first, second] {
+                    let result = context.evaluate_compiled_script_in_realm_rooted(global, &compiled).unwrap();
+                    let expected = context.string_rooted("x1");
+                    assert!(context.strict_equal_rooted(result, expected).unwrap());
+                }
+
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_host_wrappers_and_bootstrap_use_exact_source_keys() {
+        for bootstrap in [false, true] {
+            let mut compiler = crate::NativeJsCompiler::new(true);
+            let entry = compiler.compile_script("", "seed.js", Default::default()).unwrap();
+            let prefix = "(function() {\n";
+            let body = "return 42;";
+            let suffix = "\n})();";
+            let source = "globalThis.bootResult = 42;";
+            let residual = if bootstrap {
+                compiler.compile_host_script(source, "unit").unwrap()
+            } else {
+                compiler.compile_library_body(prefix, std::sync::Arc::from(body), suffix, "unit").unwrap()
+            };
+            let entry = compiler.finish(entry).unwrap();
+            let (native, counts, _) = linked_test_residual(residual);
+            let host = crate::test_host::TestHost::default().with_native_programs(move |name, parts| {
+                assert_eq!(name, "unit");
+                if bootstrap { assert_eq!(parts, ["specialized", source]); }
+                else { assert_eq!(parts, ["specialized", prefix, body, suffix]); }
+                Ok(Some(native.clone()))
+            });
+            let mut vm = Vm::new(host);
+            vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
+            if bootstrap {
+                let context = vm.embedding_program().unwrap();
+                vm.eval_host_script(&context, source, "unit").unwrap();
+                let atom = vm.lookup_atom("bootResult").unwrap();
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(42.0)));
+            } else {
+                let prepared = vm.prepare_embedding_library_body_kept(
+                    prefix, crate::bytecode::SourceText::Shared(std::sync::Arc::from(body)), suffix, "unit",
+                ).unwrap();
+                assert_eq!(vm.evaluate_embedding_prepared_script(&prepared).unwrap(), Value::number(42.0));
+            }
+            assert!(counts.iter().all(|count| count.get() > 0));
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_host_script_rejects_atom_remapping_before_effects() {
+        let (native, counts, _) = linked_test_program("globalThis.nativeEffect = 42;", false);
+        let vm = semantic_vm("globalThis.differentNamespace = 0;");
+        let error = match vm.prepare_native_script(native) {
+            Ok(_) => panic!("incompatible native atoms were accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("atom IDs"));
+        assert!(counts.iter().all(|count| count.get() == 0));
+        assert!(vm.lookup_atom("nativeEffect").is_none());
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_host_script_rejects_specialization_mismatch_and_resolver_errors() {
+        let (native, counts, _) = linked_test_program("", false);
+        let entry = crate::Engine::specialize_unspecialized("", "unspecialized.js").unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
+        let error = match vm.prepare_native_script(native) {
+            Ok(_) => panic!("incompatible specialization was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("specialization"));
+        assert!(counts.iter().all(|count| count.get() == 0));
+
+        let host = crate::test_host::TestHost::default().with_native_programs(|_, _| Err("broken linked image".into()));
+        let mut vm = Vm::new(host);
+        let entry = crate::Engine::specialize("", "entry.js").unwrap();
+        vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
+        let error = match vm.prepare_embedding_specialized_script("globalThis.effect = 1;", "unit", None) {
+            Ok(_) => panic!("resolver error silently fell back to compilation"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("broken linked image"));
+        assert!(vm.lookup_atom("effect").is_none());
     }
 
     #[cfg(feature = "aot")]

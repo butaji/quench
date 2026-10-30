@@ -31,7 +31,12 @@ impl InlineSource {
     }
 }
 
+#[cfg(feature = "aot")]
+pub type NativeProgramResolver = fn(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, String>;
+
 pub struct NodeHost {
+    #[cfg(feature = "aot")]
+    pub(crate) native_program_resolver: Option<NativeProgramResolver>,
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
@@ -59,6 +64,13 @@ pub struct NodeHost {
 }
 
 impl NodeHost {
+    /// Resolve linked code by the loader's exact name, source and shaping inputs.
+    #[cfg(feature = "aot")]
+    pub fn with_native_programs(mut self, resolver: NativeProgramResolver) -> Self {
+        self.native_program_resolver = Some(resolver);
+        self
+    }
+
     /// `path`'s real path through the loaders' known-real paths (`real_path`); a path that
     /// cannot be resolved is returned as it is.
     pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
@@ -441,6 +453,8 @@ impl NodeHost {
         Self {
             node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
+            #[cfg(feature = "aot")]
+            native_program_resolver: None,
             bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,

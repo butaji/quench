@@ -11,6 +11,8 @@ impl NodeHost {
             // The installation and the process's own entry and environment.
             node_library_root: _,
             compile_cache: _,
+            #[cfg(feature = "aot")]
+            native_program_resolver: _,
             shared_state,
             commonjs_entry: _,
             inline_source: _,

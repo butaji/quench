@@ -122,6 +122,18 @@ pub trait Host {
         None
     }
 
+    /// Native code for the same exact source-shaping key as the compile cache.
+    /// Returning an image commits to its atom IDs and host ABI; an incompatible
+    /// image fails admission rather than recompiling behind the host's back.
+    #[cfg(feature = "aot")]
+    fn kept_native_program(
+        &mut self, _name: &str, _parts: &[&str],
+    ) -> Result<Option<crate::NativeJsProgram<Self>>, String>
+    where Self: Sized,
+    {
+        Ok(None)
+    }
+
     /// A program kept by `kept_compiled_program` has decoded, in place of its compilation,
     /// and is about to run. It parsed nothing, so it took none of a compilation's phase
     /// boundaries (`set_compile_phase_boundary`): a host may return the pages loading it

@@ -1137,6 +1137,14 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 
+    #[cfg(feature = "aot")]
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, String> {
+        match self.native_program_resolver {
+            Some(resolve) => resolve(name, parts),
+            None => Ok(None),
+        }
+    }
+
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }

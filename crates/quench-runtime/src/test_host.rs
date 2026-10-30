@@ -36,7 +36,12 @@ pub(crate) struct TestHost {
     resolve: Option<Resolve>,
     module_source: Option<fn(&ModuleSource) -> bool>,
     state: Rc<dyn Any>,
+    #[cfg(feature = "aot")]
+    native_lookup: Option<Rc<NativeLookup>>,
 }
+
+#[cfg(feature = "aot")]
+type NativeLookup = dyn Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, String>;
 
 impl Default for TestHost {
     fn default() -> Self {
@@ -48,11 +53,18 @@ impl Default for TestHost {
             resolve: None,
             module_source: None,
             state: Rc::new(()),
+            #[cfg(feature = "aot")]
+            native_lookup: None,
         }
     }
 }
 
 impl TestHost {
+    #[cfg(feature = "aot")]
+    pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, String> + 'static) -> Self {
+        Self { native_lookup: Some(Rc::new(lookup)), ..self }
+    }
+
     /// A host that writes into `lines`.
     pub(crate) fn writing_to(lines: Rc<RefCell<Vec<String>>>) -> Self {
         Self { lines, ..Self::default() }
@@ -108,6 +120,14 @@ impl TestHost {
 }
 
 impl Host for TestHost {
+    #[cfg(feature = "aot")]
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram<Self>>, String> {
+        match &self.native_lookup {
+            Some(lookup) => lookup(name, parts),
+            None => Ok(None),
+        }
+    }
+
     fn write_line(&mut self, text: &str) {
         self.lines.borrow_mut().push(text.to_owned());
     }

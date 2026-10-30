@@ -12,6 +12,24 @@ use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::{fmt, ops::Range};
+/// Source-shaping inputs shared by host Script preparation and native compilation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostScriptOptions {
+    pub origin: Option<(u32, u32)>,
+    pub keep_records: bool,
+    pub typescript: bool,
+}
+
+impl HostScriptOptions {
+    /// Middle component of the host compile-cache/native-image key; source text
+    /// and the specialization mode remain separate components.
+    pub fn cache_goal(self) -> String {
+        let (line, column) = self.origin.unwrap_or_default();
+        format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
+            if self.typescript { ":typescript" } else { "" })
+    }
+}
+
 /// The most registers a function's promoted locals may take: half of the register domain,
 /// leaving the other half for the temporaries of any one statement.
 const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
@@ -19,6 +37,10 @@ mod annex_b_targets;
 mod arrow;
 mod ast;
 mod atoms;
+#[cfg(feature = "aot")]
+mod native_sources;
+#[cfg(feature = "aot")]
+pub use native_sources::NativeJsCompiler;
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
@@ -665,6 +687,19 @@ impl Engine {
             source, name, SpecializationMode::Enabled, &NoAtomPrefix,
             SourceType::script().with_typescript(true), false, false, false,
         )
+    }
+
+    pub(crate) fn specialize_host_script(
+        source: &str, name: &str, prefix: &dyn AtomPrefix,
+        options: HostScriptOptions, released: ReleasedRecords,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        if options.typescript {
+            Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
+        } else if options.keep_records {
+            Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
+        } else {
+            Self::specialize_script_with_atom_prefix(source, name, prefix, released)
+        }
     }
 
     pub(crate) fn specialize_typescript_script_with_atom_prefix(

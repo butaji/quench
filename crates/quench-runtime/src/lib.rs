@@ -84,3 +84,7 @@ pub use vm::{
         emit_native_module, emit_native_object,
     },
 };
+
+#[cfg(feature = "aot")]
+pub use compile::NativeJsCompiler;
+pub use compile::HostScriptOptions;

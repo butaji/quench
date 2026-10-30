@@ -8,7 +8,7 @@ use std::{any::Any, marker::PhantomData, rc::Rc};
 pub type NativeJsFunctionEntry =
     unsafe extern "C" fn(*mut std::ffi::c_void, u64, u64, *const u64, *mut u64) -> u32;
 
-pub(super) enum NativeJsCode {
+pub(crate) enum NativeJsCode {
     Linked(&'static [NativeJsFunctionEntry]),
     Owned {
         entries: Box<[NativeJsFunctionEntry]>,
@@ -31,6 +31,12 @@ pub struct NativeJsProgram<H: Host> {
     program: Rc<ResidualProgram>,
     code: Rc<NativeJsCode>,
     host: PhantomData<fn(&mut H)>,
+}
+
+impl<H: Host> Clone for NativeJsProgram<H> {
+    fn clone(&self) -> Self {
+        Self { program: self.program.clone(), code: self.code.clone(), host: PhantomData }
+    }
 }
 
 impl<H: Host> NativeJsProgram<H> {
@@ -104,6 +110,28 @@ impl<H: Host> NativeJsProgram<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// Native operands already contain atom IDs. Only an identical prefix of
+    /// the initialized VM namespace can be adopted without rewriting the code.
+    pub(super) fn prepare_native_script(
+        &self, native: NativeJsProgram<H>,
+    ) -> Result<crate::PreparedScript, JsError> {
+        if native.program.specialized != self.specialized {
+            return Err(JsError::validation("native script specialization does not match runtime".into()));
+        }
+        if native.program.atoms.len() > self.atom_sequence.len()
+            || native.program.atoms.iter().enumerate().any(|(id, name)| {
+                !self.atom_units_equal_str(id as u32, name)
+            })
+        {
+            return Err(JsError::validation("native script atom IDs do not match runtime namespace".into()));
+        }
+        let mut program = Rc::unwrap_or_clone(native.program);
+        program.atoms = crate::bytecode::AtomTable::shared(
+            self.atom_sequence.clone(), program.atoms.len(),
+        );
+        Ok(crate::PreparedScript { program: Rc::new(program), native: Some(native.code) })
+    }
+
     pub(crate) fn execute_native_program(
         &mut self,
         native: &NativeJsProgram<H>,

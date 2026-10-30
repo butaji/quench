@@ -10,3 +10,5 @@ pub(crate) mod startup_snapshot;
 pub(crate) use crate::shared_run::EntryGoal;
 pub(crate) use node_host::SharedNodeState;
 pub use node_host::{NodeHost, NodeOutputSink};
+#[cfg(feature = "aot")]
+pub use node_host::NativeProgramResolver;
