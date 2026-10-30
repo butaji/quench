@@ -130,6 +130,9 @@ enum CaptureStage<'a> {
 pub(crate) fn stage_host_sources(
     context: &mut quench_runtime::NativeContext<'_, NodeHost>, demands: HostSourceDemands,
 ) -> Result<(), quench_runtime::RootedError> {
+    // The default warning listener is installed after the staging boundary and
+    // can run for host-generated warnings without an application import.
+    crate::modules::process_warning_shared_vm::prepare(context)?;
     let global = context.global_root()?;
     let process = context.string_rooted("process");
     let process = context.get_property_rooted(global, process)?;
@@ -137,6 +140,25 @@ pub(crate) fn stage_host_sources(
     context.get_property_rooted(process, env)?;
     let builtins: Vec<_> = demands.builtins.iter().map(String::as_str).collect();
     crate::host::startup_snapshot::preload_named(context, &builtins)?;
+    // These imported modules expose SDK-backed lazy policies. Stage the
+    // policies without invoking their exported operations or capturing state.
+    for name in &builtins {
+        context.scoped(|context| {
+            let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
+                "fs" | "fs/promises" => {
+                    let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
+                    let key = context.string_rooted("promises");
+                    (context.get_property_rooted(fs, key)?, "readlink")
+                }
+                "util" => (crate::modules::util_shared_vm::module(context)?, "aborted"),
+                // Domain's capture callback preserves the process report flag.
+                "domain" => (process, "report"),
+                _ => return Ok(()),
+            };
+            let key = context.string_rooted(member);
+            context.get_property_rooted(module, key).map(drop)
+        })?;
+    }
     for name in demands.globals {
         let key = context.string_rooted(&name);
         context.get_property_rooted(global, key)?;

@@ -114,7 +114,11 @@ impl crate::NodeHost {
         preference: LibrarySource,
     ) -> std::io::Result<Cow<'static, str>> {
         #[cfg(feature = "native-execution")]
-        if let Some(file) = self.embedded_module(path) {
+        if let crate::aot::ModuleAssetState::Embedded(modules) = &self.module_assets {
+            let file = modules.file(path).ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("SDK source outside frozen image: {}", path.display()),
+            ))?;
             return match std::str::from_utf8(file.bytes) {
                 Ok(source) => Ok(Cow::Borrowed(source)),
                 Err(_) => {
@@ -282,6 +286,12 @@ mod frozen_source_tests {
                 Cow::Borrowed("frozen source")
             ));
         }
+        let external = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        assert!(external.is_file());
+        assert!(host.node_library_source(&external, LibrarySource::Configured)
+            .unwrap_err().to_string().contains("SDK source outside frozen image"));
+        assert!(host.module_bytes(&external, quench_runtime::SourceKind::Script)
+            .unwrap_err().to_string().contains("module source outside frozen image"));
     }
 
     #[cfg(feature = "aot")]

@@ -356,7 +356,7 @@ pub(crate) fn preload_named(
     }
     // Node's `fs` loads its option policy and defines its members with it; Quench's at their
     // first use.
-    if builtins.contains(&"fs") {
+    if builtins.iter().any(|name| name.strip_prefix("node:").unwrap_or(name) == "fs") {
         context.scoped(crate::modules::fs_policy_shared_vm::capture)?;
         context.scoped(crate::modules::fs_shared_vm::materialize)?;
     }

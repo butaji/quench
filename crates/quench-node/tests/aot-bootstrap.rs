@@ -38,6 +38,26 @@ fn source_keys_reject_unknown_or_noncanonical_shapes() {
 }
 
 #[test]
+fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench-warning-stage-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, "require('node:fs/promises'); require('node:util'); require('node:domain'); throw new Error('application entry must not run');").unwrap();
+    let graph = SourceManifest::default().add_commonjs_graph(&entry).unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+    let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
+    let warning = Path::new("lib/internal/process/warning.js");
+    assert!(staged.assets().files.keys().any(|path| path.ends_with(warning)));
+    assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(warning)));
+    assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/internal/process/report.js")));
+    for source in ["lib/internal/fs/promises.js", "lib/internal/abort_controller.js"] {
+        assert!(staged.assets().views.keys().any(|(path, _)| path.ends_with(source)), "{source}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn manifest_retains_full_source_identity_and_compiles_without_guest_execution() {
     let mut manifest = SourceManifest::default();
     let options = HostScriptOptions { typescript: true, ..Default::default() };

@@ -141,7 +141,11 @@ impl crate::NodeHost {
     }
 
     pub(crate) fn module_bytes(&mut self, path: &Path, _kind: SourceKind) -> std::io::Result<Vec<u8>> {
-        if let Some(file) = self.embedded_module(path) { return Ok(file.bytes.to_vec()); }
+        if let ModuleAssetState::Embedded(modules) = &self.module_assets {
+            return modules.file(path).map(|file| file.bytes.to_vec()).ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::NotFound, format!("module source outside frozen image: {}", path.display()),
+            ));
+        }
         let bytes = std::fs::read(path).or_else(|error| {
             #[cfg(feature = "aot")]
             if matches!(self.module_assets, ModuleAssetState::Capture(_)) {
