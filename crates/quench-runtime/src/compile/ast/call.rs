@@ -27,7 +27,7 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {
         if self.strict {
             self.owner
-                .reject(call.span(), "SyntaxError: invalid call assignment target");
+                .reject_syntax(call.span(), "SyntaxError: invalid call assignment target");
             return self.literal(Constant::Undefined);
         }
         self.expression(call);

@@ -3632,6 +3632,14 @@ impl<'a> Compiler<'a> {
             span,
         });
     }
+    fn reject_syntax(&mut self, span: Span, message: impl Into<String>) {
+        self.errors.push(Diagnostic {
+            kind: DiagnosticKind::Syntax,
+            source: self.source.into(),
+            message: message.into(),
+            span,
+        });
+    }
     pub(super) fn collect_body_lexical_bindings(
         &mut self,
         body: &[Statement<'_>],

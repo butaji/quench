@@ -388,6 +388,12 @@ mod tests {
     use super::Test262RuntimeHost;
 
     #[test]
+    fn strict_call_assignment_is_a_syntax_error_not_a_backend_rejection() {
+        let errors = super::Engine::specialize("'use strict'; f() = 1;", "strict-call-assignment.js").unwrap_err();
+        assert!(super::compile_failure(&errors).starts_with("quench runtime SyntaxError:"));
+    }
+
+    #[test]
     fn strict_test_does_not_make_harness_functions_strict() {
         let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
         #[cfg(feature = "aot")]
