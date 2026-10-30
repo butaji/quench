@@ -10,10 +10,51 @@ use std::time::{Duration, Instant};
 
 use crate::Test262Host;
 
+fn compile_failure(errors: &[quench_runtime::Diagnostic]) -> String {
+    if !errors.is_empty() && errors.iter().all(quench_runtime::Diagnostic::is_syntax_error) {
+        format!("quench runtime SyntaxError: {errors:?}")
+    } else {
+        format!("quench compilation failed: {errors:?}")
+    }
+}
+
 const TEST262_MODULE_SOURCE_SPECIFIER: &str = "<module source>";
 const HARNESS_SCRIPT_NAME: &str = "<test262-harness>";
 const TIMER_MIN_DELAY_MS: f64 = 1.0;
 const TIMER_MAX_DELAY_MS: f64 = 2_147_483_647.0;
+
+#[cfg(feature = "aot")]
+fn native_output_directory(name: &str, variant: &str) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(root) = std::env::var_os("TEST262_AOT_OUTPUT_DIR") else { return Ok(None); };
+    let suite = std::env::var_os("TEST262_DIR").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "tests/test262".into()).join("test");
+    let path = Path::new(name);
+    let relative = path.strip_prefix(&suite).unwrap_or_else(|_| Path::new(path.file_name().unwrap_or_default()));
+    let directory = std::path::PathBuf::from(root).join(relative).join(variant);
+    std::fs::create_dir_all(&directory).map_err(|error| format!("quench AOT output: {error}"))?;
+    Ok(Some(directory))
+}
+
+#[cfg(feature = "aot")]
+fn compile_native_unit(
+    program: quench_runtime::ResidualProgram,
+    compilation: &mut crate::NativeCompilation,
+    output: Option<&Path>,
+) -> Result<quench_runtime::NativeJsProgram<Test262RuntimeHost>, String> {
+    let name = format!("test262_unit_{}", compilation.units.len());
+    let module = quench_runtime::lower_native_js_module(&program, &name).map_err(|error| format!("quench AOT lowering: {error}"))?;
+    let object = quench_runtime::emit_native_module(&name, module.functions, module.data)
+        .map_err(|error| format!("quench AOT object: {error}"))?;
+    let object_bytes = object.len();
+    let path = output.map(|directory| directory.join(format!("{name}.o")));
+    if let Some(path) = &path {
+        std::fs::write(path, object).map_err(|error| format!("quench AOT object write: {error}"))?;
+    }
+    let functions = program.function_count();
+    let native = quench_runtime::NativeJsProgram::compile_eager(program).map_err(|error| format!("quench AOT publication: {error}"))?;
+    compilation.units.push(crate::NativeCompiledUnit { functions, object_bytes, object: path });
+    Ok(native)
+}
 
 static HOST_GLOBALS: [HostGlobal; 2] = [
     HostGlobal {
@@ -41,6 +82,8 @@ pub struct Test262RuntimeHost {
     done: Option<String>,
     /// The execution every case's runtime uses: the interpreter, or compiled (JIT) execution.
     execution_mode: ExecutionMode,
+    native_compilation: crate::NativeCompilation,
+    native_variant: &'static str,
     timers: Vec<TestTimer>,
     next_timer_id: u64,
 }
@@ -171,18 +214,55 @@ impl Test262RuntimeHost {
         let mut runtime = Runtime::new(std::mem::take(self));
         runtime.set_execution_mode(execution_mode);
         let result = (|| {
-            let program = match kind {
+            #[cfg(feature = "aot")]
+            let mut compiler = quench_runtime::NativeJsCompiler::new(false);
+            #[cfg(feature = "aot")]
+            let mut native_harness = Vec::new();
+            #[cfg(feature = "aot")]
+            if execution_mode == ExecutionMode::NativeOnly {
+                for script in harness {
+                    native_harness.push(compiler.compile_script(script, HARNESS_SCRIPT_NAME, Default::default())
+                        .map_err(|errors| format!("quench AOT harness SyntaxError: {errors:?}"))?);
+                }
+            }
+            let program = if execution_mode == ExecutionMode::NativeOnly {
+                #[cfg(feature = "aot")]
+                {
+                    let program = match kind {
+                        SourceKind::Module => compiler.compile_module(source, name),
+                        SourceKind::Script => compiler.compile_script(source, name, Default::default()),
+                        SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
+                    }.map_err(|errors| compile_failure(&errors))?;
+                    compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?
+                }
+                #[cfg(not(feature = "aot"))]
+                { return Err("quench AOT code generation requires the aot feature".into()); }
+            } else { match kind {
                 SourceKind::Script => Engine::specialize_unspecialized(source, name),
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
-            .map_err(|errors| format!("quench runtime SyntaxError: {errors:?}"))?;
+            .map_err(|errors| compile_failure(&errors))? };
             let harness = harness
                 .iter()
                 .map(|script| (*script, HARNESS_SCRIPT_NAME))
                 .collect::<Vec<_>>();
-            runtime
-                .execute_after_scripts(&harness, &program)
+            let execution = if execution_mode == ExecutionMode::NativeOnly {
+                #[cfg(feature = "aot")]
+                {
+                    let host = runtime.host_mut();
+                    let output = native_output_directory(name, host.native_variant)?;
+                    let mut scripts = Vec::new();
+                    for script in native_harness {
+                        scripts.push(compile_native_unit(script, &mut host.native_compilation, output.as_deref())?);
+                    }
+                    let native = compile_native_unit(program.clone(), &mut host.native_compilation, output.as_deref())?;
+                    runtime.execute_native_after_scripts(&scripts, &native)
+                }
+                #[cfg(not(feature = "aot"))]
+                { unreachable!("AOT feature checked before compilation") }
+            } else { runtime.execute_after_scripts(&harness, &program) };
+            execution
                 .map_err(|error| {
                     format!("quench runtime: {}", runtime.format_error(&program, &error))
                 })?;
@@ -222,34 +302,39 @@ impl Test262RuntimeHost {
                 runtime.release_root(arg);
             }
         }
+        let rejections = runtime.native_execution_rejections();
+        runtime.host_mut().native_compilation.rejections = rejections;
         *self = runtime.into_host();
-        result
+        if rejections != 0 {
+            Err(format!("quench AOT capability rejection: {rejections} native code requests unavailable; outcome: {result:?}"))
+        } else { result }
     }
 
-    fn compose(harness: &[&str], source: &str, strict: bool) -> String {
-        let mut composed = String::new();
-        if strict {
-            composed.push_str("\"use strict\";\n");
-        }
-        if source.starts_with("#!") {
-            composed.push_str(source);
-            composed.push('\n');
-        }
-        for script in harness {
-            composed.push_str(script);
-            composed.push('\n');
-        }
-        if !source.starts_with("#!") {
-            composed.push_str(source);
-        }
-        composed
+    fn execute_harnessed_script(
+        &mut self, harness: &[&str], source: &str, strict: bool, name: &str,
+    ) -> Result<(), String> {
+        let source = if strict {
+            let prefix = if source.starts_with("#!") {
+                source.char_indices().find(|(_, ch)| oxc_syntax::line_terminator::is_line_terminator(*ch))
+                    .map_or(source.len(), |(index, ch)| index + ch.len_utf8())
+            } else { 0 };
+            std::borrow::Cow::Owned(format!("{}\n\"use strict\";\n{}", &source[..prefix], &source[prefix..]))
+        } else { std::borrow::Cow::Borrowed(source) };
+        self.execute_after_harness(harness, &source, name, SourceKind::Script)
     }
+
 }
 
 impl Test262Host for Test262RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         self.async_test = metadata.is_async;
         self.can_block = metadata.can_block;
+        self.native_compilation = crate::NativeCompilation::default();
+        self.native_variant = if metadata.is_module { "module" } else if metadata.is_raw { "raw" } else if metadata.only_strict { "strict" } else { "sloppy" };
+    }
+
+    fn native_compilation(&self) -> Option<&crate::NativeCompilation> {
+        (self.execution_mode == ExecutionMode::NativeOnly).then_some(&self.native_compilation)
     }
 
     fn run_script(&mut self, source: &str) -> Result<(), String> {
@@ -266,7 +351,7 @@ impl Test262Host for Test262RuntimeHost {
         source: &str,
         strict: bool,
     ) -> Result<(), String> {
-        self.execute(&Self::compose(harness, source, strict), "<test262-harness>")
+        self.execute_harnessed_script(harness, source, strict, "<test262>")
     }
 
     fn run_harnessed_script_at(
@@ -276,10 +361,7 @@ impl Test262Host for Test262RuntimeHost {
         strict: bool,
         path: &Path,
     ) -> Result<(), String> {
-        self.execute(
-            &Self::compose(harness, source, strict),
-            &path.display().to_string(),
-        )
+        self.execute_harnessed_script(harness, source, strict, &path.display().to_string())
     }
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
@@ -304,6 +386,30 @@ impl Test262Host for Test262RuntimeHost {
 #[cfg(test)]
 mod tests {
     use super::Test262RuntimeHost;
+
+    #[test]
+    fn strict_test_does_not_make_harness_functions_strict() {
+        let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
+        #[cfg(feature = "aot")]
+        let modes = modes.chain([super::ExecutionMode::NativeOnly]);
+        for mode in modes {
+            let mut host = Test262RuntimeHost::new(mode);
+            host.execute_harnessed_script(
+                &["function harnessThis() { return this; }"],
+                "if (harnessThis() !== globalThis) throw Error('strict harness'); if ((function() { return this; })() !== undefined) throw Error('sloppy test');",
+                true, "strict-entry.js",
+            ).unwrap();
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_qualification_rejects_caught_missing_source_compilation() {
+        let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
+        let result = host.execute("try { eval('1'); } catch (error) {} ", "caught-eval.js");
+        assert!(result.unwrap_err().starts_with("quench AOT capability rejection:"));
+        assert_eq!(host.native_compilation.rejections, 1);
+    }
 
     #[test]
     fn async_timer_is_a_macrotask_and_then_reactions_stay_microtasks() {

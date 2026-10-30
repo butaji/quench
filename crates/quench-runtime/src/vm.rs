@@ -1854,6 +1854,7 @@ pub(crate) struct Vm<H> {
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
+    native_execution_rejections: u64,
     execution_interrupt: crate::ExecutionInterrupt,
     /// Invalidates monomorphic `call_indirect` certificates after a table
     /// mutation or collection that can change target identity.

@@ -109,6 +109,13 @@ impl<H: Host> Runtime<H> {
 
     pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
 
+    /// Native-only requests rejected during this runtime's lifetime, including
+    /// guest-caught source-compilation errors. A conformance host must not
+    /// mistake those capability rejections for expected JavaScript errors.
+    pub fn native_execution_rejections(&self) -> u64 {
+        self.vm.native_execution_rejections()
+    }
+
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
     }
@@ -151,6 +158,12 @@ impl<H: Host> Runtime<H> {
     #[cfg(feature = "native-execution")]
     pub fn execute_native_deferred_jobs(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
         self.vm.execute_native_program(program, false).map(drop)
+    }
+
+    /// Run precompiled global Scripts before a native entry in the same realm.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_after_scripts(&mut self, scripts: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        self.vm.execute_native_after_scripts(scripts, program).map(drop)
     }
 
     /// Evaluate each `(source, name)` as a global Script of the entry's realm,

@@ -128,6 +128,7 @@ pub(crate) fn eval_context_source(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiagnosticKind {
+    Syntax,
     Compilation,
     StackExhausted,
 }
@@ -141,13 +142,18 @@ pub struct Diagnostic {
 impl Diagnostic {
     fn message(&self) -> &str {
         match self.kind {
-            DiagnosticKind::Compilation => &self.message,
+            DiagnosticKind::Syntax | DiagnosticKind::Compilation => &self.message,
             DiagnosticKind::StackExhausted => crate::stack::STACK_EXHAUSTED_MESSAGE,
         }
     }
 
-    /// The message of the SyntaxError this diagnostic throws, without the class name some
-    /// compiler messages carry.
+    /// Whether parsing or ECMAScript early-error validation rejected the source.
+    /// Backend limits and unsupported syntax are separate compilation failures.
+    pub fn is_syntax_error(&self) -> bool {
+        self.kind == DiagnosticKind::Syntax
+    }
+
+    /// The diagnostic message without a leading SyntaxError class name.
     pub fn syntax_message(&self) -> &str {
         let message = self.message();
         message.strip_prefix(SYNTAX_ERROR_PREFIX).unwrap_or(message)
@@ -157,7 +163,7 @@ impl Diagnostic {
     fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
         let offset = error.labels.first().map_or(0, |label| label.offset());
         Self {
-            kind: DiagnosticKind::Compilation,
+            kind: DiagnosticKind::Syntax,
             source: source_name.into(),
             message: syntax_message::parse_failure(source, error),
             span: Span::new(offset, offset),
@@ -1064,7 +1070,7 @@ impl Engine {
             return Err(vec![match error {
                 early::RegExpEarlyError::StackExhausted => Diagnostic::stack_exhausted(name),
                 early::RegExpEarlyError::Syntax(message) => Diagnostic {
-                    kind: DiagnosticKind::Compilation,
+                    kind: DiagnosticKind::Syntax,
                     source: name.into(),
                     message,
                     span: Span::default(),
@@ -1076,7 +1082,7 @@ impl Engine {
             && let Some(span) = early::eval_return_outside_function(&parsed.program)
         {
             return Err(vec![Diagnostic {
-                kind: DiagnosticKind::Compilation,
+                kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: return outside function in eval".into(),
                 span,
@@ -1089,7 +1095,7 @@ impl Engine {
         }
         if let Some(span) = annex_b_targets::invalid_target(&parsed.program) {
             return Err(vec![Diagnostic {
-                kind: DiagnosticKind::Compilation,
+                kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: invalid assignment target".into(),
                 span,
@@ -1144,7 +1150,7 @@ impl Engine {
                 .diagnostics
                 .into_iter()
                 .map(|error| Diagnostic {
-                    kind: DiagnosticKind::Compilation,
+                    kind: DiagnosticKind::Syntax,
                     source: name.into(),
                     message: format!("SyntaxError: {error}"),
                     span: Span::default(),
@@ -1234,7 +1240,7 @@ impl Engine {
                 parsed.program.directives = directives;
                 if let Some(span) = early::eval_return_outside_function(&parsed.program) {
                     return Err(vec![Diagnostic {
-                        kind: DiagnosticKind::Compilation,
+                        kind: DiagnosticKind::Syntax,
                         source: name.into(),
                         message: "SyntaxError: return outside function in eval".into(),
                         span,

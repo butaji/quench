@@ -1650,6 +1650,7 @@ impl<H: Host> Vm<H> {
             if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
                 && !(STOPS && stop_pc == Some(pc))
             {
+                self.record_native_execution_rejection();
                 return Err(JsError::validation(format!(
                     "native guest code required: {} function {} at {}",
                     p.source_name, self.frames[frame].function, pc,
@@ -1993,6 +1994,7 @@ impl<H: Host> Vm<H> {
             let step = if let Some(step) = native_step {
                 step.result
             } else if !crate::DYNAMIC_EXECUTION_ENABLED {
+                self.record_native_execution_rejection();
                 return Err(JsError::validation("native guest code required: interpreter dispatch is unavailable".into()));
             } else {
             #[cfg(feature = "profile-memory")]

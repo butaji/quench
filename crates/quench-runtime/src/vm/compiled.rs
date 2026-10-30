@@ -5705,6 +5705,46 @@ fn compile_and_publish_entry(
     .ok()
 }
 
+/// Eager publication has no code-cache admission budget: all requested bodies
+/// must compile or the whole program fails. Owners release code and operands together.
+#[cfg(feature = "aot")]
+pub(super) fn compile_eager_native<H: Host>(program: ResidualProgram) -> Result<crate::NativeJsProgram<H>, String> {
+    program.validate_unless_proven()?;
+    program.freeze_native_diagnostics();
+    let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
+        .ok_or("native target unavailable")?;
+    let mut owners = Vec::with_capacity(program.function_count());
+    let mut entries = Vec::with_capacity(program.function_count());
+    for id in 0..program.function_count() {
+        let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
+        let function = program.function(id);
+        let operands: Box<[_]> = function.code.iter().copied().map(|packed| {
+            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+            super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
+        }).collect();
+        let mut signature = None;
+        let native = super::native_graph::lower_function(function, function_id, &*isa,
+            |builder, op, pc, context, result| {
+                let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
+                let target = builder.ins().iconst(isa.pointer_type(), op.native_semantic_entry::<H>() as usize as i64);
+                let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
+                let pc = builder.ins().iconst(types::I64, pc as i64);
+                let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
+                builder.inst_results(call)[0]
+            })?;
+        let memory = super::jit_backend::compile_function(native, &*isa, None, |compiled, _| {
+            if !compiled.buffer.relocs().is_empty() { return Err(NativeCompileRejection::Relocations); }
+            CodeMemory::new(compiled.code_buffer()).ok_or(NativeCompileRejection::Publish)
+        }).map_err(|error| format!("native function {id}: {}", error.reason()))?;
+        // SAFETY: lower_function emits the native entry ABI; owner keeps code
+        // and the immutable operands addressed by it alive through every call.
+        entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(memory.pointer()) });
+        owners.push((memory, operands));
+    }
+    // SAFETY: every entry was lowered from its exact function for host H.
+    unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(owners)) }
+}
+
 use super::jit_backend::NativeCompileRejection;
 
 /// Publication policy for relocation-free JIT entries. Compilation itself keeps
@@ -11996,6 +12036,14 @@ impl<H: Host> Vm<H> {
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
     pub(crate) fn compile_wasm_eagerly(&mut self) {
         self.programs.compile_wasm_modules_at_first_entry();
+    }
+
+    pub(crate) fn native_execution_rejections(&self) -> u64 {
+        self.native_execution_rejections
+    }
+
+    pub(crate) fn record_native_execution_rejection(&mut self) {
+        self.native_execution_rejections = self.native_execution_rejections.saturating_add(1);
     }
 
     pub(crate) fn execution_mode(&self) -> ExecutionMode {

@@ -40,6 +40,13 @@ impl<H: Host> Clone for NativeJsProgram<H> {
 }
 
 impl<H: Host> NativeJsProgram<H> {
+    /// Compile every function before execution using the object backend's graph
+    /// and the JIT's executable-memory publisher. No hotness or fallback tier.
+    #[cfg(feature = "aot")]
+    pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
+        super::compiled::compile_eager_native(program)
+    }
+
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.
     /// Its header retains the compiler's ABI marker at link time.
     ///
@@ -140,11 +147,30 @@ impl<H: Host> Vm<H> {
         native: &NativeJsProgram<H>,
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
+        self.execute_native_with_scripts(&[], native, drain_jobs)
+    }
+
+    pub(crate) fn execute_native_after_scripts(
+        &mut self,
+        scripts: &[NativeJsProgram<H>],
+        native: &NativeJsProgram<H>,
+    ) -> Result<Value, JsError> {
+        self.execute_native_with_scripts(scripts, native, true)
+    }
+
+    fn execute_native_with_scripts(
+        &mut self,
+        scripts: &[NativeJsProgram<H>],
+        native: &NativeJsProgram<H>,
+        drain_jobs: bool,
+    ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
-        self.programs
-            .attach_native_js(ProgramId::MAIN, native.code.clone())
-            .map_err(JsError::validation)?;
+        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
+        for script in scripts {
+            let prepared = self.prepare_native_script(script.clone())?;
+            self.evaluate_embedding_prepared_script(&prepared)?;
+        }
         self.run_main(&native.program, drain_jobs)
     }
 }

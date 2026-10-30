@@ -2038,3 +2038,47 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
     runtime.compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Module }).unwrap();
     assert_eq!(kept.borrow().len(), 2);
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
+    let mut compiler = crate::NativeJsCompiler::new(false);
+    let harness = compiler.compile_script(
+        "globalThis.readSeed = () => 7;", "harness.js", Default::default(),
+    ).unwrap();
+    let entry = compiler.compile_module(
+        "globalThis.answer = readSeed() + 35; Promise.resolve().then(() => { answer += 1; });",
+        "entry.mjs",
+    ).unwrap();
+    let entry = compiler.finish(entry).unwrap();
+    let residual = entry.clone();
+    let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(entry).unwrap();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native_after_scripts(&[harness], &native).unwrap();
+    drop(native);
+    runtime.collect(&residual).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("answer");
+    let answer = runtime.get_property_rooted(global, key).unwrap();
+    assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(43.0));
+    let key = runtime.string_rooted("readSeed");
+    let read = runtime.get_property_rooted(global, key).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let result = runtime.call_rooted(read, receiver, &[]).unwrap();
+    assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(7.0));
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_execution_audit_retains_guest_caught_source_rejections() {
+    let program = Engine::specialize_unspecialized(
+        "try { eval('1'); } catch (error) { if (!(error instanceof TypeError)) throw error; }", "caught-eval.js",
+    ).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 1);
+}

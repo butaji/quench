@@ -10,6 +10,7 @@ license = "MIT"
 doctest = false
 
 [features]
+aot = ["quench-runtime/aot"]
 profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
@@ -19,6 +20,7 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 
 [dependencies]
-quench-runtime = { path = "../quench-runtime" }
+oxc_syntax.workspace = true
+quench-runtime = { path = "../quench-runtime", features = ["native-execution"] }
 serde_json = "1"
 wait-timeout = "0.2.1"

@@ -296,6 +296,7 @@ impl<H: Host> Vm<H> {
             pending_call_stacks: _,
             lane_stack: _,
             execution_mode: _,
+            native_execution_rejections: _,
             execution_interrupt: _,
             wasm_reference_epoch: _,
             active_call_roots,

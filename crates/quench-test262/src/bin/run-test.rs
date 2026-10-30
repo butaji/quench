@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
 use quench_test262::{
-    take_execution_mode, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG,
+    take_execution_mode, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
 };
 
 fn main() -> ExitCode {
@@ -29,16 +29,20 @@ fn run() -> ExitCode {
     let mut args = env::args_os().skip(1).collect::<Vec<_>>();
     let mode = take_execution_mode(&mut args);
     let Some(path) = args.into_iter().next().map(PathBuf::from) else {
-        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}] <test.js>");
+        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}|{AOT_FLAG}] <test.js>");
         return ExitCode::from(2);
     };
     let root = test262_root();
     let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
     let mut harness = HarnessCache::new(root.join("harness"));
-    let outcome = runner.run_file_with_cache(&path, &mut harness);
-    match outcome {
-        Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
-        Ok(TestOutcome::Fail { reason }) => fail(reason),
+    match runner.run_file_variants_with_cache(&path, &mut harness) {
+        Ok(outcomes) => {
+            let failures = outcomes.iter().filter_map(|record| match &record.outcome {
+                TestOutcome::Pass => None,
+                TestOutcome::Fail { reason } => Some(format!("{}: {reason}", record.variant.name())),
+            }).collect::<Vec<_>>();
+            if failures.is_empty() { ExitCode::SUCCESS } else { fail(failures.join("\n")) }
+        }
         Err(error) => fail(error),
     }
 }

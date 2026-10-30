@@ -22,13 +22,17 @@ use quench_runtime::ExecutionMode;
 
 /// The switch that runs cases in compiled (JIT) execution, spelled as the Wasm runner's.
 pub const JIT_FLAG: &str = "--jit";
+pub const AOT_FLAG: &str = "--aot";
 
-/// The execution `args` select, with the switch removed: compiled when they carry
-/// `JIT_FLAG`, else the interpreter.
+/// Select native-only, JIT, or interpreter execution and remove the mode switch.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
+    let native = args.iter().any(|arg| arg == AOT_FLAG);
+    args.retain(|arg| arg != AOT_FLAG);
     let before = args.len();
     args.retain(|arg| arg != JIT_FLAG);
-    if args.len() < before {
+    if native {
+        ExecutionMode::NativeOnly
+    } else if args.len() < before {
         ExecutionMode::Compiled
     } else {
         ExecutionMode::Interpreted
@@ -40,6 +44,15 @@ pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
     match mode {
         ExecutionMode::Interpreted => "no-jit",
         ExecutionMode::Compiled => "jit",
+        ExecutionMode::NativeOnly => "aot",
+    }
+}
+
+pub fn execution_mode_flag(mode: ExecutionMode) -> Option<&'static str> {
+    match mode {
+        ExecutionMode::Interpreted => None,
+        ExecutionMode::Compiled => Some(JIT_FLAG),
+        ExecutionMode::NativeOnly => Some(AOT_FLAG),
     }
 }
 
@@ -47,6 +60,8 @@ pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
 pub trait Test262Host: Send {
     /// Configure per-test host policy before dispatch.
     fn configure(&mut self, _metadata: &TestMetadata) {}
+
+    fn native_compilation(&self) -> Option<&NativeCompilation> { None }
 
     /// Execute a complete script source.
     fn run_script(&mut self, source: &str) -> Result<(), String>;
@@ -91,6 +106,35 @@ pub trait Test262Host: Send {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct NativeCompilation {
+    pub units: Vec<NativeCompiledUnit>,
+    pub rejections: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct NativeCompiledUnit {
+    pub functions: usize,
+    pub object_bytes: usize,
+    pub object: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TestVariant { Sloppy, Strict, Module, Raw }
+
+impl TestVariant {
+    pub fn name(self) -> &'static str {
+        match self { Self::Sloppy => "sloppy", Self::Strict => "strict", Self::Module => "module", Self::Raw => "raw" }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VariantOutcome {
+    pub variant: TestVariant,
+    pub outcome: TestOutcome,
+    pub compilation: Option<NativeCompilation>,
+}
+
 /// Runner metadata needed before dispatching one test.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TestMetadata {
@@ -102,6 +146,8 @@ pub struct TestMetadata {
     pub is_raw: bool,
     /// Whether the runner must prepend a strict directive.
     pub only_strict: bool,
+    /// A script explicitly excluded from the strict variant.
+    pub no_strict: bool,
     /// Harness files requested by the test, in declaration order.
     pub includes: Vec<String>,
     /// Expected early/runtime error phase, when the test is negative.
@@ -122,6 +168,13 @@ enum MetadataList {
 }
 
 impl TestMetadata {
+    pub fn variants(&self) -> Vec<TestVariant> {
+        if self.is_module { vec![TestVariant::Module] }
+        else if self.is_raw { vec![TestVariant::Raw] }
+        else if self.only_strict { vec![TestVariant::Strict] }
+        else if self.no_strict { vec![TestVariant::Sloppy] }
+        else { vec![TestVariant::Sloppy, TestVariant::Strict] }
+    }
     /// Parse the small YAML subset used for dispatch decisions.
     pub fn parse(source: &str) -> Result<Self, String> {
         // Test262 includes a pair of legacy fixtures with bare CR line
@@ -172,6 +225,7 @@ impl TestMetadata {
         metadata.is_async = flags.iter().any(|flag| flag == "async");
         metadata.is_raw = flags.iter().any(|flag| flag == "raw");
         metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
+        metadata.no_strict = flags.iter().any(|flag| flag == "noStrict");
         metadata.can_block = flags.iter().any(|flag| flag == "CanBlockIsTrue");
         Ok(metadata)
     }
@@ -418,6 +472,19 @@ pub struct Test262Runner<H: Test262Host> {
 }
 
 impl<H: Test262Host> Test262Runner<H> {
+    /// Account for every variant; a failure never suppresses the remaining variant.
+    pub fn run_file_variants_with_cache(&mut self, path: &Path, cache: &mut HarnessCache) -> Result<Vec<VariantOutcome>, String> {
+        let source = std::fs::read_to_string(path).map_err(|error| format!("test262 read failed: {error}"))?;
+        let mut metadata = TestMetadata::parse(&source)?;
+        let harness = runner_support::cached_harness(&metadata, cache)?;
+        let mut outcomes = Vec::new();
+        for variant in metadata.variants() {
+            metadata.only_strict = variant == TestVariant::Strict;
+            let outcome = runner_support::negative(self.dispatch_test_at(&harness, &source, &metadata, Some(path)), &metadata);
+            outcomes.push(VariantOutcome { variant, outcome, compilation: self.host.native_compilation().cloned() });
+        }
+        Ok(outcomes)
+    }
     /// Create a runner around an engine host.
     pub fn new(host: H) -> Self {
         Self { host }
@@ -702,6 +769,18 @@ impl<H: Test262Host> Test262Runner<H> {
 #[cfg(test)]
 mod tests {
     use super::TestMetadata;
+
+    #[test]
+    fn metadata_selects_required_execution_variants() {
+        use super::TestVariant::*;
+        for (flags, expected) in [
+            ("", vec![Sloppy, Strict]), ("onlyStrict", vec![Strict]),
+            ("noStrict", vec![Sloppy]), ("module", vec![Module]), ("raw", vec![Raw]),
+        ] {
+            let source = format!("/*---\nflags: [{flags}]\n---*/");
+            assert_eq!(TestMetadata::parse(&source).unwrap().variants(), expected);
+        }
+    }
 
     #[test]
     fn metadata_skips_copyright_block_before_frontmatter() {

@@ -66,6 +66,7 @@ impl<H: Host> Vm<H> {
         if self.execution_mode.allows_dynamic_execution() {
             Ok(())
         } else {
+            self.record_native_execution_rejection();
             Err(self.type_error(p, "native guest code required: source compilation is unavailable".into()))
         }
     }

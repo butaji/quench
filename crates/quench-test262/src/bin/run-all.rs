@@ -20,14 +20,15 @@ use quench_test262::ratchet::{
 use quench_test262::waivers::{Adjudication, Waivers};
 use quench_runtime::ExecutionMode;
 use quench_test262::{
-    discover_js_files, execution_mode_name, resolve_stages, take_execution_mode, HarnessCache,
-    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG,
+    discover_js_files, execution_mode_name, execution_mode_flag, resolve_stages, take_execution_mode, HarnessCache,
+    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
 };
 use wait_timeout::ChildExt;
 
 const DEFAULT_REPORT: &str = "target/test262-report.json";
 /// A compiled run's report, kept beside the interpreter's so neither overwrites the other.
 const DEFAULT_JIT_REPORT: &str = "target/test262-report-jit.json";
+const DEFAULT_AOT_REPORT: &str = "target/test262-report-aot.json";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
     "length.js",
@@ -64,11 +65,14 @@ fn main() -> ExitCode {
 
 fn run() -> ExitCode {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == AOT_FLAG) && args.iter().any(|arg| arg == JIT_FLAG) {
+        return fail("choose one execution mode".into());
+    }
     let mode = take_execution_mode(&mut args);
     let freeze_expected = match args.as_slice() {
         [] => false,
         [option] if option == "--freeze-expected-pass-set" => true,
-        _ => return fail(format!("usage: run-all [{JIT_FLAG}] [--freeze-expected-pass-set]")),
+        _ => return fail(format!("usage: run-all [{JIT_FLAG}|{AOT_FLAG}] [--freeze-expected-pass-set]")),
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
@@ -77,6 +81,9 @@ fn run() -> ExitCode {
         Ok(files) => files,
         Err(error) => return fail(error),
     };
+    if freeze_expected && mode == ExecutionMode::NativeOnly {
+        return fail("AOT qualification cannot freeze the interpreter baseline".into());
+    }
     if freeze_expected {
         return match freeze_expected_pass_set(&root, &all_files) {
             Ok(()) => ExitCode::SUCCESS,
@@ -84,6 +91,16 @@ fn run() -> ExitCode {
         };
     }
     let discovered = all_files.len();
+    if discovered == 0 { return fail("Test262 inventory is empty".into()); }
+    if mode == ExecutionMode::NativeOnly {
+        let Some(directory) = env::var_os("TEST262_CASE_REPORT_DIR").map(PathBuf::from) else {
+            return fail("AOT qualification requires TEST262_CASE_REPORT_DIR for variant accounting".into());
+        };
+        if directory.exists() && fs::read_dir(&directory).map_or(true, |mut entries| entries.next().is_some()) {
+            return fail("AOT case report directory must be empty to prevent stale outcomes".into());
+        }
+        if let Err(error) = fs::create_dir_all(&directory) { return fail(format!("case report directory: {error}")); }
+    }
     let files = match select_batch(all_files) {
         Ok(files) => files,
         Err(error) => return fail(error),
@@ -111,7 +128,9 @@ fn run() -> ExitCode {
     let test_root = root.join("test");
     let report = collect_report(&files, &outcomes, &waivers, &test_root);
     let full_inventory = env::var_os("TEST262_BATCH_SIZE").is_none();
-    let ratchet = match update_ratchet(&root, &files, &outcomes, &report, timeout, full_inventory) {
+    let ratchet = match if mode == ExecutionMode::NativeOnly {
+        Ok(RatchetResult { verdict: "native-baseline-not-frozen", regressions: Vec::new() })
+    } else { update_ratchet(&root, &files, &outcomes, &report, timeout, full_inventory) } {
         Ok(ratchet) => ratchet,
         Err(error) => return fail(error),
     };
@@ -140,7 +159,8 @@ fn run() -> ExitCode {
     if !ratchet.regressions.is_empty() {
         eprintln!("ratchet regressions={}", ratchet.regressions.len());
     }
-    if report.failures.is_empty() && report.total == files.len() && ratchet.regressions.is_empty() {
+    if report.failures.is_empty() && (mode != ExecutionMode::NativeOnly || report.failed == 0)
+        && report.total == files.len() && ratchet.regressions.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -258,9 +278,16 @@ fn run_case_entry() -> ExitCode {
     let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
     let mut harness = HarnessCache::new(root.join("harness"));
     // The bare failure is the case outcome, as run-stages' worker reports it.
-    match runner.run_file_with_cache(path, &mut harness) {
-        Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
-        Ok(TestOutcome::Fail { reason: failure }) | Err(failure) => {
+    match runner.run_file_variants_with_cache(&path, &mut harness) {
+        Ok(outcomes) => {
+            if let Err(error) = quench_test262::reporting::write_variant_report(&root, &path, &outcomes) { return fail(error); }
+            let failures: Vec<_> = outcomes.iter().filter_map(|record| match &record.outcome {
+                TestOutcome::Pass => None,
+                TestOutcome::Fail { reason } => Some(format!("{}: {reason}", record.variant.name())),
+            }).collect();
+            if failures.is_empty() { ExitCode::SUCCESS } else { eprintln!("{}", failures.join("\n")); ExitCode::from(1) }
+        }
+        Err(failure) => {
             eprintln!("{failure}");
             ExitCode::from(1)
         }
@@ -276,7 +303,7 @@ fn run_case_process(
 ) -> Result<(), String> {
     let mut child = Command::new(executable)
         .arg("--case")
-        .args((mode == ExecutionMode::Compiled).then_some(JIT_FLAG))
+        .args(execution_mode_flag(mode))
         .arg(path)
         .env("TEST262_DIR", root)
         .stdout(Stdio::null())
@@ -370,6 +397,7 @@ fn write_report(
     let default_report = match mode {
         ExecutionMode::Interpreted => DEFAULT_REPORT,
         ExecutionMode::Compiled => DEFAULT_JIT_REPORT,
+        ExecutionMode::NativeOnly => DEFAULT_AOT_REPORT,
     };
     let path = env::var_os("TEST262_REPORT")
         .map(PathBuf::from)
@@ -399,9 +427,34 @@ fn write_report(
             }
             let relative = report_path(path, &test_root);
             let waiver = waivers.adjudicate(&relative, outcome).waiver();
-            case_outcome(relative, stage, outcome, waiver)
+            let mut record = case_outcome(relative, stage, outcome, waiver);
+            record["variants"] = quench_test262::reporting::variant_report_path(root, path)
+                .and_then(|path| fs::read(path).ok()).and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_else(|| {
+                    let metadata = fs::read_to_string(path).ok().and_then(|source| quench_test262::TestMetadata::parse(&source).ok());
+                    serde_json::json!(metadata.map(|metadata| metadata.variants().into_iter().map(|variant| serde_json::json!({
+                        "variant":variant.name(),"outcome":"not_completed","reason":outcome.as_ref().err(),
+                    })).collect::<Vec<_>>()).unwrap_or_default())
+                });
+            record
         })
         .collect::<Vec<_>>();
+    let mut variant_counts = BTreeMap::<String, usize>::new();
+    let mut native_units = 0_u64;
+    let mut native_functions = 0_u64;
+    let mut native_object_bytes = 0_u64;
+    let mut native_rejections = 0_u64;
+    for record in &outcomes {
+        for variant in record["variants"].as_array().into_iter().flatten() {
+            *variant_counts.entry(variant["outcome"].as_str().unwrap_or("not_completed").into()).or_default() += 1;
+            native_rejections += variant["native_rejections"].as_u64().unwrap_or(0);
+            for unit in variant["native_units"].as_array().into_iter().flatten() {
+                native_units += 1;
+                native_functions += unit["functions"].as_u64().unwrap_or(0);
+                native_object_bytes += unit["object_bytes"].as_u64().unwrap_or(0);
+            }
+        }
+    }
     let mut families = BTreeMap::<String, usize>::new();
     let mut metadata_families = BTreeMap::<String, usize>::new();
     for (_, reason) in &report.failures {
@@ -433,6 +486,8 @@ fn write_report(
         "schema": 1,
         "engine": RATCHET_ENGINE,
         "provenance": {
+            "test262_revision": Command::new("git").arg("-C").arg(root).args(["rev-parse", "HEAD"]).output().ok()
+                .filter(|output| output.status.success()).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned()),
             "source_revision": source_revision,
             "source_dirty": source_dirty,
             "binary": binary,
@@ -441,6 +496,12 @@ fn write_report(
             "jobs": worker_jobs(),
             "execution_mode": execution_mode_name(mode),
         },
+        "variant_counts": variant_counts,
+        "native_qualification": (mode == ExecutionMode::NativeOnly).then(|| serde_json::json!({
+            "units": native_units, "functions": native_functions, "object_bytes": native_object_bytes,
+            "capability_rejections": native_rejections, "compiler_present_in_host": true,
+            "separately_linked_executables": false,
+        })),
         "discovered": discovered,
         "total": report.total,
         "passed": report.passed,

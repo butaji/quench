@@ -428,3 +428,12 @@ fn discarded_sequence_elements_and_branches_release_their_temporaries() {
     assert!(registers < 32, "{registers} registers");
     program.validate().unwrap();
 }
+
+#[test]
+fn syntax_diagnostics_are_distinct_from_backend_and_resource_rejections() {
+    let errors = super::Engine::specialize("var = ;", "invalid.js").unwrap_err();
+    assert!(!errors.is_empty());
+    assert!(errors.iter().all(super::Diagnostic::is_syntax_error));
+    assert!(!super::Diagnostic::unsupported("backend.js", "unsupported lowering").is_syntax_error());
+    assert!(!super::Diagnostic::stack_exhausted("deep.js").is_syntax_error());
+}

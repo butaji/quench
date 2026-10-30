@@ -93,6 +93,13 @@ impl NativeJsCompiler {
         Ok(program)
     }
 
+    /// Compile a module in the same namespace as its precompiled host scripts.
+    pub fn compile_module(&mut self, source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let mut program = Engine::specialize_module_with_atom_prefix(source, name, self, ReleasedRecords::Dropped)?;
+        self.adopt(&mut program);
+        Ok(program)
+    }
+
     /// Compile context-free host bootstrap source, matching `eval_host_script`.
     pub fn compile_host_script(
         &mut self, source: &str, name: &str,

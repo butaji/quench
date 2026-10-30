@@ -62,13 +62,43 @@ pub(crate) fn negative(outcome: TestOutcome, metadata: &TestMetadata) -> TestOut
         TestOutcome::Pass => TestOutcome::Fail {
             reason: format!("expected {expected_type} but execution completed"),
         },
-        TestOutcome::Fail { reason } if reason.contains(expected_type) => TestOutcome::Pass,
+        TestOutcome::Fail { reason } if expected_failure(&reason, metadata, expected_type) => TestOutcome::Pass,
         TestOutcome::Fail { reason } => TestOutcome::Fail {
             reason: format!("expected {expected_type}, got {reason}"),
         },
     }
 }
 
+fn expected_failure(reason: &str, metadata: &TestMetadata, expected_type: &str) -> bool {
+    let early = reason.strip_prefix("quench runtime SyntaxError:");
+    let runtime = ["quench runtime: ", "quench runtime jobs: ", "quench runtime async: "]
+        .iter().find_map(|prefix| reason.strip_prefix(prefix));
+    if early.is_some() {
+        return expected_type == "SyntaxError" && matches!(metadata.negative_phase.as_deref(), None | Some("parse" | "early"));
+    }
+    if runtime.is_some() && matches!(metadata.negative_phase.as_deref(), Some("parse" | "early")) { return false; }
+    let error = runtime.unwrap_or(reason).trim_start();
+    error == expected_type || error.strip_prefix(expected_type).is_some_and(|rest| rest.starts_with(':'))
+}
+
 pub(crate) fn outcome(result: Result<(), String>) -> TestOutcome {
     result.map_or_else(|reason| TestOutcome::Fail { reason }, |_| TestOutcome::Pass)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negative_errors_require_exact_type_and_phase() {
+        let metadata = TestMetadata::parse("/*---\nnegative:\n  phase: parse\n  type: SyntaxError\n---*/").unwrap();
+        assert!(expected_failure("quench runtime SyntaxError: invalid token", &metadata, "SyntaxError"));
+        assert!(!expected_failure("quench runtime: SyntaxError: thrown at runtime", &metadata, "SyntaxError"));
+        assert!(!expected_failure("backend failed at /SyntaxError/example.js", &metadata, "SyntaxError"));
+        assert!(!expected_failure("quench runtime: TypeError: mentions SyntaxError", &metadata, "SyntaxError"));
+        let mut runtime = metadata;
+        runtime.negative_phase = Some("runtime".into());
+        assert!(expected_failure("quench runtime: SyntaxError: thrown at runtime", &runtime, "SyntaxError"));
+        assert!(!expected_failure("quench runtime SyntaxError: invalid token", &runtime, "SyntaxError"));
+    }
 }

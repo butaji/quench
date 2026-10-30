@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
             pending_call_stacks: vec![],
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
+            native_execution_rejections: 0,
             execution_interrupt,
             wasm_reference_epoch: std::cell::Cell::new(1),
             active_call_roots: vec![],
