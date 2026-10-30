@@ -134,10 +134,12 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
-        let residual = self
-            .programs
-            .get(program_id)
-            .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
+        self.run_global_script_program(program_id)
+    }
+
+    fn run_global_script_program(&mut self, program_id: super::ProgramId) -> Result<Value, JsError> {
+        let residual = self.programs.get(program_id)
+            .ok_or_else(|| JsError::validation("global Script program is unavailable".into()))?;
         let eval_script_context = std::mem::replace(&mut self.eval_script_context, true);
         let active_program = self.replace_active_program(program_id);
         let result = (|| {
@@ -678,6 +680,19 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn prepared_script_is_current(&self, prepared: &crate::PreparedScript) -> bool {
         prepared.program.atoms.belongs_to(&self.atom_sequence)
+    }
+
+    pub(crate) fn evaluate_prepared_global_script(
+        &mut self, prepared: &crate::PreparedScript,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        if !self.prepared_script_is_current(prepared) {
+            return Err(self.type_error(&program, "prepared Script belongs to a different runtime state".into()));
+        }
+        let Some(program_id) = self.store_prepared_script(prepared)? else {
+            return Err(self.type_error(&program, "global Script program store is full".into()));
+        };
+        self.run_global_script_program(program_id)
     }
 
     pub(crate) fn evaluate_embedding_prepared_script(

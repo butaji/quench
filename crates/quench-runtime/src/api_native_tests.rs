@@ -2044,10 +2044,10 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
 fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
     let mut compiler = crate::NativeJsCompiler::new(false);
     let harness = compiler.compile_script(
-        "globalThis.readSeed = () => 7;", "harness.js", Default::default(),
+        "const seed = 7; function readSeed() { return seed; }", "harness.js", Default::default(),
     ).unwrap();
     let entry = compiler.compile_module(
-        "globalThis.answer = readSeed() + 35; Promise.resolve().then(() => { answer += 1; });",
+        "globalThis.answer = seed + readSeed() + 28; Promise.resolve().then(() => { answer += 1; });",
         "entry.mjs",
     ).unwrap();
     let entry = compiler.finish(entry).unwrap();

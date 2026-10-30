@@ -395,8 +395,8 @@ mod tests {
         for mode in modes {
             let mut host = Test262RuntimeHost::new(mode);
             host.execute_harnessed_script(
-                &["function harnessThis() { return this; }"],
-                "if (harnessThis() !== globalThis) throw Error('strict harness'); if ((function() { return this; })() !== undefined) throw Error('sloppy test');",
+                &["const harnessNumber = 7; function harnessThis() { return this; }"],
+                "if (harnessNumber !== 7) throw Error('missing lexical'); if (harnessThis() !== globalThis) throw Error('strict harness'); if ((function() { return this; })() !== undefined) throw Error('sloppy test');",
                 true, "strict-entry.js",
             ).unwrap();
         }

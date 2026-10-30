@@ -169,7 +169,7 @@ impl<H: Host> Vm<H> {
         self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
         for script in scripts {
             let prepared = self.prepare_native_script(script.clone())?;
-            self.evaluate_embedding_prepared_script(&prepared)?;
+            self.evaluate_prepared_global_script(&prepared)?;
         }
         self.run_main(&native.program, drain_jobs)
     }
