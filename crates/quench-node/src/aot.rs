@@ -45,22 +45,23 @@ impl CompiledSources {
     pub fn emit(self, directory: &Path) -> Result<NativeImageInputs, String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
-        let write = |program: &ResidualProgram, name: &str| -> Result<PathBuf, String> {
+        let write = |program: &ResidualProgram, name: &str| -> Result<(PathBuf, String), String> {
             let module = lower_native_js_module(program, &format!("quench_{name}"))?;
+            let symbol = module.entry_table_symbol().to_owned();
             let object = emit_native_module(name, module.functions, module.data)?;
             fs::write(directory.join(format!("{name}.o")), object).map_err(|error| error.to_string())?;
             let metadata = directory.join(format!("{name}.bin"));
             program.write_binary(&metadata)?;
-            Ok(metadata)
+            Ok((metadata, symbol))
         };
-        let entry = write(&self.entry, "entry")?;
+        let (entry, entry_symbol) = write(&self.entry, "entry")?;
         let mut catalog = fs::File::create(directory.join("catalog.rs")).map_err(|error| error.to_string())?;
-        writeln!(catalog, "quench_node::linked_native_sources! {{\nentry bind_entry: quench_entry_entries => {:?};\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
+        writeln!(catalog, "quench_node::linked_native_sources! {{\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         for (index, unit) in self.units.iter().enumerate() {
-            let metadata = write(&unit.program, &format!("unit_{index}"))?;
+            let (metadata, symbol) = write(&unit.program, &format!("unit_{index}"))?;
             let parts: Vec<_> = unit.key.parts().collect();
-            writeln!(catalog, "quench_unit_{index}_entries => ({:?}, {:?}, {:?}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name(), parts)
+            writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, {:?}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name(), parts)
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
@@ -72,15 +73,15 @@ impl CompiledSources {
 /// generated invocation contains only data; this macro owns the loading rules.
 #[macro_export]
 macro_rules! linked_native_sources {
-    (entry $entry:ident: $entry_symbol:ident => $entry_metadata:literal;
+    (entry $entry:ident: $entry_symbol:ident => ($entry_link:literal, $entry_metadata:literal);
      resolver $resolve:ident {
-         $($symbol:ident => ($metadata:literal, $name:literal, [$($part:literal),*]),)*
+         $($symbol:ident => ($link:literal, $metadata:literal, $name:literal, [$($part:literal),*]),)*
      }) => {
         /// # Safety
         /// Metadata, host ABI and all entry tables must be emitted together by
         /// this compiler, linked unmodified, and kept alive for the process.
         pub unsafe fn $entry() -> Result<quench_runtime::NativeJsProgram<$crate::NodeHost>, String> {
-            unsafe extern "C" { static $entry_symbol: u8; }
+            unsafe extern "C" { #[link_name = $entry_link] static $entry_symbol: u8; }
             let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($entry_metadata)[..]);
             let program = quench_runtime::ResidualProgram::from_binary_bytes(bytes)?;
             // SAFETY: the compiler emits the metadata and this linked table together.
@@ -90,7 +91,7 @@ macro_rules! linked_native_sources {
         /// Every catalog record must meet the linked-image contract above.
         pub unsafe fn $resolve(name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<$crate::NodeHost>>, String> {
             $(if name == $name && parts == [$($part),*] {
-                unsafe extern "C" { static $symbol: u8; }
+                unsafe extern "C" { #[link_name = $link] static $symbol: u8; }
                 let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($metadata)[..]);
                 let program = quench_runtime::ResidualProgram::from_binary_bytes(bytes)?;
                 // SAFETY: as above, including the compiler-wide atom namespace.
