@@ -1425,9 +1425,10 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// Whether a frame entry may run the lane at all: instruction profiling observes every PC,
-    /// so profiling builds run the general path only.
-    const FRAME_ENTRY_LANE_RUNS: bool = !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
+    /// Whether a frame entry may run the lane: execution-only support never
+    /// interprets, and instruction profiling must observe every PC.
+    const FRAME_ENTRY_LANE_RUNS: bool = crate::DYNAMIC_EXECUTION_ENABLED
+        && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
 
     /// `run_frame_general_with_error` of a resumed generator's or async function's frame
     /// `frame` with no error to raise. Without JS tiers the general loop would only enter the
@@ -1654,7 +1655,7 @@ impl<H: Host> Vm<H> {
                     p.source_name, self.frames[frame].function, pc,
                 )));
             }
-            if native_step.is_none() && !resumed && pc == 0 {
+            if crate::DYNAMIC_EXECUTION_ENABLED && native_step.is_none() && !resumed && pc == 0 {
                 match self.js_tier_frame_entry(p, frame, allow_inline_calls) {
                     super::compiled::JsTierFrameEntry::Interpreter => {}
                     super::compiled::JsTierFrameEntry::ContinueAt(return_pc)
@@ -1667,7 +1668,7 @@ impl<H: Host> Vm<H> {
                         native_step = Some(step);
                     }
                 }
-            } else if native_step.is_none() && !resumed {
+            } else if crate::DYNAMIC_EXECUTION_ENABLED && native_step.is_none() && !resumed {
                 // A compiled caller resumes at the bytecode after a callout or
                 // at a hot loop header. Re-enter its shared CFG from that exact
                 // PC instead of sending the rest of the activation through the
@@ -1991,6 +1992,8 @@ impl<H: Host> Vm<H> {
             let ins = cursor.instruction(instruction_pc);
             let step = if let Some(step) = native_step {
                 step.result
+            } else if !crate::DYNAMIC_EXECUTION_ENABLED {
+                return Err(JsError::validation("native guest code required: interpreter dispatch is unavailable".into()));
             } else {
             #[cfg(feature = "profile-memory")]
             self.heap.set_memory_allocation_site(

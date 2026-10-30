@@ -334,6 +334,14 @@ const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
     "specialize_module_with_atom_prefix", "specialize_eval_with_context",
     "specialize_function_constructor",
 ];
+const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
+    "::run_fast_lane", "::derive_lane_view", "::js_step_callout",
+    "::step_wasm", "::js_tier_frame_entry",
+];
+
+fn is_interpreter_symbol(symbol: &str) -> bool {
+    INTERPRETER_DISPATCH_SYMBOLS.iter().any(|name| symbol.contains(name))
+}
 
 fn is_compiler_symbol(symbol: &str) -> bool {
     BACKEND_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name))
@@ -349,8 +357,8 @@ fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<Strin
         // Demangled names omit the instantiating crate: a core generic first
         // emitted by OXC can be required without retaining any OXC operation.
         // Inspect the full line because Rust types may contain spaces.
-        if is_compiler_symbol(line) {
-            return Err(format!("native image retained a compiler symbol: {line}"));
+        if is_compiler_symbol(line) || is_interpreter_symbol(line) {
+            return Err(format!("native image retained compilation or interpretation support: {line}"));
         }
         let mut fields = line.split_whitespace().rev();
         let Some(symbol) = fields.next() else {
@@ -378,6 +386,26 @@ fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interpreter_audit_preserves_native_frame_coordination_and_shared_validation() {
+        for symbol in [
+            "<quench_runtime::vm::Vm<Host>>::run_fast_lane",
+            "quench_runtime::vm::dispatch_fast::derive_lane_view::<Host>",
+            "quench_runtime::vm::compiled::js_step_callout::<Host>",
+            "<quench_runtime::vm::Vm<Host>>::step_wasm",
+            "<quench_runtime::vm::Vm<Host>>::js_tier_frame_entry",
+        ] {
+            assert!(is_interpreter_symbol(symbol), "{symbol}");
+        }
+        for symbol in [
+            "<quench_runtime::vm::Vm<Host>>::run_general_loop::<false>",
+            "<quench_runtime::vm::Vm<Host>>::step_operation_74",
+            "quench_runtime::vm::dispatch_fast::lane_fields_fit",
+        ] {
+            assert!(!is_interpreter_symbol(symbol), "{symbol}");
+        }
+    }
 
     #[test]
     fn compiler_audit_distinguishes_source_lowering_from_execution_analysis() {

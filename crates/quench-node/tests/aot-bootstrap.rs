@@ -316,6 +316,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
         assert_eq!(report["execution_mode"], "native_only");
         assert_eq!(report["source_compilation"], false);
         assert_eq!(report["js_source_frontend"], false);
+        assert_eq!(report["bytecode_interpreter"], false);
         assert_eq!(report["requested_support_profile"], profile);
         assert_eq!(report["payload_minimal"], false);
         assert!(report["sdk_source_views"].as_u64().unwrap() > 0);

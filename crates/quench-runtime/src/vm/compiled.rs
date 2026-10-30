@@ -5881,7 +5881,10 @@ fn run_js_native_entry<H: Host>(
     let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
     context.vm = vm.cast();
     context.program = program;
-    context.callout = js_step_callout::<H> as Callout as usize;
+    // Linked entries import their fixed semantic operations directly.
+    if crate::DYNAMIC_EXECUTION_ENABLED {
+        context.callout = js_step_callout::<H> as Callout as usize;
+    }
     let constants = unsafe { &(*vm.cast::<Vm<H>>()).programs }.constants(program);
     context.js_constants = constants.as_ptr();
     context.js_constant_count = constants.len();
@@ -6056,10 +6059,16 @@ pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>
     arguments: *const u64,
     result: *mut u64,
 ) -> i64 {
-    let operation = Op::from_index(OPCODE).map(|opcode| StaticJsOperation {
-        opcode,
-        execute: Vm::<H>::resolve_step_operation(opcode),
-    });
+    // Resolve the complete semantic descriptor before emitting this helper.
+    let operation = const {
+        match Op::from_index(OPCODE) {
+            Some(opcode) => Some(StaticJsOperation {
+                opcode,
+                execute: Vm::<H>::resolve_step_operation(opcode),
+            }),
+            None => None,
+        }
+    };
     // SAFETY: forwarded from this entry's native ABI contract. Invalid opcode
     // constants are reported inside the shared exception boundary.
     unsafe { js_semantic_callout::<H, true>(context.cast(), pc, arguments, result, operation) }

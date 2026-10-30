@@ -10409,11 +10409,12 @@ impl<H: Host> Vm<H> {
         capture
     }
 
-    /// Whether `program` runs in the lane: Wasm always, JavaScript only where both it and the
-    /// VM are specialized. A lane run keeps its program and the VM's specialization, so the
+    /// Whether `program` runs in the lane when dynamic execution is allowed:
+    /// Wasm always, JavaScript where it and the VM are specialized. A lane run keeps its program and the VM's specialization, so the
     /// lane's field caches (`Vm::primary_own_field_hit` and its kin) need not test them.
     pub(super) fn lane_admits(&self, program: &ResidualProgram) -> bool {
-        program.kind == crate::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
+        self.execution_mode.allows_dynamic_execution()
+            && (program.kind == crate::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized))
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -18611,7 +18612,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn lane_runs(view: *const LaneView, pc: usize) -> bool {
         // SAFETY: a non-null view has an entry for every validated PC.
-        !view.is_null() && unsafe { *(&(*view).entries).get_unchecked(pc) }
+        crate::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { *(&(*view).entries).get_unchecked(pc) }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
@@ -18751,6 +18752,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
+        if !self.execution_mode.allows_dynamic_execution() { return None; }
         let site = self.lane_native?;
         let cx: *mut LaneContext<H> = site.cx.cast();
         // The native runs from the lane's frame, the innermost, with no activation above it:
@@ -18854,6 +18856,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
+        if !self.execution_mode.allows_dynamic_execution() { return None; }
         let deferred = self.lane_deferred?;
         let cx: *mut LaneContext<H> = deferred.cx.cast();
         if deferred.frames != self.frames.len()
