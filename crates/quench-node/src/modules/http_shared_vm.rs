@@ -55,6 +55,8 @@ pub(crate) fn has_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>)
         .values()
         .any(|server| server.listening_pending || (server.closing && server.connections.is_empty()))
         || !host.http.clients.is_empty()
+        // A queued request is live work even before its socket exists.
+        || !host.http.pending.is_empty()
         || crate::modules::net_shared_vm::has_work(&host.tcp)
 }
 

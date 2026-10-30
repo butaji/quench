@@ -131,6 +131,19 @@ fn micros(value: libc::timeval) -> f64 {
     const MICROS_PER_SECOND: f64 = std::time::Duration::from_secs(1).as_micros() as f64;
     value.tv_sec as f64 * MICROS_PER_SECOND + value.tv_usec as f64
 }
+fn thread_rusage() -> libc::c_int {
+    // macOS has no RUSAGE_THREAD; the process total is the closest portable
+    // approximation and is only used for the diagnostic threadCpuUsage read.
+    #[cfg(target_os = "macos")]
+    {
+        libc::RUSAGE_SELF
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        libc::RUSAGE_THREAD
+    }
+}
+
 fn cpu(c: &mut Context<'_>, args: &[RootId], who: libc::c_int) -> Result<RootId, RootedError> {
     let usage = usage(who)?;
     let target = args
@@ -152,7 +165,7 @@ pub(crate) fn thread_cpu(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    cpu(c, args, libc::RUSAGE_THREAD)
+    cpu(c, args, thread_rusage())
 }
 pub(crate) fn resources(
     c: &mut Context<'_>,
@@ -160,6 +173,13 @@ pub(crate) fn resources(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let usage = usage(libc::RUSAGE_SELF)?;
+    // Linux getrusage reports max RSS in KiB; macOS reports bytes. Node's public
+    // API is KiB on every platform, so convert Darwin's value here.
+    let max_rss = if cfg!(target_os = "macos") {
+        usage.ru_maxrss as f64 / 1024.0
+    } else {
+        usage.ru_maxrss as f64
+    };
     let target = args
         .first()
         .copied()
@@ -171,7 +191,7 @@ pub(crate) fn resources(
         &[
             micros(usage.ru_utime),
             micros(usage.ru_stime),
-            usage.ru_maxrss as f64,
+            max_rss,
             usage.ru_ixrss as f64,
             usage.ru_idrss as f64,
             usage.ru_isrss as f64,
@@ -190,6 +210,7 @@ pub(crate) fn resources(
     Ok(c.undefined())
 }
 /// The process's resident set from `/proc/self/statm`, in bytes.
+#[cfg(target_os = "linux")]
 fn resident_bytes() -> Result<f64, RootedError> {
     let text = std::fs::read_to_string("/proc/self/statm")
         .map_err(|error| RootedError::host(error.to_string()))?;
@@ -203,6 +224,29 @@ fn resident_bytes() -> Result<f64, RootedError> {
         return Err(os_error("sysconf(_SC_PAGESIZE)"));
     }
     Ok(pages as f64 * page_size as f64)
+}
+
+/// The process's resident set from Mach's basic task info, in bytes.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn resident_bytes() -> Result<f64, RootedError> {
+    let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::uninit();
+    let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+    // SAFETY: `info` points at a `mach_task_basic_info` and `count` is its
+    // natural_t word count, as `task_info` requires.
+    let status = unsafe {
+        libc::task_info(
+            libc::mach_task_self(),
+            libc::MACH_TASK_BASIC_INFO,
+            info.as_mut_ptr().cast(),
+            &mut count,
+        )
+    };
+    if status != libc::KERN_SUCCESS {
+        return Err(RootedError::host(format!("task_info: {status}")));
+    }
+    // task_info initializes the complete result on success.
+    Ok(unsafe { info.assume_init() }.resident_size as f64)
 }
 pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     Ok(c.number(resident_bytes()?))

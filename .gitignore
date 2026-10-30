@@ -18,15 +18,25 @@ Thumbs.db
 # Local scratch / test outputs
 /tmp/
 /scratch/
+/work/
+/evidence/
+/tasks/
+/tests/npm-perf/reports/
+
+# Historical profiler and diagnostic dumps
+*.heapprofile
+*.heapsnapshot
+*.cpuprofile
+/secret.txt
 
 # Agent session artifacts
 .pi/
 
 # Local JavaScript lint dependencies
-/node_modules/
-/tests/node_modules/
-/tests/npm-perf/node_modules/
-/tests/npm-top300/node_modules/
+/node_modules
+/tests/node_modules
+/tests/npm-perf/node_modules
+/tests/npm-top300/node_modules
 
 # Test262 checkpoint (auto-created by staged runner)
 .test262_checkpoint
@@ -47,3 +57,7 @@ Thumbs.db
 /tests/node-compat/stage-*/access.txt
 /tests/node-compat/stage-*/read-only
 /tests/node-compat/stage-*/root/
+
+# Compile-cache artifacts a run writes beside its working directory.
+/tests/npm-perf/0/
+/tests/npm-perf/snapshot/

@@ -3009,7 +3009,8 @@ script_handler! {
 }
 
 /// A `Binary` record's value where it runs no guest code: Number arithmetic and
-/// relations, then identity equality and an ordinary `instanceof`.
+/// relations, then identity equality, an ordinary `instanceof` and an `in` whose key
+/// and receiver (`Vm::plain_in`) need no guest code.
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
@@ -3026,9 +3027,12 @@ unsafe fn lane_binary_value<H: Host>(
         Some(value) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
-        // A comparison, or `instanceof` (`lane_relation_other`), decides from the operands;
-        // any other operator past Numbers may be a BigInt's.
-        None if operator <= super::operations::LAST_COMPARISON_OPERATOR || operator == INSTANCEOF_OPERATOR => {
+        // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
+        // decides from the operands; any other operator past Numbers may be a BigInt's.
+        None if operator <= super::operations::LAST_COMPARISON_OPERATOR
+            || operator == INSTANCEOF_OPERATOR
+            || operator == IN_OPERATOR =>
+        {
             lane_relation::<H>(operator, left, right)
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
         }
@@ -5686,36 +5690,6 @@ fn lane_raise<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError) -> Ip {
 }
 
 script_handler! {
-    /// `DefinePropertyRecord` (`Vm::define_property_or_throw`): it can run a Proxy trap, so
-    /// publish the current PC and materialize frameless activations around the general semantic
-    /// operation. Ordinary definitions stay in the lane; abrupt completion resumes at this
-    /// exact instruction through `lane_in_place`.
-    #[inline(never)]
-    fn lane_define_property_record<>(cx, r, ip, i, view) {
-        let Some(mode) = crate::bytecode::PropertyDefinitionMode::from_word(i.imm()) else {
-            return lane_raise(
-                cx,
-                ip,
-                JsError::validation("invalid property definition mode".into()),
-            );
-        };
-        let target = r.get(i.b);
-        let key = r.get(i.c);
-        let descriptor = super::object_descriptors::PropertyDescriptorRecord::for_definition(
-            mode,
-            r.get(i.a),
-        );
-        let result = lane_in_place(cx, ip, |vm, code| {
-            vm.define_property_or_throw(code, target, key, descriptor)
-        });
-        if result.is_none() {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
     /// `DefineField` (`Vm::define_field_cached`), as the general step defines it. A Proxy
     /// receiver's define runs its trap, which a frameless activation leaves to the general path.
     #[inline(never)]
@@ -5755,6 +5729,45 @@ script_handler! {
         }
         // Adding a private element can allocate.
         note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// `DefinePropertyRecord` of the record at `ip`, defined as the general step defines it: a
+/// class method or accessor, or an object literal accessor. An out-of-domain mode or a throw
+/// leaves the instruction to the general path. Out of line, as `lane_set_index_slot_store`:
+/// the handler's frame then holds none of the descriptor across its dispatch, which forms as
+/// a sibling call (`tools/check-lane-tail-calls.sh`).
+#[inline(never)]
+fn lane_define_property_record_in_place<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    i: &LaneInstruction,
+) -> Option<()> {
+    let mode = crate::bytecode::PropertyDefinitionMode::from_word(i.imm())?;
+    let (value, target, key) = (i.a, i.b, i.c);
+    lane_in_place(cx, ip, |vm, code| {
+        let (value, target, key) = {
+            let r = unsafe { (*cx).registers };
+            (r.get(value), r.get(target), r.get(key))
+        };
+        let descriptor =
+            super::object_descriptors::PropertyDescriptorRecord::for_definition(mode, value);
+        vm.define_property_or_throw(code, target, key, descriptor)
+    })
+}
+
+script_handler! {
+    /// `DefinePropertyRecord`, whose computed key's conversion or a proxy's define may run
+    /// guest code. An out-of-domain mode leaves the instruction to the general path before it
+    /// has any effect.
+    #[inline(never)]
+    fn lane_define_property_record<>(cx, r, ip, i, view) {
+        if lane_define_property_record_in_place(cx, ip, i).is_none() {
+            return exit(ip);
+        }
+        // Guest code the definition ran made the activations frames, whose registers these are.
+        let r = unsafe { (*cx).registers };
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -6082,6 +6095,10 @@ script_handler! {
 
 /// The `instanceof` operator as a `Binary` immediate or a test's operator field.
 const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+
+/// The `in` operator as a `Binary` immediate; `Vm::plain_in` decides an ordinary-object
+/// HasProperty without running guest code and leaves every other case to the general path.
+const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
 
 script_handler! {
     /// `Binary` `instanceof` of two registers, decoded when the view was derived
@@ -18981,6 +18998,24 @@ impl<H: Host> Vm<H> {
 #[inline(always)]
 fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
     loop {
+        #[cfg(feature = "profile-lane-exits")]
+        {
+            // The record's opcode from its packed instruction: the census needs the mix, and
+            // the lane record keeps only the handler.
+            let vm = unsafe { vm(cx) };
+            let function = vm
+                .lane_stack
+                .activations
+                .last()
+                .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+            let code = unsafe { &*(*cx).code };
+            let pc = unsafe { ip.offset_from((*cx).base) as usize };
+            if let Some(body) = code.function_get(function as usize)
+                && let Some(packed) = body.code.get(pc)
+            {
+                super::lane_exits::dispatch(decoded_instruction(body, *packed).op());
+            }
+        }
         // SAFETY: handlers have returned, so no other access is live.
         let (view, registers, acc) = unsafe {
             let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));

@@ -5558,6 +5558,18 @@ const JS_FUNCTION_TIERS: [bool; crate::MemoryPolicy::ALL.len()] = [true, false];
 
 /// Whether the JavaScript function tiers compile under `policy` (`JS_FUNCTION_TIERS`).
 pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
+    #[cfg(feature = "gc-tuning")]
+    {
+        // Measurement builds may turn the function tiers off under any policy
+        // (`QUENCH_JS_JIT_TIERS=0`), to separate their `--jit` peak from the loop tier's.
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let enabled = *ENABLED.get_or_init(|| {
+            std::env::var("QUENCH_JS_JIT_TIERS").map_or(true, |value| value != "0")
+        });
+        if !enabled {
+            return false;
+        }
+    }
     JS_FUNCTION_TIERS[policy as usize]
 }
 
@@ -5569,6 +5581,10 @@ pub(super) fn compile_osr_region(
     policy: crate::MemoryPolicy,
     track_backedges: bool,
 ) -> Option<CompiledOsrRegion> {
+    #[cfg(feature = "gc-tuning")]
+    if loop_tier_region_budget_spent() {
+        return None;
+    }
     let isa = super::jit_backend::target_isa(LOOP_TIER_OPT_LEVELS[policy as usize]?)?;
     // A row-recurrence stencil nest computes its rows in pairs (`wavefront`); any other region
     // takes the loop tier's lowering.
@@ -5588,6 +5604,44 @@ pub(super) fn compile_osr_region(
         entry,
         widenings,
     })
+}
+
+/// The process's peak resident set in KiB, for `QUENCH_JS_JIT_PEAK_TRACE`.
+#[cfg(feature = "gc-tuning")]
+fn process_peak_rss_kib() -> i64 {
+    // SAFETY: `getrusage` writes into the struct this call owns.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: as above; RUSAGE_SELF names this process.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+        return 0;
+    }
+    // Darwin counts bytes, Linux KiB.
+    #[cfg(target_vendor = "apple")]
+    {
+        usage.ru_maxrss / 1024
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        usage.ru_maxrss
+    }
+}
+
+/// Whether the loop tier has compiled as many regions as `QUENCH_LOOP_TIER_MAX_REGIONS`
+/// allows; unlimited when unset. Measurement builds only (`gc-tuning`): it exists to trade
+/// region compilation against the `--jit` peak that regalloc2's state sets
+/// (`LOOP_TIER_OPT_LEVELS`).
+#[cfg(feature = "gc-tuning")]
+fn loop_tier_region_budget_spent() -> bool {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COMPILED: AtomicUsize = AtomicUsize::new(0);
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| {
+        std::env::var("QUENCH_LOOP_TIER_MAX_REGIONS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(usize::MAX)
+    });
+    COMPILED.fetch_add(1, Ordering::Relaxed) >= limit
 }
 
 /// The directory `QUENCH_JS_JIT_DUMP` names, read once per process: each loop region
@@ -12793,7 +12847,18 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
+                #[cfg(feature = "gc-tuning")]
+                let peak_before = (std::env::var_os("QUENCH_JS_JIT_PEAK_TRACE").is_some())
+                    .then(process_peak_rss_kib);
                 let artifact = super::js_compiled::compile(&residual, function_id);
+                #[cfg(feature = "gc-tuning")]
+                if let Some(before) = peak_before {
+                    let after = process_peak_rss_kib();
+                    eprintln!(
+                        "QUENCH_JS_JIT_PEAK function={function_id} succeeded={} peak_before_kib={before} peak_after_kib={after}",
+                        artifact.is_some(),
+                    );
+                }
                 self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {

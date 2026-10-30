@@ -99,7 +99,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_kill", kill)?;
     #[cfg(target_os = "linux")]
     {
-        let signals = super::os_shared_vm::signal_constants(context)?;
+        let signals =
+            super::os_shared_vm::signal_constants(context, super::process_signals_state::SIGNALS)?;
         let data = context.array_rooted(&[process, signals])?;
         let operation = context
             .host_function_with_data(crate::host::shared_vm::operation("processKill"), data)?;
@@ -2244,7 +2245,15 @@ fn drain_checkpoint(
                     None => poll_interval,
                 };
                 if !wait.is_zero() {
-                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
+                    #[cfg(unix)]
+                    let extra = shared_state.borrow().child_output_descriptors();
+                    #[cfg(not(unix))]
+                    let extra = Vec::new();
+                    crate::modules::net_shared_vm::wait_ready(
+                        &shared_state.borrow().tcp,
+                        &extra,
+                        wait,
+                    );
                 }
                 continue;
             }
@@ -2307,7 +2316,15 @@ fn drain_checkpoint(
                     None => poll_interval,
                 };
                 if !wait.is_zero() {
-                    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, wait);
+                    #[cfg(unix)]
+                    let extra = shared_state.borrow().child_output_descriptors();
+                    #[cfg(not(unix))]
+                    let extra = Vec::new();
+                    crate::modules::net_shared_vm::wait_ready(
+                        &shared_state.borrow().tcp,
+                        &extra,
+                        wait,
+                    );
                 }
                 continue;
             }
@@ -3455,6 +3472,7 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         // Listeners receive the signal's name and number (src/signal_wrap.cc).
+        #[allow(unused_mut)]
         let mut args = vec![event, signal];
         #[cfg(target_os = "linux")]
         if let Some(number) = crate::modules::process_signals_state::signal_number(&name) {

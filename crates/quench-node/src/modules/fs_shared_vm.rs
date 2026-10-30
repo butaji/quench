@@ -2021,6 +2021,9 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
 const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("UV_FS_SYMLINK_DIR", UV_FS_SYMLINK_DIR),
     ("UV_FS_SYMLINK_JUNCTION", UV_FS_SYMLINK_JUNCTION),
+    ("O_RDONLY", libc::O_RDONLY),
+    ("O_WRONLY", libc::O_WRONLY),
+    ("O_RDWR", libc::O_RDWR),
     ("UV_DIRENT_UNKNOWN", UV_DIRENT_UNKNOWN),
     ("UV_DIRENT_FILE", UV_DIRENT_FILE),
     ("UV_DIRENT_DIR", UV_DIRENT_DIR),
@@ -2029,13 +2032,47 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("UV_DIRENT_SOCKET", UV_DIRENT_SOCKET),
     ("UV_DIRENT_CHAR", UV_DIRENT_CHAR),
     ("UV_DIRENT_BLOCK", UV_DIRENT_BLOCK),
-    ("S_IRUSR", S_IRUSR),
-    ("S_IWUSR", S_IWUSR),
+    ("S_IFMT", libc::S_IFMT as i32),
+    ("S_IFREG", libc::S_IFREG as i32),
+    ("S_IFDIR", libc::S_IFDIR as i32),
+    ("S_IFCHR", libc::S_IFCHR as i32),
+    ("S_IFBLK", libc::S_IFBLK as i32),
+    ("S_IFIFO", libc::S_IFIFO as i32),
+    ("S_IFLNK", libc::S_IFLNK as i32),
+    ("S_IFSOCK", libc::S_IFSOCK as i32),
+    ("O_CREAT", libc::O_CREAT),
+    ("O_EXCL", libc::O_EXCL),
     ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
     ("UV_FS_O_TEMPORARY", UV_FS_O_TEMPORARY),
     ("UV_FS_O_SHORT_LIVED", UV_FS_O_SHORT_LIVED),
     ("UV_FS_O_SEQUENTIAL", UV_FS_O_SEQUENTIAL),
     ("UV_FS_O_RANDOM", UV_FS_O_RANDOM),
+    ("O_NOCTTY", libc::O_NOCTTY),
+    ("O_TRUNC", libc::O_TRUNC),
+    ("O_APPEND", libc::O_APPEND),
+    ("O_DIRECTORY", libc::O_DIRECTORY),
+    ("O_NOFOLLOW", libc::O_NOFOLLOW),
+    ("O_SYNC", libc::O_SYNC),
+    ("O_DSYNC", libc::O_DSYNC),
+    // Darwin's own open flag: Node exposes it and Linux does not have it.
+    ("O_SYMLINK", libc::O_SYMLINK),
+    ("O_NONBLOCK", libc::O_NONBLOCK),
+    ("S_IRWXU", libc::S_IRWXU as i32),
+    ("S_IRUSR", S_IRUSR),
+    ("S_IWUSR", S_IWUSR),
+    ("S_IXUSR", libc::S_IXUSR as i32),
+    ("S_IRWXG", libc::S_IRWXG as i32),
+    ("S_IRGRP", libc::S_IRGRP as i32),
+    ("S_IWGRP", libc::S_IWGRP as i32),
+    ("S_IXGRP", libc::S_IXGRP as i32),
+    ("S_IRWXO", libc::S_IRWXO as i32),
+    ("S_IROTH", libc::S_IROTH as i32),
+    ("S_IWOTH", libc::S_IWOTH as i32),
+    ("S_IXOTH", libc::S_IXOTH as i32),
+    ("F_OK", libc::F_OK),
+    ("R_OK", libc::R_OK),
+    ("W_OK", libc::W_OK),
+    ("X_OK", libc::X_OK),
     ("UV_FS_COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
     ("UV_FS_COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
@@ -3308,4 +3345,51 @@ fn library_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, R
         set(context, policy, name, function)?;
     }
     Ok(policy)
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod constants_tests {
+    use super::FS_CONSTANT_VALUES;
+
+    /// The names Node's own `fs.constants` exposes on Darwin (captured from Node v26.12.1,
+    /// the pinned oracle). A missing name is not cosmetic: `fs.writeFileSync` and the Node
+    /// library's `open` OR these values together, and an absent `O_CREAT`/`O_WRONLY` turns
+    /// every create-and-write into a read-only open (ENOENT, then EBADF on the write).
+    const DARWIN_CONSTANTS: &[&str] = &[
+        "UV_FS_SYMLINK_DIR", "UV_FS_SYMLINK_JUNCTION", "O_RDONLY", "O_WRONLY", "O_RDWR",
+        "UV_DIRENT_UNKNOWN", "UV_DIRENT_FILE", "UV_DIRENT_DIR", "UV_DIRENT_LINK",
+        "UV_DIRENT_FIFO", "UV_DIRENT_SOCKET", "UV_DIRENT_CHAR", "UV_DIRENT_BLOCK", "S_IFMT",
+        "S_IFREG", "S_IFDIR", "S_IFCHR", "S_IFBLK", "S_IFIFO", "S_IFLNK", "S_IFSOCK", "O_CREAT",
+        "O_EXCL", "UV_FS_O_FILEMAP", "UV_FS_O_TEMPORARY", "UV_FS_O_SHORT_LIVED",
+        "UV_FS_O_SEQUENTIAL", "UV_FS_O_RANDOM", "O_NOCTTY", "O_TRUNC", "O_APPEND",
+        "O_DIRECTORY", "O_NOFOLLOW", "O_SYNC", "O_DSYNC", "O_SYMLINK", "O_NONBLOCK", "S_IRWXU",
+        "S_IRUSR", "S_IWUSR", "S_IXUSR", "S_IRWXG", "S_IRGRP", "S_IWGRP", "S_IXGRP", "S_IRWXO",
+        "S_IROTH", "S_IWOTH", "S_IXOTH", "F_OK", "R_OK", "W_OK", "X_OK", "UV_FS_COPYFILE_EXCL",
+        "COPYFILE_EXCL", "UV_FS_COPYFILE_FICLONE", "COPYFILE_FICLONE",
+        "UV_FS_COPYFILE_FICLONE_FORCE", "COPYFILE_FICLONE_FORCE",
+    ];
+
+    #[test]
+    fn exposes_every_darwin_fs_constant() {
+        let names = FS_CONSTANT_VALUES.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+        for expected in DARWIN_CONSTANTS {
+            assert!(names.contains(expected), "fs.constants does not expose {expected}");
+        }
+        assert_eq!(names, DARWIN_CONSTANTS, "fs.constants order diverges from Node's");
+    }
+
+    #[test]
+    fn the_create_and_write_flag_set_is_usable() {
+        let value = |name: &str| {
+            FS_CONSTANT_VALUES
+                .iter()
+                .find(|(candidate, _)| *candidate == name)
+                .map(|(_, value)| *value)
+                .unwrap_or_else(|| panic!("fs.constants does not expose {name}"))
+        };
+        let flags = value("O_WRONLY") | value("O_CREAT") | value("O_TRUNC");
+        assert_ne!(value("O_WRONLY"), 0, "O_WRONLY must ask for a writable descriptor");
+        assert_ne!(flags & value("O_CREAT"), 0, "the write flag set must create");
+        assert_ne!(flags & value("O_TRUNC"), 0, "the write flag set must truncate");
+    }
 }

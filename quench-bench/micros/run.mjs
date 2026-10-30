@@ -67,7 +67,7 @@ Commands: list, smoke, measure, diagnose, next, qualify, identity
 --instrument counters|sites|events --trace-engine PATH [--site CODE:PC]
 --lifecycle [--epoch-calls N]; next --report FILE.json
 qualify --edition 1 --idle-confirmed (hours; --limit records incomplete qualification)
-No command edits, builds, or optimizes a tested engine. See README.md.`);
+No command edits, builds, or optimizes a tested engine. Run \`list\` for the catalog.`);
 }
 
 function inspection(command, flags, catalog) {

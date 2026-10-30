@@ -963,9 +963,10 @@ pub(crate) struct ProgramStore {
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
-    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`:
-    /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
-    /// promotion weighs size and compile cost.
+    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`;
+    /// the memory policy's `js_function_tiers_compile` and the entry price of a
+    /// loop-free body still decide whether the tier takes a function
+    /// (`general_tier_admits`).
     js_jit_general_dispatch_enabled: bool,
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
@@ -3735,6 +3736,22 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
     let minimum = JS_JIT_PROMOTION_LOOKS
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
+    #[cfg(feature = "gc-tuning")]
+    {
+        // Measurement builds may require more entries before the specialized tier compiles
+        // (`QUENCH_JS_JIT_PROMOTION_SCALE`), to test an admission threshold against a fixture
+        // whose compiled artifacts are never entered.
+        static SCALE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let scale = *SCALE.get_or_init(|| {
+            std::env::var("QUENCH_JS_JIT_PROMOTION_SCALE")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1)
+        });
+        let minimum = u32::from(minimum).saturating_mul(scale).min(u32::from(u8::MAX));
+        return Some(u32::from(numeric) >= minimum);
+    }
+    #[cfg(not(feature = "gc-tuning"))]
     Some(numeric >= minimum)
 }
 

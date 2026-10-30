@@ -3064,6 +3064,25 @@ impl<'a> Compiler<'a> {
         if !self.errors.is_empty() {
             return Err(self.errors);
         }
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
+            // Per-function-count structures, at the point the whole module has been lowered:
+            // the tables that grow with the number of functions rather than with the source.
+            let records = self.functions.len();
+            eprintln!(
+                "{{\"kind\":\"quench-compiler-memory\",\"name\":{:?},\"functions\":{},\"early_replays\":{},\"early_replay_capacity\":{},\"function_exits\":{},\"function_facts\":{},\"atoms_added\":{},\"atom_index\":{},\"atom_index_capacity\":{},\"deferred_name_bindings\":{}}}",
+                self.source,
+                records,
+                self.early_replays.len(),
+                self.early_replays.capacity(),
+                self.function_exits.capacity() * std::mem::size_of::<replay::TableCursors>(),
+                self.function_facts.capacity() * std::mem::size_of::<capture_layout::FunctionFacts>(),
+                self.atoms.len(),
+                self.atoms.index_len(),
+                self.atoms.index_capacity(),
+                self.deferred_name_bindings.len(),
+            );
+        }
         Ok((
             self,
             ModuleParts {

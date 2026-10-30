@@ -14,6 +14,14 @@ const REPORTED_DETAILS: usize = 200;
 static DETAILS: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>> =
     std::sync::Mutex::new(None);
 
+/// Lane dispatches: one per record the lane loop executes. The census's opcode counts
+/// cover only the general loop's dispatches, so this is what turns retired instructions
+/// into a per-executed-instruction cost.
+static DISPATCHES: AtomicU64 = AtomicU64::new(0);
+/// Lane dispatches by opcode: the mix a row actually executes, which the exit census
+/// cannot show because it counts only the general loop's dispatches.
+static DISPATCH_OPS: [AtomicU64; Op::COUNT] = [const { AtomicU64::new(0) }; Op::COUNT];
+
 static CALL_TARGET_SAMPLE: AtomicU64 = AtomicU64::new(0);
 /// Exact, opt-in census of the general dispatch loop's in-loop call-target probe.
 static CALL_ELIGIBILITY: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
@@ -97,6 +105,16 @@ pub(super) fn record_detail(detail: String) {
     *details.get_or_insert_with(Default::default).entry(detail).or_default() += 1;
 }
 
+/// Record one executed lane instruction of `op`.
+pub(super) fn dispatch(op: Op) {
+    REPORT.call_once(|| {
+        // SAFETY: `report` is a plain function that outlives the process.
+        unsafe { libc::atexit(report) };
+    });
+    DISPATCHES.fetch_add(1, Ordering::Relaxed);
+    DISPATCH_OPS[op as usize].fetch_add(1, Ordering::Relaxed);
+}
+
 pub(super) fn record(op: Op) {
     REPORT.call_once(|| {
         // SAFETY: `report` is a plain function that outlives the process.
@@ -139,6 +157,17 @@ extern "C" fn report() {
         .collect();
     counts.sort_unstable_by(|a, b| b.cmp(a));
     let total: u64 = counts.iter().map(|(count, _)| count).sum();
+    eprintln!("lane dispatches: {}", DISPATCHES.load(Ordering::Relaxed));
+    let mut dispatch_ops: Vec<_> = DISPATCH_OPS
+        .iter()
+        .enumerate()
+        .map(|(op, count)| (count.load(Ordering::Relaxed), op))
+        .filter(|(count, _)| *count > 0)
+        .collect();
+    dispatch_ops.sort_unstable_by(|a, b| b.cmp(a));
+    for (count, op) in dispatch_ops.into_iter().take(REPORTED_OPCODES) {
+        eprintln!("  lane op {count:>12} {}", Op::NAMES[op]);
+    }
     eprintln!("lane exits: {total}");
     for (count, op) in counts.into_iter().take(REPORTED_OPCODES) {
         eprintln!("  {count:>12} {}", Op::NAMES[op]);

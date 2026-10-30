@@ -17,7 +17,29 @@ pub(crate) enum RequestFramingError {
 pub(crate) struct ResponseMessage {
     pub(crate) status: u16,
     pub(crate) message: String,
+    pub(crate) version: String,
     pub(crate) raw_headers: Vec<(String, String)>,
+}
+
+/// Whether a response leaves its connection reusable: HTTP/1.1 persists unless
+/// the response says `Connection: close`; HTTP/1.0 persists only on an explicit
+/// `Connection: keep-alive`.
+pub(crate) fn response_keep_alive(version: &str, headers: &[(String, String)]) -> bool {
+    let connection = headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
+        .flat_map(|(_, value)| value.split(','))
+        .map(str::trim);
+    let mut keep_alive = !version.starts_with("1.0");
+    for token in connection {
+        if token.eq_ignore_ascii_case("close") {
+            return false;
+        }
+        if token.eq_ignore_ascii_case("keep-alive") {
+            keep_alive = true;
+        }
+    }
+    keep_alive
 }
 
 pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
@@ -156,6 +178,12 @@ impl ResponseParser {
                     progress.head = Some(ResponseMessage {
                         status,
                         message: head.first.get(2..).unwrap_or_default().join(" "),
+                        version: head
+                            .first
+                            .first()
+                            .and_then(|line| line.strip_prefix("HTTP/"))
+                            .unwrap_or("1.1")
+                            .to_owned(),
                         raw_headers: head.raw_headers,
                     });
                     if status == 101 {
@@ -403,7 +431,38 @@ fn decode_chunked(bytes: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResponseParser, request};
+    use super::{request, response_keep_alive, ResponseParser};
+
+    #[test]
+    fn http_1_1_persists_unless_the_response_closes() {
+        assert!(response_keep_alive("1.1", &[]));
+        assert!(response_keep_alive(
+            "1.1",
+            &[("Connection".to_owned(), "keep-alive".to_owned())]
+        ));
+        assert!(!response_keep_alive(
+            "1.1",
+            &[("connection".to_owned(), "close".to_owned())]
+        ));
+        // A comma-separated list keeps the last decisive token.
+        assert!(!response_keep_alive(
+            "1.1",
+            &[("Connection".to_owned(), "keep-alive, close".to_owned())]
+        ));
+    }
+
+    #[test]
+    fn http_1_0_persists_only_on_an_explicit_keep_alive() {
+        assert!(!response_keep_alive("1.0", &[]));
+        assert!(response_keep_alive(
+            "1.0",
+            &[("Connection".to_owned(), "keep-alive".to_owned())]
+        ));
+        assert!(!response_keep_alive(
+            "1.0",
+            &[("Connection".to_owned(), "close".to_owned())]
+        ));
+    }
 
     #[test]
     fn upgrade_request_preserves_bytes_after_the_head() {

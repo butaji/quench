@@ -7,15 +7,19 @@
 //!
 //! The child inherits stdin, stdout and stderr. After it exits, the last line on stderr is
 //! `rss-exec maxrss_kib=N status=S`; `status` is the exit code, or 128 plus the signal that
-//! ended it. `--evict PATH` drops PATH's cached pages first (`POSIX_FADV_DONTNEED`), so each
-//! run faults its executable in as a cold start does. It writes PATH's dirty pages back
-//! first, as the advice drops only clean pages; pages another process maps stay cached
-//! whatever it advises, so the board that runs this must not be PATH itself
-//! (`quench-bench/v8-v7-rss.cjs`). `--cpu N` runs the command on CPU N alone: since Linux
-//! 6.2 a process's resident counters are per-CPU, and its peak is taken from their
-//! approximate sum, so a process that migrates between CPUs reports a peak up to a few
-//! hundred KiB low at random (V8-v7 RayTrace on one binary,
-//! x86_64 4-vCPU VM, 2026-10-25: 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
+//! ended it. `--evict PATH` drops PATH's cached pages first on Linux
+//! (`POSIX_FADV_DONTNEED`), writing PATH's dirty pages back first, as the advice drops only
+//! clean pages, so each run faults its executable in as a cold start does. Pages another
+//! process maps stay cached whatever it advises, so the board that runs this must not be PATH
+//! itself (`quench-bench/v8-v7-rss.cjs`). Darwin has no per-file page-cache eviction: there
+//! `--evict` only marks the descriptor `F_NOCACHE`, so a page an earlier run faulted in stays
+//! resident, and a Darwin board must use `/usr/bin/time -l` instead of claiming eviction here.
+//! `--cpu N` runs the command on CPU N alone: since Linux 6.2 a process's resident counters
+//! are per-CPU, and its peak is taken from their approximate sum, so a process that migrates
+//! between CPUs reports a peak up to a few hundred KiB low at random (V8-v7 RayTrace on one
+//! binary, x86_64 4-vCPU VM, 2026-10-25: 2436-2824 KiB over 20 runs, 2796 in all 20 pinned).
+//!
+//! `ru_maxrss` counts KiB on Linux and bytes on Darwin; the report is KiB on both.
 //!
 //! The child is started with `posix_spawn`, which shares this process's memory until the
 //! exec, so the launcher's own pages never count toward the child's peak.
@@ -62,6 +66,7 @@ fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Request, String> {
 }
 
 /// Drops `path`'s pages from the page cache; a path that cannot be opened is reported.
+#[cfg(target_os = "linux")]
 fn evict(path: &OsString) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
     file.sync_data().map_err(|error| format!("{path:?}: {error}"))?;
@@ -75,7 +80,22 @@ fn evict(path: &OsString) -> Result<(), String> {
     Ok(())
 }
 
+/// Darwin has no per-file page-cache eviction; `F_NOCACHE` keeps this descriptor from
+/// populating the cache and leaves already-resident pages alone.
+#[cfg(target_vendor = "apple")]
+fn evict(path: &OsString) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
+    // SAFETY: the descriptor is open for the call; the flag changes no file contents.
+    let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1) };
+    if result < 0 {
+        return Err(format!("{path:?}: F_NOCACHE failed ({})", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
 /// Confines this process, and so the command it spawns, to `cpu`.
+#[cfg(target_os = "linux")]
 fn pin(cpu: usize) -> Result<(), String> {
     // SAFETY: the set is a plain bit mask this function owns; `sched_setaffinity` only reads it.
     unsafe {
@@ -86,6 +106,13 @@ fn pin(cpu: usize) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Confining a process to a CPU reads a Linux per-CPU resident counter; other hosts have no
+/// equivalent and refuse the request instead of reporting a pinned board they did not run.
+#[cfg(not(target_os = "linux"))]
+fn pin(_: usize) -> Result<(), String> {
+    Err("--cpu needs Linux".to_owned())
 }
 
 fn c_string(argument: &OsString) -> Result<CString, String> {
@@ -140,8 +167,21 @@ fn run(command: &[OsString]) -> Result<(i32, i64), String> {
     } else {
         SIGNAL_STATUS_BASE + libc::WTERMSIG(status)
     };
-    // Linux reports ru_maxrss in KiB.
-    Ok((code, usage.ru_maxrss))
+    Ok((code, maxrss_kib(&usage)))
+}
+
+/// Bytes in one `ru_maxrss` unit: Linux counts KiB, Darwin counts bytes.
+#[cfg(target_os = "linux")]
+const MAXRSS_UNIT_BYTES: i64 = 1024;
+#[cfg(target_vendor = "apple")]
+const MAXRSS_UNIT_BYTES: i64 = 1;
+
+/// The report's unit, KiB, which every board reads.
+const BYTES_PER_KIB: i64 = 1024;
+
+/// `usage`'s peak resident set in KiB, whatever unit the platform counts.
+fn maxrss_kib(usage: &libc::rusage) -> i64 {
+    usage.ru_maxrss * MAXRSS_UNIT_BYTES / BYTES_PER_KIB
 }
 
 fn main() {

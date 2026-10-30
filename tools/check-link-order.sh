@@ -13,6 +13,6 @@ total=$(sort -u "$order" | wc -l)
 share=$((present * 100 / total))
 echo "$order: $present of $total symbols present in $binary ($share%)"
 if [ "$share" -lt "$minimum" ]; then
-  echo "link order is stale (below $minimum%): retrain it (docs/README.md, link order)" >&2
+  echo "link order is stale (below $minimum%): retrain it" >&2
   exit 1
 fi

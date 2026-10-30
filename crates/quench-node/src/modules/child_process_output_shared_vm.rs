@@ -38,6 +38,15 @@ impl Output {
             usage: Usage::Guest,
         }
     }
+    /// Whether the guest has asked for this pipe's next chunk. Readiness for an
+    /// idle pipe must not wake the event loop.
+    pub(crate) fn wants_read(&self) -> bool {
+        match &self.phase {
+            Phase::Closed => false,
+            Phase::Open { demand, .. } => matches!(demand, Demand::Requested),
+        }
+    }
+
     pub(crate) fn descriptor(&self) -> Option<i32> {
         match &self.phase {
             Phase::Open { file, .. } => Some(file.as_raw_fd()),

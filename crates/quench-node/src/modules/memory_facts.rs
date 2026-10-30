@@ -2,6 +2,7 @@
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 enum Controller {
     Unified(PathBuf),
     Legacy(PathBuf),
@@ -81,6 +82,7 @@ impl Controller {
         }
         (high != 0 && maximum != 0).then_some(high.min(maximum))
     }
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn current(&self) -> u64 {
         match self {
             Self::Unified(path) => number(path.join("memory.current")),

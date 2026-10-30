@@ -282,11 +282,13 @@ pub(crate) fn executor(
             .insert(id, PendingFetch { resolve, reject });
         (request, host.fetch.sender.clone())
     };
+    let wake = crate::modules::napi::thread_wake().ok();
     let spawned = std::thread::Builder::new()
         .name(format!("quench-fetch-{id}"))
         .spawn(move || {
             let result = perform_fetch(request);
             let _ = sender.send(FetchCompletion { id, result });
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         });
     if let Err(error) = spawned {
         let state = context.host_mut().shared_state();

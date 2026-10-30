@@ -13,13 +13,6 @@ const FROZEN_MEMBERSHIP_STATE: &str = "implemented_frozen";
 
 pub struct NodeInventory {
     document: InventoryDocument,
-    sha256: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ObservationInput {
-    pub path: PathBuf,
-    pub sha256: String,
 }
 
 #[derive(Deserialize)]
@@ -71,7 +64,6 @@ impl NodeInventory {
     /// Validate every input before selecting cases, including support-file hashes.
     pub fn read(path: &Path, repository: &Path) -> Result<Self, String> {
         let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        let sha256 = format!("{:x}", Sha256::digest(&bytes));
         let inventory: InventoryDocument = serde_json::from_slice(&bytes)
             .map_err(|error| format!("parse {}: {error}", path.display()))?;
         if inventory.schema != INPUT_INVENTORY_SCHEMA || inventory.entries.is_empty() {
@@ -140,7 +132,6 @@ impl NodeInventory {
         }
         Ok(Self {
             document: inventory,
-            sha256,
         })
     }
 
@@ -154,7 +145,7 @@ impl NodeInventory {
             .collect()
     }
 
-    pub(crate) fn included_observations(&self) -> Vec<ObservationInput> {
+    fn included_observations(&self, repository: &Path) -> Vec<PathBuf> {
         self.document
             .entries
             .iter()
@@ -162,15 +153,8 @@ impl NodeInventory {
                 matches!(input.role, Role::ObservationCase)
                     && matches!(&input.implementation, Some(Implementation::Included { .. }))
             })
-            .map(|input| ObservationInput {
-                path: input.path.clone(),
-                sha256: input.sha256.clone(),
-            })
+            .map(|input| repository.join(&input.path))
             .collect()
-    }
-
-    pub(crate) fn sha256(&self) -> &str {
-        &self.sha256
     }
 
     pub fn validate_execution(
@@ -227,14 +211,13 @@ impl NodeInventory {
     }
 
     fn validate_observations(&self, repository: &Path, selected: &[PathBuf]) -> Result<(), String> {
-        let observations = self.included_observations();
-        if observations
+        let observations = self.included_observations(repository);
+        let selected = selected
             .iter()
-            .any(|input| selected.contains(&repository.join(&input.path)))
-        {
-            crate::node_observations::validate_evidence(self, repository, selected)?;
-        }
-        Ok(())
+            .filter(|path| observations.contains(path))
+            .cloned()
+            .collect::<Vec<_>>();
+        crate::node_observations::validate_live(repository, &selected)
     }
 }
 
@@ -286,13 +269,17 @@ mod tests {
         assert_eq!(selected, [root.join("case.js"), root.join("case-two.js")]);
         assert!(inventory.validate_execution(&root, &selected).is_ok());
         assert!(inventory.validate_execution(&root, &selected[..1]).is_err());
-        assert!(inventory
-            .validate_subset_execution(&root, &selected[..1])
-            .is_ok());
+        assert!(
+            inventory
+                .validate_subset_execution(&root, &selected[..1])
+                .is_ok()
+        );
         assert!(inventory.validate_subset_execution(&root, &[]).is_err());
-        assert!(inventory
-            .validate_subset_execution(&root, &[root.join("outside.js")])
-            .is_err());
+        assert!(
+            inventory
+                .validate_subset_execution(&root, &[root.join("outside.js")])
+                .is_err()
+        );
 
         for (label, changed) in [
             ("duplicate", {
@@ -350,18 +337,22 @@ mod tests {
             pending["entries"][0]["role"] = json!(role);
             fs::write(&inventory_path, pending.to_string()).unwrap();
             let inventory = NodeInventory::read(&inventory_path, &root).unwrap();
-            assert!(inventory
-                .validate_execution(&root, &inventory.included_paths(&root))
-                .is_err());
+            assert!(
+                inventory
+                    .validate_execution(&root, &inventory.included_paths(&root))
+                    .is_err()
+            );
             pending["state"] = json!(FROZEN_MEMBERSHIP_STATE);
             if role == "assertion_case" {
                 pending["entries"][0]["implementation"] = json!(null);
             }
             fs::write(&inventory_path, pending.to_string()).unwrap();
             let inventory = NodeInventory::read(&inventory_path, &root).unwrap();
-            assert!(inventory
-                .validate_execution(&root, &inventory.included_paths(&root))
-                .is_err());
+            assert!(
+                inventory
+                    .validate_execution(&root, &inventory.included_paths(&root))
+                    .is_err()
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }

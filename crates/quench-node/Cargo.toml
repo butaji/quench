@@ -58,8 +58,9 @@ libz-rs-sys = "0.6.8"
 cc = "1"
 pkg-config = "0.3"
 
-# The global allocator on Linux; the memory policy decides whether it serves small requests
-# (`shared_run::apply_allocator_policy`). Other platforms keep the system allocator until the
-# reservation's commit behavior is measured there (macOS has no MAP_NORESERVE semantics).
-[target.'cfg(target_os = "linux")'.dependencies]
+# The global allocator on unix; the memory policy decides whether it serves small requests
+# (`shared_run::apply_allocator_policy`). On macOS the reservation is granted as PROT_NONE
+# address space and pages are faulted on use; paired M4 screens against the system allocator
+# measured 0.7-2.1% lower maximum RSS and 2.6-4.7% higher throughput (TOD-173 npm rows).
+[target.'cfg(unix)'.dependencies]
 quench-alloc = { path = "../quench-alloc" }

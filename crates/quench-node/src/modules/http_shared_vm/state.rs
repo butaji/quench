@@ -1,5 +1,7 @@
 use quench_runtime::RootId;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 pub(crate) struct State {
     next_server: u64,
@@ -23,7 +25,11 @@ pub(crate) struct State {
     pub(crate) drain_waiters: FxHashMap<u64, RootId>,
     pub(crate) requests: FxHashMap<u64, OutgoingRequest>,
     pub(crate) clients: FxHashMap<u64, Client>,
-    pub(crate) agents: FxHashMap<u64, FxHashSet<u64>>,
+    /// Each agent's pools, one entry per origin it has sockets for (`Agent.sockets`
+    /// and `Agent.freeSockets` of the guest agent, merged per name).
+    pub(crate) origins: FxHashMap<OriginKey, AgentOrigin>,
+    /// Requests waiting for their origin's agent to fall below `maxSockets`.
+    pub(crate) pending: VecDeque<PendingRequest>,
 }
 
 impl State {
@@ -158,7 +164,14 @@ pub(crate) struct OutgoingRequest {
     pub(crate) path: String,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Body,
-    pub(crate) agent: Option<u64>,
+    /// The request's destination and, when it has an agent, its pool.
+    pub(crate) origin: OriginKey,
+    /// Whether the agent keeps this origin's socket for the next request.
+    pub(crate) keep_alive: bool,
+    pub(crate) max_sockets: usize,
+    pub(crate) max_free_sockets: usize,
+    /// Free-socket lifetime from `agent.options.timeout`; `None` never expires.
+    pub(crate) idle_timeout: Option<Duration>,
 }
 
 #[derive(Default)]
@@ -206,6 +219,147 @@ pub(crate) struct Client {
     pub(crate) request: Vec<u8>,
     pub(crate) response_parser: super::protocol::ResponseParser,
     pub(crate) response_root: Option<RootId>,
+    /// The exchange's destination and, for a request with an agent, its pool.
+    pub(crate) origin: OriginKey,
+    /// The exchange may leave its socket free for the next request.
+    pub(crate) keep_alive: bool,
+    pub(crate) max_sockets: usize,
+    pub(crate) max_free_sockets: usize,
+    /// Free-socket lifetime from `agent.options.timeout`; `None` never expires.
+    pub(crate) idle_timeout: Option<Duration>,
+    /// This exchange runs on a socket taken from the free pool, which Node reports
+    /// as `ClientRequest.reusedSocket`.
+    pub(crate) reused: bool,
+}
+
+/// Where an exchange connects and, when it has an agent, the pool that owns the
+/// socket: Node's `Agent.getName` origin without the localAddress/family/
+/// socketPath suffixes this host does not model.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct OriginKey {
+    pub(crate) agent: Option<u64>,
+    pub(crate) host: String,
+    pub(crate) port: u16,
+}
+
+impl OriginKey {
+    pub(crate) fn new(agent: Option<u64>, host: &str, port: u16) -> Self {
+        Self {
+            agent,
+            host: host.to_owned(),
+            port,
+        }
+    }
+
+    /// Whether an agent pools this origin's sockets.
+    pub(crate) fn pooled(&self) -> bool {
+        self.agent.is_some()
+    }
+}
+
+/// One agent's connections to one origin: every live socket it owns, in an
+/// exchange or free, and the free subset in the order it was freed.
+#[derive(Default)]
+pub(crate) struct AgentOrigin {
+    pub(crate) sockets: FxHashSet<u64>,
+    pub(crate) idle: Vec<IdleSocket>,
+}
+
+/// A free socket and when the agent destroys it: `agent.options.timeout`, where
+/// `None` never expires, as Node's `timeout: 0` never arms its timer.
+pub(crate) struct IdleSocket {
+    pub(crate) socket: u64,
+    pub(crate) expires_at: Option<Instant>,
+}
+
+/// A request whose origin is at `maxSockets`, waiting for a socket to free.
+pub(crate) struct PendingRequest {
+    pub(crate) client: Client,
+}
+
+impl State {
+    /// Record `socket` as owned by `key`'s agent.
+    pub(crate) fn own_socket(&mut self, key: &OriginKey, socket: u64) {
+        self.origins
+            .entry(key.clone())
+            .or_default()
+            .sockets
+            .insert(socket);
+    }
+
+    /// Whether `key`'s agent still owns `socket`.
+    pub(crate) fn owns_socket(&self, key: &OriginKey, socket: u64) -> bool {
+        self.origins
+            .get(key)
+            .is_some_and(|origin| origin.sockets.contains(&socket))
+    }
+
+    /// Register `socket` as free for `key`. Node destroys a socket that would
+    /// exceed `maxFreeSockets` rather than evicting an older free socket, so a
+    /// refused socket stays the caller's to close.
+    pub(crate) fn free_socket(
+        &mut self,
+        key: &OriginKey,
+        socket: u64,
+        expires_at: Option<Instant>,
+        max_free: usize,
+    ) -> bool {
+        let origin = self.origins.entry(key.clone()).or_default();
+        if origin.idle.len() >= max_free {
+            return false;
+        }
+        origin.idle.push(IdleSocket { socket, expires_at });
+        true
+    }
+
+    /// Take the newest free socket of `key`, which Node's default LIFO
+    /// scheduling reuses first.
+    pub(crate) fn take_free_socket(&mut self, key: &OriginKey) -> Option<IdleSocket> {
+        self.origins.get_mut(key)?.idle.pop()
+    }
+
+    /// Whether `key` has a free socket to reuse.
+    pub(crate) fn has_free_socket(&self, key: &OriginKey) -> bool {
+        self.origins
+            .get(key)
+            .is_some_and(|origin| !origin.idle.is_empty())
+    }
+
+    /// Whether `key`'s agent may open another socket: Node compares the origin's
+    /// free and in-use socket counts with `maxSockets`.
+    pub(crate) fn has_capacity(&self, key: &OriginKey, max_sockets: usize) -> bool {
+        self.origins
+            .get(key)
+            .is_none_or(|origin| origin.sockets.len() < max_sockets)
+    }
+
+    /// Forget `socket` in `key`'s pool: its slot and its free entry.
+    pub(crate) fn forget_socket(&mut self, key: &OriginKey, socket: u64) {
+        let Some(origin) = self.origins.get_mut(key) else {
+            return;
+        };
+        origin.sockets.remove(&socket);
+        origin.idle.retain(|idle| idle.socket != socket);
+        if origin.sockets.is_empty() {
+            self.origins.remove(key);
+        }
+    }
+
+    /// Take the free entry of a known `socket`, returning the origin that owns it
+    /// so the caller can close the socket and drop its slot.
+    pub(crate) fn take_free_socket_by_id(&mut self, socket: u64) -> Option<OriginKey> {
+        let key = self.origins.iter().find_map(|(key, origin)| {
+            origin
+                .idle
+                .iter()
+                .any(|idle| idle.socket == socket)
+                .then(|| key.clone())
+        })?;
+        if let Some(origin) = self.origins.get_mut(&key) {
+            origin.idle.retain(|idle| idle.socket != socket);
+        }
+        Some(key)
+    }
 }
 
 impl State {
@@ -226,7 +380,8 @@ impl State {
             drain_waiters: FxHashMap::default(),
             requests: FxHashMap::default(),
             clients: FxHashMap::default(),
-            agents: FxHashMap::default(),
+            origins: FxHashMap::default(),
+            pending: VecDeque::new(),
         }
     }
 
@@ -243,7 +398,6 @@ impl State {
         self.next_agent = id
             .checked_add(1)
             .ok_or_else(|| "HTTP agent identifier space exhausted".to_owned())?;
-        self.agents.insert(id, FxHashSet::default());
         Ok(id)
     }
 
@@ -290,7 +444,8 @@ impl State {
             drain_waiters,
             requests,
             clients,
-            agents,
+            origins,
+            pending,
         } = self;
         require_quiescent(
             servers.is_empty()
@@ -299,7 +454,8 @@ impl State {
                 && drain_waiters.is_empty()
                 && requests.is_empty()
                 && clients.is_empty()
-                && agents.values().all(|sockets| sockets.is_empty()),
+                && origins.is_empty()
+                && pending.is_empty(),
             "an HTTP connection",
         )?;
         for counter in [next_server, next_agent, next_request, next_response] {
@@ -313,9 +469,7 @@ impl State {
         request_dispatch.write(writer)?;
         incoming_factory.write(writer)?;
         response_tracking.write(writer)?;
-        // The agents the bootstrap made, which hold no socket yet.
-        writer.len(agents.len());
-        agents.keys().try_for_each(|agent| agent.write(writer))
+        Ok(())
     }
     pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
         use crate::host::startup_snapshot::HostSnap;
@@ -330,10 +484,8 @@ impl State {
         self.request_dispatch = HostSnap::read(reader)?;
         self.incoming_factory = HostSnap::read(reader)?;
         self.response_tracking = HostSnap::read(reader)?;
-        self.agents.clear();
-        for _ in 0..reader.len()? {
-            self.agents.insert(HostSnap::read(reader)?, FxHashSet::default());
-        }
+        self.origins.clear();
+        self.pending.clear();
         Ok(())
     }
 }

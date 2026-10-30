@@ -64,17 +64,17 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsHrtimeBigInt" (0) => crate::modules::process_metrics_shared_vm::hrtime_bigint,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsCpu" (0) => crate::modules::process_metrics_shared_vm::process_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsThreadCpu" (0) => crate::modules::process_metrics_shared_vm::thread_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
         #[cfg(unix)]
@@ -298,29 +298,29 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathFormat" (1) => crate::modules::path_shared_vm::format_operation,
         method "pathMatchesGlob" (2) => crate::modules::path_shared_vm::matches_glob_operation,
         method "domainTrampolineCall" (0) => crate::modules::domain_trampoline::call,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osAvailableParallelism" (0) => crate::modules::os_binding_shared_vm::available_parallelism,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingCpus" (0) => crate::modules::os_binding_shared_vm::cpus,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingHome" (0) => crate::modules::os_binding_shared_vm::home,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingHostname" (0) => crate::modules::os_binding_shared_vm::hostname,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingInterfaces" (0) => crate::modules::os_binding_shared_vm::interfaces,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingLoadavg" (0) => crate::modules::os_binding_shared_vm::loadavg,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingGetPriority" (0) => crate::modules::os_binding_shared_vm::get_priority,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingInformation" (0) => crate::modules::os_binding_shared_vm::information,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingUserInfo" (0) => crate::modules::os_binding_shared_vm::user_info,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingSetPriority" (0) => crate::modules::os_binding_shared_vm::set_priority,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingTempdir" (0) => crate::modules::os_binding_shared_vm::tempdir,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingUptime" (0) => crate::modules::os_binding_shared_vm::uptime,
         method "osString" (0) => crate::modules::os_shared_vm::string_operation,
         method "osFreemem" (0) => crate::modules::os_shared_vm::freemem_operation,

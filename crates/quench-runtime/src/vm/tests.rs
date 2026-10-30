@@ -17491,6 +17491,69 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
 }
 
 #[test]
+fn lane_in_place_steps_keep_property_definition_records() {
+    // Class methods and accessors and object-literal accessors define their descriptors in
+    // place; computed keys coerce in source order, setters and private methods stay exact, a
+    // throwing key conversion raises there, and repeated definitions keep their attributes.
+    let source = r#"
+      const out = [];
+      function desc(o, key) {
+        const d = Object.getOwnPropertyDescriptor(o, key);
+        if (!d) return "none";
+        const value = typeof d.value === "function" ? d.value() : String(d.value);
+        return [value, d.writable, d.enumerable, d.configurable, typeof d.get, typeof d.set].map(String).join("/");
+      }
+      function run(round) {
+        const log = [];
+        const key = { toString() { log.push("key" + round); return "computed" + round; } };
+        const literal = {
+          method() { return "lm"; },
+          get accessor() { return "lg"; },
+          set accessor(v) { log.push("lset" + v); },
+          [key]() { return "lk"; },
+          get ["ga" + round]() { return 41 + round; },
+        };
+        literal.accessor = 3;
+        const symbol = Symbol("s" + round);
+        class C {
+          #hidden() { return "h"; }
+          method() { return "cm"; }
+          static staticMethod() { return "cs"; }
+          get accessor() { return "cg"; }
+          set accessor(v) { log.push("cset" + v); }
+          static get staticAccessor() { return 7; }
+          static set staticAccessor(v) { log.push("sset" + v); }
+          [key]() { return "ck"; }
+          [symbol]() { return "sk"; }
+          read() { return this.#hidden(); }
+        }
+        const c = new C(); c.accessor = 4; C.staticAccessor = 5;
+        out.push(round,
+          desc(literal, "method"), desc(literal, "accessor"), desc(literal, "computed" + round), desc(literal, "ga" + round),
+          desc(C.prototype, "method"), desc(C.prototype, "accessor"), desc(C.prototype, "computed" + round),
+          desc(C, "staticMethod"), desc(C, "staticAccessor"),
+          literal.method(), literal["computed" + round](), literal["ga" + round],
+          c.method(), c["computed" + round](), c[symbol](), c.read(), C.staticMethod(), C.staticAccessor,
+          Object.keys(literal).join("+"), Object.keys(C.prototype).join("+"), Object.keys(C).join("+"),
+          log.join(","));
+        const boom = { toString() { throw new RangeError("key"); } };
+        for (const thunk of [() => ({ [boom]: 1 }), () => ({ get [boom]() {} }), () => class { [boom]() {} }, () => class { static [boom]() {} }]) {
+          try { thunk(); out.push("ok"); } catch (e) { out.push(e.constructor.name + ":" + e.message); }
+        }
+      }
+      for (let round = 0; round < 3; round++) run(round);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-property-records.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|41|cm|ck|sk|h|cs|7|method+accessor+computed0+ga0|||key0,lset3,key0,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key|1|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|42|cm|ck|sk|h|cs|7|method+accessor+computed1+ga1|||key1,lset3,key1,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key|2|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|43|cm|ck|sk|h|cs|7|method+accessor+computed2+ga2|||key2,lset3,key2,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key"]
+    );
+}
+
+#[test]
 fn lane_framed_calls_and_returns_keep_frames_and_their_semantics() {
     // Calls of functions that need a frame are pushed and returned from the lane: closures,
     // `arguments`, `this` modes, throws, recursion, tail returns, generators, async functions
@@ -18391,6 +18454,141 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn in_operator_decides_ordinary_objects_and_leaves_other_receivers_to_general_semantics() {
+    let source = r#"
+      function check(name, actual, expected) {
+        if (!Object.is(actual, expected)) {
+          throw new Error(name + ": " + String(actual) + " !== " + String(expected));
+        }
+      }
+      const proto = { inherited: 1 };
+      const object = Object.create(proto);
+      object.own = 2;
+      check("own", "own" in object, true);
+      check("absent", "absent" in object, false);
+      check("inherited", "inherited" in object, true);
+      check("Object.prototype", "toString" in object, true);
+      check("missing below Object.prototype", "nope" in object, false);
+      const present = "own" in object;
+      const missing = "nope" in object;
+      check("value form present", present, true);
+      check("value form absent", missing, false);
+      if (!("own" in object)) throw new Error("jump form present");
+      if ("nope" in object) throw new Error("jump form absent");
+
+      let getterReads = 0;
+      Object.defineProperty(object, "accessor", {
+        get() { getterReads += 1; return 3; },
+        configurable: true,
+      });
+      check("accessor", "accessor" in object, true);
+      check("getter not run", getterReads, 0);
+      const hidden = {};
+      Object.defineProperty(hidden, "secret", { value: 1, enumerable: false });
+      check("non-enumerable", "secret" in hidden, true);
+
+      check("number key", 1 in { 1: "one" }, true);
+      check("string number key", "1" in { 1: "one" }, true);
+      check("number key absent", 2 in { 1: "one" }, false);
+
+      const symbol = Symbol("s");
+      const keyed = { [symbol]: 1 };
+      check("symbol present", symbol in keyed, true);
+      check("symbol absent", Symbol("s") in keyed, false);
+      check("symbol inherited", symbol in Object.create(keyed), true);
+
+      const array = [1, 2];
+      check("array index", 0 in array, true);
+      check("array end index", 2 in array, false);
+      check("array length", "length" in array, true);
+      function named() {}
+      check("function prototype", "prototype" in named, true);
+
+      const bare = Object.create(null);
+      bare.x = 1;
+      check("null prototype own", "x" in bare, true);
+      check("null prototype absent", "y" in bare, false);
+
+      const dictionary = {};
+      for (let index = 0; index < 64; index += 1) dictionary["k" + index] = index;
+      delete dictionary.k0;
+      check("dictionary present", "k63" in dictionary, true);
+      check("dictionary deleted", "k0" in dictionary, false);
+
+      const primitives = [null, undefined, 1, 1.5, "text", true, 1n, Symbol("p")];
+      for (let index = 0; index < primitives.length; index += 1) {
+        let outcome = "no throw";
+        try { "x" in primitives[index]; }
+        catch (error) { outcome = error.name; }
+        check("primitive " + index, outcome, "TypeError");
+      }
+
+      let trapCalls = 0;
+      const proxy = new Proxy({ hidden: 1 }, {
+        has(target, key) {
+          trapCalls += 1;
+          return key === "ghost" || Reflect.has(target, key);
+        },
+      });
+      check("proxy ghost", "ghost" in proxy, true);
+      check("proxy own", "hidden" in proxy, true);
+      check("proxy absent", "none" in proxy, false);
+      check("proxy trap ran", trapCalls, 3);
+      const throwing = new Proxy({}, { has() { throw new RangeError("trap"); } });
+      let threw = "no throw";
+      try { "x" in throwing; }
+      catch (error) { threw = error.name; }
+      check("proxy throw", threw, "RangeError");
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "in-operator.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "in-operator.js").unwrap(),
+    ] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_tier_claims_a_general_function_only_where_the_tier_admits_it() {
+    // A general-only function used to claim the tier prologue while the general switch
+    // was off, so a frameless lane call paid and released the prologue without running
+    // native code. The claim must come from the same authority that admits the tier
+    // (`ProgramStore::general_tier_admits`).
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function build(seed) { return { value: seed, tag: 'x' }; } build(1);",
+        "js-tier-claim-admission.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    // The fixture body is small and loop-free, so price it as hot: the claim is then
+    // decided by the tier's switch and the memory policy alone.
+    vm.programs.compile_general_baseline_when_hot();
+    let id = vm.programs.insert(program.clone()).unwrap();
+    let general_only = (0..program.functions.len())
+        .find_map(|function| {
+            let facts = vm.programs.js_entry_facts(id, function as u32)?;
+            (facts.general && !facts.candidate).then_some(function as u32)
+        })
+        .expect("fixture must contain a general-only function");
+    assert!(
+        !vm.js_tier_may_claim(&program, id, general_only),
+        "a general-only function must not pay the claim while the general tier is off"
+    );
+    vm.programs.enable_js_general_dispatch();
+    assert!(
+        vm.js_tier_may_claim(&program, id, general_only),
+        "the admitted general tier claims its general candidates"
+    );
+}
+
+#[test]
 fn js_function_tiers_follow_the_memory_policy() {
     for policy in crate::MemoryPolicy::ALL {
         let mut vm = Vm::new(TestHost::default());

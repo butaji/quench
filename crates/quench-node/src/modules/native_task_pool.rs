@@ -117,6 +117,12 @@ impl Pool {
     }
     pub(crate) fn submit(&mut self, task: impl FnOnce() + Send + 'static) -> io::Result<()> {
         self.start()?;
+        // Wake the submitting thread when its completion becomes visible.
+        let wake = crate::modules::napi::thread_wake().ok();
+        let task = move || {
+            task();
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
+        };
         let mut queue = self.shared.queue.lock().unwrap();
         if queue.stopped {
             return Err(io::Error::new(

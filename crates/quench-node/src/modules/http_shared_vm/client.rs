@@ -1,6 +1,7 @@
-use crate::host::NodeHost;
+use crate::host::{NodeHost, SharedNodeState};
 use crate::modules::net_shared_vm;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
+use std::time::{Duration, Instant};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
@@ -53,6 +54,9 @@ const REQUEST_FUNCTION: &str = r#"((Writable, create, write, removeHeader, end, 
     };
     request.path = options?.path || "/";
     request.method = options?.method || "GET";
+    // Node's ClientRequest starts with `reusedSocket = false` and the agent sets it
+    // on a request it places on a free socket.
+    request.reusedSocket = false;
     if (typeof callback === "function") request.once("response", callback);
     return request;
   };
@@ -180,10 +184,41 @@ pub(crate) fn create(
     let method = text_property(context, options, "method")?.unwrap_or_else(|| "GET".to_owned());
     let path = text_property(context, options, "path")?.unwrap_or_else(|| "/".to_owned());
     let headers = read_headers(context, args.get(1).copied())?;
-    let agent = object_property(context, options, "agent")?
+    let agent_object = object_property(context, options, "agent")?;
+    let agent = agent_object
         .map(|agent| property_id(context, agent, "_quenchSharedAgentId"))
         .transpose()?
         .flatten();
+    let (keep_alive, idle_timeout, max_sockets, max_free_sockets) = match agent {
+        Some(_) => {
+            let agent = agent_object.expect("an agent id has an agent object");
+            // Node's `Agent.keepSocketAlive` arms the free-socket timer with
+            // `agent.options.timeout` (`keepAliveMsecs` is the TCP probe delay),
+            // where 0 leaves it disarmed.
+            let timeout = match object_property(context, agent, "options")? {
+                Some(options) => number_property(context, options, "timeout")?,
+                None => None,
+            };
+            (
+                boolean_property(context, agent, "keepAlive")?.unwrap_or(false),
+                timeout
+                    .filter(|msecs| msecs.is_finite() && *msecs > 0.0)
+                    .map(|msecs| Duration::from_millis(msecs as u64)),
+                socket_limit(context, agent, "maxSockets")?.unwrap_or(usize::MAX),
+                number_property(context, agent, "maxFreeSockets")?
+                    .map(|value| {
+                        if value.is_finite() && value >= 0.0 {
+                            value as usize
+                        } else {
+                            usize::MAX
+                        }
+                    })
+                    .unwrap_or(256),
+            )
+        }
+        None => (false, None, usize::MAX, 256),
+    };
+    let origin = super::state::OriginKey::new(agent, &host, port);
     let state = context.host_mut().shared_state();
     let mut host_state = state.borrow_mut();
     let id = host_state.http.request_id().map_err(RootedError::host)?;
@@ -196,7 +231,11 @@ pub(crate) fn create(
             path,
             headers,
             body: Default::default(),
-            agent,
+            origin,
+            keep_alive,
+            max_sockets,
+            max_free_sockets,
+            idle_timeout,
         },
     );
     Ok(context.number(id as f64))
@@ -274,41 +313,233 @@ pub(crate) fn end(
         guard.http.requests.remove(&id).unwrap()
     };
     let request_bytes = serialize(&request);
-    let socket = {
+    let request_root = context.retain(request_root)?;
+    let client = super::state::Client {
+        request_id: id,
+        request_root,
+        request: request_bytes,
+        response_parser: super::protocol::ResponseParser::for_method(&request.method),
+        response_root: None,
+        origin: request.origin,
+        keep_alive: request.keep_alive,
+        max_sockets: request.max_sockets,
+        max_free_sockets: request.max_free_sockets,
+        idle_timeout: request.idle_timeout,
+        reused: false,
+    };
+    let outcome = {
         let state = context.host_mut().shared_state();
-        let result = net_shared_vm::connect(
-            &mut state.borrow_mut().tcp,
-            request.host.clone(),
-            request.port,
-        );
-        result.map_err(RootedError::host)?
+        let mut host = state.borrow_mut();
+        start_client(&mut host, client)
     };
-    let request_root = match context.retain(request_root) {
-        Ok(root) => root,
-        Err(error) => {
-            let state = context.host_mut().shared_state();
-            net_shared_vm::close_socket(&mut state.borrow_mut().tcp, socket);
-            return Err(error);
+    match outcome {
+        Ok(StartOutcome::Started { reused: true }) => {
+            mark_reused_socket(context, request_root)?;
+            Ok(context.undefined())
         }
-    };
-    let state = context.host_mut().shared_state();
-    let mut host = state.borrow_mut();
-    if let Some(agent) = request.agent {
-        if let Some(sockets) = host.http.agents.get_mut(&agent) {
-            sockets.insert(socket);
+        Ok(_) => Ok(context.undefined()),
+        Err((client, error)) => {
+            context.release_root(client.request_root);
+            Err(RootedError::host(error))
         }
     }
-    host.http.clients.insert(
-        socket,
-        super::state::Client {
-            request_id: id,
-            request_root,
-            request: request_bytes,
-            response_parser: super::protocol::ResponseParser::for_method(&request.method),
-            response_root: None,
-        },
-    );
-    Ok(context.undefined())
+}
+
+/// Node's `ClientRequest.reusedSocket`: false until the agent hands the request a
+/// socket from its free pool (`Agent.prototype.reuseSocket`).
+fn mark_reused_socket(context: &mut Context<'_>, request: RootId) -> Result<(), RootedError> {
+    let reused = context.boolean(true);
+    set(context, request, "reusedSocket", reused)
+}
+
+/// Where a completed request runs: a free keep-alive socket, a fresh socket, or
+/// the origin's queue when its agent is at `maxSockets`.
+enum StartOutcome {
+    Started { reused: bool },
+    Queued,
+}
+
+fn start_client(
+    host: &mut SharedNodeState,
+    mut client: super::state::Client,
+) -> Result<StartOutcome, (super::state::Client, String)> {
+    if client.origin.pooled() {
+        // Node's agent takes a socket from `freeSockets[name]` for this origin and
+        // destroys one it cannot use (peer closed, stray bytes, mid-delivery).
+        while let Some(idle) = host.http.take_free_socket(&client.origin) {
+            if free_socket_is_usable(host, idle.socket)
+                && net_shared_vm::write(&mut host.tcp, idle.socket, &client.request).is_ok()
+            {
+                client.reused = true;
+                // Node's `reuseSocket` re-refs the socket `keepSocketAlive` unref'd.
+                net_shared_vm::socket_reference(&mut host.tcp, idle.socket, true);
+                start_read_if_idle(host, idle.socket);
+                host.http.clients.insert(idle.socket, client);
+                return Ok(StartOutcome::Started { reused: true });
+            }
+            close_agent_socket(host, Some(&client.origin), idle.socket);
+        }
+        if !host.http.has_capacity(&client.origin, client.max_sockets) {
+            host.http
+                .pending
+                .push_back(super::state::PendingRequest { client });
+            return Ok(StartOutcome::Queued);
+        }
+    }
+    let host_name = client.origin.host.clone();
+    let port = client.origin.port;
+    match net_shared_vm::connect(&mut host.tcp, host_name, port) {
+        Ok(socket) => {
+            if client.origin.pooled() {
+                host.http.own_socket(&client.origin, socket);
+            }
+            host.http.clients.insert(socket, client);
+            Ok(StartOutcome::Started { reused: false })
+        }
+        Err(error) => Err((client, error)),
+    }
+}
+
+/// Whether a free socket can carry a new exchange: it is still open, and the
+/// transport has delivered every byte it already read for it. A socket in
+/// delivery still owns a queued transport event, whose bytes would be parsed as
+/// the next exchange's response.
+fn free_socket_is_usable(host: &SharedNodeState, socket: u64) -> bool {
+    net_shared_vm::socket_is_open(&host.tcp, socket)
+        && net_shared_vm::delivery_delivered(&host.tcp, socket)
+}
+
+/// Start queued requests whose origin now has a free socket or room under
+/// `maxSockets`, as Node's agent does when a request frees a socket. Returns the
+/// exchanges whose fresh connection failed, and whether any started.
+pub(crate) fn drain_pending(
+    host: &mut SharedNodeState,
+) -> (Vec<(super::state::Client, String)>, bool) {
+    let mut failures = Vec::new();
+    let mut progressed = false;
+    loop {
+        let index = host.http.pending.iter().position(|pending| {
+            let origin = &pending.client.origin;
+            host.http.has_free_socket(origin)
+                || host.http.has_capacity(origin, pending.client.max_sockets)
+        });
+        let Some(index) = index else { break };
+        let Some(pending) = host.http.pending.remove(index) else {
+            break;
+        };
+        // Node's agent hands a freed socket to the queued request through its
+        // `free` handler, which leaves `reusedSocket` false: only a request that
+        // finds a free socket when the agent adds it is flagged.
+        match start_client(host, pending.client) {
+            Ok(StartOutcome::Started { .. }) => progressed = true,
+            // Capacity disappeared between the check and the start; the client is
+            // back in the queue.
+            Ok(StartOutcome::Queued) => break,
+            Err((client, error)) => {
+                progressed = true;
+                failures.push((client, error));
+            }
+        }
+    }
+    (failures, progressed)
+}
+
+/// Apply the two pool facts time and the transport own: a socket the transport
+/// already dropped holds no `maxSockets` slot, and a free socket past its agent
+/// timeout is destroyed (Node's `keepSocketAlive` timer).
+pub(crate) fn maintain_agent_pools(host: &mut SharedNodeState) {
+    let now = Instant::now();
+    let mut expired = Vec::new();
+    for (key, origin) in host.http.origins.iter_mut() {
+        origin
+            .sockets
+            .retain(|socket| net_shared_vm::socket_is_open(&host.tcp, *socket));
+        let mut kept = Vec::with_capacity(origin.idle.len());
+        for idle in origin.idle.drain(..) {
+            if !origin.sockets.contains(&idle.socket) {
+                continue;
+            }
+            if idle.expires_at.is_some_and(|expires_at| expires_at <= now) {
+                expired.push((key.clone(), idle.socket));
+            } else {
+                kept.push(idle);
+            }
+        }
+        origin.idle = kept;
+    }
+    for (key, socket) in expired {
+        close_agent_socket(host, Some(&key), socket);
+    }
+}
+
+/// Leave `socket` free on its agent when the exchange permits reuse.
+pub(crate) fn release_agent_socket(
+    host: &mut SharedNodeState,
+    socket: u64,
+    client: &super::state::Client,
+) {
+    let origin = &client.origin;
+    if !origin.pooled() {
+        net_shared_vm::close_socket(&mut host.tcp, socket);
+        return;
+    }
+    // A destroyed agent, a `Connection: close` exchange, or a socket that already
+    // left the transport all end the socket instead of pooling it.
+    if !client.keep_alive
+        || !free_socket_is_usable(host, socket)
+        || !host.http.owns_socket(origin, socket)
+    {
+        close_agent_socket(host, Some(origin), socket);
+        return;
+    }
+    let expires_at = client.idle_timeout.map(|timeout| Instant::now() + timeout);
+    if !host
+        .http
+        .free_socket(origin, socket, expires_at, client.max_free_sockets)
+    {
+        close_agent_socket(host, Some(origin), socket);
+        return;
+    }
+    // Node's `keepSocketAlive` unrefs a free socket: it keeps no process alive,
+    // while the transport still reports its end or stray bytes whenever the loop
+    // runs for another reason.
+    net_shared_vm::socket_reference(&mut host.tcp, socket, false);
+    start_read_if_idle(host, socket);
+}
+
+/// Destroy a socket the caller found free on its agent: Node's free-socket guards
+/// destroy a socket that ends or receives data instead of reusing it. Returns
+/// whether the socket was free.
+pub(crate) fn destroy_free_socket(host: &mut SharedNodeState, socket: u64) -> bool {
+    let Some(origin) = host.http.take_free_socket_by_id(socket) else {
+        return false;
+    };
+    close_agent_socket(host, Some(&origin), socket);
+    true
+}
+
+fn start_read_if_idle(host: &mut SharedNodeState, socket: u64) {
+    if !net_shared_vm::read_active(&host.tcp, socket) {
+        let _ = net_shared_vm::start_read(&mut host.tcp, socket);
+    }
+}
+
+/// The pool `client`'s socket belongs to, when it has an agent.
+pub(crate) fn pooled_origin(client: &super::state::Client) -> Option<&super::state::OriginKey> {
+    client.origin.pooled().then_some(&client.origin)
+}
+
+/// Drop every pool record of `socket` and close it. A socket no agent owns is
+/// simply closed.
+fn close_agent_socket(
+    host: &mut SharedNodeState,
+    origin: Option<&super::state::OriginKey>,
+    socket: u64,
+) {
+    if let Some(origin) = origin {
+        host.http.forget_socket(origin, socket);
+    }
+    net_shared_vm::close_socket(&mut host.tcp, socket);
 }
 
 pub(crate) fn destroy(
@@ -321,19 +552,28 @@ pub(crate) fn destroy(
     let client = {
         let mut host = state.borrow_mut();
         host.http.requests.remove(&id);
-        let socket = host
+        let pending = host
             .http
-            .clients
+            .pending
             .iter()
-            .find_map(|(socket, client)| (client.request_id == id).then_some(*socket));
-        socket.and_then(|socket| {
-            let client = host.http.clients.remove(&socket)?;
-            for sockets in host.http.agents.values_mut() {
-                sockets.remove(&socket);
-            }
-            net_shared_vm::close_socket(&mut host.tcp, socket);
-            Some(client)
-        })
+            .position(|pending| pending.client.request_id == id);
+        if let Some(pending) = pending {
+            host.http
+                .pending
+                .remove(pending)
+                .map(|pending| pending.client)
+        } else {
+            let socket = host
+                .http
+                .clients
+                .iter()
+                .find_map(|(socket, client)| (client.request_id == id).then_some(*socket));
+            socket.and_then(|socket| {
+                let client = host.http.clients.remove(&socket)?;
+                close_agent_socket(&mut host, pooled_origin(&client), socket);
+                Some(client)
+            })
+        }
     };
     if let Some(client) = client {
         if let Some(response) = client.response_root {
@@ -412,10 +652,7 @@ pub(crate) fn destroy_response(
             .find_map(|(socket, client)| (client.request_id == id).then_some(*socket));
         socket.and_then(|socket| {
             let client = host.http.clients.remove(&socket)?;
-            for sockets in host.http.agents.values_mut() {
-                sockets.remove(&socket);
-            }
-            net_shared_vm::close_socket(&mut host.tcp, socket);
+            close_agent_socket(&mut host, pooled_origin(&client), socket);
             Some(client)
         })
     };
@@ -555,6 +792,42 @@ fn object_property(
         .rooted_value(value)
         .filter(|value| !value.is_undefined() && !value.is_null())
         .map(|_| value))
+}
+
+fn number_property(
+    context: &mut Context<'_>,
+    object: RootId,
+    name: &str,
+) -> Result<Option<f64>, RootedError> {
+    let key = context.string_rooted(name);
+    let value = context.get_property_rooted(object, key)?;
+    Ok(context.rooted_value(value).and_then(Value::as_number))
+}
+
+fn boolean_property(
+    context: &mut Context<'_>,
+    object: RootId,
+    name: &str,
+) -> Result<Option<bool>, RootedError> {
+    let key = context.string_rooted(name);
+    let value = context.get_property_rooted(object, key)?;
+    Ok(context.rooted_value(value).and_then(Value::as_bool))
+}
+
+/// A positive socket count; non-finite or non-positive values mean no limit, as
+/// Node's `Agent.defaultMaxSockets` does.
+fn socket_limit(
+    context: &mut Context<'_>,
+    object: RootId,
+    name: &str,
+) -> Result<Option<usize>, RootedError> {
+    Ok(number_property(context, object, name)?.map(|value| {
+        if value.is_finite() && value >= 1.0 {
+            value as usize
+        } else {
+            usize::MAX
+        }
+    }))
 }
 
 fn property_id(

@@ -15,8 +15,7 @@ const SHAPE_MEMO_ENTRIES: usize = 1 << 10;
 /// A direct-mapped memo of `ENTRIES` entries (a power of two) that allocates them on its
 /// first record. A memo a program never records into costs no memory: built at VM
 /// construction, the memos cost every run 48 to 254 KiB of peak RSS on V8-v7 whether or
-/// not it used private names, symbol keys or enumeration
-/// (`evidence/tod137-lazy-memo-tables-linux-2026-10-22`).
+/// not it used private names, symbol keys or enumeration.
 pub(super) struct DirectMappedTable<T: Copy, const ENTRIES: usize> {
     entries: OnceCell<Box<[Cell<Option<T>>]>>,
 }

@@ -42,6 +42,14 @@ impl Pool {
     }
 }
 pub(crate) fn submit(job: impl FnOnce() + Send + 'static) -> Result<(), String> {
+    let wake = crate::modules::napi::thread_wake().ok();
     let pool = POOL.get_or_init(Pool::new).as_ref().map_err(Clone::clone)?;
-    pool.sender.send(Box::new(job)).map_err(|e| e.to_string())
+    pool.sender
+        .send(Box::new(move || {
+            job();
+            // The completion sender published before this point; wake its event loop
+            // instead of leaving it to the poll interval.
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
+        }))
+        .map_err(|e| e.to_string())
 }

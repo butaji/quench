@@ -33,6 +33,22 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       super({
         ...options, autoDestroy: true, allowHalfOpen: true, emitClose: false,
         write(chunk, encoding, callback) { try { writeOperation(this, chunk, callback); } catch (error) { callback(error); } },
+        // Node's writable takes this branch when a stream corks: ws writes a frame header and
+        // its payload as two chunks, and without `writev` the second waits on the first's host
+        // completion (a whole turn). Writes complete in order, so the last chunk's callback is
+        // the flush barrier and an earlier failure is reported through it.
+        writev(chunks, callback) {
+          let failure;
+          try {
+            for (let index = 0; index < chunks.length; index += 1) {
+              const last = index === chunks.length - 1;
+              writeOperation(this, chunks[index].chunk, (error) => {
+                if (!last) { failure ??= error; return; }
+                callback(failure ?? error);
+              });
+            }
+          } catch (error) { callback(failure ?? error); }
+        },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); } },
       });
@@ -730,6 +746,7 @@ fn bind_listener(address: SocketAddr, reuse_port: bool, backlog: i32) -> std::io
 pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
     let id = transport.id()?;
     let (sender, receiver) = mpsc::channel();
+    let wake = crate::modules::napi::thread_wake().ok();
     std::thread::Builder::new()
         .name(format!("quench-node-tcp-{id}"))
         .spawn(move || {
@@ -742,6 +759,7 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
                         .map_err(TcpConnectFailure::Setup)
                 });
             let _ = sender.send(result.map_err(ConnectFailure::Tcp));
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         })
         .map_err(|error| format!("cannot start TCP connect: {error}"))?;
     transport.connecting.insert(
@@ -789,6 +807,7 @@ pub(super) fn connect_resolved(
         return Ok(());
     }
     let (sender, receiver) = mpsc::channel();
+    let wake = crate::modules::napi::thread_wake().ok();
     std::thread::Builder::new()
         .name(format!("quench-node-tcp-{id}"))
         .spawn(move || {
@@ -809,6 +828,7 @@ pub(super) fn connect_resolved(
                 })
                 .map_err(ConnectFailure::Tcp);
             let _ = sender.send(result);
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         })
         .map_err(|error| format!("cannot start TCP connect: {error}"))?;
     transport
@@ -962,6 +982,15 @@ pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
     transport.sockets.contains_key(&socket)
 }
 
+/// Whether `socket` has delivered every byte the transport already read for it. A
+/// socket in another phase still owns a queued transport event.
+pub(crate) fn delivery_delivered(transport: &Transport, socket: u64) -> bool {
+    transport
+        .sockets
+        .get(&socket)
+        .is_some_and(|socket| matches!(socket.delivery, DeliveryPhase::Delivered))
+}
+
 pub(crate) fn end(transport: &mut Transport, socket: u64) -> Result<(), String> {
     if let Some(stream) = transport.sockets.get_mut(&socket) {
         stream.end_after_write = true;
@@ -1058,9 +1087,13 @@ pub(crate) fn cleanup(transport: &mut Transport) {
 /// data or end on a socket the host reads, or room for a socket's queued bytes. The event
 /// loop's idle wait: readiness ends it at once, where a fixed sleep made every arrival wait
 /// out the interval. A watched signal's arrival ends it too (`process_signals_state::wake_fd`).
-/// Sources polled outside the transport keep the interval as their bound, and with nothing to
-/// watch the wait sleeps.
-pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
+/// Sources polled outside the transport (`extra`) keep the interval as their bound, and with
+/// nothing to watch the wait sleeps.
+pub(crate) fn wait_ready(
+    transport: &Transport,
+    extra: &[std::os::fd::RawFd],
+    timeout: std::time::Duration,
+) {
     use std::os::fd::AsRawFd;
     let watch = |fd: std::os::fd::RawFd, events: libc::c_short| libc::pollfd { fd, events, revents: 0 };
     let mut descriptors = transport
@@ -1092,6 +1125,9 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
             descriptors.push(watch(fd, events));
         }
     }
+    for &fd in extra {
+        descriptors.push(watch(fd, libc::POLLIN));
+    }
     if let Some(fd) = crate::modules::napi::wake_fd() {
         descriptors.push(watch(fd, libc::POLLIN));
     }
@@ -1102,18 +1138,37 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
         std::thread::sleep(timeout);
         return;
     }
+    let duration = timeout;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let timeout = libc::timespec {
-        tv_sec: timeout.as_secs() as libc::time_t,
-        tv_nsec: libc::c_long::from(timeout.subsec_nanos() as i32),
+        tv_sec: duration.as_secs() as libc::time_t,
+        tv_nsec: libc::c_long::from(duration.subsec_nanos() as i32),
     };
     // SAFETY: the descriptors are open for the duration of the call, which only writes
     // their `revents`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe {
         libc::ppoll(
             descriptors.as_mut_ptr(),
             descriptors.len() as libc::nfds_t,
             &timeout,
             std::ptr::null(),
+        );
+    }
+    // Darwin has no ppoll; `poll`'s millisecond timeout rounds up so a
+    // sub-millisecond wait never turns into a busy spin.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    unsafe {
+        let millis = duration.as_millis().min(i32::MAX as u128) as i32;
+        let millis = if duration.subsec_nanos() > 0 && millis == 0 {
+            1
+        } else {
+            millis
+        };
+        libc::poll(
+            descriptors.as_mut_ptr(),
+            descriptors.len() as libc::nfds_t,
+            millis,
         );
     }
     crate::modules::napi::drain_wake();
@@ -2096,6 +2151,7 @@ fn connect_local(
 ) -> Result<u64, String> {
     let id = transport.id()?;
     let (sender, receiver) = mpsc::channel();
+    let wake = crate::modules::napi::thread_wake().ok();
     std::thread::Builder::new()
         .name(format!("quench-node-local-{id}"))
         .spawn(move || {
@@ -2109,6 +2165,7 @@ fn connect_local(
                 error,
                 path: display,
             }));
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
         })
         .map_err(|error| error.to_string())?;
     transport.connecting.insert(
@@ -2994,5 +3051,28 @@ impl Transport {
     pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
         self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Transport;
+    use std::time::{Duration, Instant};
+
+    /// A cross-thread completion must end the idle wait at once instead of
+    /// leaving the event loop to discover it on the poll interval.
+    #[test]
+    fn wait_ready_returns_when_a_completion_wakes_the_thread() {
+        let wake = crate::modules::napi::thread_wake().expect("wake signal");
+        let notifier = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            crate::modules::napi::notify_wake(&wake);
+        });
+        let transport = Transport::new();
+        let started = Instant::now();
+        super::wait_ready(&transport, &[], Duration::from_secs(5));
+        let elapsed = started.elapsed();
+        notifier.join().expect("notifier thread");
+        assert!(elapsed < Duration::from_secs(1), "wait_ready slept {elapsed:?}");
     }
 }
