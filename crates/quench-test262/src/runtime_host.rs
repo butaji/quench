@@ -389,6 +389,33 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn strict_destructuring_checks_missing_bindings_after_getters_and_defaults() {
+        let source = r#"
+            const effects = [];
+            (function() {
+                'use strict';
+                try {
+                    0, { missingAssignment } = { get missingAssignment() { effects.push('get'); return 1; } };
+                    throw Error('missing ReferenceError');
+                } catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+                try {
+                    ({ missingAssignment = (effects.push('default'), 2) } = {});
+                    throw Error('missing ReferenceError');
+                } catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+                try {
+                    ({ missingAssignment } = { get missingAssignment() { effects.push('abrupt'); throw new RangeError('rhs'); } });
+                    throw Error('missing getter error');
+                } catch (error) { if (!(error instanceof RangeError)) throw error; }
+            })();
+            if (effects.join(',') !== 'get,default,abrupt') throw Error(effects.join(','));
+        "#;
+        let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
+        #[cfg(feature = "aot")]
+        let modes = modes.chain([super::ExecutionMode::NativeOnly]);
+        for mode in modes { Test262RuntimeHost::new(mode).execute(source, "strict-destructuring.js").unwrap(); }
+    }
+
+    #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
         let program = super::Engine::specialize_unspecialized(r#"
             function calculate(n = 8) {

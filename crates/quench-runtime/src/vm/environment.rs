@@ -1107,11 +1107,14 @@ impl<H: Host> Vm<H> {
         if self.store_global_var_binding(p, atom, value)? {
             return Ok(());
         }
-        if strict && !self.has_global_object_binding(p, atom)? {
-            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
-        }
+        if strict { self.require_global_assignment_binding(p, atom)?; }
         let _ = object;
         self.set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
+    }
+
+    fn require_global_assignment_binding(&mut self, p: &ResidualProgram, atom: Atom) -> Result<(), JsError> {
+        if self.has_global_object_binding(p, atom)? { Ok(()) }
+        else { Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))) }
     }
 
     fn outer_dynamic_binding(&self, frame: usize, atom: Atom) -> Option<(Value, usize)> {
@@ -2383,6 +2386,9 @@ impl<H: Host> Vm<H> {
             .last()
             .and_then(|frame| p.function_get(frame.function as usize))
             .is_some_and(|function| function.strict);
+        if strict && !initializing && !name.starts_with('\0') {
+            self.require_global_assignment_binding(p, atom)?;
+        }
         let result = self.set_field_cached(p, self.realm.globals, atom, value, cache, strict);
         if result.is_ok() && root_declared {
             self.set_property_attributes(
