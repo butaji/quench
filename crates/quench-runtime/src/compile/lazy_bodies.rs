@@ -425,7 +425,7 @@ fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, fa
         }
         #[cfg(feature = "aot")]
         if let Some((specialized, requests)) = &mut facts.native_function_sources {
-            requests.extend(super::Engine::literal_function_constructor_sources(&parsed.program, *specialized));
+            requests.extend(super::Engine::function_constructor_sources(&parsed.program, built.semantic.scoping(), *specialized));
         }
         let shift = |(start, end): (u32, u32)| (start.wrapping_add(delta), end.wrapping_add(delta));
         let first_id = facts.next_private_id;

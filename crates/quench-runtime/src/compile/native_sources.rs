@@ -332,52 +332,17 @@ impl AtomPrefix for NativeJsCompiler {
     fn native_function_requests(&self) -> Option<&RefCell<BTreeSet<NativeSourceKey>>> { self.function_requests.as_ref() }
 }
 
+mod constructors;
+
 impl Engine {
-    /// Potential constructor inputs, never proof of the callee's identity. The
-    /// actual intrinsic performs an exact key lookup after argument conversion.
+    /// Literal arguments through possible constructor bindings. Actual intrinsic
+    /// identity and exact source input are still guarded at invocation.
     pub fn literal_function_constructor_sources(program: &oxc_ast::ast::Program<'_>, specialized: bool) -> Vec<NativeSourceKey> {
-        use oxc_ast::ast::{Argument, CallExpression, Expression, NewExpression};
-        use oxc_ast_visit::{Visit, walk};
-        struct Requests { specialized: bool, keys: std::collections::BTreeSet<NativeSourceKey> }
-        impl Requests {
-            fn record(&mut self, callee: &Expression<'_>, arguments: &[Argument<'_>]) {
-                let kind = match callee.get_inner_expression() {
-                    Expression::Identifier(name) if name.name == "Function" => DynamicFunctionKind::Ordinary,
-                    Expression::StaticMemberExpression(member) if member.property.name == "Function"
-                        && matches!(member.object.get_inner_expression(), Expression::Identifier(name) if name.name == "globalThis") => DynamicFunctionKind::Ordinary,
-                    Expression::StaticMemberExpression(member) if member.property.name == "constructor" => {
-                        let Expression::FunctionExpression(function) = member.object.get_inner_expression() else { return; };
-                        match (function.r#async, function.generator) {
-                            (false, false) => DynamicFunctionKind::Ordinary,
-                            (true, false) => DynamicFunctionKind::Async,
-                            (false, true) => DynamicFunctionKind::Generator,
-                            (true, true) => DynamicFunctionKind::AsyncGenerator,
-                        }
-                    },
-                    _ => return,
-                };
-                let Some(mut strings) = arguments.iter().map(|argument| {
-                    match argument.as_expression()?.get_inner_expression() {
-                        Expression::StringLiteral(text) => Some(text.value.as_str()),
-                        _ => None,
-                    }
-                }).collect::<Option<Vec<_>>>() else { return; };
-                let body = strings.pop().unwrap_or_default();
-                self.keys.insert(NativeSourceKey::function_constructor(self.specialized, kind, &strings.join(","), body));
-            }
-        }
-        impl<'a> Visit<'a> for Requests {
-            fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-                self.record(&call.callee, &call.arguments);
-                walk::walk_call_expression(self, call);
-            }
-            fn visit_new_expression(&mut self, call: &NewExpression<'a>) {
-                self.record(&call.callee, &call.arguments);
-                walk::walk_new_expression(self, call);
-            }
-        }
-        let mut requests = Requests { specialized, keys: Default::default() };
-        requests.visit_program(program);
-        requests.keys.into_iter().collect()
+        let semantic = oxc_semantic::SemanticBuilder::new().build(program);
+        Self::function_constructor_sources(program, semantic.semantic.scoping(), specialized)
+    }
+
+    pub(super) fn function_constructor_sources(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool) -> Vec<NativeSourceKey> {
+        constructors::sources(program, scoping, specialized)
     }
 }

@@ -1270,10 +1270,14 @@ impl Engine {
             .collect();
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
+        #[cfg(feature = "aot")]
+        let native_requests = atom_prefix.native_function_requests().map(|pending| {
+            (pending, Self::function_constructor_sources(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized()))
+        });
         drop(semantic);
         Self::erase_type_only_module_syntax(&mut parsed.program);
         #[cfg(feature = "aot")]
-        let mut native_function_sources = Vec::new();
+        let mut native_requests = native_requests;
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time before code
             // generation (`lazy_bodies::body_facts`).
@@ -1294,7 +1298,8 @@ impl Engine {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             };
             #[cfg(feature = "aot")]
-            if let Some((_, requests)) = facts.native_function_sources { native_function_sources.extend(requests); }
+            if let Some((_, requests)) = facts.native_function_sources
+                && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids);
             private_name_labels.extend(facts.private_name_labels);
             prototype_unobservable.extend(facts.prototype_unobservable);
@@ -1362,11 +1367,6 @@ impl Engine {
                 allocator.capacity(),
             );
         }
-        #[cfg(feature = "aot")]
-        let native_requests = atom_prefix.native_function_requests().map(|pending| {
-            native_function_sources.extend(Self::literal_function_constructor_sources(&parsed.program, atom_prefix.specialized()));
-            (pending, native_function_sources)
-        });
         // The tree is the largest structure of a compilation; the passes that finish the
         // program do not read it.
         drop(parsed);

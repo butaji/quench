@@ -576,6 +576,41 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn constructor_aliases_keep_scope_assignment_and_loop_identities_guarded() {
+        let source = r#"
+            const Alias = Function;
+            let assigned;
+            assigned = Alias;
+            const constructors = [assigned, (function*(){}).constructor];
+            for (const Target of constructors) {
+                const created = new Target('return 42;');
+                const value = created();
+                if (typeof value === 'object') {
+                    const result = value.next();
+                    if (result.value !== 42 || !result.done) throw Error('generator alias');
+                } else if (value !== 42) throw Error('ordinary alias');
+            }
+            {
+                const Alias = () => 7;
+                if (Alias('let invalid = ;') !== 7) throw Error('shadowed alias');
+            }
+            const Async = (async function(){}).constructor;
+            const Generator = (function*(){}).constructor;
+            const AsyncGenerator = (async function*(){}).constructor;
+            for (const Target of [Function, Async, Generator, AsyncGenerator]) {
+                try { Target('#!\n_', ''); throw Error('accepted source'); }
+                catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+            }
+        "#;
+        for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
+            let mut host = Test262RuntimeHost::new(mode);
+            host.execute(source, "constructor-aliases.js").unwrap();
+            assert_eq!(host.native_compilation.rejections, 0);
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
         let program = super::Engine::specialize_unspecialized(r#"
             function calculate(n = 8) {
