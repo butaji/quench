@@ -187,6 +187,12 @@ pub(crate) fn stage_host_sources(
     let global = context.global_root()?;
     let process = context.string_rooted("process");
     let process = context.get_property_rooted(global, process)?;
+    // Process is an implicit Node entry capability and can escape through
+    // aliases or reflection. Materialize its declared lazy groups, without
+    // invoking ordinary accessor getters or any process operation.
+    for name in crate::polyfills::post_bootstrap::process_surface_00::LAZY_MEMBERS {
+        context.materialize_lazy_data_property_rooted(process, name)?;
+    }
     let env = context.string_rooted("env");
     context.get_property_rooted(process, env)?;
     let builtins: Vec<_> = demands.builtins.iter().map(String::as_str).collect();
@@ -213,6 +219,9 @@ pub(crate) fn stage_host_sources(
                 ).map(drop),
                 "fs" | "fs/promises" => {
                     let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
+                    for name in crate::modules::fs_shared_vm::READ_STREAM_MEMBERS {
+                        context.materialize_lazy_data_property_rooted(fs, name)?;
+                    }
                     let key = context.string_rooted("promises");
                     (context.get_property_rooted(fs, key)?, "readlink")
                 }

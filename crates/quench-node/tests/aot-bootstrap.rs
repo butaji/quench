@@ -1409,3 +1409,73 @@ fn native_completion_rejects_guest_caught_frozen_source_omissions() {
     assert!(stderr.contains("lib/util.js"), "{stderr}");
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "explicit source-independent process and fs stream policy qualification"]
+fn compile_command_preserves_lazy_process_and_fs_stream_policies() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench lazy node policies, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let data = directory.join("data.txt");
+    fs::write(&data, "hé🙂\nsecond-line\n").unwrap();
+    let missing = directory.join("missing.txt");
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let guest = r#"
+const fs = require('node:fs');
+const flags = process.allowedNodeEnvironmentFlags;
+const descriptor = Object.getOwnPropertyDescriptor(process, 'allowedNodeEnvironmentFlags');
+const flagChecks = { same: flags === process.allowedNodeEnvironmentFlags,
+  dashed: flags.has('--preserve-symlinks'), undashed: flags.has('preserve_symlinks'),
+  frozen: Object.isFrozen(flags), ignoredAdd: flags.add('--quench-unused-test-flag') === flags && !flags.has('--quench-unused-test-flag'),
+  ignoredDelete: flags.delete('--preserve-symlinks'),
+  descriptor: [descriptor.writable, descriptor.enumerable, descriptor.configurable],
+  methods: ['memoryUsage','cpuUsage','resourceUsage','getActiveResourcesInfo'].map(name => typeof process[name]) };
+const events = []; let text = ''; let failure;
+const stream = fs.createReadStream(process.argv[2], { encoding: 'utf8', highWaterMark: 2 });
+stream.on('open', () => events.push('open'));
+stream.on('ready', () => events.push('ready'));
+stream.on('data', chunk => { text += chunk; });
+stream.on('end', () => events.push('end'));
+stream.on('error', error => { events.push('error'); failure = [error.name, error.code, error.syscall, error.path]; });
+stream.on('close', () => {
+  events.push('close');
+  console.log(JSON.stringify({ flagChecks, events, text, failure,
+    stream: { instance: stream instanceof fs.ReadStream, name: fs.createReadStream.name,
+      length: fs.createReadStream.length, closed: stream.closed, destroyed: stream.destroyed, ended: stream.readableEnded } }));
+});
+"#;
+    for extension in ["cjs", "cts"] {
+        let sources = directory.join(extension);
+        fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        let typed = if extension == "cts" { "\nconst asserted = ('text' as unknown as number); if (asserted + 1 !== 'text1') throw new Error('assertion changed runtime value');\n" } else { "" };
+        fs::write(&entry, format!("{guest}{typed}")).unwrap();
+        let mut oracles = Vec::new();
+        for path in [&data, &missing] {
+            let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+                .arg(&entry).arg(path).current_dir(&directory).output().unwrap();
+            assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+            assert!(!oracle.stdout.is_empty());
+            oracles.push(oracle);
+        }
+        let binary = directory.join(format!("native-{extension}"));
+        let report = directory.join(format!("{extension}.json"));
+        let compile = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+            .arg("compile").arg(&entry).arg("-o").arg(&binary).arg("--report").arg(&report)
+            .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk).output().unwrap();
+        assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr));
+        fs::remove_dir_all(&sources).unwrap();
+        for (path, oracle) in [&data, &missing].into_iter().zip(oracles) {
+            let native = Command::new(&binary).arg(path).env_clear().current_dir(&directory).output().unwrap();
+            assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+            assert_eq!(native.stdout, oracle.stdout, "{extension} {}", path.display());
+            assert_eq!(native.stderr, oracle.stderr);
+        }
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_reduced_payload(&report, &binary);
+        eprintln!("Lazy process/fs stream policies ({extension}) matched Node after source removal: {}", binary.display());
+    }
+    assert_eq!(fs::read_to_string(&data).unwrap(), "hé🙂\nsecond-line\n");
+    assert!(!missing.exists());
+}

@@ -2522,7 +2522,7 @@ fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Re
         crate::host::shared_vm::operation("fsReadStreamInitialize"), module,
     )?;
     context.define_lazy_data_properties_rooted(
-        module, &["createReadStream", "ReadStream"], true, initialize_read_stream,
+        module, READ_STREAM_MEMBERS, true, initialize_read_stream,
     )?;
     let rm_sync = get(context, module, "rmSync")?;
     let promises = promises_module(
@@ -3223,6 +3223,8 @@ pub(super) fn stream_io_error(
     }
     Ok(context.throw(exception))
 }
+
+pub(crate) const READ_STREAM_MEMBERS: &[&str] = &["createReadStream", "ReadStream"];
 
 /// Defines `fs.createReadStream` and `fs.ReadStream` over `stream.Readable` when a script first
 /// observes either (the lazy group `module` installs).
