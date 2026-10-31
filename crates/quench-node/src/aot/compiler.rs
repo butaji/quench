@@ -199,6 +199,9 @@ pub(crate) fn stage_host_sources(
         context.scoped(|context| {
             let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
                 "console" => return crate::modules::console_shared_vm::stage_formatting(context),
+                // createRequire tests URL-like inputs through the SDK URL policy,
+                // including the static CommonJS facade used by ESM imports.
+                "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
                 "fs" | "fs/promises" => {
                     let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
                     let key = context.string_rooted("promises");
@@ -339,6 +342,24 @@ mod tests {
             assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
             SourceManifest::capture_for_graph(&root, &graph).unwrap();
+            fs::remove_dir_all(directory).unwrap();
+        }).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn commonjs_import_facades_stage_create_require_url_policy() {
+        std::thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(|| {
+            let directory = std::env::temp_dir().join(format!("quench-staged-create-require-{}", std::process::id()));
+            fs::create_dir(&directory).unwrap();
+            let entry = directory.join("entry.mjs");
+            fs::write(&entry, "import value from './dependency.cjs'; throw new Error('application must not execute during staging');").unwrap();
+            fs::write(directory.join("dependency.cjs"), "module.exports = 42;").unwrap();
+            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+            assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+            assert!(graph.esm_builtins.contains("node:module"));
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+            let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
+            assert!(staged.assets().files.keys().any(|path|path.ends_with("lib/internal/url.js")));
             fs::remove_dir_all(directory).unwrap();
         }).unwrap().join().unwrap();
     }
