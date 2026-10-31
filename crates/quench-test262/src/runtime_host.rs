@@ -125,12 +125,41 @@ pub struct Test262RuntimeHost {
     done: Option<String>,
     /// The execution every case's runtime uses: the interpreter, or compiled (JIT) execution.
     execution_mode: ExecutionMode,
+    native_dynamic_source: bool,
     native_compilation: crate::NativeCompilation,
     native_variant: &'static str,
     timers: Vec<TestTimer>,
     next_timer_id: u64,
-    #[cfg(feature = "aot")]
     native_module_sources: std::collections::BTreeMap<String, ModuleSource>,
+    module_input_access: ModuleInputAccess,
+    missing_module_input: Option<String>,
+}
+
+/// One atom namespace shared by exact harness, declared modules, and discovered
+/// source constructors. Both object linking and in-process verification consume
+/// this preparation without executing guest code.
+#[cfg(feature = "aot")]
+pub struct NativeCasePrograms {
+    pub harness: Vec<quench_runtime::ResidualProgram>,
+    pub modules: Vec<(ModuleSource, quench_runtime::ResidualProgram)>,
+    pub function_sources: std::collections::BTreeMap<quench_runtime::NativeSourceKey, quench_runtime::NativeSourceCompilation>,
+    pub entry: quench_runtime::ResidualProgram,
+    pub entry_module: Option<ModuleSource>,
+}
+
+/// Compiler-bound code and exact module inputs for one standalone test variant.
+pub struct LinkedCasePrograms {
+    pub harness: Vec<quench_runtime::NativeJsProgram<Test262RuntimeHost>>,
+    pub modules: Vec<quench_runtime::NativeJsProgram<Test262RuntimeHost>>,
+    pub entry: quench_runtime::NativeJsProgram<Test262RuntimeHost>,
+    pub module_sources: Vec<ModuleSource>,
+}
+
+#[derive(Debug, Default)]
+enum ModuleInputAccess {
+    #[default]
+    Filesystem,
+    Embedded,
 }
 
 #[derive(Debug)]
@@ -219,9 +248,13 @@ impl Host for Test262RuntimeHost {
             .parent()
             .unwrap_or_else(|| Path::new(""))
             .join(specifier);
-        #[cfg(feature = "aot")]
-        if let Some(module) = self.native_module_sources.get(quench_runtime::normalized_module_name(&path.to_string_lossy()).as_ref()) {
+        let name = quench_runtime::normalized_module_name(&path.to_string_lossy()).into_owned();
+        if let Some(module) = self.native_module_sources.get(&name) {
             return Ok(Some(module.clone()));
+        }
+        if matches!(self.module_input_access, ModuleInputAccess::Embedded) {
+            if self.missing_module_input.is_none() { self.missing_module_input = Some(name.clone()); }
+            return Err(format!("native image has no module input: {name}").into());
         }
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
@@ -240,6 +273,21 @@ impl Test262RuntimeHost {
         }
     }
 
+    /// Retain the shared interpreter/JIT for source first known at execution.
+    /// Static roots, harness and declared dependencies are still precompiled.
+    pub fn with_native_dynamic_source(mut self, enabled: bool) -> Result<Self, String> {
+        if enabled && (self.execution_mode != ExecutionMode::NativeOnly || !crate::NATIVE_SUPPORT_HAS_JIT) {
+            return Err("dynamic native source requires AOT compilation and JIT support".into());
+        }
+        self.native_dynamic_source = enabled;
+        self.native_compilation.dynamic_source = enabled;
+        Ok(self)
+    }
+
+    fn runtime_execution_mode(&self) -> ExecutionMode {
+        if self.native_dynamic_source { ExecutionMode::Compiled } else { self.execution_mode }
+    }
+
     fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
         self.execute_kind(source, name, SourceKind::Script)
     }
@@ -250,6 +298,44 @@ impl Test262RuntimeHost {
 
     /// Harness files are global Scripts evaluated in the test's realm before
     /// its entry, so modules the entry loads observe the same harness bindings.
+    /// Prepare the same static graph for standalone linking and native-only
+    /// verification. The caller supplies the runner's exact harness and source
+    /// goal; this operation performs no guest execution.
+    #[cfg(feature = "aot")]
+    pub fn prepare_native_programs(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        name: &str,
+        kind: SourceKind,
+    ) -> Result<NativeCasePrograms, String> {
+        self.native_module_sources.clear();
+        self.module_input_access = ModuleInputAccess::Filesystem;
+        self.missing_module_input = None;
+        let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery();
+        let mut scripts = Vec::new();
+        for script in harness {
+            scripts.push(compiler.compile_script(script, HARNESS_SCRIPT_NAME, Default::default())
+                .map_err(|errors| format!("quench AOT harness SyntaxError: {errors:?}"))?);
+        }
+        let entry_module = (kind == SourceKind::Module).then(||
+            ModuleSource::text(quench_runtime::normalized_module_name(name).into_owned(), source));
+        let program = match kind {
+            SourceKind::Module => {
+                let module = entry_module.as_ref().expect("module source goal");
+                self.native_module_sources.insert(module.name.clone(), module.clone());
+                compiler.compile_module_source(module)
+            }
+            SourceKind::Script => compiler.compile_script(source, name, Default::default()),
+            SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
+        }.map_err(|errors| compile_failure(&errors, CompilationSite::Entry))?;
+        let modules = compile_native_dependencies(self, &mut compiler, &program, name)?;
+        let function_sources = compiler.compile_function_sources()
+            .map_err(|error| format!("quench AOT Function compilation: {error}"))?;
+        let entry = compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?;
+        Ok(NativeCasePrograms { harness: scripts, modules, function_sources, entry, entry_module })
+    }
+
     fn execute_after_harness(
         &mut self,
         harness: &[&str],
@@ -258,45 +344,21 @@ impl Test262RuntimeHost {
         kind: SourceKind,
     ) -> Result<(), String> {
         self.done = None;
-        #[cfg(feature = "aot")]
         self.native_module_sources.clear();
-        let async_test = self.async_test;
+        self.module_input_access = ModuleInputAccess::Filesystem;
+        self.missing_module_input = None;
         let execution_mode = self.execution_mode;
         let mut runtime = Runtime::new(std::mem::take(self));
-        runtime.set_execution_mode(execution_mode);
+        let runtime_mode = runtime.host_mut().runtime_execution_mode();
+        runtime.set_execution_mode(runtime_mode);
         let result = (|| {
             #[cfg(feature = "aot")]
-            let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery();
-            #[cfg(feature = "aot")]
-            let mut native_harness = Vec::new();
-            #[cfg(feature = "aot")]
-            let mut native_dependencies = Vec::new();
-            #[cfg(feature = "aot")]
-            let mut native_function_sources = std::collections::BTreeMap::new();
-            #[cfg(feature = "aot")]
-            if execution_mode == ExecutionMode::NativeOnly {
-                for script in harness {
-                    native_harness.push(compiler.compile_script(script, HARNESS_SCRIPT_NAME, Default::default())
-                        .map_err(|errors| format!("quench AOT harness SyntaxError: {errors:?}"))?);
-                }
-            }
+            let prepared = if execution_mode == ExecutionMode::NativeOnly {
+                Some(runtime.host_mut().prepare_native_programs(harness, source, name, kind)?)
+            } else { None };
             let program = if execution_mode == ExecutionMode::NativeOnly {
                 #[cfg(feature = "aot")]
-                {
-                    let program = match kind {
-                        SourceKind::Module => {
-                            let module = ModuleSource::text(quench_runtime::normalized_module_name(name).into_owned(), source);
-                            let compiled = compiler.compile_module_source(&module);
-                            runtime.host_mut().native_module_sources.insert(module.name.clone(), module);
-                            compiled
-                        },
-                        SourceKind::Script => compiler.compile_script(source, name, Default::default()),
-                        SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
-                    }.map_err(|errors| compile_failure(&errors, CompilationSite::Entry))?;
-                    native_dependencies = compile_native_dependencies(runtime.host_mut(), &mut compiler, &program, name)?;
-                    native_function_sources = compiler.compile_function_sources().map_err(|error| format!("quench AOT Function compilation: {error}"))?;
-                    compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?
-                }
+                { prepared.as_ref().expect("native preparation").entry.clone() }
                 #[cfg(not(feature = "aot"))]
                 { return Err("quench AOT code generation requires the aot feature".into()); }
             } else { match kind {
@@ -312,6 +374,8 @@ impl Test262RuntimeHost {
             let execution = if execution_mode == ExecutionMode::NativeOnly {
                 #[cfg(feature = "aot")]
                 {
+                    let NativeCasePrograms { harness: native_harness, modules: native_dependencies,
+                        function_sources: native_function_sources, .. } = prepared.expect("native preparation");
                     let host = runtime.host_mut();
                     let output = native_output_directory(name, host.native_variant)?;
                     let mut scripts = Vec::new();
@@ -347,12 +411,18 @@ impl Test262RuntimeHost {
                 .map_err(|error| {
                     format!("quench runtime: {}", runtime.format_error(&program, &error))
                 })?;
-            if async_test {
+            Self::drain_completion(&mut runtime, &program)
+        })();
+        self.finish_runtime(runtime, result)
+    }
+
+    fn drain_completion(runtime: &mut Runtime<Self>, program: &quench_runtime::ResidualProgram) -> Result<(), String> {
+            if runtime.host_mut().async_test {
                 loop {
-                    runtime.run_jobs(&program).map_err(|error| {
+                    runtime.run_jobs(program).map_err(|error| {
                         format!(
                             "quench runtime jobs: {}",
-                            runtime.format_error(&program, &error)
+                            runtime.format_error(program, &error)
                         )
                     })?;
                     if let Some(error) = runtime.host_mut().done.clone() {
@@ -375,38 +445,60 @@ impl Test262RuntimeHost {
                     }
                 }
             }
-            if kind == SourceKind::Module && runtime.module_evaluation_pending(&program)
+            if program.is_module() && runtime.module_evaluation_pending(program)
                 .map_err(|error| format!("quench runtime module: {error}"))? {
                 return Err("quench runtime module: evaluation did not settle".into());
             }
-            Ok(())
-        })();
+        Ok(())
+    }
+
+    fn finish_runtime(&mut self, mut runtime: Runtime<Self>, result: Result<(), String>) -> Result<(), String> {
         for timer in runtime.host_mut().take_all_timers() {
             runtime.release_root(timer.callback);
-            for arg in timer.args {
-                runtime.release_root(arg);
-            }
+            for arg in timer.args { runtime.release_root(arg); }
         }
-        let rejections = runtime.native_execution_rejections();
+        let missing = runtime.host_mut().missing_module_input.take();
+        let rejections = runtime.native_execution_rejections().saturating_add(u64::from(missing.is_some()));
         runtime.host_mut().native_compilation.rejections = rejections;
         *self = runtime.into_host();
-        #[cfg(feature = "aot")]
         self.native_module_sources.clear();
+        self.module_input_access = ModuleInputAccess::Filesystem;
         if rejections != 0 {
-            Err(format!("quench AOT capability rejection: {rejections} native code requests unavailable; outcome: {result:?}"))
+            Err(format!("quench AOT capability rejection: {rejections} native code requests unavailable; outcome: {result:?}{}", missing.map(|name|format!("; missing module: {name}")).unwrap_or_default()))
         } else { result }
+    }
+
+    /// Execute compiler-bound objects through the same harness/job/completion
+    /// contract as source-based verification. The host's execution mode selects
+    /// strict native support or linked code plus the shared interpreter/JIT.
+    /// Module inputs remain explicit in both modes; no filesystem fallback.
+    pub fn execute_linked_programs(
+        &mut self,
+        graph: LinkedCasePrograms,
+        resolver: impl Fn(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static,
+    ) -> Result<(), String> {
+        self.done = None;
+        let execution_mode = self.runtime_execution_mode();
+        self.native_module_sources = graph.module_sources.into_iter().map(|mut source| {
+            source.name = quench_runtime::normalized_module_name(&source.name).into_owned();
+            (source.name.clone(), source)
+        }).collect();
+        self.module_input_access = ModuleInputAccess::Embedded;
+        self.missing_module_input = None;
+        let mut runtime = Runtime::new(std::mem::take(self));
+        runtime.set_execution_mode(execution_mode);
+        runtime.set_native_program_resolver(resolver);
+        let program = graph.entry.residual();
+        let result = runtime.execute_native_module_graph(&graph.harness, &graph.modules, &graph.entry)
+            .map_err(|error| format!("quench runtime: {}", runtime.format_error(program, &error)))
+            .and_then(|_| Self::drain_completion(&mut runtime, program));
+        self.finish_runtime(runtime, result)
     }
 
     fn execute_harnessed_script(
         &mut self, harness: &[&str], source: &str, strict: bool, name: &str,
     ) -> Result<(), String> {
-        let source = if strict {
-            let prefix = if source.starts_with("#!") {
-                source.char_indices().find(|(_, ch)| oxc_syntax::line_terminator::is_line_terminator(*ch))
-                    .map_or(source.len(), |(index, ch)| index + ch.len_utf8())
-            } else { 0 };
-            std::borrow::Cow::Owned(format!("{}\n\"use strict\";\n{}", &source[..prefix], &source[prefix..]))
-        } else { std::borrow::Cow::Borrowed(source) };
+        let source = crate::script_source(source, strict);
         self.execute_after_harness(harness, &source, name, SourceKind::Script)
     }
 
@@ -416,7 +508,7 @@ impl Test262Host for Test262RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         self.async_test = metadata.is_async;
         self.can_block = metadata.can_block;
-        self.native_compilation = crate::NativeCompilation::default();
+        self.native_compilation = crate::NativeCompilation { dynamic_source: self.native_dynamic_source, ..Default::default() };
         self.native_variant = if metadata.is_module { "module" } else if metadata.is_raw { "raw" } else if metadata.only_strict { "strict" } else { "sloppy" };
     }
 
@@ -473,6 +565,57 @@ impl Test262Host for Test262RuntimeHost {
 #[cfg(test)]
 mod tests {
     use super::Test262RuntimeHost;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_graph_shares_dynamic_source_semantics_and_resets_after_rejection() {
+        use quench_runtime::{ExecutionMode, NativeJsProgram, NativeSourceError, SourceKind};
+        // Inputs become known only inside guest execution. Native roots call
+        // dynamic bodies through the same heap, lexical environment and jobs.
+        let source = r#"
+            const local = 40;
+            const text = ['local', '+', '2'].join('');
+            if (eval(text) !== 42) throw Error('direct eval lexical environment');
+            const FunctionKind = (function() {}).constructor;
+            const body = ['return', 'x + 2'].join(' ');
+            const fn = FunctionKind('x', body);
+            if (fn(40) !== 42 || fn === FunctionKind('x', body)) throw Error('Function value or identity');
+            Promise.resolve().then(() => {
+                if ((0, eval)(['typeof', 'local'].join(' ')) !== 'undefined') throw Error('indirect eval scope');
+                $DONE();
+            });
+        "#;
+        for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
+            let mut host = Test262RuntimeHost::new(ExecutionMode::NativeOnly)
+                .with_native_dynamic_source(mode == ExecutionMode::Compiled).unwrap();
+            for _ in 0..2 {
+                host.async_test = true;
+                let prepared = host.prepare_native_programs(&[], source, "linked-dynamic.js", SourceKind::Script).unwrap();
+                let graph = super::LinkedCasePrograms {
+                    harness: vec![], modules: vec![],
+                    entry: NativeJsProgram::compile_eager(prepared.entry).unwrap(),
+                    module_sources: vec![],
+                };
+                let result = host.execute_linked_programs(graph, |_, _| Ok::<_, NativeSourceError>(None));
+                if mode == ExecutionMode::Compiled {
+                    result.unwrap();
+                    assert_eq!(host.native_compilation.rejections, 0);
+                    assert!(host.native_compilation.dynamic_source);
+                } else {
+                    assert!(result.unwrap_err().starts_with("quench AOT capability rejection:"));
+                    assert!(host.native_compilation.rejections > 0);
+                }
+                assert!(host.native_module_sources.is_empty());
+                assert!(host.timers.is_empty());
+                assert!(matches!(host.module_input_access, super::ModuleInputAccess::Filesystem));
+            }
+            if mode == ExecutionMode::Compiled {
+                host.execute(source, "hybrid-source-verification.js").unwrap();
+                assert!(!host.native_compilation.units.is_empty());
+                assert_eq!(host.native_compilation.rejections, 0);
+            }
+        }
+    }
 
     #[test]
     fn strict_destructuring_checks_missing_bindings_after_getters_and_defaults() {

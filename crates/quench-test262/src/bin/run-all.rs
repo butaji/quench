@@ -20,7 +20,7 @@ use quench_test262::ratchet::{
 use quench_test262::waivers::{Adjudication, Waivers};
 use quench_runtime::ExecutionMode;
 use quench_test262::{
-    discover_js_files, execution_mode_name, execution_mode_flag, resolve_stages, take_execution_mode, HarnessCache,
+    discover_js_files, execution_mode_name, execution_mode_flag, resolve_stages, take_execution_mode, take_dynamic_source, HarnessCache,
     ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
 };
 use wait_timeout::ChildExt;
@@ -29,6 +29,7 @@ const DEFAULT_REPORT: &str = "target/test262-report.json";
 /// A compiled run's report, kept beside the interpreter's so neither overwrites the other.
 const DEFAULT_JIT_REPORT: &str = "target/test262-report-jit.json";
 const DEFAULT_AOT_REPORT: &str = "target/test262-report-aot.json";
+const DEFAULT_AOT_DYNAMIC_REPORT: &str = "target/test262-report-aot-dynamic.json";
 const AOT_SERIAL_SOURCE_BYTES_ENV: &str = "TEST262_AOT_SERIAL_SOURCE_BYTES";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
@@ -69,11 +70,13 @@ fn run() -> ExitCode {
     if args.iter().any(|arg| arg == AOT_FLAG) && args.iter().any(|arg| arg == JIT_FLAG) {
         return fail("choose one execution mode".into());
     }
+    let dynamic_source = take_dynamic_source(&mut args);
     let mode = take_execution_mode(&mut args);
+    if dynamic_source && mode != ExecutionMode::NativeOnly { return fail("--dynamic-source requires --aot".into()); }
     let freeze_expected = match args.as_slice() {
         [] => false,
         [option] if option == "--freeze-expected-pass-set" => true,
-        _ => return fail(format!("usage: run-all [{JIT_FLAG}|{AOT_FLAG}] [--freeze-expected-pass-set]")),
+        _ => return fail(format!("usage: run-all [{JIT_FLAG}|{AOT_FLAG} [--dynamic-source]] [--freeze-expected-pass-set]")),
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
@@ -122,7 +125,7 @@ fn run() -> ExitCode {
         Ok(waivers) => waivers,
         Err(error) => return fail(error),
     };
-    let outcomes = match run_parallel_cases(&executable, &root, &files, timeout, mode) {
+    let outcomes = match run_parallel_cases(&executable, &root, &files, timeout, mode, dynamic_source) {
         Ok(outcomes) => outcomes,
         Err(error) => return fail(error),
     };
@@ -136,7 +139,7 @@ fn run() -> ExitCode {
         Err(error) => return fail(error),
     };
     if let Err(error) = write_report(
-        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout, mode,
+        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout, mode, dynamic_source,
     ) {
         return fail(error);
     }
@@ -174,6 +177,7 @@ fn run_parallel_cases(
     files: &[PathBuf],
     timeout: Duration,
     mode: ExecutionMode,
+    dynamic_source: bool,
 ) -> Result<Vec<Result<(), String>>, String> {
     let cursor = AtomicUsize::new(0);
     let completed = AtomicUsize::new(0);
@@ -199,10 +203,10 @@ fn run_parallel_cases(
                     let exclusive = serial_source_bytes.is_some_and(|threshold| fs::metadata(path).map_or(true, |metadata| metadata.len() >= threshold));
                     let result = if exclusive {
                         let _admission = compilation_admission.write().expect("compilation admission poisoned");
-                        run_case_process(executable, root, path, timeout, mode)
+                        run_case_process(executable, root, path, timeout, mode, dynamic_source)
                     } else {
                         let _admission = compilation_admission.read().expect("compilation admission poisoned");
-                        run_case_process(executable, root, path, timeout, mode)
+                        run_case_process(executable, root, path, timeout, mode, dynamic_source)
                     };
                     outcomes.lock().expect("case results poisoned")[index] = Some(result);
                     let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -290,14 +294,20 @@ fn required_timeout_ms() -> Result<u64, String> {
 
 fn run_case_entry() -> ExitCode {
     let mut args = env::args_os().skip(2).collect::<Vec<_>>();
+    let dynamic_source = take_dynamic_source(&mut args);
     let mode = take_execution_mode(&mut args);
+    if dynamic_source && mode != ExecutionMode::NativeOnly { return fail("--dynamic-source requires --aot".into()); }
     let Some(path) = args.into_iter().next().map(PathBuf::from) else {
         return fail("--case requires a test path".into());
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
+    let host = match Test262RuntimeHost::new(mode).with_native_dynamic_source(dynamic_source) {
+        Ok(host) => host,
+        Err(error) => return fail(error),
+    };
+    let mut runner = Test262Runner::new(host);
     let mut harness = HarnessCache::new(root.join("harness"));
     // The bare failure is the case outcome, as run-stages' worker reports it.
     match runner.run_file_variants_with_cache(&path, &mut harness) {
@@ -321,10 +331,12 @@ fn run_case_process(
     path: &Path,
     timeout: Duration,
     mode: ExecutionMode,
+    dynamic_source: bool,
 ) -> Result<(), String> {
     let mut child = Command::new(executable)
         .arg("--case")
         .args(execution_mode_flag(mode))
+        .args(dynamic_source.then_some(quench_test262::DYNAMIC_SOURCE_FLAG))
         .arg(path)
         .env("TEST262_DIR", root)
         .stdout(Stdio::null())
@@ -414,10 +426,12 @@ fn write_report(
     ratchet: &RatchetResult,
     timeout: Duration,
     mode: ExecutionMode,
+    dynamic_source: bool,
 ) -> Result<(), String> {
     let default_report = match mode {
         ExecutionMode::Interpreted => DEFAULT_REPORT,
         ExecutionMode::Compiled => DEFAULT_JIT_REPORT,
+        ExecutionMode::NativeOnly if dynamic_source => DEFAULT_AOT_DYNAMIC_REPORT,
         ExecutionMode::NativeOnly => DEFAULT_AOT_REPORT,
     };
     let path = env::var_os("TEST262_REPORT")
@@ -523,6 +537,7 @@ fn write_report(
             "units": native_units, "functions": native_functions, "object_bytes": native_object_bytes,
             "capability_rejections": native_rejections, "compiler_present_in_host": true,
             "separately_linked_executables": false,
+            "dynamic_source": dynamic_source,
         })),
         "discovered": discovered,
         "total": report.total,
@@ -810,6 +825,7 @@ mod tests {
             &fixture,
             Duration::from_secs(5),
             ExecutionMode::Interpreted,
+            false,
         )
         .unwrap_err();
 

@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
 use quench_test262::{
-    take_execution_mode, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
+    take_execution_mode, take_dynamic_source, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
 };
 
 fn main() -> ExitCode {
@@ -27,13 +27,18 @@ fn run() -> ExitCode {
         return ExitCode::from(2);
     }
     let mut args = env::args_os().skip(1).collect::<Vec<_>>();
+    let dynamic_source = take_dynamic_source(&mut args);
     let mode = take_execution_mode(&mut args);
     let Some(path) = args.into_iter().next().map(PathBuf::from) else {
         eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}|{AOT_FLAG}] <test.js>");
         return ExitCode::from(2);
     };
     let root = test262_root();
-    let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
+    let host = match Test262RuntimeHost::new(mode).with_native_dynamic_source(dynamic_source) {
+        Ok(host) => host,
+        Err(error) => return fail(error),
+    };
+    let mut runner = Test262Runner::new(host);
     let mut harness = HarnessCache::new(root.join("harness"));
     match runner.run_file_variants_with_cache(&path, &mut harness) {
         Ok(outcomes) => {

@@ -20,6 +20,7 @@ pub fn write_variant_report(root: &std::path::Path, path: &std::path::Path, outc
             "functions": unit.functions, "object_bytes": unit.object_bytes, "object": unit.object,
         })).collect::<Vec<_>>());
         json!({"variant":record.variant.name(),"outcome":outcome,"reason":reason,"native_units":compilation,
+            "dynamic_source":record.compilation.as_ref().map(|compilation| compilation.dynamic_source),
             "native_rejections":record.compilation.as_ref().map(|compilation| compilation.rejections)})
     }).collect();
     std::fs::write(report, serde_json::to_vec(&variants).map_err(|error| error.to_string())?).map_err(|error| error.to_string())

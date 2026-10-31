@@ -11,11 +11,19 @@ mod harness_cache;
 pub mod ratchet;
 pub mod reporting;
 mod runner_support;
+pub use runner_support::{cached_harness as harness_sources, negative as classify_test_outcome, outcome as execution_outcome, script_source};
 pub mod runtime_host;
 mod stages;
 pub mod waivers;
 pub use harness_cache::HarnessCache;
-pub use runtime_host::Test262RuntimeHost;
+pub use runtime_host::{Test262RuntimeHost, LinkedCasePrograms};
+#[cfg(feature = "aot")]
+pub use runtime_host::NativeCasePrograms;
+
+/// Whether the linked host omits source compilation and dynamic execution.
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && !cfg!(any(feature = "jit", feature = "aot"));
+/// A hybrid native image requires the shared interpreter and JIT.
+pub const NATIVE_SUPPORT_HAS_JIT: bool = cfg!(feature = "jit");
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 use quench_runtime::ExecutionMode;
@@ -23,6 +31,14 @@ use quench_runtime::ExecutionMode;
 /// The switch that runs cases in compiled (JIT) execution, spelled as the Wasm runner's.
 pub const JIT_FLAG: &str = "--jit";
 pub const AOT_FLAG: &str = "--aot";
+pub const DYNAMIC_SOURCE_FLAG: &str = "--dynamic-source";
+
+/// Dynamic source support is orthogonal to ahead-of-time object publication.
+pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {
+    let requested = args.iter().any(|arg| arg == DYNAMIC_SOURCE_FLAG);
+    args.retain(|arg| arg != DYNAMIC_SOURCE_FLAG);
+    requested
+}
 
 /// Select native-only, JIT, or interpreter execution and remove the mode switch.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
@@ -108,6 +124,7 @@ pub trait Test262Host: Send {
 
 #[derive(Clone, Debug, Default)]
 pub struct NativeCompilation {
+    pub dynamic_source: bool,
     pub units: Vec<NativeCompiledUnit>,
     pub rejections: u64,
 }

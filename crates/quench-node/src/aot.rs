@@ -17,57 +17,16 @@ pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSour
 #[cfg(feature = "aot")]
 pub(crate) use compiler::{HostSourceDemands, stage_host_sources};
 
-/// One compiler-owned UTF-8 pool; all ranges retain their exact original text.
+/// One compiler-owned source pool, shared by all embedding hosts.
 #[macro_export]
 macro_rules! linked_source_pool {
-    ($lookup:ident, $path:literal) => {
-        const fn $lookup(start: usize, len: usize) -> &'static str {
-            const TEXT: &str = include_str!($path);
-            TEXT.split_at(start).1.split_at(len).0
-        }
-    };
+    ($($tokens:tt)*) => { quench_runtime::linked_source_pool! { $($tokens)* } };
 }
 
-/// Bind the compiler's metadata and static entry tables for NodeHost. The
-/// generated invocation contains only data; this macro owns the loading rules.
+/// Node's host selection for the shared linked-program catalog.
 #[macro_export]
 macro_rules! linked_native_sources {
-    (entry $entry:ident: $entry_symbol:ident => ($entry_link:literal, $entry_metadata:literal);
-     resolver $resolve:ident {
-         $($symbol:ident => ($link:literal, $metadata:literal, $name:literal, [$($part:expr),*] $(, source $source:expr)?),)*
-     } $(errors {
-         $(($error_name:literal, [$($error_part:expr),*]) => $message:expr,)*
-     })?) => {
-        pub const NATIVE_SOURCE_COUNT: usize = (&[$(stringify!($symbol)),*] as &[&str]).len()
-            + (&[$($(stringify!($error_name)),*)?] as &[&str]).len();
-        /// # Safety
-        /// Metadata, host ABI and all entry tables must be emitted together by
-        /// this compiler, linked unmodified, and kept alive for the process.
-        pub unsafe fn $entry() -> Result<quench_runtime::NativeJsProgram<$crate::NodeHost>, String> {
-            unsafe extern "C" { #[link_name = $entry_link] static $entry_symbol: u8; }
-            let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($entry_metadata)[..]);
-            let program = quench_runtime::ResidualProgram::from_binary_bytes(bytes)?;
-            // SAFETY: the compiler emits the metadata and this linked table together.
-            unsafe { quench_runtime::NativeJsProgram::from_linked_image(program, std::ptr::addr_of!($entry_symbol)) }
-        }
-        /// # Safety
-        /// Every catalog record must meet the linked-image contract above.
-        pub unsafe fn $resolve(namespace: &quench_runtime::NativeProgramNamespace, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<$crate::NodeHost>>, quench_runtime::NativeSourceError> {
-            $(if name == $name && parts == [$($part),*] {
-                unsafe extern "C" { #[link_name = $link] static $symbol: u8; }
-                let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($metadata)[..]);
-                let program = $crate::linked_native_sources!(@decode namespace, bytes $(, $source)?)?;
-                // SAFETY: as above, including the compiler-wide atom namespace.
-                return unsafe { quench_runtime::NativeJsProgram::from_linked_image(program, std::ptr::addr_of!($symbol)) }.map(Some).map_err(Into::into);
-            })*
-            $($(if name == $error_name && parts == [$($error_part),*] {
-                return Err(quench_runtime::NativeSourceError::Syntax($message.to_owned()));
-            })*)?
-            Ok(None)
-        }
-    };
-    (@decode $namespace:ident, $bytes:ident) => { $namespace.decode($bytes) };
-    (@decode $namespace:ident, $bytes:ident, $source:expr) => { $namespace.decode_with_static_source($bytes, $source) };
+    ($($tokens:tt)*) => { quench_runtime::linked_native_sources! { host $crate::NodeHost; $($tokens)* } };
 }
 
 /// Derive a static loader archive from compiler-owned raw inputs and edges.
