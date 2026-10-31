@@ -1378,3 +1378,34 @@ fn compile_command_rejects_guest_caught_native_capability_errors() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "explicit incomplete-image native completion qualification"]
+fn native_completion_rejects_guest_caught_frozen_source_omissions() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-frozen-source-completion-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, "try { new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array([255])); } catch (_) {}\n").unwrap();
+    let mut manifest = SourceManifest::default();
+    let graph = manifest.add_module_graph(&entry).unwrap();
+    assert!(graph.requirements.is_empty());
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+    manifest.extend(SourceManifest::capture_for_graph(&root, &graph).unwrap()).unwrap();
+    let mut compiled = manifest.compile().unwrap();
+    // Fault injection: keep the native bodies but omit an SDK loader asset
+    // required only when the decoder constructs its invalid-input error.
+    let omitted = compiled.assets.node_root.as_ref().unwrap().join("lib/util.js");
+    assert!(compiled.assets.files.remove(&omitted).is_some());
+    let inputs = compiled.emit(&directory.join("images")).unwrap();
+    let executable = directory.join("native");
+    link_images(&inputs, &executable);
+    fs::remove_file(&entry).unwrap();
+    let output = Command::new(&executable).env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("native AOT image omitted required module source:"), "{stderr}");
+    assert!(stderr.contains("lib/util.js"), "{stderr}");
+    fs::remove_dir_all(directory).unwrap();
+}
