@@ -44,7 +44,14 @@ impl<H: Host> NativeJsProgram<H> {
     /// and the JIT's executable-memory publisher. No hotness or fallback tier.
     #[cfg(feature = "aot")]
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        super::compiled::compile_eager_native(program)
+        Self::compile_eager_with_options(program, crate::NativeJsCodegenOptions::default())
+    }
+
+    #[cfg(feature = "aot")]
+    pub fn compile_eager_with_options(
+        program: ResidualProgram, options: crate::NativeJsCodegenOptions,
+    ) -> Result<Self, String> {
+        super::compiled::compile_eager_native(program, options)
     }
 
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.

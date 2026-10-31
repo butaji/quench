@@ -2116,3 +2116,43 @@ if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
         runtime.execute(&program).unwrap();
     }
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owners() {
+    let program = Engine::specialize_unspecialized(r#"
+        globalThis.answer = 0;
+        function grow(n) {
+            let sum = 0;
+            for (let i = 0; i < n; i++) {
+                try { if (i === 3) throw i; sum += i; }
+                catch (error) { sum += error * 2; }
+                finally { sum += 1; }
+            }
+            return () => sum;
+        }
+        globalThis.saved = grow(8);
+        answer = saved();
+        Promise.resolve().then(() => { answer += 1; });
+    "#, "native-regions.js").unwrap();
+    let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap() };
+    let module = crate::lower_native_js_module_with_options(&program, "native_regions", options).unwrap();
+    assert!(module.functions.iter().filter(|function| matches!(function, crate::NativeFunction::Definition { .. })).count() > program.function_count());
+    crate::emit_native_module("native_regions", module.functions, module.data).unwrap();
+    let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    drop(native);
+    runtime.collect(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("answer");
+    let answer = runtime.get_property_rooted(global, key).unwrap();
+    assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(40.0));
+    let key = runtime.string_rooted("saved");
+    let saved = runtime.get_property_rooted(global, key).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let value = runtime.call_rooted(saved, receiver, &[]).unwrap();
+    assert_eq!(runtime.rooted_value(value).unwrap().as_number(), Some(39.0));
+    assert_eq!(runtime.native_execution_rejections(), 0);
+}

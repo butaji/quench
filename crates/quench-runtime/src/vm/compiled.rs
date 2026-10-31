@@ -5708,7 +5708,9 @@ fn compile_and_publish_entry(
 /// Eager publication has no code-cache admission budget: all requested bodies
 /// must compile or the whole program fails. Owners release code and operands together.
 #[cfg(feature = "aot")]
-pub(super) fn compile_eager_native<H: Host>(program: ResidualProgram) -> Result<crate::NativeJsProgram<H>, String> {
+pub(super) fn compile_eager_native<H: Host>(
+    program: ResidualProgram, options: super::native_graph::NativeJsCodegenOptions,
+) -> Result<crate::NativeJsProgram<H>, String> {
     program.validate_unless_proven()?;
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
@@ -5722,27 +5724,57 @@ pub(super) fn compile_eager_native<H: Host>(program: ResidualProgram) -> Result<
             let instruction = super::dispatch_fast::decoded_instruction(function, packed);
             super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
         }).collect();
-        let mut signature = None;
-        let native = super::native_graph::lower_function(function, function_id, &*isa,
-            |builder, op, pc, context, result| {
-                let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
-                let target = builder.ins().iconst(isa.pointer_type(), op.native_semantic_entry::<H>() as usize as i64);
-                let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
-                let pc = builder.ins().iconst(types::I64, pc as i64);
-                let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
-                builder.inst_results(call)[0]
-            })?;
-        let memory = super::jit_backend::compile_function(native, &*isa, None, |compiled, _| {
-            if !compiled.buffer.relocs().is_empty() { return Err(NativeCompileRejection::Relocations); }
-            CodeMemory::new(compiled.code_buffer()).ok_or(NativeCompileRejection::Publish)
-        }).map_err(|error| format!("native function {id}: {}", error.reason()))?;
-        // SAFETY: lower_function emits the native entry ABI; owner keeps code
-        // and the immutable operands addressed by it alive through every call.
-        entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(memory.pointer()) });
-        owners.push((memory, operands));
+        let mut code = Vec::new();
+        if let Some(regions) = options.regions(function) {
+            for region in regions.iter().cloned() {
+                code.push(compile_eager_body::<H>(function, function_id, &*isa, &operands, Some(region))?);
+            }
+            let mut signature = None;
+            let wrapper = super::native_graph::lower_region_dispatch(function_id, function.code.len(),
+                options.region_instruction_budget.get(), regions.len(), &*isa,
+                |builder, index, context, pc, result| {
+                    let signature = *signature.get_or_insert_with(|| builder.import_signature(
+                        native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
+                    let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
+                    let arguments = super::native_graph::region_call_arguments(builder, &*isa, context, pc, result);
+                    let call = builder.ins().call_indirect(signature, target, &arguments);
+                    builder.inst_results(call)[0]
+                })?;
+            code.push(publish_eager_graph(wrapper, &*isa)?);
+        } else { code.push(compile_eager_body::<H>(function, function_id, &*isa, &operands, None)?); }
+        // SAFETY: the final body or wrapper implements the public native entry
+        // ABI; owner retains every private region and immutable operand array.
+        entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(code.last().expect("native entry compiled").pointer()) });
+        owners.push((code, operands));
     }
     // SAFETY: every entry was lowered from its exact function for host H.
     unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(owners)) }
+}
+
+#[cfg(feature = "aot")]
+fn compile_eager_body<H: Host>(
+    function: &Function, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
+    operands: &[super::NativeJsOperands], region: Option<std::ops::Range<usize>>,
+) -> Result<CodeMemory, String> {
+    let mut signature = None;
+    let native = super::native_graph::lower_body(function, function_id, isa, region,
+        |builder, op, pc, context, result| {
+            let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
+            let target = builder.ins().iconst(isa.pointer_type(), op.native_semantic_entry::<H>() as usize as i64);
+            let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
+            let pc = builder.ins().iconst(types::I64, pc as i64);
+            let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
+            builder.inst_results(call)[0]
+        })?;
+    publish_eager_graph(native, isa).map_err(|error| format!("native function {function_id}: {error}"))
+}
+
+#[cfg(feature = "aot")]
+fn publish_eager_graph(function: ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Result<CodeMemory, String> {
+    super::jit_backend::compile_function(function, isa, None, |compiled, _| {
+        if !compiled.buffer.relocs().is_empty() { return Err(NativeCompileRejection::Relocations); }
+        CodeMemory::new(compiled.code_buffer()).ok_or(NativeCompileRejection::Publish)
+    }).map_err(|error| error.reason().to_owned())
 }
 
 use super::jit_backend::NativeCompileRejection;
@@ -14956,6 +14988,19 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
+    fn partitioned_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, Entry) {
+        let program = vm.programs.get(ProgramId::MAIN).unwrap();
+        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap() };
+        let native = crate::NativeJsProgram::compile_eager_with_options((*program).clone(), options).unwrap();
+        let prepared = vm.prepare_native_script(native).unwrap();
+        let entry = prepared.native.as_ref().unwrap().entries()[0];
+        // SAFETY: only the opaque context pointer type differs; the entry is
+        // compiled for this exact program and H, and prepared owns all regions.
+        let entry = unsafe { std::mem::transmute::<crate::NativeJsFunctionEntry, Entry>(entry) };
+        (prepared, entry)
+    }
+
+    #[cfg(feature = "aot")]
     fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
         -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>)
     {
@@ -14966,7 +15011,7 @@ mod tests {
         }).collect();
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut signature = None;
-        let native = super::super::native_graph::lower_function(function, function_id, &*isa,
+        let native = super::super::native_graph::lower_body(function, function_id, &*isa, None,
             |builder, op, pc, context, result| {
                 if pc == 0 && let Some(entries) = entries {
                     let pointer = builder.ins().iconst(isa.pointer_type(), entries as i64);
@@ -15374,14 +15419,17 @@ mod tests {
     fn native_semantic_graph_rejects_full_width_invalid_resume_pc_before_effects() {
         let mut vm = semantic_vm("globalThis.effect = 1;");
         let (_memory, entry, _operands) = live_native_graph(&vm);
+        let (_prepared, partitioned) = partitioned_native_graph(&vm);
         let invalid = (u64::from(u32::MAX) + 1) as usize;
-        let (status, word, outcome) = with_semantic_context(&mut vm, invalid, |context, result| {
-            // SAFETY: as above; the out-of-range PC is data, not a pointer.
-            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
-        });
-        assert_eq!(status, i64::from(NATIVE_JS_INVALID_PC));
-        assert_eq!(word, invalid as u64);
-        assert!(outcome.is_none());
+        for entry in [entry, partitioned] {
+            let (status, word, outcome) = with_semantic_context(&mut vm, invalid, |context, result| {
+                // SAFETY: as above; the out-of-range PC is data, not a pointer.
+                unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+            });
+            assert_eq!(status, i64::from(NATIVE_JS_INVALID_PC));
+            assert_eq!(word, invalid as u64);
+            assert!(outcome.is_none());
+        }
         let effect = vm.lookup_atom("effect").unwrap();
         assert_eq!(vm.own_property(vm.realm.globals, effect), None);
     }
@@ -15395,14 +15443,17 @@ mod tests {
         ).unwrap();
         let mut vm = semantic_program(program);
         let (_memory, entry, _operands) = live_native_graph(&vm);
-        let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
-            // SAFETY: the rooted frame, compiled entry and operands live through the call.
-            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
-        });
-        assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
-        let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
-        let value = error.thrown_value().expect("original thrown value");
-        assert_eq!(vm.heap.string(value).expect("JS string concatenation").to_string(), "x1");
+        let (_prepared, partitioned) = partitioned_native_graph(&vm);
+        for entry in [entry, partitioned] {
+            let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
+                // SAFETY: the rooted frame, entries and operands live through the call.
+                unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+            });
+            assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
+            let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
+            let value = error.thrown_value().expect("original thrown value");
+            assert_eq!(vm.heap.string(value).expect("JS string concatenation").to_string(), "x1");
+        }
     }
 
     #[cfg(feature = "aot")]

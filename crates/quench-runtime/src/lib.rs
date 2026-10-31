@@ -81,7 +81,7 @@ pub use vm::{
 };
 #[cfg(feature = "aot")]
 pub use vm::{
-    native_graph::{NativeJsModule, lower_native_js_module},
+    native_graph::{NativeJsModule, NativeJsCodegenOptions, lower_native_js_module, lower_native_js_module_with_options},
     native_object::{
         NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction, NativeFunctionAddress,
         emit_native_module, emit_native_object,
