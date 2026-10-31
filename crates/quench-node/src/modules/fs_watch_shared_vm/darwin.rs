@@ -56,7 +56,7 @@ pub(crate) struct Kernel {
     descriptor: Option<OwnedFd>,
     subscriptions: HashMap<WatchDescriptor, Subscription>,
     next_id: i32,
-    pending: Queue,
+    pending: Option<Queue>,
 }
 impl Kernel {
     fn descriptor(&mut self) -> io::Result<&OwnedFd> {
@@ -87,7 +87,11 @@ impl Kernel {
         let descriptor = WatchDescriptor(id);
         let subscription = if file.metadata()?.is_dir() {
             Subscription::Directory {
-                _stream: Directory::start(path, descriptor, self.pending.clone())?,
+                _stream: Directory::start(
+                    path,
+                    descriptor,
+                    self.pending.get_or_insert_with(Queue::default).clone(),
+                )?,
             }
         } else {
             let queue = self.descriptor()?.as_raw_fd();
@@ -101,12 +105,23 @@ impl Kernel {
     pub(crate) fn unsubscribe(&mut self, descriptor: WatchDescriptor) {
         // Closing a file removes its kevent; Directory::drop invalidates its stream.
         self.subscriptions.remove(&descriptor);
-        self.pending
-            .borrow_mut()
-            .retain(|event| event.descriptor != descriptor);
+        if let Some(pending) = &self.pending {
+            pending
+                .borrow_mut()
+                .retain(|event| event.descriptor != descriptor);
+            // Only directory callback contexts share the queue with this kernel.
+            // Once the final context is released there is no producer to retain.
+            if Rc::strong_count(pending) == 1 {
+                self.pending = None;
+            }
+        }
     }
     pub(crate) fn next_event(&mut self) -> io::Result<Option<KernelEvent>> {
-        if let Some(event) = self.pending.borrow_mut().pop_front() {
+        if let Some(event) = self
+            .pending
+            .as_ref()
+            .and_then(|pending| pending.borrow_mut().pop_front())
+        {
             return Ok(Some(event));
         }
         if self
@@ -123,7 +138,11 @@ impl Kernel {
                     u8::from(true),
                 );
             }
-            if let Some(event) = self.pending.borrow_mut().pop_front() {
+            if let Some(event) = self
+                .pending
+                .as_ref()
+                .and_then(|pending| pending.borrow_mut().pop_front())
+            {
                 return Ok(Some(event));
             }
         }
@@ -199,13 +218,16 @@ impl Kernel {
     }
     pub(crate) fn reset(&mut self) {
         self.subscriptions.clear();
-        self.pending.borrow_mut().clear();
+        self.pending = None;
         self.descriptor = None;
     }
     pub(crate) fn snapshot_quiescent(&self) -> bool {
         self.subscriptions.is_empty()
             && self.descriptor.is_none()
-            && self.pending.borrow().is_empty()
+            && self
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.borrow().is_empty())
     }
 }
 fn arm(queue: i32, file: i32, id: WatchDescriptor) -> io::Result<()> {

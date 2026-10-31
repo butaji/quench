@@ -51,6 +51,8 @@ fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
     assert!(staged.assets().files.keys().any(|path| path.ends_with(warning)));
     assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(warning)));
     assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/internal/process/report.js")));
+    assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/fs.js")));
+    assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with("lib/fs.js")));
     for source in ["lib/internal/fs/promises.js", "lib/internal/abort_controller.js"] {
         assert!(staged.assets().views.keys().any(|(path, _)| path.ends_with(source)), "{source}");
     }
@@ -1610,4 +1612,56 @@ if (mode === 'missing') {
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap(); assert_reduced_payload(&report, &binary);
         eprintln!("Filesystem watch delivery/lifecycle ({extension}) matched Node in interpreter, JIT and source-deleted native image: {}", binary.display());
     }
+}
+
+#[test]
+#[ignore = "explicit source-independent fs namespace/library-policy qualification"]
+fn compile_command_freezes_fs_namespace_directory_and_glob_policies() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench fs library policies, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let data = directory.join("data"); fs::create_dir(&data).unwrap(); fs::create_dir(data.join("sub")).unwrap();
+    fs::write(data.join("héllo.txt"), "one").unwrap(); fs::write(data.join("sub/nested.txt"), "two").unwrap();
+    let sdk = directory.join("support.jsonl"); fs::write(&sdk, pinned_support_report()).unwrap();
+    let guest = r#"
+const fs = require('node:fs');
+const data = process.argv[2], beforeCwd = process.cwd();
+const policy = ['Dirent','glob','globSync','readdirSync'].map(name => {
+  const descriptor = Object.getOwnPropertyDescriptor(fs, name);
+  return [name,typeof fs[name],fs[name].name,fs[name].length,descriptor.writable,descriptor.enumerable,descriptor.configurable];
+});
+const entries = fs.readdirSync(data,{withFileTypes:true,encoding:'buffer'}).map(entry => ({
+  name:entry.name.toString(),buffer:Buffer.isBuffer(entry.name),parentPath:entry.parentPath,
+  dirent:entry instanceof fs.Dirent,file:entry.isFile(),directory:entry.isDirectory(),symlink:entry.isSymbolicLink()
+}));
+const matches = fs.globSync('**/*.txt',{cwd:data});
+let error; try { fs.readdirSync(data+'/missing'); } catch(failure) {
+  error=[failure.name,failure.code,failure.errno,failure.syscall,failure.path,Object.keys(failure)];
+}
+console.log(JSON.stringify({policy,entries,matches,error,promiseGlob:typeof fs.promises.glob,sameCwd:process.cwd()===beforeCwd}));
+"#;
+    for extension in ["cjs", "cts"] {
+        let sources = directory.join(extension); fs::create_dir(&sources).unwrap(); let entry = sources.join(format!("entry.{extension}"));
+        let guest = if extension == "cts" { guest.replace("const fs = require('node:fs');", "const fs = (require('node:fs') as unknown as {globSync(pattern:string, options:unknown):number});") } else { guest.to_owned() };
+        fs::write(&entry, guest).unwrap();
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).arg(&data).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr)); assert!(!oracle.stdout.is_empty());
+        for jit in [false,true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node")); if jit { command.arg("--jit"); }
+            let actual = command.arg(&entry).arg(&data).output().unwrap();
+            assert_eq!(actual.status.code(),oracle.status.code(),"jit={jit}: {}",String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(actual.stdout,oracle.stdout,"{extension} jit={jit}"); assert_eq!(actual.stderr,oracle.stderr);
+        }
+        let binary = directory.join(format!("native-{extension}")); let report = directory.join(format!("{extension}.json"));
+        let compile = Command::new(env!("CARGO_BIN_EXE_quench-node")).arg("compile").arg(&entry).arg("-o").arg(&binary)
+            .arg("--report").arg(&report).args(["--profile","iteration","--sdk-report"]).arg(&sdk).output().unwrap();
+        assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr)); fs::remove_dir_all(&sources).unwrap();
+        let actual = Command::new(&binary).arg(&data).env_clear().current_dir(&directory).output().unwrap();
+        assert_eq!(actual.status.code(),oracle.status.code(),"{}",String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout,oracle.stdout,"{extension}"); assert_eq!(actual.stderr,oracle.stderr);
+        let report:serde_json::Value=serde_json::from_slice(&fs::read(report).unwrap()).unwrap(); assert_reduced_payload(&report,&binary);
+        eprintln!("Filesystem directory/glob policies ({extension}) matched Node in interpreter, JIT and source-deleted native image: {}",binary.display());
+    }
+    assert_eq!(fs::read_to_string(data.join("héllo.txt")).unwrap(),"one"); assert_eq!(fs::read_to_string(data.join("sub/nested.txt")).unwrap(),"two");
+    assert!(!data.join("missing").exists());
 }

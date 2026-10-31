@@ -3207,21 +3207,7 @@ pub(super) fn stream_io_error(
     syscall: &str,
     path: &str,
 ) -> Result<RootedError, RootedError> {
-    let (code, _) = super::fs_error_codes::code_for(&error);
-    let description = super::fs_error_codes::strerror(code);
-    let message = format!("{code}: {description}, {syscall} '{path}'");
-    let exception = context.error_rooted(&message)?;
-    let code_value = context.string_rooted(code);
-    set(context, exception, "code", code_value)?;
-    let syscall_value = context.string_rooted(syscall);
-    set(context, exception, "syscall", syscall_value)?;
-    let path_value = context.string_rooted(path);
-    set(context, exception, "path", path_value)?;
-    if let Some(errno) = error.raw_os_error() {
-        let errno_value = context.number(-f64::from(errno));
-        set(context, exception, "errno", errno_value)?;
-    }
-    Ok(context.throw(exception))
+    sync::io_error(context, syscall, Some(path), &error)
 }
 
 pub(crate) const READ_STREAM_MEMBERS: &[&str] = &["createReadStream", "ReadStream"];

@@ -222,12 +222,10 @@ pub(crate) fn stage_host_sources(
                     context, "assert.js", "internal/util/comparisons.js",
                 ).map(drop),
                 "fs" | "fs/promises" => {
-                    let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
-                    for name in crate::modules::fs_shared_vm::READ_STREAM_MEMBERS {
-                        context.materialize_lazy_data_property_rooted(fs, name)?;
-                    }
-                    let key = context.string_rooted("promises");
-                    (context.get_property_rooted(fs, key)?, "readlink")
+                    // Namespace readers can observe directory/glob policy as well
+                    // as streams, including fs.promises reached through fs.
+                    crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs")?;
+                    return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs/promises");
                 }
                 // Domain's capture callback preserves the process report flag.
                 "domain" => (process, "report"),

@@ -2288,3 +2288,92 @@ fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effect
         }
     }
 }
+
+const INITIALIZE_CHAINED_PROPERTY: HostFunctionId = HostFunctionId(0);
+const LAZY_CHAIN_LAYERS: u32 = 3;
+fn initialize_chained_property(
+    context: &mut NativeContext<'_, TestHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let state = context.host_function_data()?;
+    let holder = context.get_named_property_rooted(state, "0")?;
+    let remaining = context.get_named_property_rooted(state, "1")?;
+    let remaining = context
+        .rooted_value(remaining)
+        .and_then(Value::as_number)
+        .unwrap();
+    let next = context.number(remaining - 1.0);
+    let key = context.string_rooted("1");
+    context.set_property_rooted(state, key, next, state)?;
+    if remaining > 1.0 {
+        let initializer = context.host_function_with_data(INITIALIZE_CHAINED_PROPERTY, state)?;
+        context.define_lazy_data_properties_rooted(holder, &["value"], true, initializer)?;
+    } else {
+        let key = context.string_rooted("value");
+        let value = context.number(42.0);
+        context.define_data_property_rooted(holder, key, value, true, true, true)?;
+    }
+    Ok(context.undefined())
+}
+#[test]
+fn reflection_finishes_replacement_lazy_groups_before_exposing_data_descriptors() {
+    for (operation, writable, enumerable, configurable) in [
+        (
+            "Object.getOwnPropertyDescriptor(chain,'value')",
+            true,
+            true,
+            true,
+        ),
+        (
+            "Reflect.getOwnPropertyDescriptor(chain,'value')",
+            true,
+            true,
+            true,
+        ),
+        (
+            "Object.getOwnPropertyDescriptors(chain).value",
+            true,
+            true,
+            true,
+        ),
+        (
+            "(Object.freeze(chain),Object.getOwnPropertyDescriptor(chain,'value'))",
+            false,
+            true,
+            false,
+        ),
+        (
+            "(Object.defineProperty(chain,'value',{enumerable:false}),Object.getOwnPropertyDescriptor(chain,'value'))",
+            true,
+            false,
+            true,
+        ),
+    ] {
+        let source = format!(
+            "const descriptor={operation}; if(descriptor.value!==42||descriptor.writable!=={writable}||descriptor.enumerable!=={enumerable}||descriptor.configurable!=={configurable}||'get' in descriptor||chainState[1]!==0)throw Error('incomplete lazy chain'); if(chain.value!==42||chainState[1]!==0)throw Error('reinitialized chain');"
+        );
+        for program in [
+            Engine::compile(crate::ExecutionRequest {
+                source: &source,
+                name: "lazy-chain.js",
+                kind: crate::SourceKind::Script,
+            })
+            .unwrap(),
+            Engine::specialize(&source, "lazy-chain.js").unwrap(),
+        ] {
+            let host=TestHost::default().with_natives(crate::host_functions![method "initializeChain" (0) => initialize_chained_property,])
+                .with_install(|context: &mut NativeContext<'_, TestHost>| {
+                    let holder=context.object_rooted()?; let count=context.number(f64::from(LAZY_CHAIN_LAYERS)); let state=context.array_rooted(&[holder,count])?;
+                    let initializer=context.host_function_with_data(INITIALIZE_CHAINED_PROPERTY,state)?;
+                    context.define_lazy_data_properties_rooted(holder,&["value"],true,initializer)?;
+                    let global=context.global_root()?;
+                    for (name,value) in [("chain",holder),("chainState",state)] { let key=context.string_rooted(name); context.set_property_rooted(global,key,value,global)?; }
+                    context.seal_startup_intrinsics(); Ok(())
+                });
+            Runtime::new(host)
+                .execute(&program)
+                .unwrap_or_else(|error| panic!("{operation}: {error:?}"));
+        }
+    }
+}

@@ -1234,7 +1234,7 @@ fn throw_operation_error(
     error: &ops::OperationError,
 ) -> Result<RootId, RootedError> {
     let details = fs_error_details::operation_error_details(error);
-    throw_error_details(context, details)
+    Err(error_from_details(context, details)?)
 }
 
 pub(crate) fn throw_io_error(
@@ -1243,16 +1243,22 @@ pub(crate) fn throw_io_error(
     path: Option<&str>,
     error: &std::io::Error,
 ) -> Result<RootId, RootedError> {
-    throw_error_details(
-        context,
-        fs_error_details::error_details(syscall, path, error),
-    )
+    Err(io_error(context, syscall, path, error)?)
 }
 
-fn throw_error_details(
+pub(super) fn io_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    syscall: &str,
+    path: Option<&str>,
+    error: &std::io::Error,
+) -> Result<RootedError, RootedError> {
+    error_from_details(context, fs_error_details::error_details(syscall, path, error))
+}
+
+fn error_from_details(
     context: &mut NativeContext<'_, NodeHost>,
     details: fs_error_details::FsErrorDetails,
-) -> Result<RootId, RootedError> {
+) -> Result<RootedError, RootedError> {
     let exception = context.error_rooted(&details.message)?;
     if let Some(name) = details.name {
         set_string(context, exception, "name", name)?;
@@ -1266,7 +1272,7 @@ fn throw_error_details(
         let path = context.string_rooted(&path);
         set(context, exception, "path", path)?;
     }
-    Err(context.throw(exception))
+    Ok(context.throw(exception))
 }
 
 fn set_string(
