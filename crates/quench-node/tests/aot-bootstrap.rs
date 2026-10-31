@@ -684,3 +684,170 @@ console.log(JSON.stringify({ identity:bare === prefixed, actual:bare.default ===
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+fn write_typescript_esm_fixture(directory: &std::path::Path, extension: &str) -> std::path::PathBuf {
+    use std::fs;
+    fs::create_dir_all(directory).unwrap();
+    fs::write(directory.join("package.json"), if extension == "mts" { r#"{"type":"commonjs"}"# } else { r#"{"type":"module"}"# }).unwrap();
+    let entry = directory.join(format!("entry.{extension}"));
+    fs::write(&entry, r#"
+import type { Missing } from './never-present.mts';
+export type { MissingAgain } from './also-missing.mts';
+export type * from './missing-star.mts';
+import { type Shape, value, bump, erased, asserted } from './dep.mts';
+import { type Side } from './side.mts';
+import * as ns from './dep.mts';
+interface Local { value: number }
+export interface Exported { value: number }
+export type Alias = Local;
+export { type Local };
+const result: number = erased('text' as unknown as number);
+await Promise.resolve();
+bump();
+console.log(JSON.stringify({result, asserted:asserted(false as unknown as number),
+  value, keys:Object.keys(ns), effects:globalThis.typedSideEffects,
+  requireType:typeof require, descriptor:Object.getOwnPropertyDescriptor(ns, 'value')}));
+"#).unwrap();
+    fs::write(directory.join("dep.mts"), r#"
+export interface Shape { value: number }
+export let value: number = 40;
+export function bump(): void { value++; }
+export function erased(input: number): number { return input + 1; }
+export function asserted(input: unknown): number { return (input as number) + 1; }
+"#).unwrap();
+    fs::write(directory.join("side.mts"), "export interface Side {}
+globalThis.typedSideEffects = (globalThis.typedSideEffects || 0) + 1;
+").unwrap();
+    entry
+}
+
+#[test]
+fn typescript_esm_graph_erases_type_edges_without_assuming_value_types() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-ts-esm-graph-{}", std::process::id()));
+    for extension in ["mts", "ts"] {
+        let root = directory.join(extension);
+        let entry = write_typescript_esm_fixture(&root, extension);
+        let mut manifest = SourceManifest::default();
+        let graph = manifest.add_module_graph(&entry).unwrap();
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        assert_eq!(graph.files.len(), 3);
+        assert!(manifest.assets().modules.values().all(|(_, typescript)| *typescript));
+        manifest.compile().unwrap();
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+        let output: serde_json::Value = serde_json::from_slice(&oracle.stdout).unwrap();
+        assert_eq!(output["result"], "text1");
+        assert_eq!(output["asserted"], 1);
+        assert_eq!(output["effects"], 1);
+        for jit in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+            if jit { command.arg("--jit"); }
+            let actual = command.arg(&entry).output().unwrap();
+            assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(actual.stdout, oracle.stdout);
+            assert_eq!(actual.stderr, oracle.stderr);
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit source-independent TypeScript ESM compile/link qualification"]
+fn compile_command_preserves_typescript_esm_after_source_removal() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench ts esm sources, {}", std::process::id()));
+    let sources = directory.join("sources");
+    let entry = write_typescript_esm_fixture(&sources, "mts");
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let binary = directory.join("program");
+    let report = directory.join("report.json");
+    let compile = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&binary)
+        .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk)
+        .arg("--report").arg(&report).output().unwrap();
+    assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr));
+    fs::remove_dir_all(&sources).unwrap();
+    let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, oracle.stdout);
+    assert_eq!(native.stderr, oracle.stderr);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(report["bytecode_interpreter"], false);
+    assert_eq!(report["js_source_frontend"], false);
+    eprintln!("TypeScript ESM type-only edges and unsound assertions matched Node after source removal: {}", binary.display());
+}
+
+#[test]
+fn unscoped_typescript_type_import_does_not_force_module_goal() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-ts-unscoped-{}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.ts");
+    fs::write(&entry, "import type { Missing } from './missing.mts';\nexport interface Shape {}\nexport type Alias = number;\nexport type * from './missing-star.mts';\nconst value: number = 42; console.log(typeof require, value);\n").unwrap();
+    assert_eq!(quench_node::NodeHost::source_kind(&entry).unwrap(), quench_runtime::SourceKind::Script);
+    let mut manifest = SourceManifest::default();
+    let graph = manifest.add_module_graph(&entry).unwrap();
+    assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+    assert_eq!(graph.files.len(), 1);
+    manifest.compile().unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    for jit in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        if jit { command.arg("--jit"); }
+        let actual = command.arg(&entry).output().unwrap();
+        assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, oracle.stdout);
+        assert_eq!(actual.stderr, oracle.stderr);
+    }
+    let entry = directory.join("module.ts");
+    fs::write(directory.join("side.mts"), "export interface Shape {}\n").unwrap();
+    fs::write(&entry, "import { type Shape } from './side.mts'; console.log(typeof require);\n").unwrap();
+    assert_eq!(quench_node::NodeHost::source_kind(&entry).unwrap(), quench_runtime::SourceKind::Module);
+    let mut manifest = SourceManifest::default();
+    let graph = manifest.add_module_graph(&entry).unwrap();
+    assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+    assert_eq!(graph.files.len(), 2);
+    manifest.compile().unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    for jit in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        if jit { command.arg("--jit"); }
+        let actual = command.arg(&entry).output().unwrap();
+        assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, oracle.stdout);
+        assert_eq!(actual.stderr, oracle.stderr);
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn typescript_symlink_uses_real_package_scope() {
+    use std::{fs, os::unix::fs::symlink, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-ts-symlink-{}", std::process::id()));
+    let scoped = directory.join("scoped");
+    fs::create_dir_all(&scoped).unwrap();
+    fs::write(scoped.join("package.json"), r#"{"type":"module"}"#).unwrap();
+    let original = scoped.join("entry.ts");
+    fs::write(&original, "const value: number = 42; console.log(typeof require, value);\n").unwrap();
+    let entry = directory.join("linked.ts");
+    symlink(&original, &entry).unwrap();
+    assert_eq!(quench_node::NodeHost::source_kind(&entry).unwrap(), quench_runtime::SourceKind::Module);
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    for jit in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        if jit { command.arg("--jit"); }
+        let actual = command.arg(&entry).output().unwrap();
+        assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, oracle.stdout);
+        assert_eq!(actual.stderr, oracle.stderr);
+    }
+    fs::remove_dir_all(directory).unwrap();
+}

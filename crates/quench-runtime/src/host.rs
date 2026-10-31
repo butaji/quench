@@ -41,6 +41,8 @@ pub struct HostGlobal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleSource {
     pub name: String,
+    /// Host-selected syntax; annotations never establish runtime value facts.
+    pub typescript: bool,
     /// The text the VM compiles, shared: a resolved module is kept and handed out once per
     /// import that names it, and copying its text each time had cost a large bundle's
     /// whole text per import (vite npm scenario: 250 copies of a 1.36 MB module).
@@ -54,7 +56,7 @@ pub struct ModuleSource {
 impl ModuleSource {
     /// A module whose bytes are its source text.
     pub fn text(name: impl Into<String>, source: impl Into<std::sync::Arc<str>>) -> Self {
-        Self { name: name.into(), source: source.into(), original_bytes: None }
+        Self { name: name.into(), source: source.into(), original_bytes: None, typescript: false }
     }
 
     /// A module read as bytes: its source is their UTF-8 decoding, with replacement
@@ -65,9 +67,18 @@ impl ModuleSource {
             Err(error) => {
                 let bytes = error.into_bytes();
                 let source = String::from_utf8_lossy(&bytes).into();
-                Self { name: name.into(), source, original_bytes: Some(bytes.into()) }
+                Self { name: name.into(), source, original_bytes: Some(bytes.into()), typescript: false }
             }
         }
+    }
+
+    pub fn with_typescript(mut self, typescript: bool) -> Self {
+        self.typescript = typescript;
+        self
+    }
+
+    pub fn compilation_goal(&self) -> &'static str {
+        if self.typescript { crate::STATIC_TYPESCRIPT_MODULE_GOAL } else { crate::STATIC_MODULE_GOAL }
     }
 
     /// The module's bytes, as an import with `type: "bytes"` reads them.

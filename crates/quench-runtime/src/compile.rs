@@ -43,6 +43,7 @@ mod native_sources;
 pub use native_sources::{NativeJsCompiler, NativeSourceKey};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
+pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
@@ -358,14 +359,15 @@ struct StaticModuleTextKey {
     length: usize,
     hash: u64,
     name: Box<str>,
+    typescript: bool,
 }
 
 impl StaticModuleTextKey {
-    fn of(source: &str, module_name: &str) -> Self {
+    fn of(source: &str, module_name: &str, typescript: bool) -> Self {
         use std::hash::{Hash, Hasher};
         let mut hasher = rustc_hash::FxHasher::default();
         source.hash(&mut hasher);
-        Self { length: source.len(), hash: hasher.finish(), name: module_name.into() }
+        Self { length: source.len(), hash: hasher.finish(), name: module_name.into(), typescript }
     }
 }
 impl Engine {
@@ -446,7 +448,7 @@ impl Engine {
     /// memoized for the thread by the text and name: linking and evaluating a module asks for
     /// it several times (a module graph parsed each module three times, 12% of a Babel run).
     pub(crate) fn static_module_analysis(source: &str, module_name: &str) -> Rc<StaticModuleAnalysis> {
-        Self::static_module_analysis_with(source, module_name, |analyze| analyze())
+        Self::static_module_analysis_with(source, module_name, false, |analyze| analyze())
     }
 
     /// `static_module_analysis`, whose memo misses `obtain`, which analyzes the text with the
@@ -454,22 +456,23 @@ impl Engine {
     pub(crate) fn static_module_analysis_with(
         source: &str,
         module_name: &str,
+        typescript: bool,
         obtain: impl FnOnce(&dyn Fn() -> StaticModuleAnalysis) -> StaticModuleAnalysis,
     ) -> Rc<StaticModuleAnalysis> {
         thread_local! {
             static ANALYSES: std::cell::RefCell<FxHashMap<StaticModuleTextKey, Rc<StaticModuleAnalysis>>> =
                 std::cell::RefCell::default();
         }
-        let key = StaticModuleTextKey::of(source, module_name);
+        let key = StaticModuleTextKey::of(source, module_name, typescript);
         if let Some(analysis) = ANALYSES.with(|analyses| analyses.borrow().get(&key).cloned()) {
             return analysis;
         }
-        let analysis = Rc::new(obtain(&|| Self::analyze_static_module(source, module_name)));
+        let analysis = Rc::new(obtain(&|| Self::analyze_static_module(source, module_name, typescript)));
         ANALYSES.with(|analyses| analyses.borrow_mut().insert(key, analysis.clone()));
         analysis
     }
 
-    fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
+    fn analyze_static_module(source: &str, module_name: &str, typescript: bool) -> StaticModuleAnalysis {
         let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
         // No source-derived proof is available in execution-only support.
         // Archived analysis may still satisfy static_module_analysis_with;
@@ -477,7 +480,7 @@ impl Engine {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return unbounded; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
+        let mut parsed = Parser::new(&allocator, &normalized, SourceType::mjs().with_typescript(typescript)).parse();
         if stack::validate_parsed(&parsed).is_err() {
             return unbounded;
         }
@@ -493,6 +496,8 @@ impl Engine {
         if let Some(error) = semantic.diagnostics.first() {
             return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
+        drop(semantic);
+        Self::erase_type_only_module_syntax(&mut parsed.program);
         StaticModuleAnalysis {
             early_error: None,
             plan: Some(StaticModulePlan {
@@ -501,6 +506,50 @@ impl Engine {
                 has_top_level_await: has_top_level_await(&parsed.program.body),
             }),
         }
+    }
+
+    /// Project typed module syntax onto runtime edges and bindings while
+    /// retaining the source positions used by the compiler and replay.
+    pub fn erase_type_only_module_syntax(program: &mut Program<'_>) {
+        if program.source_type.is_typescript() { typescript::erase_module_types(program); }
+    }
+
+    /// A host that wraps a typed body must erase type-only module declarations
+    /// before placing it in function grammar. Keep byte positions and line breaks;
+    /// the module-declaration verdict comes from the same AST projection as linking.
+    pub fn project_typescript_module_syntax(source: &str) -> Option<(std::borrow::Cow<'_, str>, bool)> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+        let allocator = Allocator::default();
+        let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
+            .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
+        if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
+        let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
+        Self::erase_type_only_module_syntax(&mut parsed.program);
+        let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
+            let span = statement.span(); (span.start, span.end)
+        }).collect();
+        let has_module_declarations = parsed.program.body.iter().any(Statement::is_module_declaration);
+        let mut erased = spans.into_iter().filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
+        if erased.peek().is_none() { return Some((source.into(), has_module_declarations)); }
+        let mut projected = String::with_capacity(source.len());
+        let mut cursor = 0;
+        for span in erased {
+            let start = span.start as usize;
+            let end = span.end as usize;
+            projected.push_str(&source[cursor..start]);
+            for character in source[start..end].chars() {
+                if oxc_syntax::line_terminator::is_line_terminator(character) { projected.push(character); }
+                else { for _ in 0..character.len_utf8() { projected.push(' '); } }
+            }
+            cursor = end;
+        }
+        projected.push_str(&source[cursor..]);
+        Some((projected.into(), has_module_declarations))
+    }
+
+    /// Runtime requests after type-only module syntax has been erased.
+    pub fn module_requests(program: &Program<'_>) -> Vec<ModuleRequest> {
+        module_requests(&program.body)
     }
 
     fn module_link_plan(statements: &[Statement<'_>], module_name: &str) -> Option<ModuleLinkPlan> {
@@ -872,6 +921,7 @@ impl Engine {
     pub(crate) fn specialize_module_with_atom_prefix(
         source: &str,
         name: &str,
+        typescript: bool,
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -880,7 +930,7 @@ impl Engine {
             name,
             SpecializationMode::of(atom_prefix),
             atom_prefix,
-            SourceType::mjs(),
+            SourceType::mjs().with_typescript(typescript),
             true,
             false,
             false,
@@ -1203,6 +1253,7 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         drop(semantic);
+        Self::erase_type_only_module_syntax(&mut parsed.program);
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time before code
             // generation (`lazy_bodies::body_facts`).

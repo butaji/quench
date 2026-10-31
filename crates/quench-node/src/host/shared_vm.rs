@@ -1664,7 +1664,9 @@ impl NodeHost {
         // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
         // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
         // text it compiles, never the file it wraps.
-        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
+        Ok(Some(quench_runtime::ModuleSource::text(name, source).with_typescript(
+            kind == quench_runtime::SourceKind::Module && matches!(extension, "ts" | "mts"),
+        )))
     }
 }
 

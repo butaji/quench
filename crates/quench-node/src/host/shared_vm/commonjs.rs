@@ -144,10 +144,10 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
     source_kind_of_real(&path)
 }
 
-/// The path whose package scope decides `path`'s goal: only a `.js` or extensionless file
+/// The path whose package scope decides `path`'s goal: `.js`, `.ts` or an extensionless file
 /// asks its package scope, which is its real path's.
 fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String> {
-    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None) {
+    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js" | "ts") | None) {
         return crate::host::real_path::real_path(path).map(std::borrow::Cow::Owned).map_err(|error| error.to_string());
     }
     Ok(std::borrow::Cow::Borrowed(path))
@@ -164,7 +164,7 @@ pub(crate) fn source_kind_of_real(path: &Path) -> Result<quench_runtime::SourceK
                 return Err(SOURCE_KIND_DETECTION_UNAVAILABLE.into());
             }
             let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-            Ok(detect_source_kind(&source_text(&bytes)))
+            Ok(detect_source_kind_for_path(path, &source_text(&bytes)))
         }
     }
 }
@@ -176,8 +176,24 @@ pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<que
         Some(kind) => Ok(kind),
         None if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY =>
             Err(SOURCE_KIND_DETECTION_UNAVAILABLE.into()),
-        None => Ok(detect_source_kind(&source_text(bytes))),
+        None => Ok(detect_source_kind_for_path(path, &source_text(bytes))),
     }
+}
+
+fn detect_source_kind_for_path(path: &Path, text: &str) -> quench_runtime::SourceKind {
+    if path.extension().is_some_and(|extension| extension == "ts") {
+        let body = script_body(text);
+        let Some((projected, has_module_declarations)) = quench_runtime::Engine::project_typescript_module_syntax(body) else {
+            return quench_runtime::SourceKind::Script;
+        };
+        if has_module_declarations { return quench_runtime::SourceKind::Module; }
+        let wrapper = [WRAPPER_PREFIX, projected.as_ref(), WRAPPER_SUFFIX].concat();
+        if valid_source(&wrapper, oxc_span::SourceType::cjs().with_typescript(true)) {
+            return quench_runtime::SourceKind::Script;
+        }
+        return quench_runtime::SourceKind::Module;
+    }
+    detect_source_kind(text)
 }
 
 /// The goal a real path's extension or package scope declares; none when Node's syntax
@@ -185,9 +201,9 @@ pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<que
 fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind>, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
         // Node's `wasm` format is an ES module (`esm_wasm`).
-        Some("mjs" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
+        Some("mjs" | "mts" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
         Some("cjs" | "cts" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
-        Some(extension) if extension != "js" => return Ok(None),
+        Some(extension) if extension != "js" && extension != "ts" => return Ok(None),
         _ => {}
     }
     // Package scope is a filesystem/JSON question, not another resolution of
@@ -2987,8 +3003,15 @@ fn load_with_resolution(
                 crate::modules::primordials_shared_vm::project_primordials(&file_text)?.into(),
             _ => file_text,
         }, };
+        let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
+        let file_text = if prepared.is_none() && typed_commonjs {
+            match quench_runtime::Engine::project_typescript_module_syntax(&file_text) {
+                Some((std::borrow::Cow::Owned(source), _)) => source.into(),
+                _ => file_text,
+            }
+        } else { file_text };
         #[cfg(feature = "aot")]
-        if library_relative.is_some() {
+        if library_relative.is_some() || typed_commonjs {
             context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
         }
 
@@ -3117,7 +3140,7 @@ const getLinkedBinding = () => ({});
                         let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main, typescript) {
                             Ok(wrapper) => wrapper,
                             Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
-                                && detect_source_kind(&wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
+                                && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
                                     == quench_runtime::SourceKind::Module =>
                             {
                                 drop(wrapper_source);
@@ -3267,7 +3290,10 @@ pub(crate) fn native_commonjs_source(
         origin: Some(quench_runtime::wrapper_origin(WRAPPER_PREFIX).ok_or("CommonJS wrapper origin exceeds compiler positions")?),
         keep_records: entry, typescript,
     };
-    let source = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
+    let body = if typescript {
+        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or(body.into())
+    } else { body.into() };
+    let source = [WRAPPER_PREFIX, body.as_ref(), WRAPPER_SUFFIX].concat();
     quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])
 }
 

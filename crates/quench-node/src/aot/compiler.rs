@@ -57,7 +57,7 @@ impl CompiledSources {
             if let Some(PreparedModuleSource::Projected(source)) = &file.prepared { texts.push(source.as_ref()); }
         }
         texts.extend(self.assets.views.values().map(|source| source.as_ref()));
-        texts.extend(self.assets.modules.values().map(|source| source.as_ref()));
+        texts.extend(self.assets.modules.values().map(|(source, _)| source.as_ref()));
         let pool = SourcePool::new(texts);
         let pool_path = directory.join("source_pool.utf8");
         fs::write(&pool_path, pool.text()).map_err(|error| error.to_string())?;
@@ -134,8 +134,8 @@ impl CompiledSources {
             writeln!(catalog, "({referrer:?}, {specifier:?}) => {target:?},").map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}} modules {{").map_err(|error| error.to_string())?;
-        for (name, source) in &self.assets.modules {
-            writeln!(catalog, "{name:?} => source {},", pool.reference(source)).map_err(|error| error.to_string())?;
+        for (name, (source, typescript)) in &self.assets.modules {
+            writeln!(catalog, "{name:?} => source {}, typescript {typescript},", pool.reference(source)).map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
         fs::write(directory.join("required_exports.txt"), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")

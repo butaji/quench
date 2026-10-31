@@ -106,7 +106,7 @@ impl<'a> Visit<'a> for Requests {
 
 pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<DependencyGraph, String> {
     use std::{cell::RefCell, rc::Rc};
-    use quench_runtime::{Host, ModuleSource, SourceKind, STATIC_MODULE_GOAL};
+    use quench_runtime::{Host, ModuleSource, SourceKind};
     let entry = entry.canonicalize().map_err(|error| error.to_string())?;
     let assets = Rc::new(RefCell::new(super::ModuleAssets::default()));
     let mut host = crate::NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?;
@@ -142,6 +142,11 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
                 pending_modules.insert(module.name.clone(), module);
                 continue;
             }
+            if matches!(extension, Some("ts" | "cts")) {
+                let text = commonjs::source_text(&bytes);
+                let projected = quench_runtime::Engine::project_typescript_module_syntax(&text).map(|(source, _)| source).unwrap_or(text.clone());
+                host.record_prepared_module(&path, &projected)?;
+            }
             manifest.insert_key(commonjs::native_commonjs_source(&path, &bytes, path == entry)?);
             (path.to_string_lossy().into_owned(), commonjs::source_text(&bytes).into_owned(),
                 oxc_span::SourceType::script().with_typescript(matches!(extension, Some("ts" | "cts" | "mts"))))
@@ -150,15 +155,16 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
             if !seen_modules.insert(name.clone()) { continue; }
             let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
             if path.extension().is_some_and(|extension| extension == "json") { continue; }
-            manifest.insert(&name, &["specialized", STATIC_MODULE_GOAL, &module.source])?;
-            (name, module.source.to_string(), oxc_span::SourceType::mjs())
+            manifest.insert(&name, &["specialized", module.compilation_goal(), &module.source])?;
+            (name, module.source.to_string(), oxc_span::SourceType::mjs().with_typescript(module.typescript))
         };
         let body = commonjs::script_body(&text);
         let base = u32::try_from(text.len() - body.len()).map_err(|_| "module source exceeds compiler positions")?;
         let allocator = oxc_allocator::Allocator::default();
-        let parsed = oxc_parser::Parser::new(&allocator, body, source_type)
+        let mut parsed = oxc_parser::Parser::new(&allocator, body, source_type)
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: source_type.is_script(), ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() { return Err(format!("{name}: {:?}", parsed.diagnostics)); }
+        quench_runtime::Engine::erase_type_only_module_syntax(&mut parsed.program);
         let mut requests = Requests::default();
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
@@ -184,7 +190,8 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
                 }),
             }
         }
-        for specifier in parsed.module_record.requested_modules.keys() {
+        for request in quench_runtime::Engine::module_requests(&parsed.program) {
+            let specifier = request.source.as_str();
             if commonjs::is_builtin_specifier(specifier) {
                 graph.esm_builtins.insert(format!("node:{}", specifier.strip_prefix("node:").unwrap_or(specifier)));
             }

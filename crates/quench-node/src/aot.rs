@@ -93,7 +93,7 @@ macro_rules! linked_module_assets {
     } $(imports {
         $(($import_referrer:literal, $import_specifier:literal) => $import_target:literal,)*
     } modules {
-        $($module_name:literal => source $module_source:expr,)*
+        $($module_name:literal => source $module_source:expr, $(typescript $module_typescript:expr,)?)*
     })?) => {
         pub fn $factory() -> &'static $crate::aot::EmbeddedModules {
             static MODULES: $crate::aot::EmbeddedModules = $crate::aot::EmbeddedModules {
@@ -104,7 +104,7 @@ macro_rules! linked_module_assets {
                 resolutions: &[$($crate::aot::EmbeddedModuleResolution { parent: $parent, specifier: $specifier, target: $target },)*],
                 views: &[$($crate::aot::EmbeddedSourceView { path: $view_path, key: $view_key, source: $view_source },)*],
                 imports: &[$($($crate::aot::EmbeddedImportResolution { referrer: $import_referrer, specifier: $import_specifier, target: $import_target },)*)?],
-                modules: &[$($($crate::aot::EmbeddedModuleSource { name: $module_name, source: $module_source },)*)?],
+                modules: &[$($($crate::aot::EmbeddedModuleSource { name: $module_name, source: $module_source, typescript: false $(|| $module_typescript)? },)*)?],
             };
             &MODULES
         }

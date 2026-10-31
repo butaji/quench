@@ -11,6 +11,7 @@ pub fn initialize_cli_process_signals() -> std::io::Result<()> {
     crate::modules::process_signals_state::reset_cli_dispositions()
 }
 
+const TYPESCRIPT_MODULE_ENTRY_NAME: &str = "<quench:typescript-module-entry>";
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
@@ -347,14 +348,18 @@ fn execute_shared_on_worker(
             };
             let is_module = kind == SourceKind::Module;
             let wasm = path.extension().is_some_and(|extension| extension == "wasm");
+            let typed_module = is_module && path.extension().is_some_and(|extension| extension == "ts" || extension == "mts");
             let source = if is_module && wasm {
                 crate::host::shared_vm::esm_wasm::entry_facade(&path)?
+            } else if typed_module {
+                let url = url::Url::from_file_path(&path).map_err(|_| "invalid module file URL")?;
+                format!("import {};", serde_json::to_string(url.as_str()).map_err(|error| error.to_string())?)
             } else if is_module {
                 std::fs::read_to_string(&path).map_err(|error| error.to_string())?
             } else {
                 String::new()
             };
-            let name = path.to_string_lossy().into_owned();
+            let name = if typed_module { TYPESCRIPT_MODULE_ENTRY_NAME.into() } else { path.to_string_lossy().into_owned() };
             let commonjs_entry = if is_module { None } else { Some(path.clone()) };
             (source, name, kind, commonjs_entry, exec_argv, goal, Some(path))
         }

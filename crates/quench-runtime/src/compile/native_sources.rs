@@ -1,6 +1,6 @@
 //! Compile source units into one stable atom namespace before host initialization.
 
-use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, STATIC_MODULE_GOAL};
+use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
 use crate::bytecode::{Atom, AtomSequence, AtomTable, SourceText};
 use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;
@@ -18,7 +18,7 @@ impl NativeSourceKey {
     pub fn new(name: &str, parts: &[&str]) -> Result<Self, String> {
         match parts {
             ["specialized" | "unspecialized", _] => {},
-            ["specialized" | "unspecialized", STATIC_MODULE_GOAL, _] => {},
+            ["specialized" | "unspecialized", STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL, _] => {},
             ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
             ["specialized" | "unspecialized", _, _, _] => {},
             _ => return Err("unknown native host source key".into()),
@@ -73,7 +73,7 @@ impl NativeJsCompiler {
         }
         match parts.as_slice() {
             [_, source] => self.compile_host_script(source, key.name()).map_err(|errors| format!("{errors:?}")),
-            [_, STATIC_MODULE_GOAL, source] => self.compile_module(source, key.name())
+            [_, goal @ (STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL), source] => self.compile_module_with_syntax(source, key.name(), *goal == STATIC_TYPESCRIPT_MODULE_GOAL)
                 .map_err(|errors| format!("{errors:?}")),
             [_, goal, source] => self.compile_script(source, key.name(), script_options(goal)?)
                 .map_err(|errors| format!("{errors:?}")),
@@ -98,14 +98,18 @@ impl NativeJsCompiler {
 
     /// Compile a module in the same namespace as its precompiled host scripts.
     pub fn compile_module(&mut self, source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let mut program = Engine::specialize_module_with_atom_prefix(source, name, self, ReleasedRecords::Dropped)?;
+        self.compile_module_with_syntax(source, name, false)
+    }
+
+    fn compile_module_with_syntax(&mut self, source: &str, name: &str, typescript: bool) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let mut program = Engine::specialize_module_with_atom_prefix(source, name, typescript, self, ReleasedRecords::Dropped)?;
         self.adopt(&mut program);
         Ok(program)
     }
 
     /// Retain a frozen loader source without another resident copy of its text.
     pub fn compile_module_source(&mut self, module: &crate::ModuleSource) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        let mut program = self.compile_module(&module.source, &module.name)?;
+        let mut program = self.compile_module_with_syntax(&module.source, &module.name, module.typescript)?;
         if let Some(source) = &mut program.source {
             source.text = SourceText::Shared(module.source.clone());
         }

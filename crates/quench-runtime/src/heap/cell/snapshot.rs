@@ -264,6 +264,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
 fn write_module_source(writer: &mut Writer, module: &crate::ModuleSource) {
     writer.str(&module.name);
     writer.str(&module.source);
+    writer.bool(module.typescript);
     writer.bool(module.original_bytes.is_some());
     if let Some(bytes) = &module.original_bytes {
         writer.bytes(bytes);
@@ -274,6 +275,7 @@ fn read_module_source(reader: &mut Reader<'_>) -> SnapshotResult<crate::ModuleSo
     Ok(crate::ModuleSource {
         name: reader.string()?,
         source: reader.string()?.into(),
+        typescript: reader.bool()?,
         original_bytes: if reader.bool()? { Some(reader.bytes()?.into()) } else { None },
     })
 }

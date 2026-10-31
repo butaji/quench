@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn kept_native_module_program(
         &mut self, module: &crate::ModuleSource,
     ) -> Result<Option<ProgramId>, JsError> {
-        let parts = [self.specialization_part(), crate::STATIC_MODULE_GOAL, &module.source];
+        let parts = [self.specialization_part(), module.compilation_goal(), &module.source];
         let Some(native) = self.host.kept_native_program(&module.name, &parts).map_err(JsError::validation)? else {
             return Ok(None);
         };

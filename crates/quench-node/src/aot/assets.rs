@@ -26,7 +26,7 @@ pub struct ModuleAssets {
     pub entry: Option<PathBuf>,
     pub views: BTreeMap<(PathBuf, String), Rc<str>>,
     pub imports: BTreeMap<(String, String), String>,
-    pub modules: BTreeMap<String, Arc<str>>,
+    pub modules: BTreeMap<String, (Arc<str>, bool)>,
 }
 
 #[cfg(feature = "aot")]
@@ -107,6 +107,7 @@ pub struct EmbeddedImportResolution {
 pub struct EmbeddedModuleSource {
     pub name: &'static str,
     pub source: &'static str,
+    pub typescript: bool,
 }
 
 /// Compiler-generated, sorted original module bytes and resolved edges.
@@ -181,7 +182,7 @@ impl crate::NodeHost {
                 // ModuleSource's owned contract needs one Arc per immutable
                 // source, shared across the loader's many referring edges.
                 let source = source_cache.entry(module.name).or_insert_with(|| Arc::from(module.source));
-                Ok(Some(quench_runtime::ModuleSource::text(module.name, source.clone())))
+                Ok(Some(quench_runtime::ModuleSource::text(module.name, source.clone()).with_typescript(module.typescript)))
             },
             _ => Ok(None),
         }
@@ -193,11 +194,11 @@ impl crate::NodeHost {
             let mut assets = assets.borrow_mut();
             let edge = (referrer.to_owned(), specifier.to_owned());
             if assets.imports.get(&edge).is_some_and(|name| name != &module.name)
-                || assets.modules.get(&module.name).is_some_and(|source| source != &module.source) {
+                || assets.modules.get(&module.name).is_some_and(|(source, typescript)| source != &module.source || *typescript != module.typescript) {
                 return Err(format!("module import changed during capture: {specifier} from {referrer}"));
             }
             assets.imports.insert(edge, module.name.clone());
-            assets.modules.insert(module.name.clone(), module.source.clone());
+            assets.modules.insert(module.name.clone(), (module.source.clone(), module.typescript));
         }
         Ok(())
     }
