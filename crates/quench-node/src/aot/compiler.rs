@@ -281,7 +281,12 @@ impl SourceManifest {
         host.module_assets = ModuleAssetState::Capture(assets.clone());
         let mut runtime = Runtime::new(host);
         let entry = Engine::specialize("", NATIVE_ENTRY_NAME).map_err(|errors| format!("{errors:?}"))?;
-        runtime.execute_deferred_jobs(&entry).map_err(|error| error.to_string())?;
+        runtime.execute_deferred_jobs(&entry).map_err(|error| {
+            match error.source_location() {
+                Some((file, line, column, _)) => format!("{file}:{line}:{column}: {error}"),
+                None => error.to_string(),
+            }
+        })?;
         drop(runtime);
         let mut manifest = Rc::try_unwrap(inputs).map_err(|_| "bootstrap source collector is still borrowed".to_owned())?.into_inner();
         manifest.assets = Rc::try_unwrap(assets).map_err(|_| "module asset collector is still borrowed".to_owned())?.into_inner();
