@@ -46,6 +46,7 @@ struct Requests {
     classified_requires: BTreeSet<u32>,
     dynamic_requires: BTreeSet<u32>,
     dynamic_imports: BTreeSet<u32>,
+    literal_imports: BTreeSet<String>,
     host_globals: BTreeSet<String>,
 }
 
@@ -99,7 +100,10 @@ impl<'a> Visit<'a> for Requests {
     }
 
     fn visit_import_expression(&mut self, import: &ImportExpression<'a>) {
-        self.dynamic_imports.insert(import.span().start);
+        match (import.phase, import.source.get_inner_expression()) {
+            (None, Expression::StringLiteral(specifier)) => { self.literal_imports.insert(specifier.value.to_string()); },
+            _ => { self.dynamic_imports.insert(import.span().start); },
+        }
         walk::walk_import_expression(self, import);
     }
 }
@@ -190,8 +194,10 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
                 }),
             }
         }
-        for request in quench_runtime::Engine::module_requests(&parsed.program) {
-            let specifier = request.source.as_str();
+        let imports: BTreeSet<_> = quench_runtime::Engine::module_requests(&parsed.program).into_iter()
+            .map(|request| request.source).chain(requests.literal_imports).collect();
+        for specifier in imports {
+            let specifier = specifier.as_str();
             if commonjs::is_builtin_specifier(specifier) {
                 graph.esm_builtins.insert(format!("node:{}", specifier.strip_prefix("node:").unwrap_or(specifier)));
             }

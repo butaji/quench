@@ -2538,7 +2538,6 @@ impl<H: Host> Vm<H> {
         let result = self.call_value(program, root, this, &[]);
         self.finish_main_module(program, &result)?;
         if drain_jobs {
-            self.advance_dynamic_import_jobs(program, true)?;
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;

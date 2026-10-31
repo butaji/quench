@@ -931,3 +931,154 @@ console.log(JSON.stringify({answer:target.exports.answer, result:increment(41),
     assert!(report["dynamic_interface"]["linked"].as_array().unwrap().iter().any(|name| name == "napi_create_int32"));
     eprintln!("Node-API dynamic registration/callback/value/descriptors matched Node after source removal: {}", binary.display());
 }
+
+fn write_literal_import_fixture(directory: &Path, extension: &str) -> std::path::PathBuf {
+    use std::fs;
+    fs::create_dir_all(directory).unwrap();
+    let entry = directory.join(format!("entry.{extension}"));
+    let source = r#"
+globalThis.importEvents = [];
+function uncalled() { return import('./uncalled.mjs'); }
+async function main() {
+  const pending = import(('./dep.mts'));
+  importEvents.push('returned');
+  Promise.resolve().then(() => importEvents.push('microtask'));
+  const first = await pending;
+  const second = await import('./dep.mts');
+  first.bump();
+  const cachedOrder = [];
+  const cached = import('./dep.mts');
+  cached.then(() => cachedOrder.push('import'));
+  Promise.resolve().then(() => cachedOrder.push('microtask'));
+  await cached;
+  const thenable = await import('./thenable.mjs');
+  let firstError;
+  try { await import('./throws.mjs'); } catch (error) { firstError = error; }
+  let sameError = false;
+  try { await import('./throws.mjs'); } catch (error) { sameError = firstError === error; }
+  const json = await import('./data.json', { get with() {
+    importEvents.push('with');
+    return { get type() { importEvents.push('type'); return 'json'; } };
+  } });
+  const jsonOrder = [];
+  const cachedJson = import('./data.json', { with: { type: 'json' } });
+  cachedJson.then(() => jsonOrder.push('import'));
+  Promise.resolve().then(() => jsonOrder.push('microtask'));
+  await cachedJson;
+  const legacy = await import('./legacy.cjs');
+  const bare = await import('fs');
+  const prefixed = await import('node:fs');
+  const one = await import('./instance.mjs?tag=/../one');
+  const two = await import('./instance.mjs?tag=/../two');
+  console.log(JSON.stringify({events:importEvents, identity:first === second, value:first.value,
+    typed:first.add('text'), cachedOrder, jsonOrder, thenable, sameError,
+    error:[firstError.name, firstError.message], json:json.default.answer, legacy:legacy.answer,
+    builtin:bare === prefixed, reader:typeof bare.readFile, instances:[one.id,two.id],
+    urls:[one.url,two.url], uncalled:globalThis.uncalledEvaluated === true,
+    descriptor:Object.getOwnPropertyDescriptor(first, 'value')}));
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
+"#;
+    let source = if matches!(extension, "cts" | "mts") {
+        source.replace("import(('./dep.mts'))", "import(('./dep.mts' as string))")
+    } else { source.to_owned() };
+    fs::write(&entry, source).unwrap();
+    fs::write(directory.join("dep.mts"), "importEvents.push('evaluate'); export let value: number = 40; export function bump(): void { value++; } export function add(value: number): number { return value + 1; }\n").unwrap();
+    fs::write(directory.join("data.json"), r#"{"answer":42}"#).unwrap();
+    fs::write(directory.join("legacy.cjs"), "exports.answer = 43;\n").unwrap();
+    fs::write(directory.join("instance.mjs"), "globalThis.instanceCount = (globalThis.instanceCount || 0) + 1; export const id = globalThis.instanceCount; export const url = import.meta.url;\n").unwrap();
+    fs::write(directory.join("thenable.mjs"), "export function then(resolve) { importEvents.push('then'); resolve(57); }\n").unwrap();
+    fs::write(directory.join("throws.mjs"), "importEvents.push('throw-evaluate'); throw new TypeError('literal import rejection');\n").unwrap();
+    fs::write(directory.join("uncalled.mjs"), "globalThis.uncalledEvaluated = true; throw Error('uncalled import must not evaluate');\n").unwrap();
+    entry
+}
+
+#[test]
+fn literal_dynamic_imports_close_graph_without_evaluating_modules() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench literal imports, {}", std::process::id()));
+    for extension in ["cjs", "cts", "mjs", "mts"] {
+        let entry = write_literal_import_fixture(&directory.join(extension), extension);
+        let mut manifest = SourceManifest::default();
+        let graph = manifest.add_module_graph(&entry).unwrap();
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        assert_eq!(graph.files.len(), 8);
+        assert!(manifest.assets().imports.keys().any(|(_, specifier)| specifier == "./uncalled.mjs"));
+        manifest.compile().unwrap();
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+        for jit in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+            if jit { command.arg("--jit"); }
+            let actual = command.arg(&entry).output().unwrap();
+            assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&actual.stdout).unwrap(),
+                serde_json::from_slice::<serde_json::Value>(&oracle.stdout).unwrap(), "{extension} jit={jit}");
+            assert_eq!(actual.stderr, oracle.stderr);
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn computed_dynamic_imports_keep_explicit_compile_requirements() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench computed imports, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, "import(process.argv[2]);").unwrap();
+    let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+    assert!(matches!(graph.requirements.as_slice(), [quench_node::aot::GraphRequirement::DynamicImport { .. }]));
+    fs::write(&entry, "import('./missing.mjs');").unwrap();
+    let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+    assert!(matches!(graph.requirements.as_slice(), [quench_node::aot::GraphRequirement::Unresolved { .. }]));
+    let typed = directory.join("typed.cts");
+    fs::write(&typed, "const specifier: './dep.mts' = process.argv[2] as './dep.mts'; import(specifier);").unwrap();
+    let graph = SourceManifest::default().add_module_graph(&typed).unwrap();
+    assert!(matches!(graph.requirements.as_slice(), [quench_node::aot::GraphRequirement::DynamicImport { .. }]));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit closed literal-import graph compile/link/native qualification"]
+fn compile_command_preserves_literal_import_graphs() {
+    qualify_literal_import_graphs("iteration", Some(pinned_support_report()));
+}
+
+#[test]
+#[ignore = "explicit production closed literal-import graph compile/link/native qualification"]
+fn production_compile_command_preserves_literal_import_graphs() {
+    qualify_literal_import_graphs("production", None);
+}
+
+fn qualify_literal_import_graphs(profile: &str, support: Option<String>) {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench literal native, {profile}-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = directory.join("support.jsonl");
+    if let Some(support) = &support { fs::write(&sdk, support).unwrap(); }
+    for extension in ["cjs", "cts", "mjs", "mts"] {
+        let sources = directory.join(format!("{extension}-sources"));
+        let entry = write_literal_import_fixture(&sources, extension);
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+        let binary = directory.join(extension);
+        let report = directory.join(format!("{extension}.json"));
+        let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        compiler.arg("compile").arg(&entry).arg("-o").arg(&binary).args(["--profile", profile]).arg("--report").arg(&report);
+        if support.is_some() { compiler.arg("--sdk-report").arg(&sdk); }
+        let compiled = compiler.output().unwrap();
+        assert!(compiled.status.success(), "{extension}: {}", String::from_utf8_lossy(&compiled.stderr));
+        fs::remove_dir_all(&sources).unwrap();
+        let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+        assert_eq!(native.status.code(), oracle.status.code(), "{extension}: {}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&native.stdout).unwrap(), serde_json::from_slice::<serde_json::Value>(&oracle.stdout).unwrap(), "{extension}");
+        assert_eq!(native.stderr, oracle.stderr);
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_reduced_payload(&report, &binary);
+        assert_eq!(report["requested_support_profile"], profile);
+        assert_eq!(report["bytecode_interpreter"], false);
+        assert_eq!(report["js_source_frontend"], false);
+        eprintln!("Literal dynamic imports ({extension}, {profile}) matched Node after source removal: {}", binary.display());
+    }
+}

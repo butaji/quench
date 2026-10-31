@@ -1091,6 +1091,8 @@ pub(super) struct DynamicImportJob {
     pub(super) cache_key: String,
     pub(super) module: ModuleSource,
     pub(super) promise: Value,
+    /// Absent is the default JavaScript request; synthetic types retain their attribute.
+    pub(super) module_type: Option<String>,
 }
 
 #[derive(Default)]
@@ -1761,11 +1763,8 @@ impl<H: Host> Vm<H> {
                     }
                     let module_type = module_type.as_deref().unwrap_or("javascript");
                     let cache_key = module_cache_key(&module.name, module_type);
-                    if phase == crate::bytecode::ModuleRequestPhase::Evaluation
-                        && module_type == "javascript"
-                        && let Some(reason) = vm.errored_async_cycle_root(&cache_key)
-                    {
-                        vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                    if phase == crate::bytecode::ModuleRequestPhase::Evaluation {
+                        vm.queue_dynamic_import_job(cache_key, module, promise, module_type);
                         return Ok(Value::UNDEFINED);
                     }
                     if let Some(outcome) = vm
@@ -1842,7 +1841,7 @@ impl<H: Host> Vm<H> {
                                 if module_type == "javascript"
                                     && phase == crate::bytecode::ModuleRequestPhase::Evaluation =>
                             {
-                                vm.queue_dynamic_import_job(cache_key, module, promise);
+                                vm.queue_dynamic_import_job(cache_key, module, promise, module_type);
                                 return Ok(Value::UNDEFINED);
                             }
                             ModuleOutcome::Pending(ModulePhase::Instantiated) => {}
@@ -1864,13 +1863,6 @@ impl<H: Host> Vm<H> {
                             .promise
                             .modules
                             .insert(cache_key, ModuleRecord::evaluating_root(namespace, promise));
-                        return Ok(Value::UNDEFINED);
-                    }
-                    if module_type == "javascript"
-                        && phase == crate::bytecode::ModuleRequestPhase::Evaluation
-                        && vm.deferred_dependency_batch
-                    {
-                        vm.queue_dynamic_import_job(cache_key, module, promise);
                         return Ok(Value::UNDEFINED);
                     }
                     if module_type == "javascript"
@@ -1971,43 +1963,7 @@ impl<H: Host> Vm<H> {
                         }
                         return Ok(Value::UNDEFINED);
                     }
-                    let mut record = ModuleRecord::loading(promise);
-                    let linked = record.begin_linking();
-                    debug_assert!(linked);
-                    let evaluating = record.begin_evaluation();
-                    debug_assert!(evaluating);
-                    vm.realm.promise.modules.insert(cache_key.clone(), record);
-                    match vm.evaluate_dynamic_module(p, &module, module_type, phase) {
-                        Ok(namespace) => {
-                            let waiters = vm
-                                .realm
-                                .promise
-                                .modules
-                                .get_mut(&cache_key)
-                                .expect("module record inserted above")
-                                .evaluate(namespace)
-                                .expect("module record is evaluating");
-                            for waiter in waiters {
-                                vm.promise_resolve_value(p, waiter, namespace)?;
-                            }
-                        }
-                        Err(error) => {
-                            let reason = error.thrown_value().unwrap_or_else(|| {
-                                vm.heap.alloc(Cell::Error(error.into_message()))
-                            });
-                            let waiters = vm
-                                .realm
-                                .promise
-                                .modules
-                                .get_mut(&cache_key)
-                                .expect("module record inserted above")
-                                .fail(reason)
-                                .expect("module record is pending");
-                            for waiter in waiters {
-                                vm.promise_settle(p, waiter, PromiseState::Rejected, reason)?;
-                            }
-                        }
-                    }
+                    vm.evaluate_synthetic_dynamic_import(p, &module, module_type, phase, cache_key, promise)?;
                     return Ok(Value::UNDEFINED);
                 }
                 Ok(None) => {}
@@ -2021,6 +1977,50 @@ impl<H: Host> Vm<H> {
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
         }
         Ok(promise)
+    }
+
+    fn evaluate_synthetic_dynamic_import(
+        &mut self, p: &ResidualProgram, module: &ModuleSource, module_type: &str,
+        phase: crate::bytecode::ModuleRequestPhase, cache_key: String, promise: Value,
+    ) -> Result<(), JsError> {
+        let mut record = ModuleRecord::loading(promise);
+        let linked = record.begin_linking();
+        debug_assert!(linked);
+        let evaluating = record.begin_evaluation();
+        debug_assert!(evaluating);
+        self.realm.promise.modules.insert(cache_key.clone(), record);
+        match self.evaluate_dynamic_module(p, module, module_type, phase) {
+            Ok(namespace) => {
+                let waiters = self
+                    .realm
+                    .promise
+                    .modules
+                    .get_mut(&cache_key)
+                    .expect("module record inserted above")
+                    .evaluate(namespace)
+                    .expect("module record is evaluating");
+                for waiter in waiters {
+                    self.promise_resolve_value(p, waiter, namespace)?;
+                }
+            }
+            Err(error) => {
+                let reason = error.thrown_value().unwrap_or_else(|| {
+                    self.heap.alloc(Cell::Error(error.into_message()))
+                });
+                let waiters = self
+                    .realm
+                    .promise
+                    .modules
+                    .get_mut(&cache_key)
+                    .expect("module record inserted above")
+                    .fail(reason)
+                    .expect("module record is pending");
+                for waiter in waiters {
+                    self.promise_settle(p, waiter, PromiseState::Rejected, reason)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn root_module_namespace(
@@ -2743,13 +2743,16 @@ impl<H: Host> Vm<H> {
         cache_key: String,
         module: ModuleSource,
         promise: Value,
+        module_type: &str,
     ) {
         // Each import owns an instantiation attempt. Successful evaluation is
         // shared by the module record; link failures must produce fresh errors.
         self.realm
             .promise
             .dynamic_import_jobs
-            .push(DynamicImportJob { cache_key, module, promise });
+            .push(DynamicImportJob { cache_key, module, promise,
+                module_type: (module_type != JAVASCRIPT_MODULE_TYPE).then(|| module_type.to_owned()),
+            });
     }
 
     pub(super) fn advance_dynamic_import_jobs(
@@ -2757,7 +2760,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         allow_evaluation: bool,
     ) -> Result<(), JsError> {
-        // Checked after every job: an empty queue has nothing to root or advance.
+        // Checked at the agent checkpoint: an empty queue has nothing to root or advance.
         if self.realm.promise.dynamic_import_jobs.is_empty() {
             return Ok(());
         }
@@ -2771,6 +2774,17 @@ impl<H: Host> Vm<H> {
             .collect();
         self.with_call_roots(waiters, |vm| {
             for job in jobs {
+                if !allow_evaluation {
+                    vm.realm.promise.dynamic_import_jobs.push(job);
+                    continue;
+                }
+                let module_type = job.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+                if module_type == JAVASCRIPT_MODULE_TYPE
+                    && let Some(reason) = vm.errored_async_cycle_root(&job.cache_key) {
+                    vm.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
+                    continue;
+                }
+
                 if let Some(outcome) = vm
                     .realm
                     .promise
@@ -2781,8 +2795,9 @@ impl<H: Host> Vm<H> {
                 {
                     continue;
                 }
-                if !allow_evaluation {
-                    vm.realm.promise.dynamic_import_jobs.push(job);
+                if module_type != JAVASCRIPT_MODULE_TYPE {
+                    vm.evaluate_synthetic_dynamic_import(p, &job.module, module_type,
+                        crate::bytecode::ModuleRequestPhase::Evaluation, job.cache_key, job.promise)?;
                     continue;
                 }
                 let mut active = ModuleEvaluationStack::default();
@@ -2816,12 +2831,11 @@ impl<H: Host> Vm<H> {
         promise: Value,
         outcome: ModuleOutcome,
     ) -> Result<bool, JsError> {
-        let (state, value) = match outcome {
-            ModuleOutcome::Evaluated(namespace) => (PromiseState::Fulfilled, namespace),
-            ModuleOutcome::Errored(reason) => (PromiseState::Rejected, reason),
+        match outcome {
+            ModuleOutcome::Evaluated(namespace) => self.promise_resolve_value(p, promise, namespace)?,
+            ModuleOutcome::Errored(reason) => self.promise_settle(p, promise, PromiseState::Rejected, reason)?,
             ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) => return Ok(false),
-        };
-        self.promise_settle(p, promise, state, value)?;
+        }
         Ok(true)
     }
 
@@ -4074,11 +4088,11 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Whether module advancement after a job has work: the queues the advancement drains.
-    pub(super) fn module_jobs_pending(&self) -> bool {
+    /// Static evaluation can advance after a Promise reaction. Dynamic loading
+    /// waits for the agent checkpoint after the existing microtasks have drained.
+    pub(super) fn static_module_jobs_pending(&self) -> bool {
         let promise = &self.realm.promise;
-        !promise.dynamic_import_jobs.is_empty()
-            || !promise.waiting_static_modules.is_empty()
+        !promise.waiting_static_modules.is_empty()
             || promise.async_module_settled
     }
 

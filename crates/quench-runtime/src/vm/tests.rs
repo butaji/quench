@@ -5097,6 +5097,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
                 cache_key: format!("{name}:javascript"),
                 module: crate::ModuleSource::text(name, source),
                 promise,
+                module_type: None,
             });
         }
         if collect_while_queued {
