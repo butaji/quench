@@ -20,7 +20,7 @@ default = ["jit"]
 jit = ["dep:cranelift-native", "cranelift-codegen/host-arch"]
 native-execution = []
 # Build-time native object publication; not needed by the execution-only host.
-aot = ["native-execution", "dep:cranelift-native", "cranelift-codegen/host-arch", "dep:cranelift-object", "dep:cranelift-module"]
+aot = ["native-execution", "dep:cranelift-native", "cranelift-codegen/host-arch", "dep:cranelift-object", "dep:cranelift-module", "dep:object", "dep:serde_json"]
 profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
@@ -36,6 +36,8 @@ reference = []
 verify-replay = []
 
 [dependencies]
+object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }
+serde_json = { version = "1", optional = true }
 quench-macros = { path = "../quench-macros" }
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

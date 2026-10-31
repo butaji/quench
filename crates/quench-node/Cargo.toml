@@ -17,13 +17,12 @@ default = ["jit", "bundled-sources"]
 jit = ["quench-runtime/jit", "quench-wasm/jit"]
 bundled-sources = []
 native-execution = ["quench-runtime/native-execution"]
-aot = ["bundled-sources", "native-execution", "quench-runtime/aot", "dep:object"]
+aot = ["bundled-sources", "native-execution", "quench-runtime/aot"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
 profile-allocator = ["quench-runtime/profile-allocator"]
 
 [dependencies]
-object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }
 quench-js-check = { path = "../quench-js-check" }
 quench-runtime = { path = "../quench-runtime", default-features = false }
 quench-wasm = { path = "../quench-wasm", default-features = false }

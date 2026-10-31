@@ -13,7 +13,9 @@ pub use graph::{DependencyGraph, GraphRequirement};
 #[cfg(feature = "aot")]
 mod compiler;
 #[cfg(feature = "aot")]
-pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError, NativeImageInputs};
+pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
+#[cfg(feature = "aot")]
+pub use quench_runtime::native_link::NativeImageInputs;
 #[cfg(feature = "aot")]
 pub(crate) use compiler::{HostSourceDemands, stage_host_sources};
 
@@ -116,11 +118,7 @@ fn execute_native_with_teardown(
 #[cfg(feature = "aot")]
 mod link;
 #[cfg(feature = "aot")]
-mod payload;
-#[cfg(feature = "aot")]
-mod exports;
-#[cfg(feature = "aot")]
-pub use exports::{DynamicInterface, ExportPolicy};
+pub use quench_runtime::native_link::{DynamicInterface, ExportPolicy};
 #[cfg(feature = "aot")]
 pub use link::{NativeSupport, NativeLinkAudit};
 #[cfg(feature = "aot")]

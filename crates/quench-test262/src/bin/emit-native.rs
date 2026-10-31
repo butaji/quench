@@ -1,3 +1,4 @@
+use quench_runtime::native_link::{CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use quench_runtime::{
     ExecutionMode, NativeProgramNamespace, NativeSourceCompilation, ResidualProgram, SourceKind,
 };
@@ -8,12 +9,15 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+const LINK_REPORT_SCHEMA_VERSION: u32 = 1;
+
 fn emit(
     program: &ResidualProgram,
     index: usize,
     root: &Path,
     namespace: Option<&NativeProgramNamespace>,
     exports: &mut BTreeSet<String>,
+    objects: &mut Vec<PathBuf>,
 ) -> Result<(String, String, String), String> {
     program.freeze_native_diagnostics();
     let label = format!("test262_linked_{index}");
@@ -24,11 +28,10 @@ fn emit(
             exports.insert(name.clone());
         }
     }
-    fs::write(
-        root.join(format!("unit_{index}.o")),
-        quench_runtime::emit_native_module(&label, module.functions, module.data)?,
-    )
-    .map_err(|e| e.to_string())?;
+    let object = root.join(format!("unit_{index}.o"));
+    fs::write(&object, quench_runtime::emit_native_module(&label, module.functions, module.data)?)
+        .map_err(|e| e.to_string())?;
+    objects.push(object);
     let metadata = root.join(format!("unit_{index}.bin"));
     if let Some(namespace) = namespace {
         fs::write(&metadata, namespace.encode_with_external_source(program)?)
@@ -62,19 +65,23 @@ fn main() -> Result<(), String> {
 fn run() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
     const USAGE: &str =
-        "usage: emit-native CASE OUTPUT_DIRECTORY VARIANT HARNESS_DIRECTORY [--dynamic-source]";
-    let dynamic_source = match args.len() {
-        5 => false,
-        6 if args[5] == "--dynamic-source" => true,
-        _ => return Err(USAGE.into()),
-    };
-    let support = if dynamic_source {
-        quench_runtime::NativeImageSupport::DynamicSource
-    } else {
-        quench_runtime::NativeImageSupport::Static
-    };
-    let path = PathBuf::from(&args[1]);
-    let root = PathBuf::from(&args[2]);
+        "usage: emit-native CASE OUTPUT_DIRECTORY VARIANT HARNESS_DIRECTORY [--dynamic-source] [--sdk-report CARGO_REPORT]";
+    let [_, case_path, output_directory, variant_name, harness_directory, trailing @ ..] = args.as_slice()
+        else { return Err(USAGE.into()); };
+    let mut support = quench_runtime::NativeImageSupport::Static;
+    let mut sdk_report = None;
+    let mut options = trailing.iter();
+    while let Some(option) = options.next() {
+        match option.as_str() {
+            "--dynamic-source" => support = quench_runtime::NativeImageSupport::DynamicSource,
+            "--sdk-report" if sdk_report.is_none() => {
+                sdk_report = Some(PathBuf::from(options.next().ok_or("--sdk-report needs a Cargo artifact report")?));
+            }
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let path = PathBuf::from(case_path);
+    let root = PathBuf::from(output_directory);
     fs::create_dir(&root).map_err(|e| e.to_string())?;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let original = fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -82,10 +89,10 @@ fn run() -> Result<(), String> {
     let variants = metadata.variants();
     let variant = *variants
         .iter()
-        .find(|v| v.name() == args[3])
+        .find(|v| v.name() == variant_name.as_str())
         .ok_or("variant is not declared by test metadata")?;
     metadata.only_strict = variant == TestVariant::Strict;
-    let harness_dir = PathBuf::from(args.get(4).ok_or("missing harness directory")?);
+    let harness_dir = PathBuf::from(harness_directory);
     let mut cache = HarnessCache::new(harness_dir);
     let harness = quench_test262::harness_sources(&metadata, &mut cache)?;
     let path = path.canonicalize().map_err(|e| e.to_string())?;
@@ -110,12 +117,13 @@ fn run() -> Result<(), String> {
     } = prepared;
     let namespace = NativeProgramNamespace::from_entry(&entry)?;
     let mut exports = BTreeSet::new();
-    let (entry_metadata, entry_symbol, _) = emit(&entry, 0, &root, None, &mut exports)?;
+    let mut objects = Vec::new();
+    let (entry_metadata, entry_symbol, _) = emit(&entry, 0, &root, None, &mut exports, &mut objects)?;
     let mut catalog=format!("quench_runtime::linked_native_sources!{{host quench_test262::Test262RuntimeHost; entry bind_entry: entry_table => ({entry_symbol:?},{entry_metadata:?}); resolver resolve {{\n");
     let mut binders = String::new();
     let mut count = 1;
     for (i, script) in scripts.iter().enumerate() {
-        let (meta, symbol, source) = emit(script, count, &root, Some(&namespace), &mut exports)?;
+        let (meta, symbol, source) = emit(script, count, &root, Some(&namespace), &mut exports, &mut objects)?;
         let key = format!("<linked-harness:{i}>");
         writeln!(
             catalog,
@@ -128,7 +136,7 @@ fn run() -> Result<(), String> {
     let mut module_binders = String::new();
     let mut source_binders = String::new();
     for (i, (module, program)) in modules.iter().enumerate() {
-        let (meta, symbol, source) = emit(program, count, &root, Some(&namespace), &mut exports)?;
+        let (meta, symbol, source) = emit(program, count, &root, Some(&namespace), &mut exports, &mut objects)?;
         let key = format!("<linked-module:{i}>");
         writeln!(
             catalog,
@@ -168,7 +176,7 @@ fn run() -> Result<(), String> {
         match compilation {
             NativeSourceCompilation::Program(program) => {
                 let (meta, symbol, source) =
-                    emit(&program, count, &root, Some(&namespace), &mut exports)?;
+                    emit(&program, count, &root, Some(&namespace), &mut exports, &mut objects)?;
                 writeln!(
                     catalog,
                     "unit_{count}_table => ({symbol:?},{meta:?},{:?},[{parts}],source {source}),",
@@ -195,7 +203,7 @@ fn run() -> Result<(), String> {
         .collect::<Vec<_>>()
         .join(",");
     writeln!(catalog,"quench_runtime::export_native_js_operations!(quench_test262::Test262RuntimeHost,semantic_exports,[{operations}]);").unwrap();
-    fs::write(root.join("catalog.rs"), catalog).map_err(|e| e.to_string())?;
+    fs::write(root.join(CATALOG_FILENAME), catalog).map_err(|e| e.to_string())?;
     let option = |s: &Option<String>| {
         s.as_ref()
             .map(|s| format!("Some({s:?}.into())"))
@@ -220,7 +228,7 @@ fn run()->Result<(),String>{{
 fn main()->std::process::ExitCode{{match run(){{Ok(())=>std::process::ExitCode::SUCCESS,Err(error)=>{{eprintln!("{{error}}");std::process::ExitCode::FAILURE}}}}}}
 "#,
         support = support,
-        catalog = root.join("catalog.rs").to_str().unwrap(),
+        catalog = root.join(CATALOG_FILENAME).to_str().unwrap(),
         binders = binders,
         module_binders = module_binders,
         source_binders = source_binders,
@@ -231,9 +239,10 @@ fn main()->std::process::ExitCode{{match run(){{Ok(())=>std::process::ExitCode::
         phase = option(&metadata.negative_phase),
         negative = option(&metadata.negative_type)
     );
-    fs::write(root.join("driver.rs"), driver).map_err(|e| e.to_string())?;
+    let driver_path = root.join("driver.rs");
+    fs::write(&driver_path, driver).map_err(|e| e.to_string())?;
     fs::write(
-        root.join("required_exports.txt"),
+        root.join(REQUIRED_EXPORTS_FILENAME),
         exports.iter().cloned().collect::<Vec<_>>().join("\n") + "\n",
     )
     .map_err(|error| error.to_string())?;
@@ -245,6 +254,25 @@ fn main()->std::process::ExitCode{{match run(){{Ok(())=>std::process::ExitCode::
         + "\n";
     fs::write(root.join("exports.txt"), exports_text).map_err(|e| e.to_string())?;
     fs::write(root.join("units.txt"), count.to_string()).map_err(|e| e.to_string())?;
+    if let Some(sdk_report) = sdk_report {
+        use quench_runtime::native_link::{NativeImageInputs, NativeSupport, remove_offline_symbols};
+        let report = fs::read_to_string(sdk_report).map_err(|error| error.to_string())?;
+        let sdk = NativeSupport::from_cargo_report(&report, "quench_test262", support)?;
+        let inputs = NativeImageInputs::new(root.clone(), objects, BTreeSet::new());
+        let executable = root.join("native-test");
+        let staged = root.join("native-test-linking");
+        let audit = sdk.link_audited(&inputs, &driver_path, &staged)?;
+        let payload = remove_offline_symbols(&staged)?;
+        let report = serde_json::json!({
+            "schema_version": LINK_REPORT_SCHEMA_VERSION, "test": path, "variant": variant.name(),
+            "binary": executable, "dynamic_source": support.allows_dynamic_source(),
+            "payload_minimal": false, "support_artifacts": sdk.report(),
+            "dynamic_interface": audit.dynamic_interface, "payload_reduction": payload,
+        });
+        fs::write(root.join("link-report.json"), serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+        fs::rename(staged, executable).map_err(|error| error.to_string())?;
+    }
     println!(
         "prepared {} {:?}: {} native units, original harness count {}",
         path.display(),

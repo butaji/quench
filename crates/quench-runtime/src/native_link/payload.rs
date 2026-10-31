@@ -8,7 +8,7 @@ use std::{fs, path::Path, process::Command};
 const MACHO_LINKEDIT_SEGMENT: &[u8] = b"__LINKEDIT";
 
 #[derive(Serialize)]
-pub(super) struct PayloadReduction {
+pub struct PayloadReduction {
     pub unstripped_bytes: u64,
     pub binary_bytes: u64,
     pub symbols_before: usize,
@@ -17,7 +17,7 @@ pub(super) struct PayloadReduction {
     pub preserved_loader_records: usize,
 }
 
-pub(super) fn remove_offline_symbols(executable: &Path) -> Result<PayloadReduction, String> {
+pub fn remove_offline_symbols(executable: &Path) -> Result<PayloadReduction, String> {
     let before = fs::read(executable).map_err(|error| error.to_string())?;
     // Retain the exported interface for runtime-loaded code. Plain Mach-O
     // `strip` rewrites its export trie, even when code/data bytes stay intact.

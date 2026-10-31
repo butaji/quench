@@ -1,3 +1,4 @@
+use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
 use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, ResidualProgram, Runtime, emit_native_module, lower_native_js_module};
@@ -35,20 +36,6 @@ pub struct CompiledSources {
 
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
-pub struct NativeImageInputs {
-    directory: PathBuf,
-    units: usize,
-}
-
-impl NativeImageInputs {
-    pub fn catalog(&self) -> PathBuf { self.directory.join("catalog.rs") }
-    pub fn required_exports(&self) -> PathBuf { self.directory.join("required_exports.txt") }
-    pub fn objects(&self) -> impl Iterator<Item = PathBuf> + '_ {
-        std::iter::once(self.directory.join("entry.o"))
-            .chain((0..self.units).map(|index| self.directory.join(format!("unit_{index}.o"))))
-    }
-}
-
 impl CompiledSources {
     pub fn emit(self, directory: &Path) -> Result<NativeImageInputs, String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
@@ -72,6 +59,7 @@ impl CompiledSources {
         let pool_path = directory.join("source_pool.utf8");
         fs::write(&pool_path, pool.text()).map_err(|error| error.to_string())?;
         let mut required_exports = BTreeSet::new();
+        let mut objects = Vec::new();
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
         let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
             program.freeze_native_diagnostics();
@@ -83,7 +71,9 @@ impl CompiledSources {
                 }
             }
             let object = emit_native_module(name, module.functions, module.data)?;
-            fs::write(directory.join(format!("{name}.o")), object).map_err(|error| error.to_string())?;
+            let object_path = directory.join(format!("{name}.o"));
+            fs::write(&object_path, object).map_err(|error| error.to_string())?;
+            objects.push(object_path);
             let metadata = directory.join(format!("{name}.bin"));
             match namespace {
                 Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(program)?).map_err(|error| error.to_string())?,
@@ -92,7 +82,7 @@ impl CompiledSources {
             Ok((metadata, symbol))
         };
         let (entry, entry_symbol) = write(&self.entry, "entry", None)?;
-        let mut catalog = fs::File::create(directory.join("catalog.rs")).map_err(|error| error.to_string())?;
+        let mut catalog = fs::File::create(directory.join(CATALOG_FILENAME)).map_err(|error| error.to_string())?;
         writeln!(catalog, "quench_node::linked_source_pool!(quench_native_source_text, {:?});", pool_path.to_str().ok_or("source pool path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
@@ -154,12 +144,14 @@ impl CompiledSources {
             writeln!(catalog, "{name:?} => source {}, typescript {typescript},", pool.reference(source)).map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
-        fs::write(directory.join("required_exports.txt"), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
+        fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
         let exports = required_exports.iter().map(|name| format!("{name:?}")).collect::<Vec<_>>().join(",");
         writeln!(catalog, "quench_runtime::export_native_js_operations!(quench_node::NodeHost, semantic_exports, [{exports}]);")
             .map_err(|error| error.to_string())?;
-        Ok(NativeImageInputs { directory, units: self.units.len() })
+        let host_exports = crate::modules::napi::exported_symbol_names().map(str::to_owned)
+            .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect();
+        Ok(NativeImageInputs::new(directory, objects, host_exports))
     }
 }
 

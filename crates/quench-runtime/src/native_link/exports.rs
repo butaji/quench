@@ -30,10 +30,9 @@ pub(super) struct ExportPlan {
 }
 
 fn required_exports(inputs: &NativeImageInputs) -> Result<BTreeSet<String>, String> {
-    let mut names: BTreeSet<String> = crate::modules::napi::exported_symbol_names().map(str::to_owned).collect();
+    let mut names = inputs.host_exports.clone();
     names.extend(fs::read_to_string(inputs.required_exports()).map_err(|error| error.to_string())?.lines().map(str::to_owned));
     names.insert(C_MAIN_SYMBOL.into());
-    names.insert(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.into());
     #[cfg(target_os = "macos")]
     names.insert(MACHO_HEADER_SYMBOL.into());
     for name in &names {

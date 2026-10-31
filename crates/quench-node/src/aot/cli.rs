@@ -215,7 +215,7 @@ fn compile(options: Options) -> Result<(), String> {
                 "--lib",
                 "--message-format=json",
             ]);
-            String::from_utf8(super::link::checked_output(
+            String::from_utf8(quench_runtime::native_link::checked_output(
                 &mut cargo,
                 "native execution support build",
             )?)
@@ -230,7 +230,7 @@ fn compile(options: Options) -> Result<(), String> {
     let audit = support.link_audited(&inputs, &driver, &staged)?;
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
-    let payload = super::payload::remove_offline_symbols(&staged)?;
+    let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
     report["symbol_audit_stage"] = json!("before_symbol_removal");
     report["binary_bytes"] = json!(payload.binary_bytes);
     report["payload_reduction"] = json!(payload);
@@ -265,12 +265,12 @@ fn compile(options: Options) -> Result<(), String> {
 
 fn native_dependencies(executable: &Path) -> Result<String, String> {
     #[cfg(target_os = "macos")]
-    let output = super::link::checked_output(
+    let output = quench_runtime::native_link::checked_output(
         Command::new("otool").arg("-L").arg(executable),
         "native dependency audit",
     )?;
     #[cfg(target_os = "linux")]
-    let output = super::link::checked_output(
+    let output = quench_runtime::native_link::checked_output(
         Command::new("readelf").arg("-d").arg(executable),
         "native dependency audit",
     )?;

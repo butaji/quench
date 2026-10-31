@@ -108,3 +108,6 @@ pub use host::NativeSourceError;
 mod native_image;
 #[cfg(feature = "native-execution")]
 pub use native_image::NativeImageSupport;
+
+#[cfg(feature = "aot")]
+pub mod native_link;
