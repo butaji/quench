@@ -647,12 +647,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(StepResult::Continue);
                 }
-                if self.eval_script_context
-                    && let Some(atom) =
-                        self.root_global_lexical_atom(p, self.frames[f].function, slot)
-                {
-                    self.realm.bind_global_lexical(atom, value);
-                }
+                self.mirror_global_lexical_binding(p, f, slot, value);
                 *self
                     .frame_binding_mut(p, f, slot)
                     .ok_or_else(|| JsError("invalid local environment".into()))? = value;

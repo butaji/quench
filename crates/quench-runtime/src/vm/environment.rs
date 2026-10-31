@@ -4,6 +4,10 @@ use super::*;
 // ResolveName bases are objects; this primitive preserves an unresolvable
 // Reference without allocating or rejecting it before the RHS executes.
 const UNRESOLVABLE_NAME_REFERENCE: Value = Value::UNDEFINED;
+// A realm lexical binding is selected before the RHS. Its declarative owner
+// cannot be replaced by a new object property or a binding created by the RHS.
+// ResolveName's other bases are objects, so null names this allocation-free base.
+const GLOBAL_LEXICAL_NAME_REFERENCE: Value = Value::NULL;
 
 impl<H: Host> Vm<H> {
     pub(super) fn own_dynamic_bindings(&self, frame: usize) -> Option<&Vec<(Atom, Value)>> {
@@ -96,15 +100,12 @@ impl<H: Host> Vm<H> {
         function: u32,
         slot: usize,
     ) -> Option<Value> {
-        if !self.eval_script_context {
-            return None;
-        }
         self.root_global_lexical_atom(program, function, slot)
             .and_then(|atom| self.realm.global_lexical_bindings.get(&atom).copied())
     }
 
-    fn active_global_lexical_value(&self, atom: Atom) -> Option<Value> {
-        self.frames.iter().rev().find_map(|frame| {
+    fn active_global_lexical_binding(&self, atom: Atom) -> Option<(usize, usize)> {
+        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
             }
@@ -120,12 +121,18 @@ impl<H: Host> Vm<H> {
                 .local_atoms
                 .iter()
                 .position(|candidate| *candidate == atom)?;
-            if frame.captured {
-                self.heap.environment_slot(frame.env, slot)
-            } else {
-                frame.locals.get(slot).copied()
-            }
+            Some((index, slot))
         })
+    }
+
+    fn active_global_lexical_value(&self, atom: Atom) -> Option<Value> {
+        let (index, slot) = self.active_global_lexical_binding(atom)?;
+        let frame = &self.frames[index];
+        if frame.captured {
+            self.heap.environment_slot(frame.env, slot)
+        } else {
+            frame.locals.get(slot).copied()
+        }
     }
 
     fn root_declares_binding(&self, program: &ResidualProgram, atom: Atom) -> bool {
@@ -992,6 +999,9 @@ impl<H: Host> Vm<H> {
                 self.set_property_with_program_mode(p, self.realm.globals, atom, value, false)
             };
         }
+        if object == GLOBAL_LEXICAL_NAME_REFERENCE {
+            return self.store_global_lexical_assignment(p, atom, value);
+        }
         if let Some((environment, slot, kind)) = self.binding_reference(object) {
             self.load_environment_binding(p, environment, slot)?;
             if !self.check_named_binding_assignment(p, kind, strict)? {
@@ -1052,6 +1062,12 @@ impl<H: Host> Vm<H> {
         }
         if is_with_binding {
             return self.set_property_with_program_mode(p, object, atom, value, strict);
+        }
+
+        // A global environment reference consults its declarative record at
+        // PutValue, including declarations installed while evaluating the RHS.
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return self.store_global_lexical_assignment(p, atom, value);
         }
 
         if let Some(frame_index) = self.frames.len().checked_sub(1)
@@ -1305,6 +1321,9 @@ impl<H: Host> Vm<H> {
         if object == UNRESOLVABLE_NAME_REFERENCE {
             return Err(self.name_not_defined(p, atom));
         }
+        if object == GLOBAL_LEXICAL_NAME_REFERENCE {
+            return self.load_global_lexical_binding(p, atom);
+        }
         if let Some((environment, slot, _)) = self.binding_reference(object) {
             return self.load_environment_binding(p, environment, slot);
         }
@@ -1432,7 +1451,39 @@ impl<H: Host> Vm<H> {
             });
             return Ok((reference, true));
         }
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return Ok((GLOBAL_LEXICAL_NAME_REFERENCE, false));
+        }
         Ok((self.realm.globals, false))
+    }
+
+    fn load_global_lexical_binding(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
+        let Some(value) = self.active_global_lexical_value(atom)
+            .or_else(|| self.realm.global_lexical_bindings.get(&atom).copied()) else {
+            return Err(self.uninitialized_binding_error(p, atom));
+        };
+        self.checked_binding_read(p, atom, value)
+    }
+
+    fn store_global_lexical_assignment(&mut self, p: &ResidualProgram, atom: Atom, value: Value) -> Result<(), JsError> {
+        self.load_global_lexical_binding(p, atom)?;
+        if self.realm.immutable_global_lexical_bindings.contains(&atom) {
+            return Err(self.type_error(p, "assignment to constant binding".into()));
+        }
+        let active = self.active_global_lexical_binding(atom);
+        if let Some((index, slot)) = active {
+            let frame = &mut self.frames[index];
+            if frame.captured {
+                *self.heap.environment_slot_mut(frame.env, slot)
+                    .ok_or_else(|| JsError("invalid global lexical environment".into()))? = value;
+            } else {
+                frame.locals[slot] = value;
+            }
+        }
+        if active.is_none() || self.realm.global_lexical_bindings.contains_key(&atom) {
+            self.realm.bind_global_lexical(atom, value);
+        }
+        Ok(())
     }
 
     #[inline(always)]
@@ -1795,16 +1846,19 @@ impl<H: Host> Vm<H> {
     /// `None`) is the binding itself rather than a projection.
     #[inline(always)]
     fn root_environment_slot_is_binding(&self, program: Option<u32>, slot: u16) -> bool {
-        self.programs.root_slot_is_binding(
-            program.map_or(self.active_program, super::ProgramId::from_raw),
-            slot,
-            !self.eval_script_context,
-        )
+        let owner = program.map_or(self.active_program, super::ProgramId::from_raw);
+        // A live script owns its slots until its bindings are retained in the
+        // realm. Captures must then read the realm record, even in later scripts.
+        let retained = !self.realm.global_lexical_bindings.is_empty()
+            && self.programs.residual(owner)
+                .and_then(|program| self.root_global_lexical_atom(program, super::ROOT_FUNCTION_ID, usize::from(slot)))
+                .is_some_and(|atom| self.realm.global_lexical_bindings.contains_key(&atom));
+        self.programs.root_slot_is_binding(owner, slot, !retained)
     }
 
     /// `load_projected_environment_binding` where reading runs no guest code and throws
     /// nothing: a global var held as a data property of the global object or its prototypes
-    /// (`Vm::plain_named_get`), or, in an eval script's context, an initialized global
+    /// (`Vm::plain_named_get`), or an initialized retained global
     /// lexical binding (`root_global_lexical_value`). `None` for any other projection or
     /// read.
     pub(super) fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
@@ -1851,8 +1905,7 @@ impl<H: Host> Vm<H> {
         if let Some(atom) = atom {
             return self.get_property(p, self.realm.globals, atom);
         }
-        if self.eval_script_context
-            && let Some(atom) = lexical_atom
+        if let Some(atom) = lexical_atom
             && let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied()
         {
             return self.checked_binding_read(p, atom, value);
@@ -2063,7 +2116,7 @@ impl<H: Host> Vm<H> {
         *slot = value;
         self.store_environment_mapped_argument(owner, function, env, slot_index, value);
         if let Some(atom) = self.root_global_lexical_atom(owner, function, slot_index) {
-            if self.eval_script_context {
+            if self.realm.global_lexical_bindings.contains_key(&atom) {
                 self.realm.bind_global_lexical(atom, value);
             }
             let owner = self.frames.iter().rposition(|active| {
@@ -2359,12 +2412,8 @@ impl<H: Host> Vm<H> {
                 let strict = p.function(self.frames[frame].function as usize).strict;
                 return self.store_name_binding(p, frame, binding, value, strict);
             }
-            if self.realm.global_lexical_bindings.contains_key(&atom) {
-                if self.realm.immutable_global_lexical_bindings.contains(&atom) {
-                    return Err(self.type_error(p, "assignment to constant binding".into()));
-                }
-                self.realm.bind_global_lexical(atom, value);
-                return Ok(());
+            if self.realm.global_lexical_declarations.contains(&atom) {
+                return self.store_global_lexical_assignment(p, atom, value);
             }
             if let Some(frame_index) = self.frames.len().checked_sub(1)
                 && let Some((env, slot)) = self

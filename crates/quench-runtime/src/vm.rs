@@ -2301,14 +2301,12 @@ impl<H: Host> Vm<H> {
         self.realm
             .global_lexical_declarations
             .extend(root.global_lexical_atoms().iter().copied());
-        if self.eval_script_context {
-            self.realm.immutable_global_lexical_bindings.extend(
-                root.global_immutable_atoms()
-                    .iter()
-                    .copied()
-                    .filter(|atom| root.global_lexical_atoms().contains(atom)),
-            );
-        }
+        self.realm.immutable_global_lexical_bindings.extend(
+            root.global_immutable_atoms()
+                .iter()
+                .copied()
+                .filter(|atom| root.global_lexical_atoms().contains(atom)),
+        );
         if root
             .global_var_atoms()
             .iter()
@@ -2395,25 +2393,11 @@ impl<H: Host> Vm<H> {
         slot: usize,
         value: Value,
     ) {
-        if !self.eval_script_context {
-            return;
-        }
         let Some(current) = self.frames.get(frame) else {
             return;
         };
-        if current.function != ROOT_FUNCTION_ID {
-            return;
-        }
-        let Some(atom) = program.function(ROOT_FUNCTION_ID as usize)
-            .local_atoms
-            .get(slot)
-            .copied()
-        else {
-            return;
-        };
-        if program.function(ROOT_FUNCTION_ID as usize)
-            .global_lexical_atoms()
-            .contains(&atom)
+        if let Some(atom) = self.root_global_lexical_atom(program, current.function, slot)
+            && self.realm.global_lexical_bindings.contains_key(&atom)
         {
             self.realm.bind_global_lexical(atom, value);
         }
@@ -2426,7 +2410,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         frame: &Frame,
     ) {
-        if self.eval_script_context && frame.function == ROOT_FUNCTION_ID {
+        if program.kind == crate::bytecode::ProgramKind::Script && frame.function == ROOT_FUNCTION_ID {
             self.persist_root_global_lexical_bindings(program, frame);
         }
     }
@@ -2434,33 +2418,12 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         let metadata = &program.function(ROOT_FUNCTION_ID as usize);
-        let bindings = metadata
-            .global_lexical_atoms()
-            .iter()
-            .map(|atom| {
-                let value = metadata
-                    .local_atoms
-                    .iter()
-                    .position(|candidate| candidate == atom)
-                    .and_then(|slot| {
-                        if frame.captured {
-                            self.heap.environment_slot(frame.env, slot)
-                        } else {
-                            frame.locals.get(slot).copied()
-                        }
-                    })
-                    .unwrap_or(Value::DELETED);
-                (
-                    *atom,
-                    if value.is_deleted() {
-                        Value::UNDEFINED
-                    } else {
-                        value
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        for (atom, value) in bindings {
+        for atom in metadata.global_lexical_atoms().iter().copied() {
+            let value = metadata.local_atoms.iter().position(|candidate| *candidate == atom)
+                .and_then(|slot| {
+                    if frame.captured { self.heap.environment_slot(frame.env, slot) }
+                    else { frame.locals.get(slot).copied() }
+                }).unwrap_or(Value::DELETED);
             self.realm.bind_global_lexical(atom, value);
         }
     }

@@ -119,6 +119,8 @@ pub(crate) fn eval_context_source(
     private_names: &[(String, String)],
     super_calls: bool,
 ) -> String {
+    let normalized = early::normalize_hashbang(source);
+    let source = normalized.as_ref();
     let declarations = private_names
         .iter()
         .map(|(label, _)| format!("#{label};"))
@@ -872,6 +874,8 @@ impl Engine {
         private_names: &[(String, String)],
         annex_b_forbidden_names: &[String],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let normalized = early::normalize_hashbang(source);
+        let source = normalized.as_ref();
         let method_source;
         let raw_source_len = source.len();
         let ordinary_private_context = context.home_atom.is_none()
@@ -1381,7 +1385,8 @@ impl Engine {
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
-        let strict_source = format!("'use strict';\n{source}");
+        let normalized = early::normalize_hashbang(source);
+        let strict_source = format!("'use strict';\n{normalized}");
         let source = strict_source.as_str();
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(
@@ -3099,11 +3104,11 @@ impl<'a> Compiler<'a> {
         }
         let global_lexical_atoms: Vec<_> = global_lexical_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let global_immutable_atoms: Vec<_> = global_immutable_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let global_function_names: Vec<_> = program
             .body
@@ -3118,7 +3123,7 @@ impl<'a> Compiler<'a> {
             .collect();
         let global_function_atoms = global_function_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let mut global_var_names = early::collect_var_names(&program.body);
         let mut global_annex_b_var_names = Vec::new();
@@ -3155,11 +3160,11 @@ impl<'a> Compiler<'a> {
         global_var_names.dedup();
         let global_var_atoms = global_var_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let global_annex_b_var_atoms = global_annex_b_var_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         if let Some(root) = self.functions.first_mut() {
             root.global_declarations = crate::bytecode::GlobalDeclarations {

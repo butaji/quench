@@ -437,3 +437,20 @@ fn syntax_diagnostics_are_distinct_from_backend_and_resource_rejections() {
     assert!(!super::Diagnostic::unsupported("backend.js", "unsupported lowering").is_syntax_error());
     assert!(!super::Diagnostic::stack_exhausted("deep.js").is_syntax_error());
 }
+
+#[test]
+fn global_declarations_include_bindings_whose_initializers_never_execute() {
+    let source = "'use strict'; throw 1; let laterLet; const laterConst = 1; class LaterClass {} var laterVar; function laterFunction() {}";
+    let program = Engine::specialize_script_with_atom_prefix(source, "declarations.js", &NoAtomPrefix, super::ReleasedRecords::Dropped).unwrap();
+    let root = &program.functions[0];
+    for (names, expected) in [
+        (root.global_lexical_atoms(), &["laterLet", "laterConst", "LaterClass"][..]),
+        (root.global_var_atoms(), &["laterVar", "laterFunction"][..]),
+        (root.global_immutable_atoms(), &["laterConst"][..]),
+        (root.global_function_atoms(), &["laterFunction"][..]),
+    ] {
+        for name in expected {
+            assert!(names.iter().any(|atom| &program.atoms[*atom as usize] == *name), "missing {name}");
+        }
+    }
+}

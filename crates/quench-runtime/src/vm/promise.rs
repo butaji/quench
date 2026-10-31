@@ -2818,7 +2818,12 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let mut active = ModuleEvaluationStack::default();
-        if let Err(error) = self.evaluate_static_module_source(p, job.module, &mut active) {
+        // An import starts evaluation; it cannot drain jobs waiting for its own
+        // top-level await before the requesting promise has joined the record.
+        let outer_batch = std::mem::replace(&mut self.deferred_dependency_batch, true);
+        let evaluation = self.evaluate_static_module_source(p, job.module, &mut active);
+        self.deferred_dependency_batch = outer_batch;
+        if let Err(error) = evaluation {
             let reason = error
                 .thrown_value()
                 .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
@@ -4035,8 +4040,13 @@ impl<H: Host> Vm<H> {
             let rejection_is_observed = state != PromiseState::Rejected
                 || !waiters.is_empty()
                 || vm.waiting_static_parent(p, cache_key)?;
+            let outcome = match state {
+                PromiseState::Fulfilled => ModuleOutcome::Evaluated(value),
+                PromiseState::Rejected => ModuleOutcome::Errored(value),
+                PromiseState::Pending => return Err(JsError::validation("pending module has no settlement".into())),
+            };
             for &waiter in &waiters {
-                vm.promise_settle(p, waiter, state, value)?;
+                vm.settle_dynamic_import_waiter(p, waiter, outcome)?;
             }
             if state == PromiseState::Rejected && !rejection_is_observed {
                 return Err(JsError::thrown(

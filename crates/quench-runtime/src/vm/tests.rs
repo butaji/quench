@@ -19125,3 +19125,18 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
         Vm::new(TestHost::default()).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn global_declarations_survive_abrupt_script_evaluation() {
+    let program = Engine::specialize_unspecialized("", "initial-script.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let error = vm.eval_script_source(&program, "throw 1; let laterBinding;", "later-script.js").unwrap_err();
+    assert_eq!(error.thrown_value(), Some(Value::number(1.0)));
+    let atom = vm.lookup_atom("laterBinding").unwrap();
+    assert!(vm.realm.global_lexical_declarations.contains(&atom));
+    assert_eq!(vm.realm.global_lexical_bindings.get(&atom), Some(&Value::DELETED));
+    let reference = vm.resolve_name(&program, atom, true).unwrap();
+    let error = vm.store_resolved_name(&program, reference, atom, Value::number(2.0), true).unwrap_err();
+    assert!(vm.format_error(&program, &error).contains("ReferenceError"));
+}

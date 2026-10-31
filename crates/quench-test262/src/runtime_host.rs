@@ -573,6 +573,7 @@ mod tests {
         // Inputs become known only inside guest execution. Native roots call
         // dynamic bodies through the same heap, lexical environment and jobs.
         let source = r#"
+            (function() {
             const local = 40;
             const text = ['local', '+', '2'].join('');
             if (eval(text) !== 42) throw Error('direct eval lexical environment');
@@ -584,6 +585,7 @@ mod tests {
                 if ((0, eval)(['typeof', 'local'].join(' ')) !== 'undefined') throw Error('indirect eval scope');
                 $DONE();
             });
+            })();
         "#;
         for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
             let mut host = Test262RuntimeHost::new(ExecutionMode::NativeOnly)
@@ -614,6 +616,136 @@ mod tests {
                 assert!(!host.native_compilation.units.is_empty());
                 assert_eq!(host.native_compilation.rejections, 0);
             }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn strict_dynamic_scripts_preserve_hashbangs_and_captured_global_bindings() {
+        let sources = [r#"
+            'use strict';
+            for (const text of ['#!', '#!comment', '#!\n', '#!\r', '#!\u2028', '#!\u2029']) {
+                if (eval(text) !== undefined) throw Error('hashbang completion');
+            }
+            if (eval('#!comment\n40 + 2') !== 42) throw Error('hashbang body');
+            class PrivateContext {
+                #value = 42;
+                read() { return eval('#!comment\nthis.#value'); }
+            }
+            if (new PrivateContext().read() !== 42) throw Error('private eval context');
+            try { eval(' #!\n'); throw Error('accepted misplaced hashbang'); }
+            catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+        "#, r#"
+            'use strict';
+            globalThis.objectBinding = 1;
+            Object.preventExtensions(globalThis);
+            $262.evalScript('let lexicalBinding = 1; const constantBinding = 3; class classBinding {}');
+            lexicalBinding = 2;
+            classBinding = 5;
+            if (lexicalBinding !== 2 || constantBinding !== 3 || classBinding !== 5) throw Error('lexical values');
+            for (const name of ['lexicalBinding', 'constantBinding', 'classBinding']) {
+                if (Object.hasOwn(globalThis, name)) throw Error('lexical became property');
+            }
+            try { constantBinding = 4; throw Error('constant assignment accepted'); }
+            catch (error) { if (!(error instanceof TypeError)) throw error; }
+            objectBinding = ($262.evalScript('let objectBinding = 100;'), 2);
+            if (globalThis.objectBinding !== 1 || objectBinding !== 2) throw Error('global environment reference');
+            let trace = '';
+            try { $262.evalScript('throw 1; let uninitializedBinding;'); } catch (error) { if (error !== 1) throw error; }
+            try { uninitializedBinding = (trace += 'rhs', 2); throw Error('TDZ assignment accepted'); }
+            catch (error) { if (!(error instanceof ReferenceError) || trace !== 'rhs') throw error; }
+        "#, r#"
+            'use strict';
+            let callerLexical = 1;
+            $262.evalScript('callerLexical = 2;');
+            if (callerLexical !== 2) throw Error('caller lexical did not update');
+            callerLexical = 3;
+            if ($262.evalScript('callerLexical') !== 3) throw Error('caller lexical read stale');
+            const callerConstant = 1;
+            try { $262.evalScript('callerConstant = 2;'); throw Error('caller constant assigned'); }
+            catch (error) { if (!(error instanceof TypeError)) throw error; }
+            $262.evalScript('let nestedLexical = 1; $262.evalScript("nestedLexical = 2;");');
+            if (nestedLexical !== 2) throw Error('finished script overwrote nested lexical');
+        "#, r#"
+            'use strict';
+            let capturedCaller = 1;
+            const readCaller = () => capturedCaller;
+            $262.evalScript('capturedCaller = 2;');
+            if (readCaller() !== 2) throw Error('active captured caller');
+            globalThis.writeCaller = value => capturedCaller = value;
+            $262.evalScript('writeCaller(5);');
+            capturedCaller = 6;
+            if (readCaller() !== 6 || $262.evalScript('capturedCaller') !== 6) throw Error('caller closure write authority');
+            $262.evalScript('let retained = 1; globalThis.readRetained = () => retained; globalThis.writeRetained = value => retained = value; $262.evalScript("retained = 2;");');
+            if (readRetained() !== 2) throw Error('nested captured caller');
+            $262.evalScript('retained = 3;');
+            if (readRetained() !== 3) throw Error('retained global lexical closure');
+            writeRetained(4);
+            if ($262.evalScript('retained') !== 4) throw Error('retained closure write');
+        "#];
+        for source in sources {
+            for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
+                let mut host = Test262RuntimeHost::new(mode)
+                    .with_native_dynamic_source(mode == super::ExecutionMode::NativeOnly).unwrap();
+                host.execute(source, "dynamic-script-contract.js").unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+                assert_eq!(host.native_compilation.rejections, 0);
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn global_lexicals_outlive_the_script_root() {
+        let source = r#"
+            let laterLive = 1;
+            const readLater = () => laterLive;
+            Promise.resolve().then(() => {
+                $262.evalScript('laterLive = 2;');
+                if (readLater() !== 2) throw Error('completed root lexical');
+                laterLive = 3;
+                if ($262.evalScript('laterLive') !== 3) throw Error('completed root closure write');
+            }).then($DONE, $DONE);
+        "#;
+        for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
+            let mut host = Test262RuntimeHost::new(mode)
+                .with_native_dynamic_source(mode == super::ExecutionMode::NativeOnly).unwrap();
+            host.async_test = true;
+            host.execute(source, "completed-script-root.js").unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+            assert_eq!(host.native_compilation.rejections, 0);
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn async_module_imports_preserve_waiter_order_and_namespace_resolution() {
+        let directory = tempfile::tempdir().unwrap();
+        let entry = directory.path().join("entry.js");
+        std::fs::write(directory.path().join("waiting.mjs"),
+            "globalThis.started.resolve(); await globalThis.release.promise;").unwrap();
+        std::fs::write(directory.path().join("empty.mjs"), "").unwrap();
+        std::fs::write(directory.path().join("then.mjs"),
+            "await 0; export function then(resolve) { resolve(42); }").unwrap();
+        let source = r#"
+            globalThis.started = Promise.withResolvers();
+            globalThis.release = Promise.withResolvers();
+            const trace = [];
+            const first = import('./waiting.mjs');
+            started.promise.then(async () => {
+                const second = import('./waiting.mjs');
+                await import('./empty.mjs');
+                release.resolve();
+                await Promise.all([first.then(() => trace.push('first')), second.then(() => trace.push('second'))]);
+                if (trace.join(',') !== 'first,second') throw Error('import waiter order');
+                const value = await import('./then.mjs');
+                if (value !== 42) throw Error('namespace then was not resolved');
+            }).then($DONE, $DONE);
+        "#;
+        for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
+            let mut host = Test262RuntimeHost::new(mode)
+                .with_native_dynamic_source(mode == super::ExecutionMode::NativeOnly).unwrap();
+            host.async_test = true;
+            host.execute(source, entry.to_str().unwrap()).unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+            assert_eq!(host.native_compilation.rejections, 0);
         }
     }
 

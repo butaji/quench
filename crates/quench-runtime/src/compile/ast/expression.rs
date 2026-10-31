@@ -402,7 +402,7 @@ impl FunctionCompiler<'_, '_> {
                     u32::from(slot),
                 );
             }
-            if lexical.is_none() && self.function_id == 0 && !self.owner.module_goal {
+            if lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
                 self.emit(
                     Op::StoreName,
