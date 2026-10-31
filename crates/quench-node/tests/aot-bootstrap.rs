@@ -1544,27 +1544,34 @@ fn compile_command_preserves_filesystem_watch_delivery_and_lifecycle() {
     let guest = r#"
 const fs = require('node:fs');
 const mode = process.argv[2], root = process.argv[3], file = root + '/watched.txt';
+const WATCH_DELIVERY_DEADLINE_MS = 5000, WATCH_MUTATION_DELAY_MS = 100;
+const attributes = descriptor => [descriptor.writable, descriptor.enumerable, descriptor.configurable];
+const watchSurface = [fs.watch.name, fs.watch.length, ...attributes(Object.getOwnPropertyDescriptor(fs, 'watch'))];
 fs.mkdirSync(root); if (mode === 'file') fs.writeFileSync(file, 'before');
 const controller = new AbortController();
 if (mode === 'missing') {
   try { fs.watch(file); throw new Error('missing path accepted'); }
-  catch (error) { console.log(JSON.stringify({error:[error.name,error.code,error.syscall,error.path === file]})); }
+  catch (error) { console.log(JSON.stringify({watchSurface,error:[error.name,error.code,error.syscall,error.path === file,error.filename === file,error.errno],
+    message:error.message.replace(file,'<path>'),keys:Object.keys(error),descriptors:Object.keys(error).map(name=>attributes(Object.getOwnPropertyDescriptor(error,name)))})); }
 } else {
   const events = [];
-  const deadline = setTimeout(() => { throw new Error('watch delivery timeout'); }, 5000);
+  const deadline = setTimeout(() => { throw new Error('watch delivery timeout'); }, WATCH_DELIVERY_DEADLINE_MS);
   const watcher = fs.watch(mode === 'file' ? file : root, {encoding:'buffer', signal:controller.signal}, (kind, filename) => {
     if (mode === 'abort' || filename.toString() !== 'watched.txt') return;
     events.push([kind, Buffer.isBuffer(filename), filename.toString()]); watcher.close();
   });
+  const prototype = Object.getPrototypeOf(watcher);
+  const methods = ['close','ref','unref'].map(name => { const descriptor = Object.getOwnPropertyDescriptor(prototype,name);
+    return [name,descriptor.value.name,descriptor.value.length,...attributes(descriptor),descriptor.value === watcher[name]]; });
   const identity = [watcher.ref() === watcher, watcher.unref() === watcher, watcher.ref() === watcher];
   watcher.on('close', () => {
     clearTimeout(deadline);
-    console.log(JSON.stringify({events,identity,constructor:watcher.constructor.name,aborted:controller.signal.aborted,
+    console.log(JSON.stringify({events,identity,watchSurface,methods,constructor:watcher.constructor.name,aborted:controller.signal.aborted,
       closeResult:watcher.close(),contents:fs.existsSync(file) ? fs.readFileSync(file,'utf8') : null}));
   });
   setTimeout(() => { if (mode === 'abort') controller.abort('stop');
     else if (mode === 'file') fs.appendFileSync(file,'-after');
-    else fs.writeFileSync(file,'created'); }, 100);
+    else fs.writeFileSync(file,'created'); }, WATCH_MUTATION_DELAY_MS);
 }
 "#;
     for extension in ["cjs", "cts"] {

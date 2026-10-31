@@ -2,6 +2,8 @@ use super::*;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+const DELIVERY_DEADLINE: Duration = Duration::from_secs(5);
+const HOST_POLL_INTERVAL: Duration = Duration::from_millis(1);
 struct Fixture(std::path::PathBuf);
 impl Fixture {
     fn new() -> Self {
@@ -22,7 +24,7 @@ impl Drop for Fixture {
 }
 fn event(kernel: &mut Kernel, descriptor: WatchDescriptor, name: &[u8], kind: Option<EventKind>) {
     // Failure deadline for real host delivery, not a production scheduling policy.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + DELIVERY_DEADLINE;
     loop {
         if let Some(event) = kernel.next_event().unwrap() {
             if event.descriptor == descriptor
@@ -36,7 +38,7 @@ fn event(kernel: &mut Kernel, descriptor: WatchDescriptor, name: &[u8], kind: Op
             Instant::now() < deadline,
             "missing watch event {name:?} {kind:?}"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        std::thread::sleep(HOST_POLL_INTERVAL);
     }
 }
 #[test]
