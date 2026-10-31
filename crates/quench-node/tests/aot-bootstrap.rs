@@ -876,8 +876,20 @@ fn typescript_symlink_uses_real_package_scope() {
 #[test]
 #[ignore = "explicit native dynamic-interface and Node-API runtime-loading qualification"]
 fn compile_command_preserves_runtime_loaded_node_api() {
+    qualify_runtime_loaded_node_api("iteration", Some(pinned_support_report()));
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "explicit production native dynamic-interface and Node-API runtime-loading qualification"]
+fn production_compile_command_preserves_runtime_loaded_node_api() {
+    qualify_runtime_loaded_node_api("production", None);
+}
+
+#[cfg(unix)]
+fn qualify_runtime_loaded_node_api(profile: &str, support: Option<String>) {
     use std::{fs, process::Command};
-    let directory = std::env::temp_dir().join(format!("quench node api image, {}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("quench node api image, {profile}-{}", std::process::id()));
     let sources = directory.join("sources");
     fs::create_dir_all(&sources).unwrap();
     let addon = directory.join("addon.node");
@@ -901,12 +913,13 @@ console.log(JSON.stringify({answer:target.exports.answer, result:increment(41),
     let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).arg(&addon).output().unwrap();
     assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
     let sdk = directory.join("support.jsonl");
-    fs::write(&sdk, pinned_support_report()).unwrap();
+    if let Some(support) = &support { fs::write(&sdk, support).unwrap(); }
     let binary = directory.join("program");
     let report = directory.join("report.json");
-    let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
-        .arg("compile").arg(&entry).arg("-o").arg(&binary)
-        .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk).arg("--report").arg(&report).output().unwrap();
+    let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+    compiler.arg("compile").arg(&entry).arg("-o").arg(&binary).args(["--profile", profile]).arg("--report").arg(&report);
+    if support.is_some() { compiler.arg("--sdk-report").arg(&sdk); }
+    let compiled = compiler.output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     fs::remove_dir_all(&sources).unwrap();
     let native = Command::new(&binary).arg(&addon).env_clear().current_dir(&directory).output().unwrap();
