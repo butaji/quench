@@ -1278,8 +1278,8 @@ impl Engine {
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         #[cfg(feature = "aot")]
-        let native_requests = atom_prefix.native_function_requests().map(|pending| {
-            (pending, Self::function_constructor_sources(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized()))
+        let native_requests = atom_prefix.native_source_requests().map(|pending| {
+            (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
         drop(semantic);
         Self::erase_type_only_module_syntax(&mut parsed.program);
@@ -1300,12 +1300,14 @@ impl Engine {
                 root_strict,
                 first_private_id,
                 #[cfg(feature = "aot")]
-                atom_prefix.native_function_requests().map(|_| atom_prefix.specialized()),
+                atom_prefix.native_source_requests().map(|_| atom_prefix.specialized()),
+                #[cfg(feature = "aot")]
+                atom_prefix.native_global_script_calls(),
             ) else {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             };
             #[cfg(feature = "aot")]
-            if let Some((_, requests)) = facts.native_function_sources
+            if let Some((_, requests)) = facts.native_source_requests
                 && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids);
             private_name_labels.extend(facts.private_name_labels);

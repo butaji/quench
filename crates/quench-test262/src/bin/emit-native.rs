@@ -111,7 +111,7 @@ fn run() -> Result<(), String> {
     let quench_test262::NativeCasePrograms {
         harness: scripts,
         modules,
-        function_sources: functions,
+        source_requests,
         entry,
         entry_module,
     } = prepared;
@@ -167,7 +167,7 @@ fn run() -> Result<(), String> {
         .unwrap();
     }
     let mut errors = String::new();
-    for (key, compilation) in functions {
+    for (key, compilation) in source_requests {
         let parts = key
             .parts()
             .map(|p| format!("{p:?}"))

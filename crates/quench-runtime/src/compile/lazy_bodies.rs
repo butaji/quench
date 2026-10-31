@@ -357,7 +357,7 @@ pub(super) struct BodyFacts {
     pub(super) prototype_unobservable: FxHashSet<u32>,
     next_private_id: u32,
     #[cfg(feature = "aot")]
-    pub(super) native_function_sources: Option<(bool, Vec<super::NativeSourceKey>)>,
+    pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
 
 /// The facts of the bodies of `program` (the program `source` parsed lazily, its bodies
@@ -373,15 +373,16 @@ pub(super) fn body_facts(
     root_strict: bool,
     first_private_id: u32,
     #[cfg(feature = "aot")] native_specialization: Option<bool>,
+    #[cfg(feature = "aot")] global_script_calls: &[(String, String)],
 ) -> Option<BodyFacts> {
     let mut facts = BodyFacts {
         next_private_id: first_private_id,
         #[cfg(feature = "aot")]
-        native_function_sources: native_specialization.map(|mode| (mode, Vec::new())),
+        native_source_requests: native_specialization.map(|mode| (mode, Vec::new())),
         ..BodyFacts::default()
     };
     for function in lazy_functions(program, starts, root_strict, 0) {
-        check_alone(source, function, source_type, &mut facts)?;
+        check_alone(source, function, source_type, &mut facts, #[cfg(feature = "aot")] global_script_calls)?;
     }
     Some(facts)
 }
@@ -402,7 +403,7 @@ fn lazy_functions(program: &Program<'_>, starts: &[u32], strict: bool, delta: u3
 }
 
 /// Checks `function`'s source parsed alone, adding its facts, then the bodies inside it.
-fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, facts: &mut BodyFacts) -> Option<()> {
+fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, facts: &mut BodyFacts, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> Option<()> {
     let snippet = &source[function.start as usize..function.end as usize];
     let (text, offset) = text_alone(snippet, plain_wrapper(function.expression), function.inherited_strict, source_type);
     let delta = function.start.wrapping_sub(offset);
@@ -424,8 +425,8 @@ fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, fa
             return None;
         }
         #[cfg(feature = "aot")]
-        if let Some((specialized, requests)) = &mut facts.native_function_sources {
-            requests.extend(super::Engine::function_constructor_sources(&parsed.program, built.semantic.scoping(), *specialized));
+        if let Some((specialized, requests)) = &mut facts.native_source_requests {
+            requests.extend(super::Engine::native_source_requests(&parsed.program, built.semantic.scoping(), *specialized, global_script_calls));
         }
         let shift = |(start, end): (u32, u32)| (start.wrapping_add(delta), end.wrapping_add(delta));
         let first_id = facts.next_private_id;
@@ -443,7 +444,7 @@ fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, fa
         lazy_functions(&parsed.program, &parsed.lazy_function_bodies, program_strict, delta)
     };
     for function in inside {
-        check_alone(source, function, source_type, facts)?;
+        check_alone(source, function, source_type, facts, #[cfg(feature = "aot")] global_script_calls)?;
     }
     Some(())
 }

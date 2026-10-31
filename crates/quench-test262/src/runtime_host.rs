@@ -136,13 +136,13 @@ pub struct Test262RuntimeHost {
 }
 
 /// One atom namespace shared by exact harness, declared modules, and discovered
-/// source constructors. Both object linking and in-process verification consume
+/// source requests. Both object linking and in-process verification consume
 /// this preparation without executing guest code.
 #[cfg(feature = "aot")]
 pub struct NativeCasePrograms {
     pub harness: Vec<quench_runtime::ResidualProgram>,
     pub modules: Vec<(ModuleSource, quench_runtime::ResidualProgram)>,
-    pub function_sources: std::collections::BTreeMap<quench_runtime::NativeSourceKey, quench_runtime::NativeSourceCompilation>,
+    pub source_requests: std::collections::BTreeMap<quench_runtime::NativeSourceKey, quench_runtime::NativeSourceCompilation>,
     pub entry: quench_runtime::ResidualProgram,
     pub entry_module: Option<ModuleSource>,
 }
@@ -312,7 +312,8 @@ impl Test262RuntimeHost {
         self.native_module_sources.clear();
         self.module_input_access = ModuleInputAccess::Filesystem;
         self.missing_module_input = None;
-        let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery();
+        let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery()
+            .with_global_script_source_discovery("$262", "evalScript");
         let mut scripts = Vec::new();
         for script in harness {
             scripts.push(compiler.compile_script(script, HARNESS_SCRIPT_NAME, Default::default())
@@ -330,10 +331,10 @@ impl Test262RuntimeHost {
             SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
         }.map_err(|errors| compile_failure(&errors, CompilationSite::Entry))?;
         let modules = compile_native_dependencies(self, &mut compiler, &program, name)?;
-        let function_sources = compiler.compile_function_sources()
-            .map_err(|error| format!("quench AOT Function compilation: {error}"))?;
+        let source_requests = compiler.compile_discovered_sources()
+            .map_err(|error| format!("quench AOT source compilation: {error}"))?;
         let entry = compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?;
-        Ok(NativeCasePrograms { harness: scripts, modules, function_sources, entry, entry_module })
+        Ok(NativeCasePrograms { harness: scripts, modules, source_requests, entry, entry_module })
     }
 
     fn execute_after_harness(
@@ -375,7 +376,7 @@ impl Test262RuntimeHost {
                 #[cfg(feature = "aot")]
                 {
                     let NativeCasePrograms { harness: native_harness, modules: native_dependencies,
-                        function_sources: native_function_sources, .. } = prepared.expect("native preparation");
+                        source_requests: native_sources, .. } = prepared.expect("native preparation");
                     let host = runtime.host_mut();
                     let output = native_output_directory(name, host.native_variant)?;
                     let mut scripts = Vec::new();
@@ -388,7 +389,7 @@ impl Test262RuntimeHost {
                         host.native_module_sources.insert(source.name.clone(), source);
                     }
                     let mut catalog = std::collections::BTreeMap::new();
-                    for (key, compiled) in native_function_sources {
+                    for (key, compiled) in native_sources {
                         let artifact = match compiled {
                             quench_runtime::NativeSourceCompilation::Program(program) => Ok(compile_native_unit(program, &mut host.native_compilation, output.as_deref())?),
                             quench_runtime::NativeSourceCompilation::SyntaxError(message) => Err(quench_runtime::NativeSourceError::Syntax(message)),

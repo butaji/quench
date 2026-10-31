@@ -17,7 +17,9 @@ pub(crate) trait AtomPrefix {
     fn specialized(&self) -> bool;
     /// Optional producer-owned obligations; ordinary execution prefixes retain none.
     #[cfg(feature = "aot")]
-    fn native_function_requests(&self) -> Option<&std::cell::RefCell<std::collections::BTreeSet<super::NativeSourceKey>>> { None }
+    fn native_source_requests(&self) -> Option<&std::cell::RefCell<std::collections::BTreeSet<super::NativeSourceKey>>> { None }
+    #[cfg(feature = "aot")]
+    fn native_global_script_calls(&self) -> &[(String, String)] { &[] }
 
 }
 

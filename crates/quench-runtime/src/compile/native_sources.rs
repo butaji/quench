@@ -75,7 +75,8 @@ pub struct NativeJsCompiler {
     atoms: Rc<AtomSequence>,
     index: FxHashMap<Rc<str>, Atom>,
     specialized: bool,
-    function_requests: Option<RefCell<BTreeSet<NativeSourceKey>>>,
+    source_requests: Option<RefCell<BTreeSet<NativeSourceKey>>>,
+    global_script_calls: Vec<(String, String)>,
 }
 
 impl NativeJsCompiler {
@@ -84,27 +85,42 @@ impl NativeJsCompiler {
             atoms: Rc::new(AtomSequence::new(AtomTable::default())),
             index: FxHashMap::default(),
             specialized,
-            function_requests: None,
+            source_requests: None,
+            global_script_calls: Vec::new(),
         }
     }
 
     /// Discover literal constructor obligations while compiling validated syntax.
     pub fn with_function_source_discovery(mut self) -> Self {
-        self.function_requests.get_or_insert_with(|| RefCell::new(BTreeSet::new()));
+        self.source_requests.get_or_insert_with(|| RefCell::new(BTreeSet::new()));
         self
     }
 
-    /// Compile the transitive literal-constructor graph before namespace sealing.
+    /// Configure a host global method whose argument is a global Script.
+    /// Discovery stages possible inputs; the host still owns intrinsic identity.
+    pub fn with_global_script_source_discovery(mut self, global: &str, method: &str) -> Self {
+        self.source_requests.get_or_insert_with(|| RefCell::new(BTreeSet::new()));
+        let call = (global.to_owned(), method.to_owned());
+        if !self.global_script_calls.contains(&call) { self.global_script_calls.push(call); }
+        self
+    }
+
+    /// Compatibility entry for existing constructor-only producers.
     pub fn compile_function_sources(&mut self) -> Result<BTreeMap<NativeSourceKey, NativeSourceCompilation>, String> {
+        self.compile_discovered_sources()
+    }
+
+    /// Compile the transitive source graph before namespace sealing.
+    pub fn compile_discovered_sources(&mut self) -> Result<BTreeMap<NativeSourceKey, NativeSourceCompilation>, String> {
         let mut compiled = BTreeMap::new();
         loop {
-            let key = self.function_requests.as_mut().ok_or("native Function discovery is disabled")?.get_mut().pop_first();
+            let key = self.source_requests.as_mut().ok_or("native source discovery is disabled")?.get_mut().pop_first();
             let Some(key) = key else { break; };
             if compiled.contains_key(&key) { continue; }
-            let artifact = match self.compile_function_source(&key) {
+            let artifact = match self.compile_source_request(&key) {
                 Ok(artifact) => artifact,
                 Err(error) => {
-                    let pending = self.function_requests.as_mut().expect("discovery is enabled").get_mut();
+                    let pending = self.source_requests.as_mut().expect("discovery is enabled").get_mut();
                     pending.insert(key);
                     pending.extend(compiled.into_keys());
                     return Err(error);
@@ -150,15 +166,25 @@ impl NativeJsCompiler {
 
     /// A Function request keeps ECMAScript syntax failures as data until invocation.
     pub fn compile_function_source(&mut self, key: &NativeSourceKey) -> Result<NativeSourceCompilation, String> {
+        if !key.is_function_constructor() { return Err("native source is not a Function request".into()); }
+        self.compile_source_request(key)
+    }
+
+    /// Syntax errors are residual guest failures; producer failures stop emission.
+    pub fn compile_source_request(&mut self, key: &NativeSourceKey) -> Result<NativeSourceCompilation, String> {
         let parts: Vec<_> = key.parts().collect();
-        let [mode, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] = parts.as_slice() else {
-            return Err("native source is not a Function request".into());
-        };
-        if *mode != if self.specialized { "specialized" } else { "unspecialized" } {
+        if parts.first().copied() != Some(if self.specialized { "specialized" } else { "unspecialized" }) {
             return Err("native source specialization does not match compiler".into());
         }
-        let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
-        match self.compile_function_constructor(kind, parameters, body) {
+        let compiled = match parts.as_slice() {
+            [_, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
+                let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
+                self.compile_function_constructor(kind, parameters, body)
+            },
+            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions::default()),
+            _ => return Err("unsupported native source request".into()),
+        };
+        match compiled {
             Ok(program) => Ok(NativeSourceCompilation::Program(program)),
             Err(errors) if !errors.is_empty() && errors.iter().all(Diagnostic::is_syntax_error) => {
                 Ok(NativeSourceCompilation::SyntaxError(errors[0].syntax_message().to_owned()))
@@ -247,8 +273,8 @@ impl NativeJsCompiler {
         if !entry.atoms.belongs_to(&self.atoms) {
             return Err("native entry belongs to a different compiler namespace".into());
         }
-        if self.function_requests.as_ref().is_some_and(|pending| !pending.borrow().is_empty()) {
-            return Err("native Function obligations must be compiled before namespace sealing".into());
+        if self.source_requests.as_ref().is_some_and(|pending| !pending.borrow().is_empty()) {
+            return Err("native source obligations must be compiled before namespace sealing".into());
         }
         let len = self.atoms.len();
         entry.atoms = AtomTable::shared(self.atoms, len);
@@ -259,6 +285,25 @@ impl NativeJsCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_global_script_graph_is_transitive_and_defers_syntax_errors() {
+        for specialized in [false, true] {
+            let mut compiler = NativeJsCompiler::new(specialized).with_function_source_discovery()
+                .with_global_script_source_discovery("host", "runScript");
+            let nested = "host.runScript('41 + 1;'); Function('return 7;');";
+            let source = format!("host.runScript({nested:?}); host.runScript('let invalid = ;'); function later() {{ host.runScript('void 2;'); }} {{ const host = {{}}; host.runScript('shadowed'); }}");
+            let entry = compiler.compile_script(&source, "entry.js", Default::default()).unwrap();
+            let requests = compiler.compile_discovered_sources().unwrap();
+            assert_eq!(requests.len(), 5);
+            for source in [nested, "41 + 1;", "void 2;"] {
+                assert!(matches!(requests.get(&NativeSourceKey::global_script(specialized, source)), Some(NativeSourceCompilation::Program(_))));
+            }
+            assert!(matches!(requests.get(&NativeSourceKey::global_script(specialized, "let invalid = ;")), Some(NativeSourceCompilation::SyntaxError(_))));
+            assert!(requests.contains_key(&NativeSourceKey::function_constructor(specialized, DynamicFunctionKind::Ordinary, "", "return 7;")));
+            compiler.finish(entry).unwrap();
+        }
+    }
 
     #[test]
     fn source_units_share_ids_and_entry_seeds_names_from_later_units() {
@@ -314,10 +359,10 @@ mod tests {
         let entry = compiler.compile_script("Function('return 42;');", "entry.js", Default::default()).unwrap();
         let valid = NativeSourceKey::function_constructor(true, DynamicFunctionKind::Ordinary, "", "return 42;");
         let incompatible = NativeSourceKey::function_constructor(false, DynamicFunctionKind::Ordinary, "", "return 0;");
-        compiler.function_requests.as_mut().unwrap().get_mut().insert(incompatible.clone());
+        compiler.source_requests.as_mut().unwrap().get_mut().insert(incompatible.clone());
         assert!(compiler.compile_function_sources().is_err());
         {
-            let pending = compiler.function_requests.as_ref().unwrap().borrow();
+            let pending = compiler.source_requests.as_ref().unwrap().borrow();
             assert!(pending.contains(&valid) && pending.contains(&incompatible));
         }
         assert!(compiler.finish(entry).unwrap_err().contains("obligations"));
@@ -336,12 +381,19 @@ impl AtomPrefix for NativeJsCompiler {
     fn find(&self, name: &str) -> Option<Atom> { self.index.get(name).copied() }
     fn table(&self) -> AtomTable { AtomTable::shared(self.atoms.clone(), self.atoms.len()) }
     fn specialized(&self) -> bool { self.specialized }
-    fn native_function_requests(&self) -> Option<&RefCell<BTreeSet<NativeSourceKey>>> { self.function_requests.as_ref() }
+    fn native_source_requests(&self) -> Option<&RefCell<BTreeSet<NativeSourceKey>>> { self.source_requests.as_ref() }
+    fn native_global_script_calls(&self) -> &[(String, String)] { &self.global_script_calls }
 }
 
 mod constructors;
+mod global_scripts;
 
 impl Engine {
+    pub(super) fn native_source_requests(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool, calls: &[(String, String)]) -> Vec<NativeSourceKey> {
+        let mut requests = Self::function_constructor_sources(program, scoping, specialized);
+        requests.extend(global_scripts::sources(program, scoping, specialized, calls));
+        requests
+    }
     /// Literal arguments through possible constructor bindings. Actual intrinsic
     /// identity and exact source input are still guarded at invocation.
     pub fn literal_function_constructor_sources(program: &oxc_ast::ast::Program<'_>, specialized: bool) -> Vec<NativeSourceKey> {
