@@ -747,7 +747,7 @@ impl<H: Host> Vm<H> {
                 .promise
                 .dynamic_import_jobs
                 .iter()
-                .map(|job| job.promise),
+                .flat_map(super::promise::DynamicImportJob::roots),
         );
         for job in &self.realm.jobs {
             job.push_roots(&mut roots);

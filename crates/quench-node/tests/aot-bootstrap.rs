@@ -1021,6 +1021,36 @@ fn literal_dynamic_imports_close_graph_without_evaluating_modules() {
 }
 
 #[test]
+fn shadow_realm_dynamic_imports_keep_the_requesting_realm() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench import realm, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let dependency = directory.join("dep.mjs");
+    fs::write(&dependency, "export function read() { return globalThis.marker; }\n").unwrap();
+    let specifier = url::Url::from_file_path(&dependency).unwrap().to_string();
+    let entry = directory.join("entry.mjs");
+    fs::write(&entry, format!(r#"
+        globalThis.marker = 'outer';
+        const realm = new ShadowRealm();
+        realm.evaluate("globalThis.marker = 'inner'");
+        realm.importValue({}, 'read').then(read => console.log(read()));
+    "#, serde_json::to_string(&specifier).unwrap())).unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+        .arg("--harmony-shadow-realm").arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    assert_eq!(oracle.stdout, b"inner\n");
+    for jit in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        if jit { command.arg("--jit"); }
+        let actual = command.arg(&entry).output().unwrap();
+        assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, oracle.stdout, "jit={jit}");
+        assert_eq!(actual.stderr, oracle.stderr);
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn computed_dynamic_imports_keep_explicit_compile_requirements() {
     use std::fs;
     let directory = std::env::temp_dir().join(format!("quench computed imports, {}", std::process::id()));

@@ -5081,6 +5081,38 @@ fn internal_promise_then_handlers_survive_species_reentry_and_release_after_jobs
 }
 
 #[test]
+fn dynamic_import_jobs_evaluate_in_the_requesting_realm() {
+    let source = r#"
+        globalThis.marker = 'outer';
+        const realm = new ShadowRealm();
+        realm.evaluate("globalThis.marker = 'inner'");
+        realm.importValue('inner.js', 'read').then(read => print(read()));
+        realm.importValue('throws.js', 'read').catch(error => print(error instanceof TypeError));
+        import('outer.js').then(module => print(module.read()));
+        Promise.resolve().then(() => { $262.gc(); print(globalThis.marker); });
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source, name: "import-realm.js", kind: crate::SourceKind::Script,
+        }).unwrap(),
+        Engine::specialize(source, "import-realm.js").unwrap(),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let host = TestHost::writing_to(output.clone()).with_test262().with_modules(|name| {
+            let source = if name == "throws.js" {
+                "$262.gc(); throw new Error(globalThis.marker);"
+            } else {
+                "$262.gc(); export function read() { return globalThis.marker; }"
+            };
+            Ok(Some(crate::ModuleSource::text(name.to_owned(), source.to_owned())))
+        });
+        let mut vm = Vm::new(host);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["outer", "outer", "inner", "true"]);
+    }
+}
+
+#[test]
 fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() {
     use super::promise::{DynamicImportJob, PromiseState};
     for collect_while_queued in [false, true] {
@@ -5097,6 +5129,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
                 cache_key: format!("{name}:javascript"),
                 module: crate::ModuleSource::text(name, source),
                 promise,
+                realm: vm.realm.globals,
                 module_type: None,
             });
         }

@@ -1091,8 +1091,15 @@ pub(super) struct DynamicImportJob {
     pub(super) cache_key: String,
     pub(super) module: ModuleSource,
     pub(super) promise: Value,
+    pub(super) realm: Value,
     /// Absent is the default JavaScript request; synthetic types retain their attribute.
     pub(super) module_type: Option<String>,
+}
+
+impl DynamicImportJob {
+    pub(super) fn roots(&self) -> [Value; 2] {
+        [self.promise, self.realm]
+    }
 }
 
 #[derive(Default)]
@@ -2750,7 +2757,7 @@ impl<H: Host> Vm<H> {
         self.realm
             .promise
             .dynamic_import_jobs
-            .push(DynamicImportJob { cache_key, module, promise,
+            .push(DynamicImportJob { cache_key, module, promise, realm: self.realm.globals,
                 module_type: (module_type != JAVASCRIPT_MODULE_TYPE).then(|| module_type.to_owned()),
             });
     }
@@ -2761,68 +2768,76 @@ impl<H: Host> Vm<H> {
         allow_evaluation: bool,
     ) -> Result<(), JsError> {
         // Checked at the agent checkpoint: an empty queue has nothing to root or advance.
-        if self.realm.promise.dynamic_import_jobs.is_empty() {
+        if !allow_evaluation || self.realm.promise.dynamic_import_jobs.is_empty() {
             return Ok(());
         }
         let jobs = std::mem::take(&mut self.realm.promise.dynamic_import_jobs);
         // Taking the batch transfers its roots out of the persistent queue.
-        // Keep every waiter alive, including jobs not yet evaluated, until it
+        // Keep every waiter and requesting realm alive until its job
         // is settled or transferred back to a queue/module record.
-        let waiters: Vec<_> = jobs
+        let roots: Vec<_> = jobs
             .iter()
-            .map(|job| job.promise)
+            .flat_map(DynamicImportJob::roots)
             .collect();
-        self.with_call_roots(waiters, |vm| {
+        self.with_call_roots(roots, |vm| {
             for job in jobs {
-                if !allow_evaluation {
-                    vm.realm.promise.dynamic_import_jobs.push(job);
-                    continue;
-                }
-                let module_type = job.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
-                if module_type == JAVASCRIPT_MODULE_TYPE
-                    && let Some(reason) = vm.errored_async_cycle_root(&job.cache_key) {
-                    vm.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
-                    continue;
-                }
-
-                if let Some(outcome) = vm
-                    .realm
-                    .promise
-                    .modules
-                    .get(&job.cache_key)
-                    .map(|record| record.outcome)
-                    && vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
-                {
-                    continue;
-                }
-                if module_type != JAVASCRIPT_MODULE_TYPE {
-                    vm.evaluate_synthetic_dynamic_import(p, &job.module, module_type,
-                        crate::bytecode::ModuleRequestPhase::Evaluation, job.cache_key, job.promise)?;
-                    continue;
-                }
-                let mut active = ModuleEvaluationStack::default();
-                if let Err(error) = vm.evaluate_static_module_source(p, job.module, &mut active) {
-                    let reason = error
-                        .thrown_value()
-                        .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
-                    vm.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
-                    continue;
-                }
-                let outcome = vm
-                    .realm
-                    .promise
-                    .modules
-                    .get(&job.cache_key)
-                    .map(|record| record.outcome)
-                    .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
-                if !vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
-                    && let Some(record) = vm.realm.promise.modules.get_mut(&job.cache_key)
-                {
-                    record.add_waiter(job.promise);
-                }
+                let previous = vm.switch_realm_global(job.realm);
+                let result = vm.evaluate_dynamic_import_job(p, job);
+                vm.switch_realm_global(previous);
+                result?;
             }
             Ok(())
         })
+    }
+
+    fn evaluate_dynamic_import_job(
+        &mut self,
+        p: &ResidualProgram,
+        job: DynamicImportJob,
+    ) -> Result<(), JsError> {
+        let module_type = job.module_type.as_deref().unwrap_or(JAVASCRIPT_MODULE_TYPE);
+        if module_type == JAVASCRIPT_MODULE_TYPE
+            && let Some(reason) = self.errored_async_cycle_root(&job.cache_key) {
+            self.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
+            return Ok(());
+        }
+
+        if let Some(outcome) = self
+            .realm
+            .promise
+            .modules
+            .get(&job.cache_key)
+            .map(|record| record.outcome)
+            && self.settle_dynamic_import_waiter(p, job.promise, outcome)?
+        {
+            return Ok(());
+        }
+        if module_type != JAVASCRIPT_MODULE_TYPE {
+            self.evaluate_synthetic_dynamic_import(p, &job.module, module_type,
+                crate::bytecode::ModuleRequestPhase::Evaluation, job.cache_key, job.promise)?;
+            return Ok(());
+        }
+        let mut active = ModuleEvaluationStack::default();
+        if let Err(error) = self.evaluate_static_module_source(p, job.module, &mut active) {
+            let reason = error
+                .thrown_value()
+                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+            self.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
+            return Ok(());
+        }
+        let outcome = self
+            .realm
+            .promise
+            .modules
+            .get(&job.cache_key)
+            .map(|record| record.outcome)
+            .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
+        if !self.settle_dynamic_import_waiter(p, job.promise, outcome)?
+            && let Some(record) = self.realm.promise.modules.get_mut(&job.cache_key)
+        {
+            record.add_waiter(job.promise);
+        }
+        Ok(())
     }
 
     fn settle_dynamic_import_waiter(
