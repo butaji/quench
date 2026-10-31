@@ -558,6 +558,24 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn function_constructor_validation_uses_the_combined_parameter_context() {
+        let source = r#"
+            const first = Function('a/*', '#!comment*/', 'return a;');
+            const second = Function('/*', '#!comment*/', 'return 42;');
+            if (first(42) !== 42 || first.length !== 1 || second() !== 42 || second.length !== 0) throw Error('comment context');
+            if (first.toString() !== 'function anonymous(a/*,#!comment*/\n) {\nreturn a;\n}') throw Error('source text');
+            for (const action of [() => Function('a', '#!bad'), () => Function('#!bad', 'return 1;')]) {
+                try { action(); throw Error('accepted hashbang'); }
+                catch (error) { if (!(error instanceof SyntaxError) || error.message !== 'Invalid or unexpected token') throw error; }
+            }
+        "#;
+        for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
+            Test262RuntimeHost::new(mode).execute(source, "parameter-comment-context.js").unwrap();
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
         let program = super::Engine::specialize_unspecialized(r#"
             function calculate(n = 8) {

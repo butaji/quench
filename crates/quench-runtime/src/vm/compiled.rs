@@ -15299,6 +15299,8 @@ mod tests {
             if (first === second || first.prototype === second.prototype) throw 'identity';
             if (first.name !== 'anonymous' || first.length !== 1 || first(2) !== 42) throw 'scope';
             if (first.toString() !== 'function anonymous(x\n) {\nreturn result + x;\n}') throw 'source';
+            const commented = Function('a/*', '#!comment*/', 'return a;');
+            if (commented(42) !== 42 || commented.length !== 1) throw 'parameter comment';
             const generator = (function*(){}).constructor('x', 'yield x;');
             if (generator(42).next().value !== 42) throw 'generator';
             const async = (async function(){}).constructor('x', 'return x;');
@@ -15330,6 +15332,8 @@ mod tests {
             (Kind::AsyncGenerator, "x", "yield x;"),
             (Kind::Ordinary, "a) {}); globalThis.injected = 1; (function(", "return 1;"),
             (Kind::Ordinary, "", "let invalid = ;"),
+            (Kind::Ordinary, "#!bad", "return 1;"),
+            (Kind::Ordinary, "a/*,#!comment*/", "return a;"),
         ];
         let artifacts = requests.into_iter().map(|(kind, parameters, body)| {
             let key = NativeSourceKey::function_constructor(true, kind, parameters, body);

@@ -1407,9 +1407,6 @@ impl<H: Host> Vm<H> {
         for argument in args {
             argument_strings.push(self.to_string(program, *argument)?);
         }
-        if argument_strings.iter().any(|text| text.trim().starts_with("#!")) {
-            return self.syntax_error_result(program, "hashbang is not allowed in Function source");
-        }
         let source = argument_strings.pop().unwrap_or_default();
         let parameters = argument_strings.join(",");
         let kind = match native {
