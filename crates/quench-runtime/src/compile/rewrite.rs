@@ -116,6 +116,9 @@ fusion_recipes! {
                     site.sink = Some(sink);
                 }
                 crate::bytecode::FieldLookup::Atom { atom, base, cache_site } => {
+                    // Field-site validation and scope projections do not support local bases.
+                    // Keep the checked local read and this write as separate operations.
+                    if base.local_index().is_some() { return None; }
                     fields.push(FieldSite {
                         base,
                         first: (atom, cache_site),
@@ -1198,6 +1201,50 @@ fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conditional_local_field_copy_keeps_valid_native_metadata() {
+        let cases = [
+            ("value", "const factory = () => ({model:42}); function Copy() { const result = factory(); if (result === null) {} this.model = result.model; } if (new Copy().model !== 42) throw Error('field copy failed');"),
+            ("effects", r#"
+                const events = [], poison = {};
+                let fail = false;
+                const factory = () => ({get model() { events.push('get'); if (fail) throw poison; return 42; }});
+                function Copy() { const result = factory(); if (result === null) {} this.model = result.model; }
+                Object.defineProperty(Copy.prototype, 'model', {set(value) { events.push('set:' + value); }});
+                new Copy(); fail = true;
+                try { new Copy(); throw Error('missing getter error'); } catch (error) { if (error !== poison) throw error; }
+                if (events.join('|') !== 'get|set:42|get') throw Error('field copy reordered effects');
+            "#),
+        ];
+        for (name, source) in cases {
+            for generic in [false, true] {
+                let program = if generic {
+                    crate::Engine::specialize_unspecialized(source, "local-field-copy.js")
+                } else {
+                    crate::Engine::specialize(source, "local-field-copy.js")
+                }.unwrap();
+                assert!(program.validate().is_ok(), "{:?}", program.field_sites);
+                let path = std::env::temp_dir().join(format!("quench-local-field-copy-{}-{name}-{generic}", std::process::id()));
+                program.write_binary(&path).unwrap();
+                let program = crate::ResidualProgram::read_binary(&path).unwrap();
+                std::fs::remove_file(path).unwrap();
+                for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+                    let mut runtime = crate::Runtime::new(crate::SystemHost);
+                    runtime.set_execution_mode(mode);
+                    runtime.execute(&program).unwrap();
+                }
+                #[cfg(feature = "aot")]
+                {
+                    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+                    let mut runtime = crate::Runtime::new(crate::SystemHost);
+                    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+                    runtime.execute_native(&native).unwrap();
+                    assert_eq!(runtime.native_execution_rejections(), 0);
+                }
+            }
+        }
+    }
 
     #[test]
     fn wide_jump_targets_are_protected_and_relocated() {
