@@ -184,6 +184,9 @@ pub(crate) fn stage_host_sources(
     // can run for host-generated warnings without an application import.
     crate::modules::process_warning_shared_vm::prepare(context)?;
     crate::modules::node_errors_shared_vm::stage_coded_error_support(context)?;
+    // Global timer operations construct these handles only when scheduled.
+    // Build their definitions without creating timers or enqueueing callbacks.
+    crate::modules::timers_shared_vm::timer_handle_api(context)?;
     let global = context.global_root()?;
     let process = context.string_rooted("process");
     let process = context.get_property_rooted(global, process)?;
@@ -206,9 +209,10 @@ pub(crate) fn stage_host_sources(
         context.scoped(|context| {
             let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
                 "console" => return crate::modules::console_shared_vm::stage_formatting(context),
-                // Public buffer exports include lazy Blob/File constructors; callers
-                // can observe them by copying the module's enumerable properties.
-                "buffer" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:buffer"),
+                // Namespace copies can observe every public lazy export: buffer
+                // Blob/File, util codecs, and crypto's WebCrypto policy.
+                "buffer" | "util" | "crypto" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, name),
+                "sys" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:util"),
                 // createRequire tests URL-like inputs through the SDK URL policy,
                 // including the static CommonJS facade used by ESM imports.
                 "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
@@ -225,7 +229,6 @@ pub(crate) fn stage_host_sources(
                     let key = context.string_rooted("promises");
                     (context.get_property_rooted(fs, key)?, "readlink")
                 }
-                "util" => (crate::modules::util_shared_vm::module(context)?, "aborted"),
                 // Domain's capture callback preserves the process report flag.
                 "domain" => (process, "report"),
                 _ => return Ok(()),

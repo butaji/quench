@@ -854,7 +854,7 @@ pub(crate) fn immediate_has_ref(
     Ok(context.boolean(refed))
 }
 
-fn timer_handle_api(
+pub(crate) fn timer_handle_api(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<TimerHandleApi, RootedError> {
     if let Some(api) = context.host_mut().shared_state().borrow().timer_handle_api {
