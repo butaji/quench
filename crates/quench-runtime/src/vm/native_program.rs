@@ -8,6 +8,8 @@ use std::{any::Any, marker::PhantomData, rc::Rc};
 pub type NativeJsFunctionEntry =
     unsafe extern "C" fn(*mut std::ffi::c_void, u64, u64, *const u64, *mut u64) -> u32;
 
+pub(super) type NativeProgramResolver<H> = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError>;
+
 pub(crate) enum NativeJsCode {
     Linked(&'static [NativeJsFunctionEntry]),
     Owned {
@@ -27,7 +29,7 @@ impl NativeJsCode {
 }
 
 /// A program bound to native entries compiled for the same host and semantic ABI.
-pub struct NativeJsProgram<H: Host> {
+pub struct NativeJsProgram<H> {
     program: Rc<ResidualProgram>,
     code: Rc<NativeJsCode>,
     host: PhantomData<fn(&mut H)>,
@@ -127,13 +129,23 @@ impl<H: Host> NativeJsProgram<H> {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
+        self.native_program_resolver = Some(Box::new(resolver));
+    }
+
+    pub(super) fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> {
+        if let Some(resolver) = &self.native_program_resolver
+            && let Some(program) = resolver(name, parts)? { return Ok(Some(program)); }
+        self.host.kept_native_program(name, parts)
+    }
+
     /// Admit a linked module without remapping the atom IDs embedded in its code.
     /// Module records, environments and evaluation remain owned by the shared loader.
     pub(super) fn kept_native_module_program(
         &mut self, module: &crate::ModuleSource,
     ) -> Result<Option<ProgramId>, JsError> {
         let parts = [self.specialization_part(), module.compilation_goal(), &module.source];
-        let Some(native) = self.host.kept_native_program(&module.name, &parts).map_err(|error| JsError::validation(error.to_string()))? else {
+        let Some(native) = self.resolve_native_program(&module.name, &parts).map_err(|error| JsError::validation(error.to_string()))? else {
             return Ok(None);
         };
         self.store_native_module_program(native).map(Some)

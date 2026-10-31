@@ -265,7 +265,7 @@ impl<H: Host> Vm<H> {
         let mode = self.specialization_part();
         #[cfg(feature = "native-execution")]
         if host_script
-            && let Some(native) = self.host.kept_native_program(source_name, &[mode, source]).map_err(|error| JsError::validation(error.to_string()))?
+            && let Some(native) = self.resolve_native_program(source_name, &[mode, source]).map_err(|error| JsError::validation(error.to_string()))?
         {
             let prepared = self.prepare_native_script(native)?;
             let Some(id) = self.store_prepared_script(&prepared)? else {
@@ -431,7 +431,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::PreparedScript, JsError> {
         let parts = [self.specialization_part(), prefix, &*body, suffix];
         #[cfg(feature = "native-execution")]
-        if let Some(native) = self.host.kept_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
+        if let Some(native) = self.resolve_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
             return self.prepare_native_script(native);
         }
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
@@ -557,7 +557,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "native-execution")]
         if let Some(goal) = &cache_key {
             let parts = [self.specialization_part(), goal, source];
-            if let Some(native) = self.host.kept_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
+            if let Some(native) = self.resolve_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
                 return self.prepare_native_script(native);
             }
         }

@@ -146,6 +146,13 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Stage thread-local native artifacts without moving code ownership into
+    /// the host. Missing keys defer to Host::kept_native_program; errors do not.
+    #[cfg(feature = "native-execution")]
+    pub fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
+        self.vm.set_native_program_resolver(resolver);
+    }
+
     /// Execute an entry whose known functions are already native, retaining its
     /// code owner for closures and jobs that outlive this call.
     #[cfg(feature = "native-execution")]

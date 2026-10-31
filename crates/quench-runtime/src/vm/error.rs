@@ -1421,7 +1421,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "native-execution")]
         let native_program = {
             let parts = kind.native_parts(self.specialization_part(), &parameters, &source);
-            match self.host.kept_native_program(crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
+            match self.resolve_native_program(crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
                 Ok(program) => program,
                 Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(program, &message),
                 Err(error) => return Err(JsError::validation(error.to_string())),

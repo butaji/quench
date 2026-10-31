@@ -15,6 +15,10 @@ pub(crate) trait AtomPrefix {
     fn table(&self) -> AtomTable;
     /// Whether the host runs specialized programs, which a program extending it follows.
     fn specialized(&self) -> bool;
+    /// Optional producer-owned obligations; ordinary execution prefixes retain none.
+    #[cfg(feature = "aot")]
+    fn native_function_requests(&self) -> Option<&std::cell::RefCell<std::collections::BTreeSet<super::NativeSourceKey>>> { None }
+
 }
 
 /// A standalone program numbers its atoms from zero.

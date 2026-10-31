@@ -1855,6 +1855,8 @@ pub(crate) struct Vm<H> {
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
+    #[cfg(feature = "native-execution")]
+    native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
     /// Invalidates monomorphic `call_indirect` certificates after a table
     /// mutation or collection that can change target identity.

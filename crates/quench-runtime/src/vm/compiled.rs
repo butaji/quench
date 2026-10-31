@@ -15218,6 +15218,37 @@ mod tests {
         assert!(vm.lookup_atom("effect").is_none());
     }
 
+    #[cfg(feature = "aot")]
+    #[test]
+    fn runtime_native_resolver_preserves_host_fallback_and_refuses_snapshot_loss() {
+        let mut compiler = crate::NativeJsCompiler::new(true);
+        let entry = compiler.compile_script("", "seed.js", Default::default()).unwrap();
+        let unit = compiler.compile_script("throw 42;", "unit.js", Default::default()).unwrap();
+        let (native, _, _) = linked_test_residual(unit);
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let observed = calls.clone();
+        let host = crate::test_host::TestHost::default().with_native_programs(move |_, _| {
+            observed.set(observed.get() + 1);
+            Ok(Some(native.clone()))
+        });
+        let mut vm = Vm::new(host);
+        vm.initialize_shared(&Rc::new(compiler.finish(entry).unwrap()), super::super::builtins::RealmScope::Complete).unwrap();
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        vm.set_native_program_resolver(|_, _| Ok(None));
+        let prepared = vm.prepare_embedding_specialized_script("throw 42;", "unit.js", None).unwrap();
+        let error = vm.evaluate_embedding_prepared_script(&prepared).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)));
+        assert_eq!(calls.get(), 1);
+        assert!(vm.write_snapshot(|_, _| Ok(())).unwrap_err().to_string().contains("native source resolver"));
+        vm.set_native_program_resolver(|_, _| Err(crate::NativeSourceError::InvalidImage("incompatible runtime catalog".into())));
+        let error = match vm.prepare_embedding_specialized_script("throw 42;", "unit.js", None) {
+            Ok(_) => panic!("resolver error fell back to the host"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("incompatible runtime catalog"));
+        assert_eq!(calls.get(), 1);
+    }
+
     #[cfg(feature = "native-execution")]
     #[test]
     fn native_only_rejects_unlinked_roots_before_guest_effects() {

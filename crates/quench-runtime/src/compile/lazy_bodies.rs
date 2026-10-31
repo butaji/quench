@@ -356,6 +356,8 @@ pub(super) struct BodyFacts {
     /// Function expressions whose `prototype` no program text observes (`call_only`).
     pub(super) prototype_unobservable: FxHashSet<u32>,
     next_private_id: u32,
+    #[cfg(feature = "aot")]
+    pub(super) native_function_sources: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
 
 /// The facts of the bodies of `program` (the program `source` parsed lazily, its bodies
@@ -370,8 +372,14 @@ pub(super) fn body_facts(
     source_type: SourceType,
     root_strict: bool,
     first_private_id: u32,
+    #[cfg(feature = "aot")] native_specialization: Option<bool>,
 ) -> Option<BodyFacts> {
-    let mut facts = BodyFacts { next_private_id: first_private_id, ..BodyFacts::default() };
+    let mut facts = BodyFacts {
+        next_private_id: first_private_id,
+        #[cfg(feature = "aot")]
+        native_function_sources: native_specialization.map(|mode| (mode, Vec::new())),
+        ..BodyFacts::default()
+    };
     for function in lazy_functions(program, starts, root_strict, 0) {
         check_alone(source, function, source_type, &mut facts)?;
     }
@@ -414,6 +422,10 @@ fn check_alone(source: &str, function: LazyFunction, source_type: SourceType, fa
         let built = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(&parsed.program);
         if !built.diagnostics.is_empty() {
             return None;
+        }
+        #[cfg(feature = "aot")]
+        if let Some((specialized, requests)) = &mut facts.native_function_sources {
+            requests.extend(super::Engine::literal_function_constructor_sources(&parsed.program, *specialized));
         }
         let shift = |(start, end): (u32, u32)| (start.wrapping_add(delta), end.wrapping_add(delta));
         let first_id = facts.next_private_id;

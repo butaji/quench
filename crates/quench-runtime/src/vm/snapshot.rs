@@ -234,6 +234,10 @@ impl<H: Host> Vm<H> {
         &self,
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> SnapshotResult<Vec<u8>> {
+        #[cfg(feature = "native-execution")]
+        if self.native_program_resolver.is_some() {
+            return Err(SnapshotError::unsupported("a runtime native source resolver"));
+        }
         let Self {
             native_microtask_running,
             host,
@@ -297,6 +301,8 @@ impl<H: Host> Vm<H> {
             lane_stack: _,
             execution_mode: _,
             native_execution_rejections: _,
+            #[cfg(feature = "native-execution")]
+            native_program_resolver: _,
             execution_interrupt: _,
             wasm_reference_epoch: _,
             active_call_roots,

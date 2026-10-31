@@ -4,7 +4,7 @@ use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, DynamicF
 use crate::bytecode::{Atom, AtomSequence, AtomTable, SourceText};
 use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;
-use std::rc::Rc;
+use std::{cell::RefCell, collections::{BTreeMap, BTreeSet}, rc::Rc};
 
 /// Exact host source identity, including the compilation shape. Hashes may index
 /// this key, but equality always checks the original strings.
@@ -70,6 +70,7 @@ pub struct NativeJsCompiler {
     atoms: Rc<AtomSequence>,
     index: FxHashMap<Rc<str>, Atom>,
     specialized: bool,
+    function_requests: Option<RefCell<BTreeSet<NativeSourceKey>>>,
 }
 
 impl NativeJsCompiler {
@@ -78,7 +79,35 @@ impl NativeJsCompiler {
             atoms: Rc::new(AtomSequence::new(AtomTable::default())),
             index: FxHashMap::default(),
             specialized,
+            function_requests: None,
         }
+    }
+
+    /// Discover literal constructor obligations while compiling validated syntax.
+    pub fn with_function_source_discovery(mut self) -> Self {
+        self.function_requests.get_or_insert_with(|| RefCell::new(BTreeSet::new()));
+        self
+    }
+
+    /// Compile the transitive literal-constructor graph before namespace sealing.
+    pub fn compile_function_sources(&mut self) -> Result<BTreeMap<NativeSourceKey, NativeSourceCompilation>, String> {
+        let mut compiled = BTreeMap::new();
+        loop {
+            let key = self.function_requests.as_mut().ok_or("native Function discovery is disabled")?.get_mut().pop_first();
+            let Some(key) = key else { break; };
+            if compiled.contains_key(&key) { continue; }
+            let artifact = match self.compile_function_source(&key) {
+                Ok(artifact) => artifact,
+                Err(error) => {
+                    let pending = self.function_requests.as_mut().expect("discovery is enabled").get_mut();
+                    pending.insert(key);
+                    pending.extend(compiled.into_keys());
+                    return Err(error);
+                },
+            };
+            compiled.insert(key, artifact);
+        }
+        Ok(compiled)
     }
 
     /// Compile a captured loader input without executing its guest code.
@@ -211,6 +240,9 @@ impl NativeJsCompiler {
         if !entry.atoms.belongs_to(&self.atoms) {
             return Err("native entry belongs to a different compiler namespace".into());
         }
+        if self.function_requests.as_ref().is_some_and(|pending| !pending.borrow().is_empty()) {
+            return Err("native Function obligations must be compiled before namespace sealing".into());
+        }
         let len = self.atoms.len();
         entry.atoms = AtomTable::shared(self.atoms, len);
         Ok(entry)
@@ -236,6 +268,55 @@ mod tests {
     }
 
     #[test]
+    fn discovered_function_graph_is_deduplicated_and_defers_invalid_source() {
+        let mut compiler = NativeJsCompiler::new(false).with_function_source_discovery();
+        let entry = compiler.compile_script(r#"
+            Function("return Function('return 42;');");
+            Function("return Function('return 42;');");
+            if (false) Function('let invalid = ;');
+            if (false) Function("Function('void 1;'); let invalid = ;");
+        "#, "entry.js", Default::default()).unwrap();
+        let sources = compiler.compile_function_sources().unwrap();
+        assert_eq!(sources.values().filter(|source| matches!(source, NativeSourceCompilation::Program(_))).count(), 2);
+        assert_eq!(sources.values().filter(|source| matches!(source, NativeSourceCompilation::SyntaxError(_))).count(), 2);
+        assert!(!sources.contains_key(&NativeSourceKey::function_constructor(false, DynamicFunctionKind::Ordinary, "", "void 1;")));
+        let entry = compiler.finish(entry).unwrap();
+        for source in sources.values() {
+            if let NativeSourceCompilation::Program(program) = source {
+                assert!(program.atoms.iter().zip(entry.atoms.iter()).all(|(a, b)| a == b));
+                program.validate().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn namespace_sealing_requires_discovered_obligations_and_failed_parses_add_none() {
+        let mut compiler = NativeJsCompiler::new(false).with_function_source_discovery();
+        let entry = compiler.compile_script("Function('return 42;');", "entry.js", Default::default()).unwrap();
+        assert!(compiler.with_function_source_discovery().finish(entry).unwrap_err().contains("obligations"));
+        let mut compiler = NativeJsCompiler::new(false).with_function_source_discovery();
+        let entry = compiler.compile_script("", "entry.js", Default::default()).unwrap();
+        assert!(compiler.compile_script("Function('return 1;'); const invalid = ;", "invalid.js", Default::default()).is_err());
+        assert!(compiler.compile_function_sources().unwrap().is_empty());
+        compiler.finish(entry).unwrap();
+    }
+
+    #[test]
+    fn failed_function_graph_compilation_keeps_all_obligations_pending() {
+        let mut compiler = NativeJsCompiler::new(true).with_function_source_discovery();
+        let entry = compiler.compile_script("Function('return 42;');", "entry.js", Default::default()).unwrap();
+        let valid = NativeSourceKey::function_constructor(true, DynamicFunctionKind::Ordinary, "", "return 42;");
+        let incompatible = NativeSourceKey::function_constructor(false, DynamicFunctionKind::Ordinary, "", "return 0;");
+        compiler.function_requests.as_mut().unwrap().get_mut().insert(incompatible.clone());
+        assert!(compiler.compile_function_sources().is_err());
+        {
+            let pending = compiler.function_requests.as_ref().unwrap().borrow();
+            assert!(pending.contains(&valid) && pending.contains(&incompatible));
+        }
+        assert!(compiler.finish(entry).unwrap_err().contains("obligations"));
+    }
+
+    #[test]
     fn sealing_rejects_an_independently_compiled_entry() {
         let entry = Engine::specialize("", "foreign.js").unwrap();
         assert!(NativeJsCompiler::new(true).finish(entry).is_err());
@@ -248,6 +329,7 @@ impl AtomPrefix for NativeJsCompiler {
     fn find(&self, name: &str) -> Option<Atom> { self.index.get(name).copied() }
     fn table(&self) -> AtomTable { AtomTable::shared(self.atoms.clone(), self.atoms.len()) }
     fn specialized(&self) -> bool { self.specialized }
+    fn native_function_requests(&self) -> Option<&RefCell<BTreeSet<NativeSourceKey>>> { self.function_requests.as_ref() }
 }
 
 impl Engine {

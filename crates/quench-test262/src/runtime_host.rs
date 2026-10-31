@@ -266,11 +266,13 @@ impl Test262RuntimeHost {
         runtime.set_execution_mode(execution_mode);
         let result = (|| {
             #[cfg(feature = "aot")]
-            let mut compiler = quench_runtime::NativeJsCompiler::new(false);
+            let mut compiler = quench_runtime::NativeJsCompiler::new(false).with_function_source_discovery();
             #[cfg(feature = "aot")]
             let mut native_harness = Vec::new();
             #[cfg(feature = "aot")]
             let mut native_dependencies = Vec::new();
+            #[cfg(feature = "aot")]
+            let mut native_function_sources = std::collections::BTreeMap::new();
             #[cfg(feature = "aot")]
             if execution_mode == ExecutionMode::NativeOnly {
                 for script in harness {
@@ -292,6 +294,7 @@ impl Test262RuntimeHost {
                         SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
                     }.map_err(|errors| compile_failure(&errors, CompilationSite::Entry))?;
                     native_dependencies = compile_native_dependencies(runtime.host_mut(), &mut compiler, &program, name)?;
+                    native_function_sources = compiler.compile_function_sources().map_err(|error| format!("quench AOT Function compilation: {error}"))?;
                     compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?
                 }
                 #[cfg(not(feature = "aot"))]
@@ -320,7 +323,21 @@ impl Test262RuntimeHost {
                         modules.push(compile_native_unit(program, &mut host.native_compilation, output.as_deref())?);
                         host.native_module_sources.insert(source.name.clone(), source);
                     }
+                    let mut catalog = std::collections::BTreeMap::new();
+                    for (key, compiled) in native_function_sources {
+                        let artifact = match compiled {
+                            quench_runtime::NativeSourceCompilation::Program(program) => Ok(compile_native_unit(program, &mut host.native_compilation, output.as_deref())?),
+                            quench_runtime::NativeSourceCompilation::SyntaxError(message) => Err(quench_runtime::NativeSourceError::Syntax(message)),
+                        };
+                        catalog.insert(key, artifact);
+                    }
                     let native = compile_native_unit(program.clone(), &mut host.native_compilation, output.as_deref())?;
+                    if !catalog.is_empty() {
+                        runtime.set_native_program_resolver(move |name, parts| {
+                            let key = quench_runtime::NativeSourceKey::new(name, parts)?;
+                            catalog.get(&key).cloned().transpose()
+                        });
+                    }
                     runtime.execute_native_module_graph(&scripts, &modules, &native)
                 }
                 #[cfg(not(feature = "aot"))]
@@ -482,6 +499,61 @@ mod tests {
         #[cfg(feature = "aot")]
         let modes = modes.chain([super::ExecutionMode::NativeOnly]);
         for mode in modes { Test262RuntimeHost::new(mode).execute(source, "strict-destructuring.js").unwrap(); }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_function_catalog_covers_harness_modules_nested_bodies_and_resets() {
+        use std::fs;
+        let directory = tempfile::tempdir().unwrap();
+        let entry = directory.path().join("entry.mjs");
+        fs::write(directory.path().join("dep.mjs"), r#"
+            export const fromModule = Function('x', 'return x + 2;');
+            export const nested = Function("return Function('return 42;');");
+        "#).unwrap();
+        let source = r#"
+            import { fromModule, nested } from './dep.mjs';
+            if (fromHarness() !== 40 || fromModule(40) !== 42 || nested()() !== 42) throw Error('source graph');
+            const fresh = Function('return 42;');
+            if (fresh === nested() || fresh.prototype === nested().prototype) throw Error('identity');
+            if (false) Function('let invalid = ;');
+            let effects = '';
+            try { Function({toString() { effects += 'body'; return 'let invalid = ;'; }}); throw Error('accepted syntax'); }
+            catch (error) { if (!(error instanceof SyntaxError) || effects !== 'body') throw error; }
+        "#;
+        let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly];
+        for mode in modes {
+            let mut host = Test262RuntimeHost::new(mode);
+            host.execute_after_harness(&["function fromHarness() { return Function('return 40;')(); }"],
+                source, entry.to_str().unwrap(), super::SourceKind::Module).unwrap();
+            assert_eq!(host.native_compilation.rejections, 0);
+            assert!(host.native_module_sources.is_empty());
+            if mode == super::ExecutionMode::NativeOnly {
+                let error = host.execute("const body = 'return 42;'; Function(body)();", "unknown.js").unwrap_err();
+                assert!(error.starts_with("quench AOT capability rejection:"), "{error}");
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_function_catalog_keeps_async_and_generator_kinds() {
+        let source = r#"
+            const generator = new (function*(){}).constructor('yield 42;');
+            const async = (async function(){}).constructor('return 42;');
+            const asyncGenerator = (async function*(){}).constructor('yield 42;');
+            if (generator().next().value !== 42) throw Error('generator');
+            Promise.all([async(), asyncGenerator().next()]).then(values => {
+                if (values[0] !== 42 || values[1].value !== 42 || values[1].done) throw Error('async');
+                $DONE();
+            });
+        "#;
+        for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
+            let mut host = Test262RuntimeHost::new(mode);
+            host.async_test = true;
+            host.execute(source, "constructor-kinds.js").unwrap();
+            assert_eq!(host.native_compilation.rejections, 0);
+        }
     }
 
     #[cfg(feature = "aot")]
