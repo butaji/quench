@@ -15087,6 +15087,80 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_global_scripts_preserve_lexicals_completion_and_invocation_names() {
+        let mut compiler = crate::NativeJsCompiler::new(true);
+        let entry = compiler.compile_script("", "seed.js", Default::default()).unwrap();
+        let sources = ["const frozenLexical = 41; frozenLexical + 1;", "frozenLexical;", "/* empty */"];
+        let mut counters = Vec::new();
+        let artifacts = sources.into_iter().map(|source| {
+            let key = crate::NativeSourceKey::global_script(true, source);
+            let residual = compiler.compile_source(&key).unwrap();
+            let (native, counts, _) = linked_test_residual(residual);
+            counters.push(counts);
+            (key, native)
+        }).collect::<Vec<_>>();
+        let entry = compiler.finish(entry).unwrap();
+        let host = crate::test_host::TestHost::default().with_native_programs(move |name, parts| {
+            Ok(artifacts.iter().find(|(key, _)| key.name() == name && key.parts().eq(parts.iter().copied()))
+                .map(|(_, native)| native.clone()))
+        });
+        let mut vm = Vm::new(host);
+        vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let context = vm.embedding_program().unwrap();
+        assert_eq!(vm.eval_script_source(&context, sources[0], "first-invocation.js").unwrap(), Value::number(42.0));
+        let first_id = super::super::ProgramId::from_raw(u32::try_from(vm.programs.len() - 1).unwrap());
+        assert_eq!(vm.programs.get(first_id).unwrap().source_name, "first-invocation.js");
+        assert_eq!(vm.eval_script_source(&context, sources[1], "second-invocation.js").unwrap(), Value::number(41.0));
+        assert_eq!(counters[0][0].get(), 1);
+        assert_eq!(counters[1][0].get(), 1);
+        let last = vm.programs.len();
+        assert_eq!(vm.eval_script_source(&context, sources[2], "empty.js").unwrap(), Value::UNDEFINED);
+        assert_eq!(vm.programs.len(), last);
+        let error = vm.eval_script_source(&context, "let unknown = ;", "unknown.js").unwrap_err();
+        assert!(error.to_string().contains("source compilation is unavailable"), "{error}");
+        assert!(vm.lookup_atom("unknown").is_none());
+        // The same linked declaration still performs per-invocation instantiation.
+        let error = vm.eval_script_source(&context, sources[0], "duplicate.js").unwrap_err();
+        assert!(error.to_string().contains("SyntaxError"), "{error}");
+        assert_eq!(counters[0][0].get(), 1);
+        let mut context = crate::NativeContext::new(&mut vm);
+        let realm = context.create_realm_rooted().unwrap();
+        let result = context.evaluate_script_in_realm_rooted(realm, sources[0], "foreign-realm.js").unwrap();
+        let expected = context.number(42.0);
+        assert!(context.strict_equal_rooted(result, expected).unwrap());
+        assert_eq!(counters[0][0].get(), 2);
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_global_scripts_defer_syntax_failures_and_reject_module_code() {
+        for module in [false, true] {
+            let mut compiler = crate::NativeJsCompiler::new(true);
+            let entry = compiler.compile_script("", "seed.js", Default::default()).unwrap();
+            let source = "let invalid = ;";
+            let native = module.then(|| linked_test_residual(compiler.compile_module("export {};", "module.js").unwrap()).0);
+            let entry = compiler.finish(entry).unwrap();
+            let host = crate::test_host::TestHost::default().with_native_programs(move |name, parts| {
+                assert_eq!(name, crate::GLOBAL_SCRIPT_SOURCE_NAME);
+                assert_eq!(parts, ["specialized", crate::GLOBAL_SCRIPT_GOAL, source]);
+                match &native {
+                    Some(native) => Ok(Some(native.clone())),
+                    None => Err(crate::NativeSourceError::Syntax("deferred script syntax".into())),
+                }
+            });
+            let mut vm = Vm::new(host);
+            vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let context = vm.embedding_program().unwrap();
+            let error = vm.eval_script_source(&context, source, "invocation.js").unwrap_err();
+            let expected = if module { "different parse goal" } else { "SyntaxError: deferred script syntax" };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_host_scripts_preserve_code_through_preparation_and_compiled_handles() {
         for typescript in [false, true] {
             let mut compiler = crate::NativeJsCompiler::new(true);

@@ -18,7 +18,7 @@ impl NativeSourceKey {
     pub fn new(name: &str, parts: &[&str]) -> Result<Self, String> {
         match parts {
             ["specialized" | "unspecialized", _] => {},
-            ["specialized" | "unspecialized", STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL, _] => {},
+            ["specialized" | "unspecialized", STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL | super::GLOBAL_SCRIPT_GOAL, _] => {},
             ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
             ["specialized" | "unspecialized", DYNAMIC_FUNCTION_GOAL, kind, _, _]
                 if DynamicFunctionKind::from_source_prefix(kind).is_some() => {},
@@ -35,6 +35,11 @@ impl NativeSourceKey {
 
     pub fn is_function_constructor(&self) -> bool {
         matches!(self.parts.as_slice(), [_, goal, _, _, _] if goal == DYNAMIC_FUNCTION_GOAL)
+    }
+
+    pub fn global_script(specialized: bool, source: &str) -> Self {
+        let mode = if specialized { "specialized" } else { "unspecialized" };
+        Self { name: super::GLOBAL_SCRIPT_SOURCE_NAME.into(), parts: [mode, super::GLOBAL_SCRIPT_GOAL, source].into_iter().map(str::to_owned).collect() }
     }
 
     pub fn name(&self) -> &str { &self.name }
@@ -119,6 +124,8 @@ impl NativeJsCompiler {
         }
         match parts.as_slice() {
             [_, source] => self.compile_host_script(source, key.name()).map_err(|errors| format!("{errors:?}")),
+            [_, super::GLOBAL_SCRIPT_GOAL, source] => self.compile_script(source, key.name(), HostScriptOptions::default())
+                .map_err(|errors| format!("{errors:?}")),
             [_, goal @ (STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL), source] => self.compile_module_with_syntax(source, key.name(), *goal == STATIC_TYPESCRIPT_MODULE_GOAL)
                 .map_err(|errors| format!("{errors:?}")),
             [_, goal, source] => self.compile_script(source, key.name(), script_options(goal)?)

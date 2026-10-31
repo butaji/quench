@@ -106,6 +106,31 @@ impl<H: Host> Vm<H> {
         source: &str,
         source_name: &str,
     ) -> Result<Value, JsError> {
+        #[cfg(feature = "native-execution")]
+        {
+            let native = match self.resolve_native_program(
+                crate::GLOBAL_SCRIPT_SOURCE_NAME,
+                &[self.specialization_part(), crate::GLOBAL_SCRIPT_GOAL, source],
+            ) {
+                Ok(native) => native,
+                Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(p, &message),
+                Err(error) => return Err(JsError::validation(error.to_string())),
+            };
+            if let Some(native) = native {
+                if native.residual().kind != crate::bytecode::ProgramKind::Script {
+                    return Err(JsError::validation("native global Script has a different parse goal".into()));
+                }
+                let mut prepared = self.prepare_native_script(native)?;
+                if only_trivia(source) {
+                    return Ok(Value::UNDEFINED);
+                }
+                Rc::make_mut(&mut prepared.program).source_name = source_name.to_owned();
+                let Some(id) = self.store_prepared_script(&prepared)? else {
+                    return Err(self.type_error(p, "dynamic program store is full".into()));
+                };
+                return self.run_global_script_program(id);
+            }
+        }
         self.require_source_compilation(p)?;
         if only_trivia(source) {
             return Ok(Value::UNDEFINED);

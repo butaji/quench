@@ -44,6 +44,9 @@ pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilat
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
 pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
+/// Global Script identity is independent of its invocation's diagnostic name.
+pub const GLOBAL_SCRIPT_GOAL: &str = "global-script";
+pub const GLOBAL_SCRIPT_SOURCE_NAME: &str = "<global-script>";
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
