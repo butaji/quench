@@ -2344,7 +2344,7 @@ impl<'a> Compiler<'a> {
                 declaration: crate::bytecode::EvalBindingDeclaration::Variable,
             });
         }
-        bindings.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut bindings);
         bindings
     }
 

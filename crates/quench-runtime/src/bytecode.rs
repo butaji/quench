@@ -3105,6 +3105,10 @@ pub(crate) struct EvalBinding {
 }
 
 impl EvalBinding {
+    /// Canonical atom order for construction, scope projection and decoding.
+    pub(crate) fn sort_by_atom(bindings: &mut [Self]) {
+        bindings.sort_unstable_by_key(|binding| binding.atom);
+    }
     pub(crate) fn conflicts_with_var(self) -> bool {
         matches!(self.location, EvalBindingLocation::Local(_))
             && self.declaration == EvalBindingDeclaration::Lexical

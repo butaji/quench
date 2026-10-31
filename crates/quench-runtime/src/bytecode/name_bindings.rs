@@ -121,7 +121,7 @@ impl NameBindings {
                     .filter(|binding| seen.insert(binding.atom)),
             );
         }
-        bindings.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut bindings);
         bindings
     }
 }

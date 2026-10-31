@@ -401,7 +401,7 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
         }
-        bindings.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut bindings);
         self.binding_sites.push(crate::bytecode::BindingSite {
             resume_pc: (pc + 1) as u32,
             bindings,
@@ -450,7 +450,7 @@ impl FunctionCompiler<'_, '_> {
                 });
             }
         }
-        direct.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut direct);
         // The captured and hidden names are consulted only by lookups through dynamic name
         // resolution, which the whole program decides; `Compiler::finish` resolves them for
         // the functions that may see such a lookup (`capture_layout::dynamic_name_scopes`).

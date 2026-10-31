@@ -1561,7 +1561,7 @@ impl<'a> BinaryReader<'a> {
     /// Bindings are kept sorted by atom (`NameBindings`, `BindingSite`); ids a compact
     /// encoding maps to its reader's VM keep no order, so they are sorted again.
     fn restore_atom_order(&self, bindings: &mut [EvalBinding]) {
-        if self.atoms.is_some() { bindings.sort_unstable_by_key(|binding| binding.atom); }
+        if self.atoms.is_some() { EvalBinding::sort_by_atom(bindings); }
     }
     fn optional_atom_pair(&mut self) -> Result<Option<(u32, u16)>, String> {
         match self.u8()? { 0 => Ok(None), 1 => Ok(Some(self.atom_pair()?)), _ => Err("invalid residual option".into()) }
