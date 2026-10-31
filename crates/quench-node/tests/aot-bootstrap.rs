@@ -1240,11 +1240,21 @@ fn graph_compiles_literal_function_inputs_and_defers_syntax_errors() {
 #[test]
 #[ignore = "explicit source-deleted native Function constructor qualification"]
 fn compile_command_preserves_literal_function_constructors() {
+    qualify_literal_function_constructors("iteration", Some(pinned_support_report()));
+}
+
+#[test]
+#[ignore = "explicit production source-deleted native Function constructor qualification"]
+fn production_compile_command_preserves_literal_function_constructors() {
+    qualify_literal_function_constructors("production", None);
+}
+
+fn qualify_literal_function_constructors(profile: &str, support: Option<String>) {
     use std::{fs, process::Command};
-    let directory = std::env::temp_dir().join(format!("quench function native, {}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("quench function native, {profile}-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let sdk = directory.join("support.jsonl");
-    fs::write(&sdk, pinned_support_report()).unwrap();
+    if let Some(support) = &support { fs::write(&sdk, support).unwrap(); }
     for extension in ["cjs", "cts", "mjs", "mts"] {
         let sources = directory.join(extension);
         fs::create_dir(&sources).unwrap();
@@ -1276,9 +1286,11 @@ fn compile_command_preserves_literal_function_constructors() {
         assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
         let binary = directory.join(format!("{extension}-native"));
         let report = directory.join(format!("{extension}.json"));
-        let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node")).arg("compile").arg(&entry)
-            .arg("-o").arg(&binary).args(["--profile", "iteration"]).arg("--sdk-report").arg(&sdk)
-            .arg("--report").arg(&report).output().unwrap();
+        let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        compiler.arg("compile").arg(&entry).arg("-o").arg(&binary).args(["--profile", profile])
+            .arg("--report").arg(&report);
+        if support.is_some() { compiler.arg("--sdk-report").arg(&sdk); }
+        let compiled = compiler.output().unwrap();
         assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
         fs::remove_dir_all(sources).unwrap();
         let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
@@ -1287,7 +1299,8 @@ fn compile_command_preserves_literal_function_constructors() {
         assert_eq!(native.stderr, oracle.stderr);
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
         assert_eq!(report["deferred_syntax_errors"], 2);
+        assert_eq!(report["requested_support_profile"], profile);
         assert_reduced_payload(&report, &binary);
-        eprintln!("Function constructors ({extension}) matched Node after source removal: {}", binary.display());
+        eprintln!("Function constructors ({extension}, {profile}) matched Node after source removal: {}", binary.display());
     }
 }
