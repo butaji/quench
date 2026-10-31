@@ -313,3 +313,33 @@ impl SourceManifest {
         Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_staging_uses_builtin_loaders_without_a_secondary_cache() {
+        std::thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(|| {
+            let directory = std::env::temp_dir().join(format!("quench-staged-builtin-loaders-{}", std::process::id()));
+            fs::create_dir(&directory).unwrap();
+            let entry = directory.join("entry.mjs");
+            fs::write(&entry, r#"
+                import 'node:process';
+                import 'node:path';
+                import 'node:path/posix';
+                import 'node:path/win32';
+                import 'node:assert';
+                import 'node:assert/strict';
+                import 'node:async_hooks';
+                import 'node:diagnostics_channel';
+                throw new Error('application entry must not execute during staging');
+            "#).unwrap();
+            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+            assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+            SourceManifest::capture_for_graph(&root, &graph).unwrap();
+            fs::remove_dir_all(directory).unwrap();
+        }).unwrap().join().unwrap();
+    }
+}

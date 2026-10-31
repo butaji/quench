@@ -1163,8 +1163,12 @@ pub(crate) const BUILTIN_EXPORT_VALUES: &str = "\0quench:builtinExportValues";
 /// Reading a policy does not invoke its exported operations or train an app.
 #[cfg(feature = "aot")]
 pub(crate) fn stage_builtin_exports(context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
-    let builtin = requested_builtin(context, name).ok_or_else(|| RootedError::host("unknown staged builtin"))?;
-    let module = cached_builtin(context, builtin)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted(BOOTSTRAP_REQUIRE);
+    let require = context.get_property_rooted(global, key)?;
+    let specifier = context.string_rooted(name);
+    let receiver = context.undefined();
+    let module = context.call_rooted(require, receiver, &[specifier])?;
     for name in super::builtin_export_names(name.strip_prefix("node:").unwrap_or(name)) {
         context.scoped(|context| {
             let key = context.string_rooted(name);
