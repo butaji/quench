@@ -12,6 +12,8 @@ use std::{
 
 const SELECTED_PACKAGES: usize = 300;
 const SCHEMA_VERSION: u64 = 1;
+const OBSERVATION_ENVIRONMENT: [(&str, &str); 2] = [("NO_COLOR", "1"), ("TZ", "UTC")];
+const REMOVED_OBSERVATION_ENVIRONMENT: [&str; 2] = ["FORCE_COLOR", "DEBUG"];
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -28,11 +30,10 @@ fn observe(
     directory: &Path,
     timeout: Duration,
 ) -> Result<CaseObservation, String> {
-    command
-        .current_dir(directory)
-        .env("NO_COLOR", "1")
-        .env_remove("FORCE_COLOR")
-        .env_remove("DEBUG");
+    command.current_dir(directory).envs(OBSERVATION_ENVIRONMENT);
+    for name in REMOVED_OBSERVATION_ENVIRONMENT {
+        command.env_remove(name);
+    }
     observe_command(command, timeout)
 }
 fn effects(directory: &Path) -> Result<Value, String> {
@@ -274,7 +275,7 @@ fn main() -> Result<(), String> {
     let shared = stage(compile(&options, &scenario_path, shared_directory.path()));
     let mut report = json!({"schema_version":SCHEMA_VERSION,"mode":"aot","scope":"Original behavioral scenarios and separate package-entry admission/init probes; import initialization never proves callable behavior. Declaration checks are distinct from native runtime passes.",
         "source_revision":source(&["rev-parse","HEAD"] )?,"source_dirty":!source(&["status","--porcelain"] )?.is_empty(),
-        "target_host":format!("{}-{}",std::env::consts::ARCH,std::env::consts::OS),"node":node_info,"node_sha256":digest(&fs::read(&options.node).map_err(|e|e.to_string())?),
+        "process_environment":{"set":OBSERVATION_ENVIRONMENT,"remove":REMOVED_OBSERVATION_ENVIRONMENT},"target_host":format!("{}-{}",std::env::consts::ARCH,std::env::consts::OS),"node":node_info,"node_sha256":digest(&fs::read(&options.node).map_err(|e|e.to_string())?),
         "sdk_report":options.sdk_report.as_ref().map(|path|fs::read(path).map(|bytes|json!({"path":path,"sha256":digest(&bytes)}))).transpose().map_err(|e|e.to_string())?,"compiler":options.compiler,"compiler_sha256":digest(&fs::read(&options.compiler).map_err(|e|e.to_string())?),"profile":options.profile,
         "compile_timeout_seconds":options.compile_timeout.as_secs(),"execute_timeout_seconds":options.execute_timeout.as_secs(),
         "inventory_sha256":digest(&fs::read(&inventory_path).map_err(|e|e.to_string())?),"lock_sha256":digest(&fs::read(suite.join("package-lock.json")).map_err(|e|e.to_string())?),
