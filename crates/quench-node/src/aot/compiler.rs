@@ -6,14 +6,14 @@ use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, Path
 mod source_pool;
 use source_pool::SourcePool;
 
-const NATIVE_ENTRY_NAME: &str = "<quench:aot-entry>";
+pub(super) const NATIVE_ENTRY_NAME: &str = "<quench:aot-entry>";
 
 /// Original source keys, sorted and deduplicated by full equality. This manifest
 /// is compiler input, rather than a list of sources inferred from benchmark names.
 #[derive(Default)]
 pub struct SourceManifest {
     units: BTreeSet<NativeSourceKey>,
-    assets: ModuleAssets,
+    pub(super) assets: ModuleAssets,
 }
 
 pub struct CompiledSource {
@@ -57,6 +57,7 @@ impl CompiledSources {
             if let Some(PreparedModuleSource::Projected(source)) = &file.prepared { texts.push(source.as_ref()); }
         }
         texts.extend(self.assets.views.values().map(|source| source.as_ref()));
+        texts.extend(self.assets.modules.values().map(|source| source.as_ref()));
         let pool = SourcePool::new(texts);
         let pool_path = directory.join("source_pool.utf8");
         fs::write(&pool_path, pool.text()).map_err(|error| error.to_string())?;
@@ -128,6 +129,14 @@ impl CompiledSources {
         for ((path, key), source) in &self.assets.views {
             writeln!(catalog, "({:?}, {key:?}) => source {},", path.to_str().ok_or("SDK view path is not UTF-8")?, pool.reference(source)).map_err(|error| error.to_string())?;
         }
+        writeln!(catalog, "}} imports {{").map_err(|error| error.to_string())?;
+        for ((referrer, specifier), target) in &self.assets.imports {
+            writeln!(catalog, "({referrer:?}, {specifier:?}) => {target:?},").map_err(|error| error.to_string())?;
+        }
+        writeln!(catalog, "}} modules {{").map_err(|error| error.to_string())?;
+        for (name, source) in &self.assets.modules {
+            writeln!(catalog, "{name:?} => source {},", pool.reference(source)).map_err(|error| error.to_string())?;
+        }
         writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
         fs::write(directory.join("required_exports.txt"), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
@@ -142,6 +151,7 @@ impl CompiledSources {
 pub(crate) struct HostSourceDemands {
     builtins: BTreeSet<String>,
     globals: BTreeSet<String>,
+    esm_builtins: BTreeSet<String>,
 }
 
 enum CaptureStage<'a> {
@@ -164,6 +174,9 @@ pub(crate) fn stage_host_sources(
     context.get_property_rooted(process, env)?;
     let builtins: Vec<_> = demands.builtins.iter().map(String::as_str).collect();
     crate::host::startup_snapshot::preload_named(context, &builtins)?;
+    for name in demands.esm_builtins {
+        context.scoped(|context| crate::host::shared_vm::commonjs::stage_builtin_exports(context, &name))?;
+    }
     // These imported modules expose SDK-backed lazy policies. Stage the
     // policies without invoking their exported operations or capturing state.
     for name in &builtins {
@@ -198,11 +211,9 @@ impl SourceManifest {
 
     pub(in crate::aot) fn insert_key(&mut self, key: NativeSourceKey) { self.units.insert(key); }
 
-    pub fn add_commonjs_graph(&mut self, entry: &Path) -> Result<DependencyGraph, String> {
+    pub fn add_module_graph(&mut self, entry: &Path) -> Result<DependencyGraph, String> {
         let graph = super::graph::discover(self, entry)?;
         self.assets.entry = Some(entry.canonicalize().map_err(|error| error.to_string())?);
-        self.assets.files.extend(graph.files.iter().map(|(path, file)| (path.clone(), file.clone())));
-        self.assets.resolutions.extend(graph.resolutions.iter().map(|(edge, target)| (edge.clone(), target.clone())));
         Ok(graph)
     }
 
@@ -243,7 +254,8 @@ impl SourceManifest {
         match stage {
             CaptureStage::Snapshot(kind) => host.building_snapshot = Some(kind),
             CaptureStage::Modules(graph) => host.native_source_staging = Some(HostSourceDemands {
-                builtins: graph.builtins.clone(), globals: graph.host_globals.clone(),
+                builtins: graph.builtins.union(&graph.esm_builtins).cloned().collect(),
+                globals: graph.host_globals.clone(), esm_builtins: graph.esm_builtins.clone(),
             }),
         }
         let assets = Rc::new(RefCell::new(ModuleAssets { node_root: Some(host.node_library_root.clone()), ..Default::default() }));
@@ -261,8 +273,14 @@ impl SourceManifest {
     /// or executed to create these native compilation records.
     pub fn compile(self) -> Result<CompiledSources, String> {
         let mut compiler = NativeJsCompiler::new(true);
-        let entry = compiler.compile_script("", NATIVE_ENTRY_NAME, Default::default())
-            .map_err(|errors| format!("{errors:?}"))?;
+        let entry = match self.assets.entry.as_ref().and_then(|path| self.assets.files.get(path).map(|file| (path, file.kind))) {
+            Some((path, quench_runtime::SourceKind::Module)) => {
+                let url = url::Url::from_file_path(path).map_err(|_| "invalid ES module entry path")?;
+                let source = format!("import {};", serde_json::to_string(url.as_str()).map_err(|error| error.to_string())?);
+                compiler.compile_module(&source, NATIVE_ENTRY_NAME)
+            },
+            _ => compiler.compile_script("", NATIVE_ENTRY_NAME, Default::default()),
+        }.map_err(|errors| format!("{errors:?}"))?;
         let units = self.units.into_iter().map(|key| {
             let program = compiler.compile_source(&key).map_err(|error| format!("{}: {error}", key.name()))?;
             Ok(CompiledSource { key, program })

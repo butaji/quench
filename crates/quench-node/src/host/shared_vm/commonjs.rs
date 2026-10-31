@@ -1143,6 +1143,25 @@ pub(crate) fn initialize_console_global(
 /// The private global through which a builtin's ESM facade reads its exports.
 pub(crate) const BUILTIN_EXPORT_VALUES: &str = "\0quench:builtinExportValues";
 
+/// Capture SDK definitions behind the exports an imported builtin can expose.
+/// Reading a policy does not invoke its exported operations or train an app.
+#[cfg(feature = "aot")]
+pub(crate) fn stage_builtin_exports(context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
+    let builtin = requested_builtin(context, name).ok_or_else(|| RootedError::host("unknown staged builtin"))?;
+    let module = cached_builtin(context, builtin)?;
+    for name in super::builtin_export_names(name.strip_prefix("node:").unwrap_or(name)) {
+        context.scoped(|context| {
+            let key = context.string_rooted(name);
+            let own = context.own_property_descriptor_rooted(module, key)?;
+            if !context.rooted_value(own).is_some_and(|value| value.is_undefined()) {
+                context.get_property_rooted(module, key)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 /// The values of a builtin module's named exports (`args`: the module and the export names),
 /// aligned with the names. As lib/internal/bootstrap/realm.js `syncExports` does, each is read
 /// with `getOwn` (absent own property: `undefined`), in the order the module lists its own

@@ -2,7 +2,7 @@
 use quench_runtime::SourceKind;
 #[cfg(feature = "aot")]
 use std::cell::RefCell;
-use std::{collections::BTreeMap, path::{Path, PathBuf}, rc::Rc};
+use std::{collections::BTreeMap, path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PreparedModuleSource<T> {
@@ -25,6 +25,8 @@ pub struct ModuleAssets {
     pub node_root: Option<PathBuf>,
     pub entry: Option<PathBuf>,
     pub views: BTreeMap<(PathBuf, String), Rc<str>>,
+    pub imports: BTreeMap<(String, String), String>,
+    pub modules: BTreeMap<String, Arc<str>>,
 }
 
 #[cfg(feature = "aot")]
@@ -45,6 +47,16 @@ impl ModuleAssets {
                 return Err(format!("conflicting SDK source view: {} {}", key.0.display(), key.1));
             }
         }
+        for (edge, target) in &other.imports {
+            if self.imports.get(edge).is_some_and(|old| old != target) {
+                return Err(format!("conflicting import resolution: {} from {}", edge.1, edge.0));
+            }
+        }
+        for (name, source) in &other.modules {
+            if self.modules.get(name).is_some_and(|old| old != source) {
+                return Err(format!("conflicting module source: {name}"));
+            }
+        }
         if self.node_root.is_some() && other.node_root.is_some() && self.node_root != other.node_root {
             return Err("conflicting Node SDK roots".into());
         }
@@ -59,6 +71,8 @@ impl ModuleAssets {
         }
         self.resolutions.extend(other.resolutions);
         self.views.extend(other.views);
+        self.imports.extend(other.imports);
+        self.modules.extend(other.modules);
         if other.node_root.is_some() { self.node_root = other.node_root; }
         if other.entry.is_some() { self.entry = other.entry; }
         Ok(())
@@ -84,6 +98,17 @@ pub struct EmbeddedModuleResolution {
     pub target: &'static str,
 }
 
+pub struct EmbeddedImportResolution {
+    pub referrer: &'static str,
+    pub specifier: &'static str,
+    pub target: &'static str,
+}
+
+pub struct EmbeddedModuleSource {
+    pub name: &'static str,
+    pub source: &'static str,
+}
+
 /// Compiler-generated, sorted original module bytes and resolved edges.
 pub struct EmbeddedModules {
     pub node_root: Option<&'static str>,
@@ -91,9 +116,17 @@ pub struct EmbeddedModules {
     pub files: &'static [EmbeddedModuleFile],
     pub resolutions: &'static [EmbeddedModuleResolution],
     pub views: &'static [EmbeddedSourceView],
+    pub imports: &'static [EmbeddedImportResolution],
+    pub modules: &'static [EmbeddedModuleSource],
 }
 
 impl EmbeddedModules {
+    pub(crate) fn import_source(&self, referrer: &str, specifier: &str) -> Option<&EmbeddedModuleSource> {
+        let edge = self.imports.binary_search_by(|edge| edge.referrer.cmp(referrer).then_with(|| edge.specifier.cmp(specifier))).ok()?;
+        let name = self.imports[edge].target;
+        let source = self.modules.binary_search_by(|source| source.name.cmp(name)).ok()?;
+        Some(&self.modules[source])
+    }
     pub(crate) fn view(&self, path: &Path, key: &str) -> Option<&'static str> {
         self.views.binary_search_by(|view| Path::new(view.path).cmp(path).then_with(|| view.key.cmp(key)))
             .ok().map(|index| self.views[index].source)
@@ -115,7 +148,10 @@ pub(crate) enum ModuleAssetState {
     Filesystem,
     #[cfg(feature = "aot")]
     Capture(Rc<RefCell<ModuleAssets>>),
-    Embedded(&'static EmbeddedModules),
+    Embedded {
+        modules: &'static EmbeddedModules,
+        source_cache: BTreeMap<&'static str, Arc<str>>,
+    },
 }
 
 impl crate::NodeHost {
@@ -123,16 +159,47 @@ impl crate::NodeHost {
     /// retain their existing filesystem behavior.
     pub fn with_embedded_modules(mut self, modules: &'static EmbeddedModules) -> Self {
         if let Some(root) = modules.node_root { self.node_library_root = root.into(); }
-        if let Some(entry) = modules.entry { self = self.with_commonjs_entry(entry.into()); }
-        self.module_assets = ModuleAssetState::Embedded(modules);
+        if let Some(entry) = modules.entry.filter(|entry| modules.file(Path::new(entry)).is_none_or(|file| file.kind != SourceKind::Module)) {
+            self = self.with_commonjs_entry(entry.into());
+        }
+        self.module_assets = ModuleAssetState::Embedded { modules, source_cache: BTreeMap::new() };
         self
     }
 
     pub(crate) fn embedded_module(&self, path: &Path) -> Option<&'static EmbeddedModuleFile> {
-        match self.module_assets {
-            ModuleAssetState::Embedded(modules) => modules.file(path),
+        match &self.module_assets {
+            ModuleAssetState::Embedded { modules, .. } => modules.file(path),
             _ => None,
         }
+    }
+
+    pub(crate) fn embedded_import(&mut self, referrer: &str, specifier: &str) -> Result<Option<quench_runtime::ModuleSource>, String> {
+        match &mut self.module_assets {
+            ModuleAssetState::Embedded { modules, source_cache } => {
+                let module = modules.import_source(referrer, specifier)
+                    .ok_or_else(|| format!("module import outside frozen image: {specifier} from {referrer}"))?;
+                // ModuleSource's owned contract needs one Arc per immutable
+                // source, shared across the loader's many referring edges.
+                let source = source_cache.entry(module.name).or_insert_with(|| Arc::from(module.source));
+                Ok(Some(quench_runtime::ModuleSource::text(module.name, source.clone())))
+            },
+            _ => Ok(None),
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_import(&mut self, referrer: &str, specifier: &str, module: &quench_runtime::ModuleSource) -> Result<(), String> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            let edge = (referrer.to_owned(), specifier.to_owned());
+            if assets.imports.get(&edge).is_some_and(|name| name != &module.name)
+                || assets.modules.get(&module.name).is_some_and(|source| source != &module.source) {
+                return Err(format!("module import changed during capture: {specifier} from {referrer}"));
+            }
+            assets.imports.insert(edge, module.name.clone());
+            assets.modules.insert(module.name.clone(), module.source.clone());
+        }
+        Ok(())
     }
 
     pub(crate) fn module_path(&self, path: &Path) -> std::io::Result<PathBuf> {
@@ -141,7 +208,7 @@ impl crate::NodeHost {
     }
 
     pub(crate) fn module_bytes(&mut self, path: &Path, _kind: SourceKind) -> std::io::Result<Vec<u8>> {
-        if let ModuleAssetState::Embedded(modules) = &self.module_assets {
+        if let ModuleAssetState::Embedded { modules, .. } = &self.module_assets {
             return modules.file(path).map(|file| file.bytes.to_vec()).ok_or_else(|| std::io::Error::new(
                 std::io::ErrorKind::NotFound, format!("module source outside frozen image: {}", path.display()),
             ));
@@ -206,8 +273,8 @@ impl crate::NodeHost {
     }
 
     pub(crate) fn embedded_resolution(&self, parent: &Path, specifier: &str) -> Option<PathBuf> {
-        match self.module_assets {
-            ModuleAssetState::Embedded(modules) => modules.resolve(parent, specifier).map(Path::to_owned),
+        match &self.module_assets {
+            ModuleAssetState::Embedded { modules, .. } => modules.resolve(parent, specifier).map(Path::to_owned),
             _ => None,
         }
     }

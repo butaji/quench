@@ -126,7 +126,7 @@ fn compile(options: Options) -> Result<(), String> {
         return Err("compiled output cannot replace its source entry".into());
     }
     let mut manifest = SourceManifest::default();
-    let graph = manifest.add_commonjs_graph(&entry)?;
+    let graph = manifest.add_module_graph(&entry)?;
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -180,6 +180,8 @@ fn compile(options: Options) -> Result<(), String> {
     };
     manifest.extend(SourceManifest::capture_for_graph(&library_root, &graph)?)?;
     report["source_units"] = json!(manifest.units().len());
+    report["archived_module_sources"] = json!(manifest.assets().modules.len());
+    report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = manifest.compile()?;
     let inputs = compiled.emit(&work.0.join("images"))?;

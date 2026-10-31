@@ -12,10 +12,10 @@ fn frozen_module_inputs_reject_conflicting_entries_without_changing_the_manifest
     let entry = directory.join("entry.cjs");
     fs::write(&entry, "throw 1;").unwrap();
     let mut first = SourceManifest::default();
-    first.add_commonjs_graph(&entry).unwrap();
+    first.add_module_graph(&entry).unwrap();
     fs::write(&entry, "throw 2;").unwrap();
     let mut second = SourceManifest::default();
-    second.add_commonjs_graph(&entry).unwrap();
+    second.add_module_graph(&entry).unwrap();
     assert!(first.extend(second).unwrap_err().contains("conflicting module input"));
     assert_eq!(first.assets().files[&entry.canonicalize().unwrap()].bytes.as_ref(), b"throw 1;");
     assert_eq!(first.units().len(), 1);
@@ -44,7 +44,7 @@ fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("entry.cjs");
     fs::write(&entry, "require('node:fs/promises'); require('node:util'); require('node:domain'); throw new Error('application entry must not run');").unwrap();
-    let graph = SourceManifest::default().add_commonjs_graph(&entry).unwrap();
+    let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
     let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
     let warning = Path::new("lib/internal/process/warning.js");
@@ -88,7 +88,7 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     fs::write(directory.join("dep.js"), "#!/usr/bin/env node\nrequire('./entry.cts'); module.exports = require('node:path');").unwrap();
     fs::write(directory.join("data.json"), "{\"answer\":42}").unwrap();
     let mut manifest = SourceManifest::default();
-    let graph = manifest.add_commonjs_graph(&entry).unwrap();
+    let graph = manifest.add_module_graph(&entry).unwrap();
     assert_eq!(graph.files.len(), 3);
     assert_eq!(manifest.units().len(), 2);
     assert_eq!(graph.files[&entry.canonicalize().unwrap()].bytes.as_ref(), text.as_bytes());
@@ -141,10 +141,10 @@ fn graph_rechecks_a_dependency_created_after_a_failed_resolution() {
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("entry.cjs");
     fs::write(&entry, "require('./later');").unwrap();
-    let first = SourceManifest::default().add_commonjs_graph(&entry).unwrap();
+    let first = SourceManifest::default().add_module_graph(&entry).unwrap();
     assert!(first.requirements.iter().any(|edge| matches!(edge, quench_node::aot::GraphRequirement::Unresolved { .. })));
     fs::write(directory.join("later.js"), "module.exports = 42;").unwrap();
-    let second = SourceManifest::default().add_commonjs_graph(&entry).unwrap();
+    let second = SourceManifest::default().add_module_graph(&entry).unwrap();
     assert_eq!(second.files.len(), 2);
     assert!(second.requirements.is_empty());
     fs::remove_dir_all(directory).unwrap();
@@ -155,7 +155,7 @@ fn framework_graphs_admit_original_js_and_ts_without_running_applications() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/npm-perf/workloads");
     for fixture in ["react-ssr.cjs", "react-ssr.cts", "next-route-generate.cjs", "next-route-generate.cts"] {
         let mut manifest = SourceManifest::default();
-        let graph = manifest.add_commonjs_graph(&root.join(fixture)).unwrap();
+        let graph = manifest.add_module_graph(&root.join(fixture)).unwrap();
         eprintln!("{fixture}: {} files, {} source units, {} builtins, {} requirements", graph.files.len(), manifest.units().len(), graph.builtins.len(), graph.requirements.len());
         for requirement in &graph.requirements { eprintln!("  {requirement:?}"); }
         let count = manifest.units().len();
@@ -270,7 +270,7 @@ fn bootstrap_images_reject_missing_frozen_sdk_preparation() {
     fs::write(&entry, "require('node:util');").unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
     let mut manifest = SourceManifest::default();
-    let graph = manifest.add_commonjs_graph(&entry).unwrap();
+    let graph = manifest.add_module_graph(&entry).unwrap();
     manifest.extend(SourceManifest::capture_for_graph(&root, &graph).unwrap()).unwrap();
     let mut compiled = manifest.compile().unwrap();
     let (path, file) = compiled.assets.files.iter_mut()
@@ -430,7 +430,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
     for fixture in ["react-ssr.cjs", "react-ssr.cts", "next-route-generate.cjs", "next-route-generate.cts"] {
         let original = fixtures.join(fixture).canonicalize().unwrap();
         let mut manifest = SourceManifest::default();
-        let graph = manifest.add_commonjs_graph(&original).unwrap();
+        let graph = manifest.add_module_graph(&original).unwrap();
         let sources = directory.join(format!("{fixture}-sources"));
         copy_graph_sources(&graph, &app_root, &sources);
         let entry = sources.join(original.strip_prefix(&app_root).unwrap());
@@ -520,7 +520,7 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
     for fixture in ["react-ssr.cjs", "react-ssr.cts", "next-route-generate.cjs", "next-route-generate.cts"] {
         let original_entry = fixtures.join(fixture).canonicalize().unwrap();
         let mut original = SourceManifest::default();
-        let original_graph = original.add_commonjs_graph(&original_entry).unwrap();
+        let original_graph = original.add_module_graph(&original_entry).unwrap();
         let sdk = SourceManifest::capture_for_graph(&root, &original_graph).unwrap();
         let source_directory = directory.join(format!("{fixture}-sources"));
         let app_root = source_directory.join("app");
@@ -535,7 +535,7 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         }
         let entry = app_root.join(original_entry.strip_prefix(&original_app_root).unwrap()).canonicalize().unwrap();
         let mut manifest = SourceManifest::default();
-        let graph = manifest.add_commonjs_graph(&entry).unwrap();
+        let graph = manifest.add_module_graph(&entry).unwrap();
         manifest.extend(SourceManifest::capture_for_graph(&sdk_root, &graph).unwrap()).unwrap();
         eprintln!("native {fixture}: {} files, {} source units, {} requirements", graph.files.len(), manifest.units().len(), graph.requirements.len());
         let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images"))).unwrap();
@@ -579,4 +579,108 @@ fn copy_graph_sources(graph: &quench_node::aot::DependencyGraph, original_root: 
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::copy(package, target).unwrap();
     }
+}
+
+fn write_static_esm_fixture(sources: &Path) -> std::path::PathBuf {
+    use std::fs;
+    fs::create_dir_all(sources).unwrap();
+    let entry = sources.join("entry.mjs");
+    fs::write(&entry, r#"
+import { count, bump } from './dep.mjs';
+import * as fsBare from 'fs';
+import * as fsPrefixed from 'node:fs';
+import legacy, { answer } from './legacy.cjs';
+import data from './data.json' with { type: 'json' };
+import * as first from './instance.mjs?tag=/../one';
+import * as second from './instance.mjs?tag=/../two';
+export function seed() { return 41; }
+await Promise.resolve();
+bump();
+console.log(JSON.stringify({count,answer,legacy:legacy.answer,json:data.answer,
+  builtinIdentity:fsBare === fsPrefixed,reader:typeof fsBare.readFile,
+  first:first.id,second:second.id,firstUrl:first.url,secondUrl:second.url,
+  requireType:typeof require,seedText:seed.toString(),descriptor:Object.getOwnPropertyDescriptor(fsBare, 'readFile').enumerable}));
+"#).unwrap();
+    fs::write(sources.join("dep.mjs"), "import { seed } from './entry.mjs'; export let count = seed(); export function bump() { count++; }").unwrap();
+    fs::write(sources.join("legacy.cjs"), "exports.answer = 42;").unwrap();
+    fs::write(sources.join("data.json"), "{\"answer\":43}").unwrap();
+    fs::write(sources.join("instance.mjs"), "globalThis.moduleInstances = (globalThis.moduleInstances || 0) + 1; export const id = globalThis.moduleInstances; export const url = import.meta.url;").unwrap();
+    entry
+}
+
+#[test]
+fn static_esm_graph_freezes_node_resolution_facades_and_opaque_url_identities() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench-esm-graph-{}", std::process::id()));
+    let entry = write_static_esm_fixture(&directory);
+    let mut manifest = SourceManifest::default();
+    let graph = manifest.add_module_graph(&entry).unwrap();
+    assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+    assert_eq!(graph.files.len(), 5);
+    let assets = manifest.assets();
+    let root = entry.canonicalize().unwrap().to_string_lossy().into_owned();
+    assert_eq!(assets.imports[&(root.clone(), "fs".into())], assets.imports[&(root.clone(), "node:fs".into())]);
+    assert_ne!(assets.imports[&(root.clone(), "./instance.mjs?tag=/../one".into())], assets.imports[&(root, "./instance.mjs?tag=/../two".into())]);
+    assert_eq!(assets.modules.keys().filter(|name| name.as_str() == "node:quench-builtin/fs").count(), 1);
+    manifest.compile().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit source-independent static ESM compile/link qualification"]
+fn compile_command_preserves_static_esm_graph_after_source_removal() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench esm sources, {}", std::process::id()));
+    let sources = directory.join("sources");
+    let entry = write_static_esm_fixture(&sources);
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let binary = directory.join("program");
+    let report = directory.join("report.json");
+    let compile = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&binary)
+        .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk)
+        .arg("--report").arg(&report).output().unwrap();
+    assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr));
+    fs::remove_dir_all(&sources).unwrap();
+    let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, oracle.stdout);
+    assert_eq!(native.stderr, oracle.stderr);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert!(report["archived_module_sources"].as_u64().unwrap() > 0);
+    assert!(report["static_import_resolutions"].as_u64().unwrap() > 0);
+    assert_eq!(report["bytecode_interpreter"], false);
+    assert_eq!(report["js_source_frontend"], false);
+    eprintln!("Static ESM cycles/live bindings/TLA/CJS/JSON/builtin aliases/URL identities matched Node after source removal: {}", binary.display());
+}
+
+#[test]
+fn builtin_esm_facades_bypass_commonjs_cache_poisoning_and_share_alias_identity() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench-builtin-facade-{}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.mjs");
+    fs::write(&entry, r#"
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+require.cache.fs = { exports: { injected: true } };
+const bare = await import('fs');
+const prefixed = await import('node:fs');
+console.log(JSON.stringify({ identity:bare === prefixed, actual:bare.default === require('node:fs'),
+  reader:typeof bare.readFile, poisoned:bare.default.injected === true, cache:require('fs').injected === true }));
+"#).unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    for jit in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        if jit { command.arg("--jit"); }
+        let actual = command.arg(&entry).output().unwrap();
+        assert_eq!(actual.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, oracle.stdout);
+        assert_eq!(actual.stderr, oracle.stderr);
+    }
+    fs::remove_dir_all(directory).unwrap();
 }

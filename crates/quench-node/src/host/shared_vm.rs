@@ -1237,142 +1237,14 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn resolve_dynamic_import(
-        &mut self,
-        referrer: &str,
-        specifier: &str,
+        &mut self, referrer: &str, specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
-        if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
-            return Err("native guest code required: module source resolution is unavailable".into());
-        }
-        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
-        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
-            std::sync::OnceLock::new();
-        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
-            serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON")
-        });
-        let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
-        let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
-        if !builtin && specifier.starts_with("node:") {
-            return Err(esm_errors::unknown_builtin(specifier));
-        }
-        if let Some(error) = esm_errors::unsupported_scheme(specifier) {
-            return Err(error);
-        }
-        if builtin {
-            let exports = builtin_exports
-                .get(builtin_name)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let require_specifier = specifier;
-            let mut source = format!(
-                "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
-                serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
-            );
-            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
-            // in the order the module lists its own keys (`builtin_export_values`). A member
-            // still a pending lazy data property is bound to its pending value instead, and
-            // the listener gives the binding the member's value when its group materializes.
-            let assignments: String = exports
-                .iter()
-                .enumerate()
-                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
-                .collect();
-            source.push_str(&format!(
-                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
-                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
-                    .map_err(|error| error.to_string())?,
-                serde_json::to_string(exports).map_err(|error| error.to_string())?
-            ));
-            for (index, name) in exports.iter().enumerate() {
-                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
-            }
-            return Ok(Some(quench_runtime::ModuleSource::text(
-                format!("node:quench-builtin/{builtin_name}"),
-                source,
-            )));
-        }
-
-        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
-        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
-        // several of its phases.
-        let location = match self
-            .resolved_imports
-            .get(referrer)
-            .and_then(|imports| imports.get(specifier))
-        {
-            Some(location) => std::rc::Rc::clone(location),
-            None => {
-                let Some(location) = self.import_location(referrer, specifier)? else {
-                    return Ok(None);
-                };
-                let location = std::rc::Rc::new(location);
-                self.resolved_imports
-                    .entry(referrer.into())
-                    .or_default()
-                    .insert(specifier.into(), std::rc::Rc::clone(&location));
-                location
-            }
-        };
-        let (path, name) = (location.path.clone(), location.name.clone());
-        let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
-                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
-                Err(error) => error,
-            },
-            _ => format!("module {}: {error}", path.display()).into(),
-        })?;
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("");
-        if extension == "wasm" {
-            // Node's `wasm` format: the module record is a facade over the instance.
-            let source = esm_wasm::facade(&name, &path, &bytes)?;
-            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
-        }
-        let source = if extension == "json" {
-            commonjs::source_text(&bytes).into_owned()
-        } else {
-            let kind = commonjs::source_kind_of_real_bytes(&path, &bytes)?;
-            if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes)
-                    .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
-            } else {
-                let filename = serde_json::to_string(&path.to_string_lossy())
-                    .map_err(|error| error.to_string())?;
-                let mut source = format!(
-                    "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
-                );
-                source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in
-                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
-                        .into_iter()
-                        .enumerate()
-                {
-                    let local = format!("__quenchExport{index}");
-                    source.push_str("const ");
-                    source.push_str(&local);
-                    source.push_str(" = __quenchModule[");
-                    source.push_str(
-                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
-                    );
-                    source.push_str("];\n");
-                    source.push_str("export { ");
-                    source.push_str(&local);
-                    source.push_str(" as ");
-                    source.push_str(
-                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
-                    );
-                    source.push_str(" };\n");
-                }
-                source
-            }
-        };
-        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
-        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
-        // text it compiles, never the file it wraps.
-        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
+        #[cfg(feature = "native-execution")]
+        if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
+        let module = self.resolve_filesystem_import(referrer, specifier)?;
+        #[cfg(feature = "aot")]
+        if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
+        Ok(module)
     }
 
     fn validate_module_type(
@@ -1650,6 +1522,152 @@ mod tests {
     }
 }
 
+/// One export-name authority for Node's ESM facade generation and AOT SDK staging.
+pub(crate) fn builtin_export_names(name: &str) -> &'static [String] {
+    static EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    EXPORTS.get_or_init(|| serde_json::from_str(include_str!("builtin_esm_exports.json"))
+        .expect("generated Node builtin export names are valid JSON"))
+        .get(name).map(Vec::as_slice).unwrap_or(&[])
+}
+
+impl NodeHost {
+    /// Node's source/interop policy for a resolved import; frozen images use its
+    /// compiler-captured result through the same host contract.
+    fn resolve_filesystem_import(
+        &mut self, referrer: &str, specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+            return Err("native guest code required: module source resolution is unavailable".into());
+        }
+        let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
+        let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
+        if !builtin && specifier.starts_with("node:") {
+            return Err(esm_errors::unknown_builtin(specifier));
+        }
+        if let Some(error) = esm_errors::unsupported_scheme(specifier) {
+            return Err(error);
+        }
+        if builtin {
+            let exports = builtin_export_names(builtin_name);
+            let require_specifier = format!("node:{builtin_name}");
+            let mut source = format!(
+                "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
+                serde_json::to_string(&require_specifier).map_err(|error| error.to_string())?
+            );
+            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
+            source.push_str(&format!(
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
+                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
+                    .map_err(|error| error.to_string())?,
+                serde_json::to_string(exports).map_err(|error| error.to_string())?
+            ));
+            for (index, name) in exports.iter().enumerate() {
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
+            }
+            return Ok(Some(quench_runtime::ModuleSource::text(
+                format!("node:quench-builtin/{builtin_name}"),
+                source,
+            )));
+        }
+
+        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
+        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
+        // several of its phases.
+        let location = match self
+            .resolved_imports
+            .get(referrer)
+            .and_then(|imports| imports.get(specifier))
+        {
+            Some(location) => std::rc::Rc::clone(location),
+            None => {
+                let Some(location) = self.import_location(referrer, specifier)? else {
+                    return Ok(None);
+                };
+                let location = std::rc::Rc::new(location);
+                self.resolved_imports
+                    .entry(referrer.into())
+                    .or_default()
+                    .insert(specifier.into(), std::rc::Rc::clone(&location));
+                location
+            }
+        };
+        let (path, name) = (location.path.clone(), location.name.clone());
+        let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
+                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
+                Err(error) => error,
+            },
+            _ => format!("module {}: {error}", path.display()).into(),
+        })?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if extension == "wasm" {
+            #[cfg(feature = "aot")]
+            self.record_module_bytes(&path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
+        let kind = if extension == "json" { quench_runtime::SourceKind::Script }
+            else { commonjs::source_kind_of_real_bytes(&path, &bytes)? };
+        #[cfg(feature = "aot")]
+        self.record_module_bytes(&path, kind, &bytes).map_err(|error| error.to_string())?;
+        let source = if extension == "json" {
+            commonjs::source_text(&bytes).into_owned()
+        } else {
+            if kind == quench_runtime::SourceKind::Module {
+                String::from_utf8(bytes)
+                    .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
+            } else {
+                #[cfg(feature = "aot")]
+                self.record_module_resolution(&path, &path.to_string_lossy(), &path)?;
+                let filename = serde_json::to_string(&path.to_string_lossy())
+                    .map_err(|error| error.to_string())?;
+                let mut source = format!(
+                    "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+                );
+                source.push_str("export { __quenchModule as 'module.exports' };\n");
+                for (index, export) in
+                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
+                        .into_iter()
+                        .enumerate()
+                {
+                    let local = format!("__quenchExport{index}");
+                    source.push_str("const ");
+                    source.push_str(&local);
+                    source.push_str(" = __quenchModule[");
+                    source.push_str(
+                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                    );
+                    source.push_str("];\n");
+                    source.push_str("export { ");
+                    source.push_str(&local);
+                    source.push_str(" as ");
+                    source.push_str(
+                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                    );
+                    source.push_str(" };\n");
+                }
+                source
+            }
+        };
+        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
+        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
+        // text it compiles, never the file it wraps.
+        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
+    }
+}
+
 /// Where an import loads from (`NodeHost::import_location`).
 pub(crate) struct ImportLocation {
     path: std::path::PathBuf,
@@ -1658,7 +1676,7 @@ pub(crate) struct ImportLocation {
 
 /// An import referrer's file URL, when it is one, and its path: Node resolves filesystem
 /// specifiers as URLs before accessing a file.
-fn referrer_location(
+pub(crate) fn referrer_location(
     referrer: &str,
 ) -> Result<(Option<url::Url>, std::path::PathBuf), quench_runtime::ModuleLoadError> {
     let Some(url) = referrer

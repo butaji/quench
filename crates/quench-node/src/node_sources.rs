@@ -76,7 +76,7 @@ impl crate::NodeHost {
         #[cfg(not(feature = "native-execution"))]
         let _ = (path, view);
         #[cfg(feature = "native-execution")]
-        if let crate::aot::ModuleAssetState::Embedded(modules) = &self.module_assets {
+        if let crate::aot::ModuleAssetState::Embedded { modules, .. } = &self.module_assets {
             return modules.view(path, &key).map(Cow::Borrowed).ok_or_else(|| {
                 format!(
                     "SDK source view outside frozen image: {} {key}",
@@ -114,7 +114,7 @@ impl crate::NodeHost {
         preference: LibrarySource,
     ) -> std::io::Result<Cow<'static, str>> {
         #[cfg(feature = "native-execution")]
-        if let crate::aot::ModuleAssetState::Embedded(modules) = &self.module_assets {
+        if let crate::aot::ModuleAssetState::Embedded { modules, .. } = &self.module_assets {
             let file = modules.file(path).ok_or_else(|| std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("SDK source outside frozen image: {}", path.display()),
@@ -209,6 +209,8 @@ mod frozen_source_tests {
             files: &[],
             resolutions: &[],
             views,
+            imports: &[],
+            modules: &[],
         }));
         let mut host = crate::NodeHost::new(vec!["quench".into()]).with_embedded_modules(modules);
         let path = Path::new("/quench-frozen-sdk/lib/policy.js");
@@ -277,6 +279,8 @@ mod frozen_source_tests {
             }],
             resolutions: &[],
             views: &[],
+            imports: &[],
+            modules: &[],
         };
         let path = Path::new("/quench-frozen-sdk/lib/example.js");
         let mut host = crate::NodeHost::new(vec!["quench".into()]).with_embedded_modules(&MODULES);

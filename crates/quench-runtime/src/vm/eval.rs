@@ -682,6 +682,7 @@ impl<H: Host> Vm<H> {
         prepared.program.atoms.belongs_to(&self.atom_sequence)
     }
 
+    #[cfg(feature = "native-execution")]
     pub(crate) fn evaluate_prepared_global_script(
         &mut self, prepared: &crate::PreparedScript,
     ) -> Result<Value, JsError> {
