@@ -219,9 +219,10 @@ fn compile(options: Options) -> Result<(), String> {
     let staged = work.0.join("native-image");
     let exports = support.link(&inputs, &driver, &staged)?;
     report["semantic_exports"] = json!(exports);
-    report["binary_bytes"] = json!(fs::metadata(&staged)
-        .map_err(|error| error.to_string())?
-        .len());
+    let payload = super::payload::remove_offline_symbols(&staged)?;
+    report["symbol_audit_stage"] = json!("before_symbol_removal");
+    report["binary_bytes"] = json!(payload.binary_bytes);
+    report["payload_reduction"] = json!(payload);
     report["native_dependencies"] = json!(native_dependencies(&staged)?);
     report["status"] = json!("compiled");
     // Publish only an audited executable. A failed compile leaves existing output intact.

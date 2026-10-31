@@ -137,6 +137,8 @@ fn execute_native_with_teardown(
 #[cfg(feature = "aot")]
 mod link;
 #[cfg(feature = "aot")]
+mod payload;
+#[cfg(feature = "aot")]
 pub use link::NativeSupport;
 #[cfg(feature = "aot")]
 pub mod cli;

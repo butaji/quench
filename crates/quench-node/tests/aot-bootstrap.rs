@@ -398,6 +398,17 @@ fn compile_command_preserves_pooled_source_reflection() {
     eprintln!("Pooled UTF-8, BOM, CRLF, function reflection and JSON matched Node after source removal: {}", binary.display());
 }
 
+fn assert_reduced_payload(report: &serde_json::Value, executable: &Path) {
+    assert_eq!(report["symbol_audit_stage"], "before_symbol_removal");
+    let payload = &report["payload_reduction"];
+    let bytes = std::fs::metadata(executable).unwrap().len();
+    assert_eq!(report["binary_bytes"], bytes);
+    assert_eq!(payload["binary_bytes"], bytes);
+    assert!(bytes < payload["unstripped_bytes"].as_u64().unwrap());
+    assert!(payload["symbols_after"].as_u64().unwrap() < payload["symbols_before"].as_u64().unwrap());
+    assert!(payload["preserved_runtime_sections"].as_u64().unwrap() > 0);
+}
+
 fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path) {
     let support = quench_node::aot::NativeSupport::from_cargo_report(&pinned_support_report()).unwrap();
     support.link(inputs, &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/driver.rs"), executable).unwrap();
@@ -457,6 +468,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
         fs::remove_dir_all(&sources).unwrap();
         assert_eq!(run(&mut Command::new(&executable)), oracle);
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_reduced_payload(&report, &executable);
         assert_eq!(report["status"], "compiled");
         assert_eq!(report["execution_mode"], "native_only");
         assert_eq!(report["source_compilation"], false);
@@ -650,6 +662,7 @@ fn compile_command_preserves_static_esm_graph_after_source_removal() {
     assert_eq!(native.stdout, oracle.stdout);
     assert_eq!(native.stderr, oracle.stderr);
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_reduced_payload(&report, &binary);
     assert!(report["archived_module_sources"].as_u64().unwrap() > 0);
     assert!(report["static_import_resolutions"].as_u64().unwrap() > 0);
     assert_eq!(report["bytecode_interpreter"], false);
@@ -776,6 +789,7 @@ fn compile_command_preserves_typescript_esm_after_source_removal() {
     assert_eq!(native.stdout, oracle.stdout);
     assert_eq!(native.stderr, oracle.stderr);
     let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_reduced_payload(&report, &binary);
     assert_eq!(report["bytecode_interpreter"], false);
     assert_eq!(report["js_source_frontend"], false);
     eprintln!("TypeScript ESM type-only edges and unsound assertions matched Node after source removal: {}", binary.display());
