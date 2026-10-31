@@ -206,6 +206,11 @@ pub(crate) fn stage_host_sources(
                 // createRequire tests URL-like inputs through the SDK URL policy,
                 // including the static CommonJS facade used by ESM imports.
                 "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
+                // Object-shaped throws/rejects matchers and guarded deep-equality
+                // fallbacks load the SDK comparison policy lazily.
+                "assert" | "assert/strict" => return crate::host::shared_vm::commonjs::node_library_module(
+                    context, "assert.js", "internal/util/comparisons.js",
+                ).map(drop),
                 "fs" | "fs/promises" => {
                     let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
                     let key = context.string_rooted("promises");
