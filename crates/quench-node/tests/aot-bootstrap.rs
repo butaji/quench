@@ -1532,3 +1532,75 @@ fn compile_command_preserves_scoped_loader_aliases_and_resolve_only_metadata() {
         eprintln!("Scoped loader aliases ({extension}) matched Node after source removal: {}", binary.display());
     }
 }
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[ignore = "explicit source-independent filesystem-watch oracle qualification"]
+fn compile_command_preserves_filesystem_watch_delivery_and_lifecycle() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench native watcher, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = directory.join("support.jsonl"); fs::write(&sdk, pinned_support_report()).unwrap();
+    let guest = r#"
+const fs = require('node:fs');
+const mode = process.argv[2], root = process.argv[3], file = root + '/watched.txt';
+fs.mkdirSync(root); if (mode === 'file') fs.writeFileSync(file, 'before');
+const controller = new AbortController();
+if (mode === 'missing') {
+  try { fs.watch(file); throw new Error('missing path accepted'); }
+  catch (error) { console.log(JSON.stringify({error:[error.name,error.code,error.syscall,error.path === file]})); }
+} else {
+  const events = [];
+  const deadline = setTimeout(() => { throw new Error('watch delivery timeout'); }, 5000);
+  const watcher = fs.watch(mode === 'file' ? file : root, {encoding:'buffer', signal:controller.signal}, (kind, filename) => {
+    if (mode === 'abort' || filename.toString() !== 'watched.txt') return;
+    events.push([kind, Buffer.isBuffer(filename), filename.toString()]); watcher.close();
+  });
+  const identity = [watcher.ref() === watcher, watcher.unref() === watcher, watcher.ref() === watcher];
+  watcher.on('close', () => {
+    clearTimeout(deadline);
+    console.log(JSON.stringify({events,identity,constructor:watcher.constructor.name,aborted:controller.signal.aborted,
+      closeResult:watcher.close(),contents:fs.existsSync(file) ? fs.readFileSync(file,'utf8') : null}));
+  });
+  setTimeout(() => { if (mode === 'abort') controller.abort('stop');
+    else if (mode === 'file') fs.appendFileSync(file,'-after');
+    else fs.writeFileSync(file,'created'); }, 100);
+}
+"#;
+    for extension in ["cjs", "cts"] {
+        let sources = directory.join(extension); fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        let text = if extension == "cts" { guest.replace("const watcher = fs.watch(", "const watcher = (fs.watch(").replace("watcher.close();\n  });", "watcher.close();\n  }) as unknown as { close():number, ref():string, unref():boolean });") } else { guest.to_owned() };
+        fs::write(&entry, text).unwrap();
+        let mut oracles = Vec::new();
+        for mode in ["file", "directory", "abort", "missing"] {
+            let data = directory.join(format!("{extension}-{mode}-data"));
+            let mut node = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()));
+            let oracle = node.arg(&entry).arg(mode).arg(&data).output().unwrap();
+            assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+            assert!(!oracle.stdout.is_empty()); fs::remove_dir_all(&data).unwrap();
+            for jit in [false, true] {
+                let actual_data = directory.join(format!("{extension}-{mode}-jit-{jit}-data"));
+                let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node")); if jit { command.arg("--jit"); }
+                let actual = command.arg(&entry).arg(mode).arg(&actual_data).output().unwrap();
+                assert_eq!(actual.status.code(), oracle.status.code(), "{extension} {mode} jit={jit}: {}", String::from_utf8_lossy(&actual.stderr));
+                assert_eq!(actual.stdout, oracle.stdout, "{extension} {mode} jit={jit}"); assert_eq!(actual.stderr, oracle.stderr);
+                fs::remove_dir_all(&actual_data).unwrap();
+            }
+            oracles.push((mode, oracle));
+        }
+        let binary = directory.join(format!("native-{extension}")); let report = directory.join(format!("{extension}.json"));
+        let compile = Command::new(env!("CARGO_BIN_EXE_quench-node")).arg("compile").arg(&entry).arg("-o").arg(&binary)
+            .arg("--report").arg(&report).args(["--profile", "iteration", "--sdk-report"]).arg(&sdk).output().unwrap();
+        assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr)); fs::remove_dir_all(&sources).unwrap();
+        for (mode, oracle) in oracles {
+            let data = directory.join(format!("{extension}-{mode}-native-data"));
+            let actual = Command::new(&binary).arg(mode).arg(&data).env_clear().current_dir(&directory).output().unwrap();
+            assert_eq!(actual.status.code(), oracle.status.code(), "{extension} {mode}: {}", String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(actual.stdout, oracle.stdout, "{extension} {mode}"); assert_eq!(actual.stderr, oracle.stderr);
+            fs::remove_dir_all(data).unwrap();
+        }
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap(); assert_reduced_payload(&report, &binary);
+        eprintln!("Filesystem watch delivery/lifecycle ({extension}) matched Node in interpreter, JIT and source-deleted native image: {}", binary.display());
+    }
+}
