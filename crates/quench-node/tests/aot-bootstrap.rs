@@ -400,6 +400,12 @@ fn compile_command_preserves_pooled_source_reflection() {
 
 fn assert_reduced_payload(report: &serde_json::Value, executable: &Path) {
     assert_eq!(report["symbol_audit_stage"], "before_symbol_removal");
+    let interface = &report["dynamic_interface"];
+    let linked = interface["linked"].as_array().unwrap();
+    let required = interface["required"].as_array().unwrap();
+    for name in required { assert!(linked.contains(name), "missing ABI export {name}"); }
+    #[cfg(target_os = "macos")]
+    assert_eq!(linked, required);
     let payload = &report["payload_reduction"];
     let bytes = std::fs::metadata(executable).unwrap().len();
     assert_eq!(report["binary_bytes"], bytes);
@@ -864,4 +870,51 @@ fn typescript_symlink_uses_real_package_scope() {
         assert_eq!(actual.stderr, oracle.stderr);
     }
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "explicit native dynamic-interface and Node-API runtime-loading qualification"]
+fn compile_command_preserves_runtime_loaded_node_api() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench node api image, {}", std::process::id()));
+    let sources = directory.join("sources");
+    fs::create_dir_all(&sources).unwrap();
+    let addon = directory.join("addon.node");
+    let mut rustc = Command::new("rustc");
+    rustc.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/napi-addon.rs"))
+        .args(["--edition=2024", "--crate-type=cdylib", "--crate-name=quench_napi_fixture", "-C", "panic=abort", "-o"]).arg(&addon)
+        .env("QUENCH_FIXTURE_NODE_API_VERSION", env!("QUENCH_NODE_API_DEFAULT_MODULE_API_VERSION"));
+    #[cfg(target_os = "macos")]
+    rustc.args(["-C", "link-arg=-Wl,-undefined,dynamic_lookup"]);
+    let built = rustc.output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let entry = sources.join("entry.cjs");
+    fs::write(&entry, r#"
+const target = { exports: {} };
+process.dlopen(target, process.argv[2]);
+const increment = target.exports.increment;
+console.log(JSON.stringify({answer:target.exports.answer, result:increment(41),
+  name:increment.name, length:increment.length, keys:Object.keys(target.exports),
+  descriptor:Object.getOwnPropertyDescriptor(target.exports, 'answer')}));
+"#).unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).arg(&addon).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let binary = directory.join("program");
+    let report = directory.join("report.json");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&binary)
+        .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk).arg("--report").arg(&report).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    fs::remove_dir_all(&sources).unwrap();
+    let native = Command::new(&binary).arg(&addon).env_clear().current_dir(&directory).output().unwrap();
+    assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+    assert_eq!(native.stdout, oracle.stdout);
+    assert_eq!(native.stderr, oracle.stderr);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_reduced_payload(&report, &binary);
+    assert!(report["dynamic_interface"]["linked"].as_array().unwrap().iter().any(|name| name == "napi_create_int32"));
+    eprintln!("Node-API dynamic registration/callback/value/descriptors matched Node after source removal: {}", binary.display());
 }

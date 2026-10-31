@@ -217,8 +217,9 @@ fn compile(options: Options) -> Result<(), String> {
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
     let staged = work.0.join("native-image");
-    let exports = support.link(&inputs, &driver, &staged)?;
-    report["semantic_exports"] = json!(exports);
+    let audit = support.link_audited(&inputs, &driver, &staged)?;
+    report["semantic_exports"] = json!(audit.semantic_exports());
+    report["dynamic_interface"] = json!(audit.dynamic_interface);
     let payload = super::payload::remove_offline_symbols(&staged)?;
     report["symbol_audit_stage"] = json!("before_symbol_removal");
     report["binary_bytes"] = json!(payload.binary_bytes);

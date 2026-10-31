@@ -333,7 +333,7 @@ pub(crate) fn dlopen(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     for symbol in EXPORTS.iter().flat_map(|symbols| symbols.iter()) {
-        std::hint::black_box(symbol.0);
+        std::hint::black_box(symbol.address);
     }
     let module = args.first().copied().unwrap_or_else(|| c.undefined());
     let filename = match args.get(1) {
@@ -398,7 +398,7 @@ pub(crate) fn dlopen(
 }
 
 /// The exported ABI, referenced so the linker keeps every symbol for `dlopen`ed addons.
-static EXPORTS: [&[ExportedSymbol]; 8] = [
+static EXPORTS: &[&[ExportedSymbol]] = &[
     abi::EXPORTS,
     errors::EXPORTS,
     functions::EXPORTS,
@@ -411,3 +411,10 @@ static EXPORTS: [&[ExportedSymbol]; 8] = [
 
 pub(crate) use functions::invoke;
 pub(crate) use work::{drain, has_work, poll, promise_executor};
+
+/// The linker interface derives from the same declarations as the C functions.
+/// Names are compiler-only; execution support retains just the address table.
+#[cfg(feature = "aot")]
+pub(crate) fn exported_symbol_names() -> impl Iterator<Item = &'static str> {
+    EXPORTS.iter().flat_map(|symbols| symbols.iter()).map(|symbol| symbol.name)
+}

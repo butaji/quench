@@ -18,6 +18,10 @@ pub extern "C" fn quench_entry_compiled() {
     std::hint::black_box(());
 }
 
+/// Preserve the profiling boundary in the native image's exported interface.
+#[cfg(feature = "aot")]
+pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
+
 /// The process's own mapping table.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MAPS_PATH: &str = "/proc/self/maps";

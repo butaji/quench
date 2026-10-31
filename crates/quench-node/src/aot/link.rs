@@ -1,11 +1,25 @@
 use super::NativeImageInputs;
 use serde_json::Value;
+use serde::Serialize;
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+
+/// One validated link, before offline symbol removal.
+#[derive(Serialize)]
+pub struct NativeLinkAudit {
+    pub dynamic_interface: super::exports::DynamicInterface,
+}
+
+impl NativeLinkAudit {
+    /// The semantic helper interface is a projection of the validated exports.
+    pub fn semantic_exports(&self) -> BTreeSet<String> {
+        self.dynamic_interface.linked.iter().filter(|name| name.starts_with(quench_runtime::NATIVE_JS_OPERATION_PREFIX)).cloned().collect()
+    }
+}
 
 /// Cargo's exact execution-only support artifacts and their native search paths.
 pub struct NativeSupport {
@@ -141,6 +155,12 @@ impl NativeSupport {
         driver: &Path,
         executable: &Path,
     ) -> Result<BTreeSet<String>, String> {
+        self.link_audited(inputs, driver, executable).map(|audit| audit.semantic_exports())
+    }
+
+    pub fn link_audited(
+        &self, inputs: &NativeImageInputs, driver: &Path, executable: &Path,
+    ) -> Result<NativeLinkAudit, String> {
         let mut command = Command::new("rustc");
         command
             .args([
@@ -218,8 +238,11 @@ impl NativeSupport {
             ])
             .arg("-C")
             .arg(format!("link-arg={}", map.display()));
+        let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
-        audit(inputs, executable)
+        audit(inputs, executable)?;
+        let dynamic_interface = interface.verify(executable)?;
+        Ok(NativeLinkAudit { dynamic_interface })
     }
 }
 
@@ -349,7 +372,7 @@ fn is_compiler_symbol(symbol: &str) -> bool {
         || (symbol.contains("quench_runtime") && JS_SOURCE_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name)))
 }
 
-fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<String>, String> {
+fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
     let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     let mut exports = BTreeSet::new();
@@ -380,7 +403,7 @@ fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<BTreeSet<Strin
     if exports != expected {
         return Err("native semantic helper exports do not match object imports".into());
     }
-    Ok(exports)
+    Ok(())
 }
 
 #[cfg(test)]

@@ -139,6 +139,10 @@ mod link;
 #[cfg(feature = "aot")]
 mod payload;
 #[cfg(feature = "aot")]
-pub use link::NativeSupport;
+mod exports;
+#[cfg(feature = "aot")]
+pub use exports::{DynamicInterface, ExportPolicy};
+#[cfg(feature = "aot")]
+pub use link::{NativeSupport, NativeLinkAudit};
 #[cfg(feature = "aot")]
 pub mod cli;
