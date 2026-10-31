@@ -2089,8 +2089,9 @@ fn strict_unresolvable_reference_defers_putvalue_error_until_after_rhs() {
 const effects = [];
 try { absentReference = (() => { effects.push("rhs"); throw new RangeError("rhs"); })(); throw Error("missing RHS error"); }
 catch (error) { if (!(error instanceof RangeError)) throw error; }
-absentReference = (effects.push("create"), Object.defineProperty(globalThis, "absentReference", { value: 3, configurable: true, writable: true }), 9);
-if (globalThis.absentReference !== 9) throw Error("global property created during RHS was not assigned");
+try { absentReference = (effects.push("create"), Object.defineProperty(globalThis, "absentReference", { value: 3, configurable: true, writable: true }), 9); throw Error("missing captured reference error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+if (globalThis.absentReference !== 3) throw Error("RHS property creation was not preserved");
 delete globalThis.absentReference;
 try { absentReference = (effects.push("plain"), 1); throw Error("missing reference error"); }
 catch (error) { if (!(error instanceof ReferenceError)) throw error; }

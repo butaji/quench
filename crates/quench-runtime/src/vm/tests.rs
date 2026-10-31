@@ -10,6 +10,92 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
+    let source = r#"
+      function exercise() {
+        'use strict';
+        const effects = [];
+        function expectReferenceError(action) {
+          let caught = false;
+          try { action(); } catch (error) { caught = error instanceof ReferenceError; }
+          if (!caught) throw new Error('lost unresolvable reference');
+        }
+        expectReferenceError(() => { freshAssignment = (effects.push('assign'), globalThis.freshAssignment = 5); });
+        if (globalThis.freshAssignment !== 5) throw new Error('RHS property overwritten');
+        delete globalThis.freshAssignment;
+        expectReferenceError(() => { ({freshShorthand} = {get freshShorthand() {effects.push('get'); globalThis.freshShorthand = 6; return 9;}}); });
+        if (globalThis.freshShorthand !== 6) throw new Error('getter property overwritten');
+        delete globalThis.freshShorthand;
+        expectReferenceError(() => { ({freshDefault = (effects.push('default'), globalThis.freshDefault = 7)} = {}); });
+        if (globalThis.freshDefault !== 7) throw new Error('default property overwritten');
+        delete globalThis.freshDefault;
+        expectReferenceError(() => { freshCompound += (effects.push('unexpected'), globalThis.freshCompound = 8); });
+        if ('freshCompound' in globalThis) throw new Error('compound RHS executed');
+        const cause = {};
+        let caught;
+        try { freshAbrupt = (() => { effects.push('abrupt'); throw cause; })(); } catch (error) { caught = error; }
+        if (caught !== cause) throw new Error('RHS exception replaced');
+        if (effects.join(',') !== 'assign,get,default,abrupt') throw new Error('effect order');
+      }
+      for (let index = 0; index < 40; index++) exercise();
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "captured-unresolvable.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "captured-unresolvable.js").unwrap(),
+    ] {
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut vm = Vm::new(TestHost::default());
+            vm.programs.enable_js_general_dispatch();
+            vm.programs.compile_general_baseline_when_hot();
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            #[cfg(not(quench_profiled))]
+            if mode == crate::ExecutionMode::Compiled {
+                assert!(matches!(
+                    vm.programs.js_tier(super::program_store::ProgramId::MAIN, 1),
+                    Some(super::program_store::JsTierState::Compiled(_))
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn shorthand_assignment_captures_with_binding_without_reading_its_value() {
+    let source = r#"
+      function exercise() {
+        const effects = [];
+        const target = {
+          get selected() { effects.push('unexpected read'); return 1; },
+          set selected(value) { effects.push('set:' + value); }
+        };
+        with (target) { ({selected} = { get selected() { effects.push('rhs'); return 5; } }); }
+        if (effects.join(',') !== 'rhs,set:5') throw new Error(effects.join(','));
+      }
+      for (let index = 0; index < 40; index++) exercise();
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "captured-shorthand.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "captured-shorthand.js").unwrap(),
+    ] {
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut vm = Vm::new(TestHost::default());
+            vm.programs.enable_js_general_dispatch();
+            vm.programs.compile_general_baseline_when_hot();
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            #[cfg(not(quench_profiled))]
+            if mode == crate::ExecutionMode::Compiled {
+                assert!(matches!(
+                    vm.programs.js_tier(super::program_store::ProgramId::MAIN, 1),
+                    Some(super::program_store::JsTierState::Compiled(_))
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     let source = r#"
       const out=[];

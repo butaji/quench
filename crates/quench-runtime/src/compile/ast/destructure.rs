@@ -305,7 +305,7 @@ impl FunctionCompiler<'_, '_> {
                     match property {
                         AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
                             let atom = self.owner.atom(property.binding.name.as_str());
-                            self.resolve_assignment_name(atom);
+                            let reference = self.prepare_assignment_name(atom);
                             excluded.push(
                                 self.literal(Constant::String(property.binding.name.as_str().into())),
                             );
@@ -320,7 +320,7 @@ impl FunctionCompiler<'_, '_> {
                             if let Some(init) = &property.init {
                                 self.assign_default_value_named(selected, init, Some(atom));
                             }
-                            self.store_atom(atom, selected);
+                            self.store_assignment_reference(reference, selected);
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             let Some((key, excluded_key)) = self.pattern_key(&property.name) else {
@@ -387,28 +387,7 @@ impl FunctionCompiler<'_, '_> {
         match target {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
-                let capture_global_reference = self.needs_strict_global_reference_capture(atom);
-                // RHS eval can introduce a nearer binding, but PutValue must retain
-                // the environment selected by the LHS. Own local slots are stable.
-                let capture_eval_reference = self.dynamic_eval
-                    && !self.local_slots.contains_key(&self.resolve_lexical(atom));
-                let resolve_reference =
-                    self.with_depth != 0 || capture_global_reference || capture_eval_reference;
-                let environment = if resolve_reference {
-                    let resolved = self.reg();
-                    let cache = self.owner.cache_site();
-                    self.emit(
-                        Op::ResolveName,
-                        resolved,
-                        u16::from(capture_global_reference),
-                        cache,
-                        atom,
-                    );
-                    Some(resolved)
-                } else {
-                    None
-                };
-                AssignmentReference::Name { atom, environment }
+                self.prepare_assignment_name(atom)
             }
             SimpleAssignmentTarget::StaticMemberExpression(member) => {
                 let atom = self.owner.atom(member.property.name.as_str());
@@ -753,16 +732,29 @@ impl FunctionCompiler<'_, '_> {
         Some(dst)
     }
 
-    fn resolve_assignment_name(&mut self, atom: Atom) {
-        if self.with_depth != 0 {
-            let dst = self.reg();
+    fn prepare_assignment_name(&mut self, atom: Atom) -> AssignmentReference {
+        let capture_global_reference = self.needs_strict_global_reference_capture(atom);
+        // RHS eval can introduce a nearer binding, but PutValue must retain
+        // the environment selected by the LHS. Own local slots are stable.
+        let capture_eval_reference = self.dynamic_eval
+            && !self.local_slots.contains_key(&self.resolve_lexical(atom));
+        let resolve_reference =
+            self.with_depth != 0 || capture_global_reference || capture_eval_reference;
+        let environment = if resolve_reference {
+            let resolved = self.reg();
             let cache = self.owner.cache_site();
-            self.emit(Op::LoadNameTypeof, dst, 0, cache, atom);
-        } else if self.needs_strict_global_reference_capture(atom) {
-            let dst = self.reg();
-            let cache = self.owner.cache_site();
-            self.emit(Op::ResolveName, dst, 1, cache, atom);
-        }
+            self.emit(
+                Op::ResolveName,
+                resolved,
+                u16::from(capture_global_reference),
+                cache,
+                atom,
+            );
+            Some(resolved)
+        } else {
+            None
+        };
+        AssignmentReference::Name { atom, environment }
     }
 
     fn throw_object_coercion(&mut self) {

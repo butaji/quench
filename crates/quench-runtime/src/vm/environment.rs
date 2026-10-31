@@ -1,6 +1,10 @@
 use super::property_key::PropertyKey;
 use super::*;
 
+// ResolveName bases are objects; this primitive preserves an unresolvable
+// Reference without allocating or rejecting it before the RHS executes.
+const UNRESOLVABLE_NAME_REFERENCE: Value = Value::UNDEFINED;
+
 impl<H: Host> Vm<H> {
     pub(super) fn own_dynamic_bindings(&self, frame: usize) -> Option<&Vec<(Atom, Value)>> {
         let activation = self.frames.get(frame)?;
@@ -919,9 +923,7 @@ impl<H: Host> Vm<H> {
                 .last()
                 .is_some_and(|frame| p.function(frame.function as usize).strict);
             if strict {
-                return Err(
-                    self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
-                );
+                return Err(self.name_not_defined(p, atom));
             }
             return Ok(Value::UNDEFINED);
         }
@@ -983,6 +985,13 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
+        if object == UNRESOLVABLE_NAME_REFERENCE {
+            return if strict {
+                Err(self.name_not_defined(p, atom))
+            } else {
+                self.set_property_with_program_mode(p, self.realm.globals, atom, value, false)
+            };
+        }
         if let Some((environment, slot, kind)) = self.binding_reference(object) {
             self.load_environment_binding(p, environment, slot)?;
             if !self.check_named_binding_assignment(p, kind, strict)? {
@@ -1009,7 +1018,7 @@ impl<H: Host> Vm<H> {
                 dynamic_bindings.push((atom, value));
                 return Ok(());
             }
-            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
+            return Err(self.name_not_defined(p, atom));
         }
         let key = self.heap.alloc_string(self.atom_name(atom).into());
         // ResolveName has already selected a non-global object environment.
@@ -1018,9 +1027,7 @@ impl<H: Host> Vm<H> {
         if object != self.realm.globals {
             let still_exists = self.has_property(p, object, key)?;
             if strict && !still_exists {
-                return Err(
-                    self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
-                );
+                return Err(self.name_not_defined(p, atom));
             }
             if let Some(success) = self.set_through_typed_array_prototype(p, object, atom, value)? {
                 if !success && strict {
@@ -1114,7 +1121,7 @@ impl<H: Host> Vm<H> {
 
     fn require_global_assignment_binding(&mut self, p: &ResidualProgram, atom: Atom) -> Result<(), JsError> {
         if self.has_global_object_binding(p, atom)? { Ok(()) }
-        else { Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))) }
+        else { Err(self.name_not_defined(p, atom)) }
     }
 
     fn outer_dynamic_binding(&self, frame: usize, atom: Atom) -> Option<(Value, usize)> {
@@ -1272,16 +1279,18 @@ impl<H: Host> Vm<H> {
         None
     }
 
+    fn name_not_defined(&mut self, p: &ResidualProgram, atom: Atom) -> JsError {
+        self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
+    }
+
     pub(super) fn resolve_name(
         &mut self,
         p: &ResidualProgram,
         atom: Atom,
         strict: bool,
     ) -> Result<Value, JsError> {
-        if strict && !self.atom_name(atom).starts_with('\0') {
-            // Resolution preserves observable binding checks. An absent name
-            // is rejected by PutValue after the RHS, rather than here.
-            let _ = self.has_name_binding(p, atom)?;
+        if strict && !self.has_name_binding(p, atom)? {
+            return Ok(UNRESOLVABLE_NAME_REFERENCE);
         }
         Ok(self.resolve_name_reference(p, atom)?.0)
     }
@@ -1293,6 +1302,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         strict: bool,
     ) -> Result<Value, JsError> {
+        if object == UNRESOLVABLE_NAME_REFERENCE {
+            return Err(self.name_not_defined(p, atom));
+        }
         if let Some((environment, slot, _)) = self.binding_reference(object) {
             return self.load_environment_binding(p, environment, slot);
         }
@@ -1304,9 +1316,7 @@ impl<H: Host> Vm<H> {
             return match value {
                 Some(value) => self.checked_binding_read(p, atom, value),
                 None if !strict => Ok(Value::UNDEFINED),
-                None => {
-                    Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))))
-                }
+                None => Err(self.name_not_defined(p, atom)),
             };
         }
         if object == self.realm.globals {
@@ -1315,9 +1325,7 @@ impl<H: Host> Vm<H> {
         let key = self.heap.alloc_string(self.atom_name(atom).into());
         if !self.has_property(p, object, key)? {
             if strict {
-                return Err(
-                    self.reference_error(p, format!("{} is not defined", self.atom_name(atom)))
-                );
+                return Err(self.name_not_defined(p, atom));
             }
             return Ok(Value::UNDEFINED);
         }
@@ -2224,7 +2232,7 @@ impl<H: Host> Vm<H> {
             if allow_unresolvable {
                 return Ok(Value::UNDEFINED);
             }
-            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
+            return Err(self.name_not_defined(p, atom));
         }
         match cache {
             Some(cache) => self.get_field_cached(p, self.realm.globals, atom, cache),

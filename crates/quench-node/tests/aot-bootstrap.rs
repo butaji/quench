@@ -1117,3 +1117,93 @@ fn qualify_literal_import_graphs(profile: &str, support: Option<String>) {
         eprintln!("Literal dynamic imports ({extension}, {profile}) matched Node after source removal: {}", binary.display());
     }
 }
+
+fn write_captured_reference_fixture(directory: &Path, extension: &str) -> std::path::PathBuf {
+    use std::fs;
+    fs::create_dir_all(directory).unwrap();
+    let entry = directory.join(format!("entry.{extension}"));
+    fs::write(&entry, r#"
+function exercise() {
+  'use strict';
+  const errors = [], effects = [];
+  try { freshReference = (effects.push('rhs'), globalThis.freshReference = 5); }
+  catch (error) { errors.push([error.name, error instanceof ReferenceError]); }
+  const assigned = globalThis.freshReference;
+  delete globalThis.freshReference;
+  try { ({freshDefault = (effects.push('default'), globalThis.freshDefault = 6)} = {}); }
+  catch (error) { errors.push([error.name, error instanceof ReferenceError]); }
+  const initialized = globalThis.freshDefault;
+  delete globalThis.freshDefault;
+  const cause = {};
+  let sameCause = false;
+  try { freshAbrupt = (() => { effects.push('abrupt'); throw cause; })(); }
+  catch (error) { sameCause = error === cause; }
+  return {errors, effects, assigned, initialized, sameCause};
+}
+console.log(JSON.stringify(exercise()));
+"#).unwrap();
+    entry
+}
+
+fn captured_reference_expectation() -> serde_json::Value {
+    serde_json::json!({"errors":[["ReferenceError",true],["ReferenceError",true]],
+        "effects":["rhs","default","abrupt"],"assigned":5,"initialized":6,"sameCause":true})
+}
+
+#[test]
+fn captured_reference_errors_preserve_rhs_effects() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench captured reference, {}", std::process::id()));
+    for extension in ["cjs", "cts", "mjs", "mts"] {
+        let entry = write_captured_reference_fixture(&directory.join(extension), extension);
+        for jit in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+            if jit { command.arg("--jit"); }
+            let actual = command.arg(&entry).output().unwrap();
+            assert!(actual.status.success(), "{}", String::from_utf8_lossy(&actual.stderr));
+            assert!(actual.stderr.is_empty(), "{}", String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&actual.stdout).unwrap(),
+                captured_reference_expectation(), "{extension} jit={jit}");
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit native specification qualification for captured assignment references"]
+fn compile_command_preserves_captured_references() {
+    qualify_captured_references("iteration", Some(pinned_support_report()));
+}
+
+#[test]
+#[ignore = "explicit production specification qualification for captured assignment references"]
+fn production_compile_command_preserves_captured_references() {
+    qualify_captured_references("production", None);
+}
+
+fn qualify_captured_references(profile: &str, support: Option<String>) {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench captured reference native, {profile}-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = directory.join("support.jsonl");
+    if let Some(support) = &support { fs::write(&sdk, support).unwrap(); }
+    for extension in ["cjs", "cts", "mjs", "mts"] {
+        let sources = directory.join(format!("{extension}-sources"));
+        let entry = write_captured_reference_fixture(&sources, extension);
+        let binary = directory.join(extension);
+        let report = directory.join(format!("{extension}.json"));
+        let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
+        compiler.arg("compile").arg(&entry).arg("-o").arg(&binary).args(["--profile", profile])
+            .arg("--report").arg(&report);
+        if support.is_some() { compiler.arg("--sdk-report").arg(&sdk); }
+        let compiled = compiler.output().unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        fs::remove_dir_all(sources).unwrap();
+        let actual = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+        assert!(actual.status.success(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert!(actual.stderr.is_empty(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&actual.stdout).unwrap(), captured_reference_expectation());
+        assert_reduced_payload(&serde_json::from_slice(&fs::read(report).unwrap()).unwrap(), &binary);
+        eprintln!("Captured references ({extension}, {profile}) matched Test262 semantics after source removal: {}", binary.display());
+    }
+}
