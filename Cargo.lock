@@ -1738,6 +1738,7 @@ version = "0.1.0"
 name = "quench-test262"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "oxc_syntax",
  "quench-runtime",
  "serde",

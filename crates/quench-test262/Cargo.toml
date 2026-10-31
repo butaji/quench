@@ -23,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 
 [dependencies]
+libc = "0.2"
 oxc_syntax.workspace = true
 quench-runtime = { path = "../quench-runtime", default-features = false, features = ["native-execution"] }
 serde_json = "1"
