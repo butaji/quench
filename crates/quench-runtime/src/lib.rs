@@ -90,7 +90,7 @@ pub use vm::{
 
 #[cfg(feature = "aot")]
 pub use compile::{NativeJsCompiler, NativeSourceKey};
-pub use compile::HostScriptOptions;
+pub use compile::{HostScriptOptions, STATIC_MODULE_GOAL};
 
 /// Ordinary builds and producers support dynamic compilation and execution.
 /// Execution-only native support requires linked code and archived records.

@@ -3125,7 +3125,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let program = self.intern_program_atoms(program);
-        let id = self.programs.insert_module(program)?;
+        self.store_module_program_shared(Rc::new(program))
+    }
+
+    pub(super) fn store_module_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        let id = self.programs.insert_module_shared(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);

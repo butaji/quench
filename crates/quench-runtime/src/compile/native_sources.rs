@@ -1,6 +1,6 @@
 //! Compile source units into one stable atom namespace before host initialization.
 
-use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords};
+use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, STATIC_MODULE_GOAL};
 use crate::bytecode::{Atom, AtomSequence, AtomTable, SourceText};
 use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;
@@ -18,6 +18,7 @@ impl NativeSourceKey {
     pub fn new(name: &str, parts: &[&str]) -> Result<Self, String> {
         match parts {
             ["specialized" | "unspecialized", _] => {},
+            ["specialized" | "unspecialized", STATIC_MODULE_GOAL, _] => {},
             ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
             ["specialized" | "unspecialized", _, _, _] => {},
             _ => return Err("unknown native host source key".into()),
@@ -72,6 +73,8 @@ impl NativeJsCompiler {
         }
         match parts.as_slice() {
             [_, source] => self.compile_host_script(source, key.name()).map_err(|errors| format!("{errors:?}")),
+            [_, STATIC_MODULE_GOAL, source] => self.compile_module(source, key.name())
+                .map_err(|errors| format!("{errors:?}")),
             [_, goal, source] => self.compile_script(source, key.name(), script_options(goal)?)
                 .map_err(|errors| format!("{errors:?}")),
             [_, prefix, body, suffix] => self.compile_library_body(prefix, std::sync::Arc::from(*body), suffix, key.name()),

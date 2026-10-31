@@ -41,6 +41,8 @@ mod atoms;
 mod native_sources;
 #[cfg(feature = "aot")]
 pub use native_sources::{NativeJsCompiler, NativeSourceKey};
+/// The parse goal shared by module compile-cache and linked native source keys.
+pub const STATIC_MODULE_GOAL: &str = "static-module";
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]

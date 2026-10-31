@@ -127,6 +127,26 @@ impl<H: Host> NativeJsProgram<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// Admit a linked module without remapping the atom IDs embedded in its code.
+    /// Module records, environments and evaluation remain owned by the shared loader.
+    pub(super) fn kept_native_module_program(
+        &mut self, module: &crate::ModuleSource,
+    ) -> Result<Option<ProgramId>, JsError> {
+        let parts = [self.specialization_part(), crate::STATIC_MODULE_GOAL, &module.source];
+        let Some(native) = self.host.kept_native_program(&module.name, &parts).map_err(JsError::validation)? else {
+            return Ok(None);
+        };
+        if native.program.kind != crate::bytecode::ProgramKind::Module {
+            return Err(JsError::validation("native module has the wrong parse goal".into()));
+        }
+        let prepared = self.prepare_native_script(native)?;
+        let id = self.store_module_program_shared(prepared.program)
+            .ok_or_else(|| JsError::validation("native module program store is full".into()))?;
+        self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"))
+            .map_err(JsError::validation)?;
+        Ok(Some(id))
+    }
+
     /// Native operands already contain atom IDs. Only an identical prefix of
     /// the initialized VM namespace can be adopted without rewriting the code.
     pub(super) fn prepare_native_script(

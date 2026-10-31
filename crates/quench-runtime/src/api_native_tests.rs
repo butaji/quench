@@ -2156,3 +2156,106 @@ fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owne
     assert_eq!(runtime.rooted_value(value).unwrap().as_number(), Some(39.0));
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity() {
+    const ENTRY: &str = r#"
+        import { count, bump } from './barrel.mjs';
+        import * as first from './dep.mjs';
+        export function seed() { return 41; }
+        if (count !== 41) throw Error('initial live binding');
+        bump();
+        if (count !== 42) throw Error('updated live binding');
+        globalThis.savedModuleClosure = () => count;
+        import('./dep.mjs').then(second => {
+            if (first !== second || second.count !== 42) throw Error('namespace identity');
+            globalThis.moduleJobFinished = true;
+        });
+    "#;
+    const BARREL: &str = "export { count, bump } from './dep.mjs';";
+    for awaited in [false, true] {
+        let dependency = format!(
+            "import {{ seed }} from './entry.mjs'; export let count = {}seed(); export function bump() {{ count++; }}",
+            if awaited { "await " } else { "" },
+        );
+        let sources = [("./entry.mjs", ENTRY), ("./barrel.mjs", BARREL), ("./dep.mjs", dependency.as_str())];
+        let mut compiler = crate::NativeJsCompiler::new(false);
+        let mut programs = sources.iter().map(|(name, source)| {
+            let key = crate::NativeSourceKey::new(name, &["unspecialized", crate::STATIC_MODULE_GOAL, source]).unwrap();
+            compiler.compile_source(&key).unwrap()
+        }).collect::<Vec<_>>();
+        let entry = compiler.finish(programs.remove(0)).unwrap();
+        let entries = Rc::new(RefCell::new(programs.into_iter().zip(&sources[1..]).map(|(program, (name, source))| {
+            (name.to_string(), source.to_string(), crate::NativeJsProgram::compile_eager(program).unwrap())
+        }).collect::<Vec<_>>()));
+        let lookup = entries.clone();
+        let module_sources: Vec<_> = sources.iter().map(|(name, source)| crate::ModuleSource::text(*name, *source)).collect();
+        let host = TestHost::default()
+            .with_modules(move |name| Ok(module_sources.iter().find(|module| module.name == name).cloned()))
+            .with_native_programs(move |name, parts| Ok(lookup.borrow().iter().find(|(candidate, source, _)| {
+                candidate == name && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, source.as_str()]
+            }).map(|(_, _, native)| native.clone())));
+        let native = crate::NativeJsProgram::compile_eager(entry.clone()).unwrap();
+        let mut runtime = Runtime::new(host);
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        runtime.execute_native(&native).unwrap();
+        drop(native);
+        entries.borrow_mut().clear();
+        runtime.collect(&entry).unwrap();
+        let global = runtime.global_root().unwrap();
+        let key = runtime.string_rooted("moduleJobFinished");
+        let finished = runtime.get_property_rooted(global, key).unwrap();
+        assert_eq!(runtime.rooted_value(finished), Some(Value::TRUE));
+        let key = runtime.string_rooted("savedModuleClosure");
+        let closure = runtime.get_property_rooted(global, key).unwrap();
+        let receiver = runtime.root(Value::UNDEFINED);
+        let value = runtime.call_rooted(closure, receiver, &[]).unwrap();
+        assert_eq!(runtime.rooted_value(value).unwrap().as_number(), Some(42.0));
+        assert_eq!(runtime.native_execution_rejections(), 0);
+    }
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effects() {
+    const SOURCE: &str = "globalThis.dependencyRan = true;";
+    for mismatch in ["goal", "namespace", "source"] {
+        let mut compiler = crate::NativeJsCompiler::new(false);
+        let entry = compiler.compile_module("import './dep.mjs'; globalThis.entryRan = true;", "./entry.mjs").unwrap();
+        let dependency = if mismatch == "goal" {
+            compiler.compile_script(SOURCE, "./dep.mjs", Default::default()).unwrap()
+        } else if mismatch == "namespace" {
+            crate::NativeJsCompiler::new(false).compile_module(SOURCE, "./dep.mjs").unwrap()
+        } else {
+            compiler.compile_module(SOURCE, "./dep.mjs").unwrap()
+        };
+        let entry = compiler.finish(entry).unwrap();
+        let dependency = crate::NativeJsProgram::compile_eager(dependency).unwrap();
+        let host = TestHost::default()
+            .with_modules(move |name| Ok((name == "./dep.mjs").then(|| crate::ModuleSource::text(name,
+                if mismatch == "source" { "globalThis.dependencyRan = false;" } else { SOURCE },
+            ))))
+            .with_native_programs(move |name, parts| {
+                Ok((name == "./dep.mjs" && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, SOURCE])
+                    .then(|| dependency.clone()))
+            });
+        let native = crate::NativeJsProgram::compile_eager(entry).unwrap();
+        let mut runtime = Runtime::new(host);
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        let error = runtime.execute_native(&native).unwrap_err().to_string();
+        let expected = match mismatch {
+            "goal" => "wrong parse goal",
+            "namespace" => "atom IDs do not match",
+            _ => "source compilation is unavailable",
+        };
+        assert!(error.contains(expected), "{mismatch}: {error}");
+        let global = runtime.global_root().unwrap();
+        for name in ["entryRan", "dependencyRan"] {
+            let key = runtime.string_rooted(name);
+            let value = runtime.get_property_rooted(global, key).unwrap();
+            assert_eq!(runtime.rooted_value(value), Some(Value::UNDEFINED), "{mismatch}: {name}");
+        }
+        assert_eq!(runtime.native_execution_rejections(), 1);
+    }
+}

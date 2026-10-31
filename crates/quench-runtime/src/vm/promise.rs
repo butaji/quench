@@ -1,6 +1,6 @@
 use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
-use crate::HostExecutionContext;
+use crate::{HostExecutionContext, STATIC_MODULE_GOAL};
 use std::collections::VecDeque;
 
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
@@ -1144,9 +1144,6 @@ impl PromiseRuntime {
 }
 
 
-/// Names a static module's parse goal in its compile-cache key, apart from an application
-/// entry's (`Runtime::compile_entry`), whose cached form differs.
-const STATIC_MODULE_GOAL: &str = "static-module";
 /// The compile-cache part naming a static module's analysis (`Vm::static_module_analysis`).
 const STATIC_MODULE_ANALYSIS_GOAL: &str = "static-module-analysis";
 
@@ -3572,8 +3569,23 @@ impl<H: Host> Vm<H> {
     /// cache for its exact text, as its compiled program is: a process otherwise parses every
     /// static module it links once more than it compiles it.
     pub(super) fn static_module_analysis(&mut self, source: &str, name: &str) -> Rc<crate::compile::StaticModuleAnalysis> {
+        let program = self.realm.promise.modules.get(&module_cache_key(name, "javascript"))
+            .and_then(|record| record.program)
+            .and_then(|id| self.programs.get(id))
+            .filter(|program| program.source_text() == Some(source));
         let host = &mut self.host;
         crate::Engine::static_module_analysis_with(source, name, |analyze| {
+            // Derive the loader's memoized view from its admitted compiler result.
+            if let Some(program) = program {
+                return crate::compile::StaticModuleAnalysis {
+                    early_error: None,
+                    plan: Some(crate::compile::StaticModulePlan {
+                        link_plan: program.module_link_plan.clone(),
+                        requests: program.module_requests.clone(),
+                        has_top_level_await: program.function(0).is_async,
+                    }),
+                };
+            }
             let parts = [STATIC_MODULE_ANALYSIS_GOAL, source];
             if let Some(analysis) = host
                 .kept_compiled_program(name, &parts)
@@ -3640,6 +3652,12 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let precompiled = precompiled.or_else(|| existing.and_then(|record| record.program));
+        #[cfg(feature = "native-execution")]
+        let precompiled = match precompiled {
+            Some(program) => Some(program),
+            None => self.kept_native_module_program(module)
+                .inspect_err(|_| self.record_native_execution_rejection())?,
+        };
         let _stack =
             quench_stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
         let program = match precompiled {
