@@ -2570,6 +2570,7 @@ impl<H: Host> Vm<H> {
             .map(|record| record.outcome)
         {
             Some(ModuleOutcome::Evaluated(_)) | Some(ModuleOutcome::Errored(_)) => return Ok(true),
+            Some(ModuleOutcome::Pending(ModulePhase::Loading | ModulePhase::Linking | ModulePhase::Instantiated)) => {},
             Some(ModuleOutcome::Pending(_)) => return Ok(false),
             _ => {}
         }
@@ -3273,6 +3274,9 @@ impl<H: Host> Vm<H> {
             .entry(key)
             .or_insert_with(ModuleRecord::loading_static)
             .cache_deferred_namespace(namespace);
+        // Link deferred dependencies before guest evaluation. Publishing native
+        // code supplies a body, not an instantiated environment or namespace.
+        self.instantiate_static_module_graph(p, module, None)?;
         Ok(())
     }
 

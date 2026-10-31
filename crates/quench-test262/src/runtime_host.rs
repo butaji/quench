@@ -10,9 +10,21 @@ use std::time::{Duration, Instant};
 
 use crate::Test262Host;
 
-fn compile_failure(errors: &[quench_runtime::Diagnostic]) -> String {
+#[derive(Clone, Copy)]
+enum CompilationSite {
+    Entry,
+    #[cfg(feature = "aot")]
+    Dependency,
+}
+
+fn compile_failure(errors: &[quench_runtime::Diagnostic], site: CompilationSite) -> String {
     if !errors.is_empty() && errors.iter().all(quench_runtime::Diagnostic::is_syntax_error) {
-        format!("quench runtime SyntaxError: {errors:?}")
+        let phase = match site {
+            CompilationSite::Entry => "runtime",
+            #[cfg(feature = "aot")]
+            CompilationSite::Dependency => "resolution",
+        };
+        format!("quench {phase} SyntaxError: {errors:?}")
     } else {
         format!("quench compilation failed: {errors:?}")
     }
@@ -79,7 +91,7 @@ fn compile_native_dependencies(
             };
             module.name = quench_runtime::normalized_module_name(&module.name).into_owned();
             if !seen.insert(module.name.clone()) { continue; }
-            let program = compiler.compile_module_source(&module).map_err(|errors| compile_failure(&errors))?;
+            let program = compiler.compile_module_source(&module).map_err(|errors| compile_failure(&errors, CompilationSite::Dependency))?;
             pending.push_back((module.name.clone(), program.module_requests().to_vec()));
             modules.push((module, program));
         }
@@ -278,7 +290,7 @@ impl Test262RuntimeHost {
                         },
                         SourceKind::Script => compiler.compile_script(source, name, Default::default()),
                         SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
-                    }.map_err(|errors| compile_failure(&errors))?;
+                    }.map_err(|errors| compile_failure(&errors, CompilationSite::Entry))?;
                     native_dependencies = compile_native_dependencies(runtime.host_mut(), &mut compiler, &program, name)?;
                     compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?
                 }
@@ -289,7 +301,7 @@ impl Test262RuntimeHost {
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
-            .map_err(|errors| compile_failure(&errors))? };
+            .map_err(|errors| compile_failure(&errors, CompilationSite::Entry))? };
             let harness = harness
                 .iter()
                 .map(|script| (*script, HARNESS_SCRIPT_NAME))
@@ -445,7 +457,6 @@ impl Test262Host for Test262RuntimeHost {
 mod tests {
     use super::Test262RuntimeHost;
 
-    #[cfg(feature = "aot")]
     #[test]
     fn strict_destructuring_checks_missing_bindings_after_getters_and_defaults() {
         let source = r#"
@@ -473,6 +484,7 @@ mod tests {
         for mode in modes { Test262RuntimeHost::new(mode).execute(source, "strict-destructuring.js").unwrap(); }
     }
 
+    #[cfg(feature = "aot")]
     #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
         let program = super::Engine::specialize_unspecialized(r#"
@@ -500,7 +512,7 @@ mod tests {
     #[test]
     fn strict_call_assignment_is_a_syntax_error_not_a_backend_rejection() {
         let errors = super::Engine::specialize("'use strict'; f() = 1;", "strict-call-assignment.js").unwrap_err();
-        assert!(super::compile_failure(&errors).starts_with("quench runtime SyntaxError:"));
+        assert!(super::compile_failure(&errors, super::CompilationSite::Entry).starts_with("quench runtime SyntaxError:"));
     }
 
     #[test]
@@ -597,6 +609,31 @@ mod tests {
         let result = host.execute_kind("import('./dep.mjs').then(() => $DONE(), () => $DONE());", entry.to_str().unwrap(), super::SourceKind::Module);
         assert!(result.unwrap_err().starts_with("quench AOT capability rejection:"));
         assert!(host.native_compilation.rejections > 0);
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_deferred_graph_links_before_evaluation_and_keeps_nested_bodies_deferred() {
+        use std::fs;
+        let directory = tempfile::tempdir().unwrap();
+        let entry = directory.path().join("entry.mjs");
+        let source = r#"
+            import defer * as deferred from './dep.mjs';
+            if (effects.length !== 0) throw Error('eager deferred evaluation');
+            const child = deferred.child;
+            if (effects.join(',') !== 'first,dep') throw Error('deferred dependency order');
+            if (child.answer !== 42 || effects.join(',') !== 'first,dep,child') throw Error('nested deferred evaluation');
+        "#;
+        fs::write(&entry, source).unwrap();
+        fs::write(directory.path().join("dep.mjs"), "import './first.mjs'; import defer * as child from './child.mjs'; effects.push('dep'); export { child };").unwrap();
+        fs::write(directory.path().join("first.mjs"), "effects.push('first');").unwrap();
+        fs::write(directory.path().join("child.mjs"), "effects.push('child'); export const answer = 42;").unwrap();
+        let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly];
+        for mode in modes {
+            let mut host = Test262RuntimeHost::new(mode);
+            host.execute_after_harness(&["globalThis.effects = [];"], source, entry.to_str().unwrap(), super::SourceKind::Module).unwrap();
+            assert_eq!(host.native_compilation.rejections, 0);
+        }
     }
 
     #[test]

@@ -70,6 +70,9 @@ pub(crate) fn negative(outcome: TestOutcome, metadata: &TestMetadata) -> TestOut
 }
 
 fn expected_failure(reason: &str, metadata: &TestMetadata, expected_type: &str) -> bool {
+    if reason.starts_with("quench resolution SyntaxError:") {
+        return expected_type == "SyntaxError" && matches!(metadata.negative_phase.as_deref(), None | Some("resolution"));
+    }
     let early = reason.strip_prefix("quench runtime SyntaxError:");
     let runtime = ["quench runtime: ", "quench runtime jobs: ", "quench runtime async: "]
         .iter().find_map(|prefix| reason.strip_prefix(prefix));
@@ -100,5 +103,10 @@ mod tests {
         runtime.negative_phase = Some("runtime".into());
         assert!(expected_failure("quench runtime: SyntaxError: thrown at runtime", &runtime, "SyntaxError"));
         assert!(!expected_failure("quench runtime SyntaxError: invalid token", &runtime, "SyntaxError"));
+        assert!(!expected_failure("quench resolution SyntaxError: invalid dependency", &runtime, "SyntaxError"));
+        runtime.negative_phase = Some("resolution".into());
+        assert!(expected_failure("quench resolution SyntaxError: invalid dependency", &runtime, "SyntaxError"));
+        runtime.negative_phase = Some("parse".into());
+        assert!(!expected_failure("quench resolution SyntaxError: invalid dependency", &runtime, "SyntaxError"));
     }
 }

@@ -159,7 +159,7 @@ impl ModuleRecord {
     /// Leave a module reached only through a deferred request unevaluated
     /// until its deferred namespace is first observed.
     pub(crate) fn defer_evaluation(&mut self) -> bool {
-        let (ModulePhase::Loading, Some(namespace)) = (self.phase(), self.deferred_namespace)
+        let (ModulePhase::Loading | ModulePhase::Linking | ModulePhase::Instantiated, Some(namespace)) = (self.phase(), self.deferred_namespace)
         else {
             return false;
         };
