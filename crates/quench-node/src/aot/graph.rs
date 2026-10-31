@@ -8,6 +8,12 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
 use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
+mod loader_bindings;
+use loader_bindings::{Base, LoaderBindings};
+
+#[derive(Clone, Copy)]
+enum RequestKind { Resolve, Load }
+
 #[derive(Debug)]
 pub enum GraphRequirement {
     DynamicRequire { from: PathBuf, offset: u32 },
@@ -42,7 +48,8 @@ pub struct DependencyGraph {
 
 struct Requests<'s> {
     scoping: &'s oxc_semantic::Scoping,
-    specifiers: BTreeSet<String>,
+    loaders: &'s LoaderBindings<'s>,
+    specifiers: BTreeMap<String, RequestKind>,
     classified_requires: BTreeSet<u32>,
     dynamic_requires: BTreeSet<u32>,
     dynamic_imports: BTreeSet<u32>,
@@ -51,10 +58,16 @@ struct Requests<'s> {
 }
 
 impl<'s> Requests<'s> {
-    fn new(scoping: &'s oxc_semantic::Scoping) -> Self {
-        Self { scoping, specifiers: BTreeSet::new(), classified_requires: BTreeSet::new(),
+    fn new(scoping: &'s oxc_semantic::Scoping, loaders: &'s LoaderBindings<'s>) -> Self {
+        Self { scoping, loaders, specifiers: BTreeMap::new(), classified_requires: loaders.transfers(),
             dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
             literal_imports: BTreeSet::new(), host_globals: BTreeSet::new() }
+    }
+
+    fn request(&mut self, specifier: String, kind: RequestKind) {
+        self.specifiers.entry(specifier).and_modify(|existing| {
+            if matches!(kind, RequestKind::Load) { *existing = kind; }
+        }).or_insert(kind);
     }
 
     fn runtime_reference(&self, name: &IdentifierReference<'_>) -> Option<&oxc_syntax::reference::Reference> {
@@ -68,7 +81,7 @@ impl<'s> Requests<'s> {
     }
 
     fn record_host_global(&mut self, name: &str) {
-        if name == "console" { self.specifiers.insert("node:console".into()); }
+        if name == "console" { self.request("node:console".into(), RequestKind::Load); }
         let interfaces = commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS).copied()
             .chain(crate::modules::events_shared_vm::EVENT_GLOBALS.iter().copied())
             .chain(crate::modules::events_shared_vm::MESSAGING_GLOBALS.iter().copied())
@@ -82,20 +95,17 @@ impl<'s> Requests<'s> {
 
 impl<'a> Visit<'a> for Requests<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let require = match &call.callee {
-            Expression::Identifier(name) if name.name == "require" => {
-                self.classified_requires.insert(name.span.start);
-                true
-            },
-            Expression::StaticMemberExpression(member) if member.property.name == "require" => {
-                matches!(&member.object, Expression::Identifier(name) if name.name == "module")
-            },
-            _ => false,
-        };
-        if require {
-            match call.arguments.as_slice() {
+        if let Some(require) = self.loaders.require_call(call) {
+            if let Some(reference) = require.reference { self.classified_requires.insert(reference); }
+            let kind = if require.resolve_only { RequestKind::Resolve } else { RequestKind::Load };
+            match require.arguments {
                 [argument] => match argument.as_expression() {
-                    Some(Expression::StringLiteral(name)) => { self.specifiers.insert(name.value.to_string()); },
+                    Some(expression) => match expression.get_inner_expression() {
+                        Expression::StringLiteral(name) if require.base == Base::Current || commonjs::is_builtin_specifier(name.value.as_str()) => {
+                            self.request(name.value.to_string(), kind);
+                        },
+                        _ => { self.dynamic_requires.insert(call.span.start); },
+                    },
                     _ => { self.dynamic_requires.insert(call.span.start); },
                 },
                 _ => { self.dynamic_requires.insert(call.span.start); },
@@ -108,7 +118,7 @@ impl<'a> Visit<'a> for Requests<'_> {
         let Some(reference) = self.runtime_reference(name) else { return };
         let global = reference.symbol_id().is_none();
         if global { self.record_host_global(name.name.as_str()); }
-        if name.name == "require" && !self.classified_requires.contains(&name.span.start) {
+        if self.loaders.is_require_reference(name) && !self.classified_requires.contains(&name.span.start) {
             self.dynamic_requires.insert(name.span.start);
         }
     }
@@ -127,8 +137,8 @@ impl<'a> Visit<'a> for Requests<'_> {
     }
 
     fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
-        match (expression.operator, expression.argument.without_parentheses()) {
-            (oxc_syntax::operator::UnaryOperator::Typeof, Expression::Identifier(name)) if name.name == "require" => {
+        match (expression.operator, expression.argument.get_inner_expression()) {
+            (oxc_syntax::operator::UnaryOperator::Typeof, Expression::Identifier(name)) if self.loaders.is_require_reference(name) => {
                 self.classified_requires.insert(name.span.start);
             },
             _ => {},
@@ -211,7 +221,9 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         for key in quench_runtime::Engine::function_constructor_sources(&parsed.program, scoping, true) {
             manifest.insert_key(key);
         }
-        let mut requests = Requests::new(scoping);
+        let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
+        let loaders = LoaderBindings::discover(&parsed.program, scoping, &path);
+        let mut requests = Requests::new(scoping, &loaders);
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
         for offset in requests.dynamic_requires {
@@ -220,16 +232,18 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         for offset in requests.dynamic_imports {
             graph.requirements.push(GraphRequirement::DynamicImport { from: name.clone().into(), offset: offset + base });
         }
-        let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
-        for specifier in requests.specifiers {
-            if commonjs::is_builtin_specifier(&specifier) { graph.builtins.insert(specifier); continue; }
+        for (specifier, kind) in requests.specifiers {
+            if commonjs::is_builtin_specifier(&specifier) {
+                if matches!(kind, RequestKind::Load) { graph.builtins.insert(specifier); }
+                continue;
+            }
             let directory = path.parent().ok_or("module has no parent directory")?;
             let resolved = commonjs::with_commonjs_resolver(|resolver| commonjs::resolve_kept(resolver, |resolver| resolver.resolve(directory, &specifier)));
             match resolved {
                 Ok(resolved) => {
                     let target = resolved.full_path().canonicalize().map_err(|error| error.to_string())?;
                     host.record_module_resolution(&path, &specifier, &target)?;
-                    pending_files.insert(target);
+                    if matches!(kind, RequestKind::Load) { pending_files.insert(target); }
                 },
                 Err(error) => graph.requirements.push(GraphRequirement::Unresolved {
                     from: name.clone().into(), specifier, diagnostic: error.to_string(),

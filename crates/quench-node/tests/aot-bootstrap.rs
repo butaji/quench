@@ -83,7 +83,7 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     let directory = std::env::temp_dir().join(format!("quench-native-graph-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("entry.cts");
-    let text = "\u{feff}require('./dep'); require('./data.json'); const load = require; load('unknown'); const x: number = 42; console.error(x); throw x;";
+    let text = "\u{feff}require('./dep'); require('./data.json'); const load = require; load('unknown'); load(process.argv[2]); const x: number = 42; console.error(x); throw x;";
     fs::write(&entry, text).unwrap();
     fs::write(directory.join("dep.js"), "#!/usr/bin/env node\nrequire('./entry.cts'); module.exports = require('node:path');").unwrap();
     fs::write(directory.join("data.json"), "{\"answer\":42}").unwrap();
@@ -95,6 +95,7 @@ fn commonjs_graph_keeps_cycles_json_dynamic_edges_and_original_bytes() {
     assert!(graph.builtins.contains("node:path"));
     assert!(graph.builtins.contains("node:console"));
     assert!(graph.requirements.iter().any(|edge| matches!(edge, GraphRequirement::DynamicRequire { .. })));
+    assert!(graph.requirements.iter().any(|edge| matches!(edge, GraphRequirement::Unresolved { specifier, .. } if specifier == "unknown")));
     assert_eq!(manifest.compile().unwrap().units.len(), 2);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1478,4 +1479,56 @@ stream.on('close', () => {
     }
     assert_eq!(fs::read_to_string(&data).unwrap(), "hé🙂\nsecond-line\n");
     assert!(!missing.exists());
+}
+
+#[test]
+#[ignore = "explicit source-independent loader alias and resolve-only qualification"]
+fn compile_command_preserves_scoped_loader_aliases_and_resolve_only_metadata() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench loader aliases, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    for extension in ["mjs", "mts", "cts"] {
+        let sources = directory.join(extension);
+        fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        let source = if extension == "cts" {
+            "const fake = (() => () => 42) as unknown as typeof import('node:module').createRequire; const loader = fake('not a filename'); console.log(JSON.stringify({ value: loader('./not-installed'), kind: typeof loader }));".to_owned()
+        } else {
+            fs::write(sources.join("broken.cjs"), "let invalid = ;").unwrap();
+            fs::write(sources.join("value.cjs"), "globalThis.effects = (globalThis.effects || 0) + 1; module.exports = { answer: 42 };").unwrap();
+            fs::write(sources.join("dependency.cjs"), "const method = module && module.require; const copy = method; module.exports = copy.call(module, './value.cjs');").unwrap();
+            let factory = if extension == "mts" { "(create as unknown as () => string)" } else { "create" };
+            format!(r#"
+                import {{ createRequire as create }} from 'node:module';
+                const factory = {factory};
+                let loader; loader = factory(import.meta.url);
+                const copy = loader;
+                const path = copy.resolve('./broken.cjs');
+                const first = copy('./dependency.cjs');
+                const second = copy('./dependency.cjs');
+                console.log(JSON.stringify({{ answer: first.answer, same: first === second,
+                    effects: globalThis.effects, path, kind: typeof copy }}));
+            "#)
+        };
+        fs::write(&entry, source).unwrap();
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+            .arg(&entry).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+        let binary = directory.join(format!("native-{extension}"));
+        let report = directory.join(format!("{extension}.json"));
+        let compile = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+            .arg("compile").arg(&entry).arg("-o").arg(&binary).arg("--report").arg(&report)
+            .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk).output().unwrap();
+        assert!(compile.status.success(), "{}", String::from_utf8_lossy(&compile.stderr));
+        fs::remove_dir_all(&sources).unwrap();
+        let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+        assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, oracle.stdout);
+        assert_eq!(native.stderr, oracle.stderr);
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_reduced_payload(&report, &binary);
+        eprintln!("Scoped loader aliases ({extension}) matched Node after source removal: {}", binary.display());
+    }
 }
