@@ -1750,3 +1750,122 @@ fn compile_command_preserves_dynamic_source_scope_coercion_and_jobs() {
         eprintln!("dynamic sources ({extension}) matched Node after source removal: {}", binary.display());
     }
 }
+
+#[test]
+#[ignore = "explicit source-deleted framework HTML, response-body and type-soundness qualification"]
+fn compile_command_preserves_framework_html_and_response_bodies() {
+    use std::{fs, process::Command};
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/npm-perf/workloads");
+    let app_root = fixtures.parent().unwrap().canonicalize().unwrap();
+    let directory = std::env::temp_dir().join(format!("quench framework observables, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let source = r#"
+const React = require('react');
+const server = require('react-dom/server');
+const { NextResponse } = require('next/server');
+const { getRouteMatcher } = require('next/dist/shared/lib/router/utils/route-matcher');
+const { getRouteRegex } = require('next/dist/shared/lib/router/utils/route-regex');
+const asserted__DECLARATION__ = ('A<&>"λ🦀' __ASSERTION__);
+const Context = React.createContext('fallback');
+function Card(props) {
+  const label = React.useContext(Context);
+  const [state] = React.useState(() => 'state-' + props.index);
+  const id = React.useId();
+  return React.createElement('article', { id, title: props.title, 'data-label': label },
+    React.createElement('span', { style: { color: 'red', lineHeight: 1.5, '--accent': 'λ' } }, state),
+    props.title, React.createElement('input', { defaultValue: props.title, checked: true, readOnly: true }));
+}
+const tree = React.createElement(Context.Provider, { value: 'provider <&>' },
+  React.createElement('main', { lang: 'en' },
+    React.createElement(Card, { index: 1, title: asserted }),
+    React.createElement(Card, { index: 2, title: 'second & "quoted"' }),
+    React.createElement('section', { dangerouslySetInnerHTML: { __html: '<b data-x="&">raw</b>' } })));
+const html = server.renderToString(tree);
+const staticHtml = server.renderToStaticMarkup(tree);
+const marker = new Error('component marker');
+let thrown;
+try { server.renderToString(React.createElement(function Broken() { throw marker; })); }
+catch (error) { thrown = { same: error === marker, name: error.name, message: error.message,
+  descriptor: Object.getOwnPropertyDescriptor(error, 'message') }; }
+async function main() {
+  const cases = [
+    ['/products/[category]/[...slug]', '/products/books/a%20b/%CE%BB'],
+    ['/users/[id]', '/users/8421'],
+    ['/docs/[[...slug]]', '/docs']
+  ];
+  const responses = [];
+  for (const [route, pathname] of cases) {
+    const match = getRouteMatcher(getRouteRegex(route));
+    const params = match(pathname);
+    const response = NextResponse.json({ route, params, title: asserted },
+      { status: 201, headers: { 'x-custom': 'latin-é' } });
+    response.headers.append('x-pair', 'left');
+    response.headers.append('x-pair', 'right');
+    response.cookies.set('token', 'a b&λ', { httpOnly: true, sameSite: 'lax', path: '/' });
+    const before = response.body;
+    const body = await response.text();
+    let doubleRead;
+    try { await response.text(); } catch (error) { doubleRead = { name: error.name, message: error.message }; }
+    responses.push({ route, params, keys: Object.keys(params), missing: match('/not-a-route'),
+      status: response.status, statusText: response.statusText, headers: Array.from(response.headers),
+      cookie: response.cookies.get('token'), body, bodyUsed: response.bodyUsed,
+      sameStream: response.body === before, doubleRead });
+  }
+  const redirect = NextResponse.redirect(new URL('https://example.test/λ?q=a%20b'), 308);
+  const redirectBody = await redirect.text();
+  let invalidUrl;
+  try { NextResponse.redirect('/relative'); }
+  catch (error) { invalidUrl = { name: error.name, message: error.message }; }
+  console.log(JSON.stringify({ type: typeof asserted, html, staticHtml,
+    repeat: server.renderToString(tree) === html, thrown,
+    moduleIdentity: React.createElement === require('react').createElement,
+    renderName: Object.getOwnPropertyDescriptor(server.renderToString, 'name'),
+    responses, redirect: { status: redirect.status, headers: Array.from(redirect.headers), body: redirectBody }, invalidUrl }));
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
+"#;
+    for profile in ["iteration", "production"] {
+        let variable = if profile == "production" { "QUENCH_NATIVE_PRODUCTION_BUILD_REPORT" } else { "QUENCH_NATIVE_BUILD_REPORT" };
+        let sdk = std::env::var_os(variable).expect("immutable execution-only SDK report");
+        for extension in ["cjs", "cts"] {
+            let sources = directory.join(format!("{profile}-{extension}-sources"));
+            for fixture in ["react-ssr.cjs", "next-route-generate.cjs"] {
+                let mut manifest = SourceManifest::default();
+                let graph = manifest.add_module_graph(&fixtures.join(fixture).canonicalize().unwrap()).unwrap();
+                copy_graph_sources(&graph, &app_root, &sources);
+            }
+            let entry = sources.join("workloads").join(format!("observables.{extension}"));
+            let typed = extension == "cts";
+            fs::write(&entry, source.replace("__DECLARATION__", if typed { ": number" } else { "" })
+                .replace("__ASSERTION__", if typed { "as unknown as number" } else { "" })).unwrap();
+            let mut oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()));
+            let expected = oracle.arg(&entry).env_clear().env("NODE_ENV", "production").current_dir(&directory).output().unwrap();
+            assert!(expected.status.success(), "Node {profile}/{extension}: {}", String::from_utf8_lossy(&expected.stderr));
+            assert!(expected.stderr.is_empty(), "{}", String::from_utf8_lossy(&expected.stderr));
+            let expected_value: serde_json::Value = serde_json::from_slice(&expected.stdout).unwrap();
+            assert_eq!(expected_value["type"], "string");
+            assert_eq!(expected_value["thrown"]["same"], true);
+            assert!(expected_value["html"].as_str().unwrap().contains("&lt;&amp;&gt;"));
+            let binary = directory.join(format!("{profile}-{extension}"));
+            let report = directory.join(format!("{profile}-{extension}.json"));
+            let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+                .arg("compile").arg(&entry).arg("-o").arg(&binary).arg("--report").arg(&report)
+                .args(["--profile", profile, "--sdk-report"]).arg(&sdk)
+                .env_remove(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV).output().unwrap();
+            assert!(compiled.status.success(), "compile {profile}/{extension}: {}", String::from_utf8_lossy(&compiled.stderr));
+            fs::remove_dir_all(&sources).unwrap();
+            let actual = Command::new(&binary).env_clear().env("NODE_ENV", "production")
+                .current_dir(&directory).output().unwrap();
+            assert_eq!(actual.status.code(), expected.status.code(), "{profile}/{extension}: {}", String::from_utf8_lossy(&actual.stderr));
+            assert_eq!(actual.stderr, expected.stderr, "{profile}/{extension}");
+            let value: serde_json::Value = serde_json::from_slice(&actual.stdout).unwrap();
+            assert_eq!(value, expected_value, "{profile}/{extension}");
+            let report: serde_json::Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
+            assert_reduced_payload(&report, &binary);
+            assert_eq!(report["execution_mode"], "native_only");
+            assert_eq!(report["source_compilation"], false);
+            assert_eq!(report["bytecode_interpreter"], false);
+            eprintln!("framework complete observables ({profile}/{extension}) matched Node after source removal: {}", binary.display());
+        }
+    }
+}
