@@ -5,6 +5,9 @@ use std::{collections::BTreeSet, sync::{Arc, mpsc, atomic::{AtomicBool, Ordering
 /// sum is a lower bound on the instantaneous process-tree peak, not an exact
 /// high-water mark. The time wrapper and this observer are excluded.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(1);
+// Short VM initialization peaks can fit between millisecond samples. Bound
+// busy observation to startup; timing experiments never enable this observer.
+const DENSE_STARTUP_WINDOW: Duration = Duration::from_millis(100);
 
 pub struct Monitor {
     stop: Arc<AtomicBool>,
@@ -28,7 +31,8 @@ impl Monitor {
             let mut peak_processes = 0usize;
             let mut unreadable = 0u64;
             let mut maximum_gap = Duration::ZERO;
-            let mut previous = Instant::now();
+            let started = Instant::now();
+            let mut previous = started;
             while !requested.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 maximum_gap = maximum_gap.max(now.duration_since(previous));
@@ -53,13 +57,12 @@ impl Monitor {
                 if processes > 0 { observed_samples += 1; }
                 peak = peak.max(resident);
                 peak_processes = peak_processes.max(processes);
-                // Do not spend the first sampling window asleep before a
-                // short-lived target has even become observable.
-                if observed_samples > 0 { thread::sleep(SAMPLE_INTERVAL); }
+                if started.elapsed() >= DENSE_STARTUP_WINDOW { thread::sleep(SAMPLE_INTERVAL); }
             }
             json!({"sampled_peak_resident_bytes":peak,"maximum_observed_processes":peak_processes,"samples":samples,
                 "observed_samples":observed_samples,"unreadable_process_observations":unreadable,
                 "requested_interval_nanoseconds":SAMPLE_INTERVAL.as_nanos(),"maximum_sample_gap_nanoseconds":maximum_gap.as_nanos(),
+                "dense_startup_window_nanoseconds":DENSE_STARTUP_WINDOW.as_nanos(),
                 "scope":"Sampled resident-byte sum of descendants of the time wrapper; wrapper/observer excluded. Lower bound; short-lived allocations or children between samples can be missed. RSS shared pages may be counted in multiple processes."})
         }).map_err(|error|error.to_string())?;
         prepared.recv().map_err(|e|e.to_string())?;
