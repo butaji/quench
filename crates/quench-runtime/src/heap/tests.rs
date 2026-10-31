@@ -1455,8 +1455,8 @@ fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
         heap.set_memory_policy(policy);
         collect_minor(&mut heap, []);
         assert!(!heap.should_full_collect());
-        let growth = heap.pacing().minimum_old_growth;
-        heap.charge_reclaimable_program(growth * payload_unit());
+        let growth = heap.pacing().minimum_external_budget;
+        heap.charge_reclaimable_program(growth);
         assert!(heap.should_full_collect());
         heap.collect_with_object_roots([], |_, _, _, _, _| {}, None, None, true);
         assert!(!heap.should_full_collect());
