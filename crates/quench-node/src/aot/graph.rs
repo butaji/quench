@@ -3,7 +3,7 @@
 
 use super::{SourceManifest, ModuleFile};
 use crate::host::shared_vm::commonjs;
-use oxc_ast::ast::{CallExpression, ComputedMemberExpression, Expression, IdentifierReference, ImportExpression, StaticMemberExpression, UnaryExpression};
+use oxc_ast::ast::{CallExpression, ComputedMemberExpression, Expression, IdentifierReference, ImportExpression, LogicalExpression, StaticMemberExpression, UnaryExpression};
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
 use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
@@ -134,6 +134,17 @@ impl<'a> Visit<'a> for Requests<'_> {
             self.record_host_global(name.value.as_str());
         }
         walk::walk_computed_member_expression(self, member);
+    }
+
+    fn visit_logical_expression(&mut self, expression: &LogicalExpression<'a>) {
+        if expression.operator == oxc_syntax::operator::LogicalOperator::And {
+            if let Expression::Identifier(name) = expression.left.get_inner_expression() {
+                if self.loaders.is_require_reference(name) {
+                    self.classified_requires.insert(name.span.start);
+                }
+            }
+        }
+        walk::walk_logical_expression(self, expression);
     }
 
     fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {

@@ -3,11 +3,15 @@
 use oxc_ast::ast::*;
 use oxc_ast_visit::{walk, Visit};
 use oxc_semantic::Scoping;
-use oxc_syntax::{operator::AssignmentOperator, symbol::SymbolId};
+use oxc_syntax::{
+    operator::{AssignmentOperator, LogicalOperator},
+    symbol::SymbolId,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Every tracked origin denotes an object/function: always truthy and non-null.
 enum Origin {
     ModuleNamespace,
     ModuleRecord,
@@ -35,6 +39,7 @@ enum Flow {
     Member(Box<Flow>, Member),
     Call(Box<Flow>, Input),
     Join(Box<Flow>, Box<Flow>),
+    And(Box<Flow>, Option<Box<Flow>>),
 }
 struct Constraint {
     binding: SymbolId,
@@ -192,7 +197,19 @@ impl<'s> LoaderBindings<'s> {
                 Some(Flow::Call(Box::new(self.expression(&call.callee)?), input))
             }
             Expression::LogicalExpression(value) => {
-                Self::join(self.expression(&value.left), self.expression(&value.right))
+                let left = self.expression(&value.left);
+                let right = self.expression(&value.right);
+                if value.operator == LogicalOperator::And {
+                    // A tracked origin on the left is truthy, so only the right
+                    // can supply the resulting loader. Keep guard uses for the
+                    // passive-reference projection even when the result is unknown.
+                    match left {
+                        Some(left) => Some(Flow::And(Box::new(left), right.map(Box::new))),
+                        None => right,
+                    }
+                } else {
+                    Self::join(left, right)
+                }
             }
             Expression::ConditionalExpression(value) => Self::join(
                 self.expression(&value.consequent),
@@ -221,6 +238,10 @@ impl<'s> LoaderBindings<'s> {
         match value {
             Flow::Binding(symbol, _) => self.origins.get(symbol).cloned().unwrap_or_default(),
             Flow::Root(origin, _) => BTreeSet::from([*origin]),
+            Flow::And(_, right) => right
+                .as_ref()
+                .map(|right| self.evaluate(right))
+                .unwrap_or_default(),
             Flow::Join(left, right) => {
                 let mut values = self.evaluate(left);
                 values.extend(self.evaluate(right));
@@ -307,6 +328,12 @@ impl<'s> LoaderBindings<'s> {
                 self.transfer_positions(left, positions);
                 self.transfer_positions(right, positions);
             }
+            Flow::And(left, right) => {
+                self.transfer_positions(left, positions);
+                if let Some(right) = right {
+                    self.transfer_positions(right, positions);
+                }
+            }
             Flow::Member(object, _) => self.transfer_positions(object, positions),
             _ => {}
         }
@@ -378,6 +405,12 @@ impl Flow {
             Self::Join(left, right) => {
                 left.bindings(visit);
                 right.bindings(visit);
+            }
+            Self::And(left, right) => {
+                left.bindings(visit);
+                if let Some(right) = right {
+                    right.bindings(visit);
+                }
             }
             Self::Root(..) => {}
         }
@@ -561,5 +594,43 @@ mod tests {
             assert!(!graph.files.contains_key(&entry.with_file_name("invalid.cjs")));
             assert_eq!(graph.resolutions[&(entry.to_owned(), "./invalid.cjs".into())], entry.with_file_name("invalid.cjs"));
         });
+    }
+    #[test]
+    fn truthy_module_guards_do_not_turn_loaded_export_values_into_loaders() {
+        for extension in ["cjs", "cts"] {
+            fixture(
+                "truthy-module",
+                extension,
+                r#"
+                const record = typeof module === 'object' && module && !module.nodeType && module;
+                const types = record && record.require && record.require('node:util').types;
+                if (types) types.isTypedArray(new Uint8Array());
+                const loader = require;
+                loader && loader('./dependency.cjs');
+                const result = loader && loader('./dependency.cjs');
+                if (result) console.log(result);
+            "#,
+                |graph, _| {
+                    assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+                    assert!(graph.builtins.contains("node:util"));
+                    assert_eq!(graph.files.len(), 2);
+                },
+            );
+        }
+    }
+    #[test]
+    fn logical_or_can_return_a_loader_and_keeps_its_escape_requirement() {
+        fixture(
+            "logical-or-escape",
+            "cjs",
+            "const loader = require; module.exports = loader || (() => 42);",
+            |graph, _| {
+                assert_eq!(graph.requirements.len(), 1);
+                assert!(matches!(
+                    graph.requirements[0],
+                    GraphRequirement::DynamicRequire { .. }
+                ));
+            },
+        );
     }
 }
