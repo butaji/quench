@@ -199,6 +199,9 @@ pub(crate) fn stage_host_sources(
         context.scoped(|context| {
             let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
                 "console" => return crate::modules::console_shared_vm::stage_formatting(context),
+                // Public buffer exports include lazy Blob/File constructors; callers
+                // can observe them by copying the module's enumerable properties.
+                "buffer" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:buffer"),
                 // createRequire tests URL-like inputs through the SDK URL policy,
                 // including the static CommonJS facade used by ESM imports.
                 "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
@@ -368,4 +371,34 @@ mod tests {
             fs::remove_dir_all(directory).unwrap();
         }).unwrap().join().unwrap();
     }
+    #[test]
+    fn host_staging_captures_performance_and_lazy_buffer_exports() {
+        std::thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(|| {
+            let directory = std::env::temp_dir().join(format!("quench-staged-global-exports-{}", std::process::id()));
+            fs::create_dir(&directory).unwrap();
+            let entry = directory.join("entry.cts");
+            fs::write(&entry, "require('node:buffer'); (performance as unknown as {now(): number}).now(); throw new Error('entry must not execute during staging');").unwrap();
+            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+            assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+            assert!(graph.host_globals.contains("performance"));
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+            let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
+            assert!(staged.units().any(|key| key.name() == "node:perf_hooks.js"));
+            assert!(staged.assets().files.keys().any(|path|path.ends_with("lib/internal/blob.js")));
+            fs::remove_dir_all(directory).unwrap();
+        }).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn local_names_and_typescript_assertions_do_not_create_host_global_demands() {
+        let directory = std::env::temp_dir().join(format!("quench-shadowed-global-exports-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        fs::write(&entry, "function read(performance: unknown, console: unknown, Blob: unknown) { return [performance as Performance, console as Console, Blob as typeof globalThis.Blob]; }").unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.host_globals.is_empty(), "{:?}", graph.host_globals);
+        assert!(!graph.builtins.contains("node:console"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
 }

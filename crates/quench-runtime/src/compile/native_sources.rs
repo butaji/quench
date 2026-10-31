@@ -342,7 +342,9 @@ impl Engine {
         Self::function_constructor_sources(program, semantic.semantic.scoping(), specialized)
     }
 
-    pub(super) fn function_constructor_sources(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool) -> Vec<NativeSourceKey> {
+    /// Discover literal constructor obligations using the caller's authoritative
+    /// OXC scopes, shared with its other source analyses.
+    pub fn function_constructor_sources(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool) -> Vec<NativeSourceKey> {
         constructors::sources(program, scoping, specialized)
     }
 }

@@ -40,8 +40,8 @@ pub struct DependencyGraph {
     pub requirements: Vec<GraphRequirement>,
 }
 
-#[derive(Default)]
-struct Requests {
+struct Requests<'s> {
+    scoping: &'s oxc_semantic::Scoping,
     specifiers: BTreeSet<String>,
     classified_requires: BTreeSet<u32>,
     dynamic_requires: BTreeSet<u32>,
@@ -50,7 +50,15 @@ struct Requests {
     host_globals: BTreeSet<String>,
 }
 
-impl<'a> Visit<'a> for Requests {
+impl<'s> Requests<'s> {
+    fn new(scoping: &'s oxc_semantic::Scoping) -> Self {
+        Self { scoping, specifiers: BTreeSet::new(), classified_requires: BTreeSet::new(),
+            dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
+            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new() }
+    }
+}
+
+impl<'a> Visit<'a> for Requests<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         let require = match &call.callee {
             Expression::Identifier(name) if name.name == "require" => {
@@ -77,12 +85,16 @@ impl<'a> Visit<'a> for Requests {
     fn visit_identifier_reference(&mut self, name: &IdentifierReference<'a>) {
         // The global facade delegates rich values and formatting to the same SDK
         // module as require('node:console'), even when an entry only uses writers.
-        if name.name == "console" {
-            self.specifiers.insert("node:console".into());
-        }
-        if commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS)
-            .any(|global| *global == name.name.as_str()) {
-            self.host_globals.insert(name.name.to_string());
+        let global = name.reference_id.get().is_some_and(|reference| {
+            self.scoping.get_reference(reference).symbol_id().is_none()
+        });
+        if global {
+            if name.name == "console" { self.specifiers.insert("node:console".into()); }
+            if name.name == "performance"
+                || commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS)
+                    .any(|global| *global == name.name.as_str()) {
+                self.host_globals.insert(name.name.to_string());
+            }
         }
         if name.name == "require" && !self.classified_requires.contains(&name.span.start) {
             self.dynamic_requires.insert(name.span.start);
@@ -169,10 +181,12 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: source_type.is_script(), ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() { return Err(format!("{name}: {:?}", parsed.diagnostics)); }
         quench_runtime::Engine::erase_type_only_module_syntax(&mut parsed.program);
-        for key in quench_runtime::Engine::literal_function_constructor_sources(&parsed.program, true) {
+        let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
+        let scoping = semantic.semantic.scoping();
+        for key in quench_runtime::Engine::function_constructor_sources(&parsed.program, scoping, true) {
             manifest.insert_key(key);
         }
-        let mut requests = Requests::default();
+        let mut requests = Requests::new(scoping);
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
         for offset in requests.dynamic_requires {
