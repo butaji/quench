@@ -351,6 +351,7 @@ impl Test262RuntimeHost {
         self.prepare_native_programs_typed(harness,source,name,kind).map_err(|error|error.to_string())
     }
 
+    #[cfg(feature = "aot")]
     pub fn prepare_native_programs_typed(
         &mut self,harness:&[&str],source:&str,name:&str,kind:SourceKind,
     )->Result<NativeCasePrograms,NativePreparationError> {

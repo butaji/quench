@@ -256,132 +256,15 @@ impl TestMetadata {
 }
 
 fn extract_frontmatter(source: &str) -> Result<&str, String> {
-    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
-    // Fixtures normally begin with copyright comments. Hashbang tests add a
-    // deliberately malformed preamble before those comments; skip only that
-    // narrow preamble, never arbitrary JavaScript preceding the marker.
-    let mut body = skip_hashbang_preamble(source);
-    body = skip_html_close_preamble(body);
-    loop {
-        if let Some(rest) = body.strip_prefix('\n') {
-            body = rest;
-            continue;
-        }
-        // Test262 files commonly place a copyright block comment before the
-        // metadata marker. Skip only complete comments here; the `/*---`
-        // marker itself must remain the frontmatter opener, and arbitrary
-        // JavaScript preambles must not be treated as metadata.
-        if let Some(rest) = body.strip_prefix("/*") {
-            if body.starts_with("/*---") {
-                break;
-            }
-            let Some(end) = rest.find("*/") else {
-                break;
-            };
-            body = &rest[end + 2..];
-            continue;
-        }
-        let Some(rest) = body.strip_prefix("//") else {
-            break;
-        };
-        let Some(line_end) = rest.find('\n') else {
-            return Ok("");
-        };
-        body = &rest[line_end + 1..];
-    }
-    let Some(body) = body.strip_prefix("/*---") else {
+    // Test262's packaging and lint tools search the source for frontmatter,
+    // including cases whose executable preamble precedes that metadata.
+    let Some((_, body)) = source.split_once("/*---") else {
         return Ok("");
     };
     let Some(end_offset) = body.find("---*/") else {
         return Err("unterminated test262 frontmatter".into());
     };
     Ok(&body[..end_offset])
-}
-
-fn skip_html_close_preamble(mut source: &str) -> &str {
-    loop {
-        let Some(line_end) = source.find('\n') else {
-            return source;
-        };
-        let line = &source[..line_end];
-        let bytes = line.as_bytes();
-        let mut cursor = 0;
-        loop {
-            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-                cursor += 1;
-            }
-            if bytes
-                .get(cursor..)
-                .is_some_and(|tail| tail.starts_with(b"/*"))
-            {
-                let Some(end) = line[cursor + 2..].find("*/") else {
-                    return source;
-                };
-                cursor += end + 4;
-                continue;
-            }
-            break;
-        }
-        if !bytes
-            .get(cursor..)
-            .is_some_and(|tail| tail.starts_with(b"-->"))
-        {
-            return source;
-        }
-        source = &source[line_end + 1..];
-    }
-}
-
-fn skip_hashbang_preamble(source: &str) -> &str {
-    let mut body = source;
-
-    // A preceding directive, empty statement, line comment, or block comment
-    // is accepted only when it is immediately followed by a hashbang line.
-    if body.starts_with("\"use strict\"") {
-        if let Some(line_end) = body.find('\n') {
-            let after_directive = &body[line_end + 1..];
-            if after_directive.starts_with("#!") {
-                body = after_directive;
-            }
-        }
-    } else if body.starts_with(";#!") {
-        body = skip_line(body);
-    } else if body.starts_with("//\n#!") {
-        body = &body[3..];
-    } else if body.starts_with("/*\n*/#!") {
-        body = &body["/*\n*/".len()..];
-    }
-
-    while is_hashbang_candidate(body) {
-        if body.starts_with("#!/*") {
-            if let Some(end) = body.find("*/") {
-                body = &body[end + 2..];
-            } else {
-                return "";
-            }
-        } else {
-            body = skip_line(body);
-        }
-    }
-    body
-}
-
-fn is_hashbang_candidate(source: &str) -> bool {
-    let Some(line_end) = source.find('\n') else {
-        return source.starts_with("#!") || source.starts_with("#\\") || source.starts_with('\\');
-    };
-    let line = source[..line_end].trim_start();
-    line.starts_with("#!")
-        || line.starts_with("#\\")
-        || line.starts_with("\\u")
-        || line.starts_with("\\x")
-        || line.starts_with("\\0")
-}
-
-fn skip_line(source: &str) -> &str {
-    source
-        .find('\n')
-        .map_or("", |line_end| &source[line_end + 1..])
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
@@ -850,10 +733,9 @@ mod tests {
     }
 
     #[test]
-    fn metadata_does_not_skip_javascript_before_frontmatter() {
-        let source = "var preamble = 1;\n/*---\nflags: [onlyStrict]\n---*/\n";
+    fn metadata_after_executable_preamble_controls_variants() {
+        let source = "#! comment\u{2029}{\n}\n/*---\nflags: [raw]\n---*/\n";
         let metadata = TestMetadata::parse(source).expect("metadata parses");
-        assert!(metadata.includes.is_empty());
-        assert!(!metadata.only_strict);
+        assert_eq!(metadata.variants(), vec![super::TestVariant::Raw]);
     }
 }
