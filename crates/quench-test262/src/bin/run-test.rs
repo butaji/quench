@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
 use quench_test262::{
-    take_execution_mode, take_dynamic_source, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
+    take_execution_mode, take_dynamic_source, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome, TestVariant, JIT_FLAG, AOT_FLAG,
 };
 
 fn main() -> ExitCode {
@@ -29,8 +29,18 @@ fn run() -> ExitCode {
     let mut args = env::args_os().skip(1).collect::<Vec<_>>();
     let dynamic_source = take_dynamic_source(&mut args);
     let mode = take_execution_mode(&mut args);
+    let selected = if let Some(index) = args.iter().position(|arg| arg == "--variant") {
+        args.remove(index);
+        if index >= args.len() { return fail("--variant requires a declared variant name".into()); }
+        let value = args.remove(index);
+        match value.to_str().and_then(TestVariant::from_name) {
+            Some(variant) => Some(variant),
+            None => return fail("unknown variant name".into()),
+        }
+    } else { None };
+    if args.len() > 1 { return fail("run-test requires exactly one test path".into()); }
     let Some(path) = args.into_iter().next().map(PathBuf::from) else {
-        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}|{AOT_FLAG}] <test.js>");
+        eprintln!("usage: cargo run -p quench-test262 --bin run-test -- [{JIT_FLAG}|{AOT_FLAG}] [--variant NAME] <test.js>");
         return ExitCode::from(2);
     };
     let root = test262_root();
@@ -40,7 +50,11 @@ fn run() -> ExitCode {
     };
     let mut runner = Test262Runner::new(host);
     let mut harness = HarnessCache::new(root.join("harness"));
-    match runner.run_file_variants_with_cache(&path, &mut harness) {
+    let outcomes = match selected {
+        Some(variant) => runner.run_file_variant_with_cache(&path, &mut harness, variant).map(|outcome|vec![outcome]),
+        None => runner.run_file_variants_with_cache(&path, &mut harness),
+    };
+    match outcomes {
         Ok(outcomes) => {
             match quench_test262::aggregate_variants(&outcomes) {
                 TestOutcome::Pass => ExitCode::SUCCESS,

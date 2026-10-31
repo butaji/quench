@@ -140,6 +140,8 @@ pub struct NativeCompiledUnit {
 pub enum TestVariant { Sloppy, Strict, Module, Raw }
 
 impl TestVariant {
+    pub const ALL: [Self; 4] = [Self::Sloppy, Self::Strict, Self::Module, Self::Raw];
+    pub fn from_name(name: &str) -> Option<Self> { Self::ALL.into_iter().find(|variant| variant.name() == name) }
     pub fn name(self) -> &'static str {
         match self { Self::Sloppy => "sloppy", Self::Strict => "strict", Self::Module => "module", Self::Raw => "raw" }
     }
@@ -506,11 +508,22 @@ pub struct Test262Runner<H: Test262Host> {
 impl<H: Test262Host> Test262Runner<H> {
     /// Account for every variant; a failure never suppresses the remaining variant.
     pub fn run_file_variants_with_cache(&mut self, path: &Path, cache: &mut HarnessCache) -> Result<Vec<VariantOutcome>, String> {
+        self.run_file_selected_variants(path, cache, None)
+    }
+
+    /// Select only a variant declared by the original test metadata.
+    pub fn run_file_variant_with_cache(&mut self, path: &Path, cache: &mut HarnessCache, variant: TestVariant) -> Result<VariantOutcome, String> {
+        self.run_file_selected_variants(path, cache, Some(variant))?.pop().ok_or_else(|| "selected variant produced no outcome".into())
+    }
+
+    fn run_file_selected_variants(&mut self, path: &Path, cache: &mut HarnessCache, selected: Option<TestVariant>) -> Result<Vec<VariantOutcome>, String> {
         let source = std::fs::read_to_string(path).map_err(|error| format!("test262 read failed: {error}"))?;
         let mut metadata = TestMetadata::parse(&source)?;
+        let variants = metadata.variants();
+        if selected.is_some_and(|variant|!variants.contains(&variant)) { return Err("variant is not declared by test metadata".into()); }
         let harness = runner_support::cached_harness(&metadata, cache)?;
         let mut outcomes = Vec::new();
-        for variant in metadata.variants() {
+        for variant in variants.into_iter().filter(|variant| selected.is_none_or(|selected| selected == *variant)) {
             metadata.only_strict = variant == TestVariant::Strict;
             let outcome = runner_support::negative(self.dispatch_test_at(&harness, &source, &metadata, Some(path)), &metadata);
             outcomes.push(VariantOutcome { variant, outcome, compilation: self.host.native_compilation().cloned() });

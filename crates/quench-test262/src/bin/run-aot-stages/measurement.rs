@@ -5,11 +5,21 @@ use std::os::unix::process::CommandExt;
 use wait_timeout::ChildExt;
 
 const BYTES_PER_KIBIBYTE: u64 = 1024;
+#[path = "process_tree.rs"]
+mod process_tree;
 
 /// Measure each command in a fresh process group, keeping compiler memory out
 /// of runtime observations. OS time reports a process maximum, not a sampled
 /// concurrent process-tree resident sum.
 pub fn run(program: &Path, arguments: &[String], directory: &Path, label: &str, timeout: Duration, empty_environment: bool) -> Result<Value, String> {
+    run_observed(program,arguments,directory,label,timeout,empty_environment,false)
+}
+
+pub fn run_with_tree(program: &Path, arguments: &[String], directory: &Path, label: &str, timeout: Duration, empty_environment: bool) -> Result<Value, String> {
+    run_observed(program,arguments,directory,label,timeout,empty_environment,true)
+}
+
+fn run_observed(program: &Path, arguments: &[String], directory: &Path, label: &str, timeout: Duration, empty_environment: bool, sample_tree: bool) -> Result<Value, String> {
     let stdout = directory.join(format!("{label}.stdout"));
     let stderr = directory.join(format!("{label}.stderr"));
     let resources = directory.join(format!("{label}.resources"));
@@ -25,6 +35,7 @@ pub fn run(program: &Path, arguments: &[String], directory: &Path, label: &str, 
     if empty_environment { command.env_clear().current_dir("/"); }
     let started = Instant::now();
     let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let observer = if sample_tree { Some(process_tree::Monitor::start(child.id())?) } else { None };
     let status = child.wait_timeout(timeout).map_err(|e| e.to_string())?;
     let timed_out = status.is_none();
     let status = if let Some(status) = status { status } else {
@@ -37,6 +48,7 @@ pub fn run(program: &Path, arguments: &[String], directory: &Path, label: &str, 
         child.wait().map_err(|e| e.to_string())?
     };
     let elapsed = started.elapsed();
+    let tree = observer.map(process_tree::Monitor::finish).transpose()?;
     let text = std::fs::read_to_string(&resources).unwrap_or_default();
     let maximum_resident_bytes = if cfg!(target_os = "macos") {
         text.lines().find(|line| line.contains("maximum resident set size"))
@@ -48,6 +60,7 @@ pub fn run(program: &Path, arguments: &[String], directory: &Path, label: &str, 
     };
     Ok(json!({"program":program,"arguments":arguments,"exit":status.code(),"success":status.success() && !timed_out,
         "timed_out":timed_out,"wall_nanoseconds":elapsed.as_nanos(),"maximum_resident_bytes":maximum_resident_bytes,
+        "sampled_process_tree":tree,
         "memory_scope":"OS time per-command maximum RSS; concurrent process-tree peak not measured",
         "stdout":stdout,"stderr":stderr,"resources":resources,"empty_environment":empty_environment}))
 }
@@ -72,5 +85,15 @@ mod tests {
         assert_eq!(record["timed_out"],true);
         assert_eq!(record["success"],false);
         assert!(record["wall_nanoseconds"].as_u64().unwrap() < Duration::from_secs(5).as_nanos() as u64);
+    }
+    #[test]
+    fn memory_observer_captures_concurrent_descendants() {
+        let root=tempfile::tempdir().unwrap();
+        let record=run_with_tree(Path::new("/bin/sh"),&["-c".into(),"sleep 0.2 & sleep 0.2 & wait".into()],root.path(),"tree",Duration::from_secs(5),true).unwrap();
+        assert_eq!(record["success"],true);
+        let tree=&record["sampled_process_tree"];
+        assert!(tree["sampled_peak_resident_bytes"].as_u64().unwrap()>0);
+        assert!(tree["maximum_observed_processes"].as_u64().unwrap()>=3,"{tree}");
+        assert!(tree["observed_samples"].as_u64().unwrap()>0);
     }
 }

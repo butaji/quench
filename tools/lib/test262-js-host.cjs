@@ -173,21 +173,53 @@ async function runMode(relative, source, meta, strict) {
   }
 }
 
-// A JavaScript engine's failures for every mode the case declares, or null when all pass.
-async function caseFailures(relative) {
+// Derive both all-variant and single-variant execution from the same metadata.
+function declaredVariants(meta) {
+  if (meta.flags.includes('module')) return ['module'];
+  if (meta.flags.includes('raw')) return ['raw'];
+  if (meta.flags.includes('onlyStrict')) return ['strict'];
+  if (meta.flags.includes('noStrict')) return ['sloppy'];
+  return ['sloppy', 'strict'];
+}
+
+async function caseResults(relative, selected) {
   const source = fs.readFileSync(path.join(SUITE, 'test', relative), 'utf8');
   const meta = metadata(source);
+  const variants = declaredVariants(meta);
+  if (selected !== undefined && !variants.includes(selected)) throw new Error('variant is not declared by test metadata');
   if ((meta.flags.includes('module') || meta.features.includes('dynamic-import')) && typeof vm.SourceTextModule !== 'function') return { unverifiable: 'module cases need vm.SourceTextModule (Node: --experimental-vm-modules)' };
-  const strictModes = meta.flags.includes('module') ? [true] : meta.flags.includes('onlyStrict')
-    ? [true]
-    : meta.flags.includes('noStrict') || meta.flags.includes('raw') ? [false] : [false, true];
-  const failures = [];
-  for (const strict of strictModes) {
-    const failure = await runMode(relative, source, meta, strict);
+  const results = [];
+  for (const variant of variants.filter(variant => selected === undefined || variant === selected)) {
+    const failure = await runMode(relative, source, meta, variant === 'module' || variant === 'strict');
     if (failure?.unverifiable) return failure;
-    if (failure !== null) failures.push(`${meta.flags.includes('module') ? 'module' : strict ? 'strict' : 'sloppy'}: ${failure}`);
+    results.push({ variant, failure });
   }
+  return results;
+}
+
+// Preserve the historical all-mode failure shape used by waiver adjudication.
+async function caseFailures(relative) {
+  const results = await caseResults(relative);
+  if (!Array.isArray(results)) return results;
+  const failures = results.filter(result => result.failure !== null)
+    .map(result => `${result.variant === 'raw' ? 'sloppy' : result.variant}: ${result.failure}`);
   return failures.length === 0 ? null : { failures };
 }
 
-module.exports = { REPOSITORY, SUITE, caseFailures };
+async function caseVariantFailure(relative, variant) {
+  const results = await caseResults(relative, variant);
+  return Array.isArray(results) ? results[0].failure : results;
+}
+
+module.exports = { REPOSITORY, SUITE, caseFailures, caseVariantFailure };
+
+if (require.main === module) {
+  const [relative, variant, ...extra] = process.argv.slice(2);
+  if (!relative || !variant || extra.length) {
+    console.error('usage: test262-js-host.cjs RELATIVE_TEST VARIANT');
+    process.exitCode = 2;
+  } else caseVariantFailure(relative, variant).then(failure => {
+    if (failure !== null) console.error(typeof failure === 'string' ? failure : JSON.stringify(failure));
+    process.exitCode = failure === null ? 0 : failure?.unverifiable ? 2 : 1;
+  }).catch(error => { console.error(error.message); process.exitCode = 2; });
+}

@@ -8,7 +8,7 @@ mod measurement;
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(300);
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
-const REPORT_SCHEMA: u32 = 1;
+const REPORT_SCHEMA: u32 = 2;
 
 fn main() -> ExitCode {
     match run() { Ok(()) => ExitCode::SUCCESS, Err(error) => { eprintln!("{error}"); ExitCode::FAILURE } }
@@ -60,10 +60,14 @@ fn run() -> Result<(), String> {
                         observations.push(measurement::run(&binary,&[],&case_root,&format!("run-{round}"),EXECUTE_TIMEOUT,true)?);
                     }
                 }
+                let memory = if compiled { Some(measurement::run_with_tree(&binary,&[],&case_root,"memory",EXECUTE_TIMEOUT,true)?) } else { None };
+                let memory_valid = memory.as_ref().is_some_and(|record|record["success"]==true
+                    && record["sampled_process_tree"]["observed_samples"].as_u64().is_some_and(|samples|samples>0));
                 let passed = compiled && !compilation["maximum_resident_bytes"].is_null() && observations.len() == rounds
-                    && observations.iter().all(|run| run["success"] == true && !run["maximum_resident_bytes"].is_null());
+                    && memory_valid && observations.iter().all(|run| run["success"] == true && !run["maximum_resident_bytes"].is_null());
                 let record = json!({"path":path.strip_prefix(root.join("test")).map_err(|e| e.to_string())?,"stage":stage.id,"variant":variant.name(),
                     "negative_phase":metadata.negative_phase,"negative_type":metadata.negative_type,"compilation":compilation,"observations":observations,
+                    "memory_observation":memory,
                     "binary_bytes":fs::metadata(&binary).ok().map(|m|m.len()),"outcome":if passed {"pass"} else {"fail"},
                     "link_report":fs::read_to_string(image_root.join("link-report.json")).ok().and_then(|s|serde_json::from_str::<Value>(&s).ok())});
                 fs::write(case_root.join("record.json"),serde_json::to_vec_pretty(&record).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
@@ -74,7 +78,7 @@ fn run() -> Result<(), String> {
         let passed = records.iter().filter(|r|r["outcome"]=="pass").count();
         let summary = json!({"schema":REPORT_SCHEMA,"stage":stage.id,"path":stage.path,"files":files.len(),"variants":records.len(),"passed":passed,"failed":records.len()-passed,
             "rounds":rounds,"dynamic_source":dynamic,"emitter":emitter,"sdk_report":sdk,"records":records,
-            "scope":"Separately linked variants; fresh-process wall time includes startup and OS time observer. RSS is per-command, not concurrent process-tree peak. No matched JIT/Node performance claim. Compile failures, including unsupported typed negative emission, remain failures."});
+            "scope":"Separately linked variants; timing includes startup and OS time but excludes tree sampling. Separate memory observation reports a sampled process-tree resident sum, a lower bound. No matched JIT/Node performance claim. Compile failures, including unsupported typed negative emission, remain failures."});
         fs::write(stage_root.join("report.json"),serde_json::to_vec_pretty(&summary).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
         summaries.push(json!({"stage":stage.id,"files":files.len(),"variants":summary["variants"],"passed":passed,"failed":summary["failed"]}));
         fs::write(output.join("stages.json"),serde_json::to_vec_pretty(&summaries).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;

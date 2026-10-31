@@ -451,3 +451,20 @@ fn standalone_runner_exposes_only_host_facing_execution() {
     let mut runner = Test262Runner::new(Probe);
     assert_eq!(runner.run_script("pass"), TestOutcome::Pass);
 }
+
+#[test]
+fn selected_variant_rejects_undeclared_modes_before_harness_or_guest_execution() {
+    use quench_test262::TestVariant;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("strict.js");
+    std::fs::write(&path,"/*---\nflags: [onlyStrict]\n---*/\npass").unwrap();
+    let mut runner = Test262Runner::new(SourceProbe);
+    let mut cache = HarnessCache::new(dir.path().join("missing-harness"));
+    let error = runner.run_file_variant_with_cache(&path,&mut cache,TestVariant::Sloppy).unwrap_err();
+    assert!(error.contains("not declared"),"{error}");
+    for name in ["assert.js","sta.js"] { std::fs::write(dir.path().join(name),"").unwrap(); }
+    let mut cache = HarnessCache::new(dir.path().to_owned());
+    let result = runner.run_file_variant_with_cache(&path,&mut cache,TestVariant::Strict).unwrap();
+    assert_eq!(result.variant,TestVariant::Strict);
+    assert_eq!(result.outcome,TestOutcome::Pass);
+}
