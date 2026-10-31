@@ -13,6 +13,8 @@ doctest = false
 default = ["jit"]
 jit = ["quench-runtime/jit"]
 native-execution = ["quench-runtime/native-execution"]
+# One host ABI per native SDK; regular multi-host builds keep exports in drivers.
+native-sdk = ["native-execution"]
 aot = ["quench-runtime/aot"]
 profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-memory = ["quench-runtime/profile-memory"]

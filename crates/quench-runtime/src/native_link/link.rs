@@ -31,7 +31,10 @@ pub struct NativeSupport {
     optimization: String,
     rust_lto: bool,
     support: NativeImageSupport,
+    host_semantic_exports: bool,
 }
+
+const NATIVE_SDK_FEATURE: &str = "native-sdk";
 
 impl NativeSupport {
     pub fn from_cargo_report(report: &str, host_crate: &str, support: NativeImageSupport) -> Result<Self, String> {
@@ -40,6 +43,7 @@ impl NativeSupport {
         let mut native_paths = BTreeSet::new();
         let mut optimization = None;
         let mut completed = false;
+        let mut host_semantic_exports = false;
         for line in report.lines() {
             let artifact: Value = serde_json::from_str(line).map_err(|error| error.to_string())?;
             match artifact["reason"].as_str() {
@@ -103,6 +107,7 @@ impl NativeSupport {
                             .ok_or_else(|| format!("Cargo did not emit {name}'s rlib"))?;
                         let file = exact_dependency(Path::new(file), name)?;
                         if name == host_crate {
+                            host_semantic_exports = features.iter().any(|feature|feature == NATIVE_SDK_FEATURE);
                             if host.replace(file).is_some() {
                                 return Err("ambiguous host support artifacts".into());
                             }
@@ -146,6 +151,7 @@ impl NativeSupport {
             host_crate: host_crate.to_owned(),
             support,
             rust_lto,
+            host_semantic_exports,
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?,
@@ -156,8 +162,11 @@ impl NativeSupport {
         serde_json::json!({ "host_library": self.host, "host_crate": self.host_crate, "runtime_library": self.runtime,
             "optimization_level": self.optimization, "native_search_paths": self.native_paths,
             "driver_panic_strategy": "abort", "rust_lto": self.rust_lto,
-            "dynamic_source": self.support.allows_dynamic_source() })
+            "dynamic_source": self.support.allows_dynamic_source(), "host_semantic_exports": self.host_semantic_exports })
     }
+
+    /// The SDK already owns the opcode-derived C ABI helpers for its host.
+    pub fn provides_semantic_exports(&self) -> bool { self.host_semantic_exports }
 
     pub fn link(
         &self,

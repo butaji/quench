@@ -80,6 +80,10 @@ fn run() -> Result<(), String> {
             _ => return Err(USAGE.into()),
         }
     }
+    let sdk = sdk_report.map(|path| {
+        let report = fs::read_to_string(path).map_err(|error|error.to_string())?;
+        quench_runtime::native_link::NativeSupport::from_cargo_report(&report,"quench_test262",support)
+    }).transpose()?;
     let path = PathBuf::from(case_path);
     let root = PathBuf::from(output_directory);
     fs::create_dir(&root).map_err(|e| e.to_string())?;
@@ -202,7 +206,9 @@ fn run() -> Result<(), String> {
         .map(|name| format!("{name:?}"))
         .collect::<Vec<_>>()
         .join(",");
-    writeln!(catalog,"quench_runtime::export_native_js_operations!(quench_test262::Test262RuntimeHost,semantic_exports,[{operations}]);").unwrap();
+    if !sdk.as_ref().is_some_and(|sdk|sdk.provides_semantic_exports()) {
+        writeln!(catalog,"quench_runtime::export_native_js_operations!(quench_test262::Test262RuntimeHost,semantic_exports,[{operations}]);").unwrap();
+    }
     fs::write(root.join(CATALOG_FILENAME), catalog).map_err(|e| e.to_string())?;
     let option = |s: &Option<String>| {
         s.as_ref()
@@ -254,10 +260,8 @@ fn main()->std::process::ExitCode{{match run(){{Ok(())=>std::process::ExitCode::
         + "\n";
     fs::write(root.join("exports.txt"), exports_text).map_err(|e| e.to_string())?;
     fs::write(root.join("units.txt"), count.to_string()).map_err(|e| e.to_string())?;
-    if let Some(sdk_report) = sdk_report {
-        use quench_runtime::native_link::{NativeImageInputs, NativeSupport, remove_offline_symbols};
-        let report = fs::read_to_string(sdk_report).map_err(|error| error.to_string())?;
-        let sdk = NativeSupport::from_cargo_report(&report, "quench_test262", support)?;
+    if let Some(sdk) = sdk {
+        use quench_runtime::native_link::{NativeImageInputs, remove_offline_symbols};
         let inputs = NativeImageInputs::new(root.clone(), objects, BTreeSet::new());
         let executable = root.join("native-test");
         let staged = root.join("native-test-linking");

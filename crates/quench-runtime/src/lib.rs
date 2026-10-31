@@ -78,7 +78,7 @@ pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS
 #[cfg(feature = "native-execution")]
 pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,
-    native_program::{NativeJsFunctionEntry, NativeJsProgram},
+    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeProgramResolver},
 };
 #[cfg(feature = "aot")]
 pub use vm::{

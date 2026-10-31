@@ -33,9 +33,10 @@ fn run_observed(program: &Path, arguments: &[String], directory: &Path, label: &
     #[cfg(unix)]
     command.process_group(0);
     if empty_environment { command.env_clear().current_dir("/"); }
+    let mut observer = if sample_tree { Some(process_tree::Monitor::prepare()?) } else { None };
     let started = Instant::now();
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    let observer = if sample_tree { Some(process_tree::Monitor::start(child.id())?) } else { None };
+    if let Some(observer)=&mut observer { observer.observe(child.id())?; }
     let status = child.wait_timeout(timeout).map_err(|e| e.to_string())?;
     let timed_out = status.is_none();
     let status = if let Some(status) = status { status } else {
@@ -95,5 +96,16 @@ mod tests {
         assert!(tree["sampled_peak_resident_bytes"].as_u64().unwrap()>0);
         assert!(tree["maximum_observed_processes"].as_u64().unwrap()>=3,"{tree}");
         assert!(tree["observed_samples"].as_u64().unwrap()>0);
+    }
+    #[test]
+    fn prepared_observer_captures_short_processes() {
+        const REPETITIONS:usize = 16;
+        let root=tempfile::tempdir().unwrap();
+        for attempt in 0..REPETITIONS {
+            let record=run_with_tree(Path::new("/bin/sleep"),&["0.005".into()],root.path(),&format!("short-{attempt}"),Duration::from_secs(5),true).unwrap();
+            assert_eq!(record["success"],true);
+            let tree=&record["sampled_process_tree"];
+            assert!(tree["observed_samples"].as_u64().unwrap()>0,"attempt {attempt}: {tree}");
+        }
     }
 }

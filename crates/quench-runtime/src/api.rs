@@ -153,6 +153,12 @@ impl<H: Host> Runtime<H> {
         self.vm.set_native_program_resolver(resolver);
     }
 
+    /// Adopt an already type-erased resolver without allocating another wrapper.
+    #[cfg(feature = "native-execution")]
+    pub fn set_native_program_resolver_boxed(&mut self, resolver: Box<crate::NativeProgramResolver<H>>) {
+        self.vm.set_native_program_resolver_boxed(resolver);
+    }
+
     /// Execute an entry whose known functions are already native, retaining its
     /// code owner for closures and jobs that outlive this call.
     #[cfg(feature = "native-execution")]

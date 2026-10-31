@@ -478,6 +478,15 @@ impl Test262RuntimeHost {
         graph: LinkedCasePrograms,
         resolver: impl Fn(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static,
     ) -> Result<(), String> {
+        self.execute_linked_programs_resolved(graph,Box::new(resolver))
+    }
+
+    // One SDK execution body serves every catalog. The resolver's concrete
+    // closure type does not specialize VM construction or the completion loop.
+    #[inline(never)]
+    fn execute_linked_programs_resolved(
+        &mut self, graph:LinkedCasePrograms, resolver:Box<quench_runtime::NativeProgramResolver<Self>>,
+    ) -> Result<(),String> {
         self.done = None;
         let execution_mode = self.runtime_execution_mode();
         self.native_module_sources = graph.module_sources.into_iter().map(|mut source| {
@@ -488,7 +497,7 @@ impl Test262RuntimeHost {
         self.missing_module_input = None;
         let mut runtime = Runtime::new(std::mem::take(self));
         runtime.set_execution_mode(execution_mode);
-        runtime.set_native_program_resolver(resolver);
+        runtime.set_native_program_resolver_boxed(resolver);
         let program = graph.entry.residual();
         let result = runtime.execute_native_module_graph(&graph.harness, &graph.modules, &graph.entry)
             .map_err(|error| format!("quench runtime: {}", runtime.format_error(program, &error)))

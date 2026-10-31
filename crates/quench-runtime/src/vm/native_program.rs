@@ -8,7 +8,7 @@ use std::{any::Any, marker::PhantomData, rc::Rc};
 pub type NativeJsFunctionEntry =
     unsafe extern "C" fn(*mut std::ffi::c_void, u64, u64, *const u64, *mut u64) -> u32;
 
-pub(super) type NativeProgramResolver<H> = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError>;
+pub type NativeProgramResolver<H> = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError>;
 
 pub(crate) enum NativeJsCode {
     Linked(&'static [NativeJsFunctionEntry]),
@@ -130,7 +130,11 @@ impl<H: Host> NativeJsProgram<H> {
 
 impl<H: Host> Vm<H> {
     pub(crate) fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
-        self.native_program_resolver = Some(Box::new(resolver));
+        self.set_native_program_resolver_boxed(Box::new(resolver));
+    }
+
+    pub(crate) fn set_native_program_resolver_boxed(&mut self, resolver: Box<NativeProgramResolver<H>>) {
+        self.native_program_resolver = Some(resolver);
     }
 
     pub(super) fn resolve_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> {

@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, sync::{Arc, atomic::{AtomicBool, Ordering}}, thread, time::{Duration, Instant}};
+use std::{collections::BTreeSet, sync::{Arc, mpsc, atomic::{AtomicBool, Ordering}}, thread, time::{Duration, Instant}};
 
 /// Memory sampling runs separately from unobserved timing. A sampled resident
 /// sum is a lower bound on the instantaneous process-tree peak, not an exact
@@ -8,13 +8,20 @@ const SAMPLE_INTERVAL: Duration = Duration::from_millis(1);
 
 pub struct Monitor {
     stop: Arc<AtomicBool>,
-    worker: thread::JoinHandle<Value>,
+    root: Option<mpsc::SyncSender<u32>>,
+    worker: Option<thread::JoinHandle<Value>>,
 }
 impl Monitor {
-    pub fn start(wrapper: u32) -> Result<Self,String> {
+    pub fn prepare() -> Result<Self,String> {
         let stop = Arc::new(AtomicBool::new(false));
         let requested = stop.clone();
+        let (ready,prepared) = mpsc::sync_channel(0);
+        let (root,wrapper) = mpsc::sync_channel(0);
         let worker = thread::Builder::new().name("aot-memory-observer".into()).spawn(move || {
+            // Initialize the OS observer before the short-lived guest starts.
+            let _ = platform::children(std::process::id());
+            if ready.send(()).is_err() { return json!({"error":"observer preparation cancelled"}); }
+            let Ok(wrapper) = wrapper.recv() else { return json!({"error":"target was not spawned"}); };
             let mut samples = 0u64;
             let mut observed_samples = 0u64;
             let mut peak = 0u64;
@@ -46,18 +53,31 @@ impl Monitor {
                 if processes > 0 { observed_samples += 1; }
                 peak = peak.max(resident);
                 peak_processes = peak_processes.max(processes);
-                thread::sleep(SAMPLE_INTERVAL);
+                // Do not spend the first sampling window asleep before a
+                // short-lived target has even become observable.
+                if observed_samples > 0 { thread::sleep(SAMPLE_INTERVAL); }
             }
             json!({"sampled_peak_resident_bytes":peak,"maximum_observed_processes":peak_processes,"samples":samples,
                 "observed_samples":observed_samples,"unreadable_process_observations":unreadable,
                 "requested_interval_nanoseconds":SAMPLE_INTERVAL.as_nanos(),"maximum_sample_gap_nanoseconds":maximum_gap.as_nanos(),
                 "scope":"Sampled resident-byte sum of descendants of the time wrapper; wrapper/observer excluded. Lower bound; short-lived allocations or children between samples can be missed. RSS shared pages may be counted in multiple processes."})
         }).map_err(|error|error.to_string())?;
-        Ok(Self { stop, worker })
+        prepared.recv().map_err(|e|e.to_string())?;
+        Ok(Self { stop, root:Some(root), worker:Some(worker) })
     }
-    pub fn finish(self) -> Result<Value,String> {
+    pub fn observe(&mut self,pid:u32)->Result<(),String> {
+        self.root.take().ok_or("observer target already supplied")?.send(pid).map_err(|e|e.to_string())
+    }
+    pub fn finish(mut self) -> Result<Value,String> {
         self.stop.store(true,Ordering::Relaxed);
-        self.worker.join().map_err(|_|"memory observer panicked".into())
+        self.worker.take().ok_or("memory observer already joined")?.join().map_err(|_|"memory observer panicked".into())
+    }
+}
+impl Drop for Monitor {
+    fn drop(&mut self) {
+        self.stop.store(true,Ordering::Relaxed);
+        self.root.take();
+        if let Some(worker)=self.worker.take() { let _=worker.join(); }
     }
 }
 
@@ -95,8 +115,9 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    const STAT_PARENT_COLUMN:usize = 4 - 3;
-    const STAT_START_COLUMN:usize = 22 - 3;
+    const FIRST_STAT_FIELD:usize = 3;
+    const STAT_PARENT_COLUMN:usize = 4 - FIRST_STAT_FIELD;
+    const STAT_START_COLUMN:usize = 22 - FIRST_STAT_FIELD;
     const STATM_RESIDENT_COLUMN:usize = 1;
     pub fn children(pid:u32)->Result<Vec<u32>,String> {
         let mut children=std::collections::BTreeSet::new();

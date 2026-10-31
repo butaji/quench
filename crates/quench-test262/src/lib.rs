@@ -17,6 +17,8 @@ mod stages;
 pub mod waivers;
 pub use harness_cache::HarnessCache;
 pub use runtime_host::{Test262RuntimeHost, LinkedCasePrograms};
+#[cfg(feature = "native-sdk")]
+quench_runtime::export_native_js_operations!(Test262RuntimeHost, native_sdk_semantics);
 #[cfg(feature = "aot")]
 pub use runtime_host::NativeCasePrograms;
 
