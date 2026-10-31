@@ -183,6 +183,7 @@ pub(crate) fn stage_host_sources(
     // The default warning listener is installed after the staging boundary and
     // can run for host-generated warnings without an application import.
     crate::modules::process_warning_shared_vm::prepare(context)?;
+    crate::modules::node_errors_shared_vm::stage_coded_error_support(context)?;
     let global = context.global_root()?;
     let process = context.string_rooted("process");
     let process = context.get_property_rooted(global, process)?;
