@@ -2259,3 +2259,31 @@ fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effect
         assert_eq!(runtime.native_execution_rejections(), 1);
     }
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effects() {
+    let mut compiler = crate::NativeJsCompiler::new(false);
+    let harness = compiler.compile_script("globalThis.harnessRan = true;", "harness.js", Default::default()).unwrap();
+    let entry = compiler.compile_module("globalThis.entryRan = true;", "entry.mjs").unwrap();
+    let dependency = compiler.compile_module("globalThis.depRan = true; export {};", "dep.mjs").unwrap();
+    let entry = crate::NativeJsProgram::compile_eager(compiler.finish(entry).unwrap()).unwrap();
+    let dependency = crate::NativeJsProgram::compile_eager(dependency).unwrap();
+    let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
+    for (modules, message) in [
+        (vec![entry.clone()], "duplicates the entry module"),
+        (vec![dependency.clone(), dependency.clone()], "duplicate native module identity"),
+        (vec![harness.clone()], "wrong parse goal"),
+    ] {
+        let mut runtime = Runtime::new(TestHost::default());
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        let error = runtime.execute_native_module_graph(&[harness.clone()], &modules, &entry).unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+        let global = runtime.global_root().unwrap();
+        for name in ["harnessRan", "entryRan", "depRan"] {
+            let key = runtime.string_rooted(name);
+            let value = runtime.get_property_rooted(global, key).unwrap();
+            assert_eq!(runtime.rooted_value(value), Some(Value::UNDEFINED));
+        }
+    }
+}

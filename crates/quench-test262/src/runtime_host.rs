@@ -56,6 +56,37 @@ fn compile_native_unit(
     Ok(native)
 }
 
+/// Traverse only declared requests. Compilation neither executes guest code nor
+/// guesses dynamic imports; every dependency enters the same atom namespace.
+#[cfg(feature = "aot")]
+fn compile_native_dependencies(
+    host: &mut Test262RuntimeHost,
+    compiler: &mut quench_runtime::NativeJsCompiler,
+    entry: &quench_runtime::ResidualProgram,
+    name: &str,
+) -> Result<Vec<(ModuleSource, quench_runtime::ResidualProgram)>, String> {
+    use std::collections::{BTreeSet, VecDeque};
+    let mut seen = BTreeSet::from([quench_runtime::normalized_module_name(name).into_owned()]);
+    let mut pending = VecDeque::from([(name.to_owned(), entry.module_requests().to_vec())]);
+    let mut modules = Vec::new();
+    while let Some((referrer, requests)) = pending.pop_front() {
+        for request in requests {
+            if request.phase == quench_runtime::ModuleRequestPhase::Source
+                || request.module_type.as_deref().unwrap_or("javascript") != "javascript" { continue; }
+            let Some(mut module) = host.resolve_dynamic_import(&referrer, &request.source)
+                .map_err(|error| format!("quench AOT dependency resolution: {}", error.message))? else {
+                return Err(format!("quench AOT dependency unresolved: {} from {referrer}", request.source));
+            };
+            module.name = quench_runtime::normalized_module_name(&module.name).into_owned();
+            if !seen.insert(module.name.clone()) { continue; }
+            let program = compiler.compile_module_source(&module).map_err(|errors| compile_failure(&errors))?;
+            pending.push_back((module.name.clone(), program.module_requests().to_vec()));
+            modules.push((module, program));
+        }
+    }
+    Ok(modules)
+}
+
 static HOST_GLOBALS: [HostGlobal; 2] = [
     HostGlobal {
         name: "$262",
@@ -86,6 +117,8 @@ pub struct Test262RuntimeHost {
     native_variant: &'static str,
     timers: Vec<TestTimer>,
     next_timer_id: u64,
+    #[cfg(feature = "aot")]
+    native_module_sources: std::collections::BTreeMap<String, ModuleSource>,
 }
 
 #[derive(Debug)]
@@ -174,6 +207,10 @@ impl Host for Test262RuntimeHost {
             .parent()
             .unwrap_or_else(|| Path::new(""))
             .join(specifier);
+        #[cfg(feature = "aot")]
+        if let Some(module) = self.native_module_sources.get(quench_runtime::normalized_module_name(&path.to_string_lossy()).as_ref()) {
+            return Ok(Some(module.clone()));
+        }
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
         Ok(Some(ModuleSource::from_bytes(
@@ -209,6 +246,8 @@ impl Test262RuntimeHost {
         kind: SourceKind,
     ) -> Result<(), String> {
         self.done = None;
+        #[cfg(feature = "aot")]
+        self.native_module_sources.clear();
         let async_test = self.async_test;
         let execution_mode = self.execution_mode;
         let mut runtime = Runtime::new(std::mem::take(self));
@@ -218,6 +257,8 @@ impl Test262RuntimeHost {
             let mut compiler = quench_runtime::NativeJsCompiler::new(false);
             #[cfg(feature = "aot")]
             let mut native_harness = Vec::new();
+            #[cfg(feature = "aot")]
+            let mut native_dependencies = Vec::new();
             #[cfg(feature = "aot")]
             if execution_mode == ExecutionMode::NativeOnly {
                 for script in harness {
@@ -229,10 +270,16 @@ impl Test262RuntimeHost {
                 #[cfg(feature = "aot")]
                 {
                     let program = match kind {
-                        SourceKind::Module => compiler.compile_module(source, name),
+                        SourceKind::Module => {
+                            let module = ModuleSource::text(quench_runtime::normalized_module_name(name).into_owned(), source);
+                            let compiled = compiler.compile_module_source(&module);
+                            runtime.host_mut().native_module_sources.insert(module.name.clone(), module);
+                            compiled
+                        },
                         SourceKind::Script => compiler.compile_script(source, name, Default::default()),
                         SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
                     }.map_err(|errors| compile_failure(&errors))?;
+                    native_dependencies = compile_native_dependencies(runtime.host_mut(), &mut compiler, &program, name)?;
                     compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?
                 }
                 #[cfg(not(feature = "aot"))]
@@ -256,8 +303,13 @@ impl Test262RuntimeHost {
                     for script in native_harness {
                         scripts.push(compile_native_unit(script, &mut host.native_compilation, output.as_deref())?);
                     }
+                    let mut modules = Vec::new();
+                    for (source, program) in native_dependencies {
+                        modules.push(compile_native_unit(program, &mut host.native_compilation, output.as_deref())?);
+                        host.native_module_sources.insert(source.name.clone(), source);
+                    }
                     let native = compile_native_unit(program.clone(), &mut host.native_compilation, output.as_deref())?;
-                    runtime.execute_native_after_scripts(&scripts, &native)
+                    runtime.execute_native_module_graph(&scripts, &modules, &native)
                 }
                 #[cfg(not(feature = "aot"))]
                 { unreachable!("AOT feature checked before compilation") }
@@ -294,6 +346,10 @@ impl Test262RuntimeHost {
                     }
                 }
             }
+            if kind == SourceKind::Module && runtime.module_evaluation_pending(&program)
+                .map_err(|error| format!("quench runtime module: {error}"))? {
+                return Err("quench runtime module: evaluation did not settle".into());
+            }
             Ok(())
         })();
         for timer in runtime.host_mut().take_all_timers() {
@@ -305,6 +361,8 @@ impl Test262RuntimeHost {
         let rejections = runtime.native_execution_rejections();
         runtime.host_mut().native_compilation.rejections = rejections;
         *self = runtime.into_host();
+        #[cfg(feature = "aot")]
+        self.native_module_sources.clear();
         if rejections != 0 {
             Err(format!("quench AOT capability rejection: {rejections} native code requests unavailable; outcome: {result:?}"))
         } else { result }
@@ -467,6 +525,91 @@ mod tests {
         let result = host.execute("try { eval('1'); } catch (error) {} ", "caught-eval.js");
         assert!(result.unwrap_err().starts_with("quench AOT capability rejection:"));
         assert_eq!(host.native_compilation.rejections, 1);
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_static_graph_compiles_cycles_once_and_preserves_harness_await_and_live_bindings() {
+        use std::fs;
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("sub")).unwrap();
+        let entry = directory.path().join("entry.mjs");
+        let source = r#"
+            import { count, bump } from './dep.mjs';
+            import * as first from './dep.mjs';
+            export function seed() { return harnessSeed; }
+            if (count !== 41) throw Error('initial binding');
+            bump();
+            if (count !== 42) throw Error('live binding');
+            import('./sub/../dep.mjs').then(second => {
+                if (first !== second || second.count !== 42) throw Error('namespace identity');
+            });
+        "#;
+        fs::write(&entry, source).unwrap();
+        fs::write(directory.path().join("dep.mjs"), "import { seed } from './sub/../entry.mjs'; export let count = await seed(); export function bump() { count++; }").unwrap();
+        let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
+        host.execute_after_harness(&["const harnessSeed = 41;"], source, entry.to_str().unwrap(), super::SourceKind::Module).unwrap();
+        assert_eq!(host.native_compilation.units.len(), 3);
+        assert_eq!(host.native_compilation.rejections, 0);
+        assert!(host.native_module_sources.is_empty());
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn native_static_graph_freezes_sources_before_execution_and_rejects_uncompiled_dynamic_source() {
+        use std::fs;
+        let directory = tempfile::tempdir().unwrap();
+        let entry = directory.path().join("entry.mjs");
+        let source = "import { value } from './dep.mjs'; globalThis.saved = () => value; if (value !== 42) throw Error('bad dependency');";
+        fs::write(directory.path().join("dep.mjs"), "export const value = harnessSeed;").unwrap();
+        let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
+        let mut compiler = quench_runtime::NativeJsCompiler::new(false);
+        let harness = compiler.compile_script("const harnessSeed = 42;", "harness.js", Default::default()).unwrap();
+        let program = compiler.compile_module(source, entry.to_str().unwrap()).unwrap();
+        let dependencies = super::compile_native_dependencies(&mut host, &mut compiler, &program, entry.to_str().unwrap()).unwrap();
+        let program = compiler.finish(program).unwrap();
+        fs::remove_file(directory.path().join("dep.mjs")).unwrap();
+        let modules = dependencies.into_iter().map(|(source, program)| {
+            let code = super::compile_native_unit(program, &mut host.native_compilation, None).unwrap();
+            host.native_module_sources.insert(source.name.clone(), source);
+            code
+        }).collect::<Vec<_>>();
+        let harness = super::compile_native_unit(harness, &mut host.native_compilation, None).unwrap();
+        let native = super::compile_native_unit(program, &mut host.native_compilation, None).unwrap();
+        let mut runtime = super::Runtime::new(host);
+        runtime.set_execution_mode(super::ExecutionMode::NativeOnly);
+        runtime.execute_native_module_graph(&[harness], &modules, &native).unwrap();
+        let program = native.residual().clone();
+        drop(modules);
+        drop(native);
+        runtime.collect(&program).unwrap();
+        let global = runtime.global_root().unwrap();
+        let key = runtime.string_rooted("saved");
+        let saved = runtime.get_property_rooted(global, key).unwrap();
+        let receiver = runtime.root(quench_runtime::Value::UNDEFINED);
+        let result = runtime.call_rooted(saved, receiver, &[]).unwrap();
+        assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(42.0));
+        assert_eq!(runtime.native_execution_rejections(), 0);
+        drop(runtime);
+        let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
+        fs::write(directory.path().join("dep.mjs"), "export const value = 42;").unwrap();
+        host.async_test = true;
+        let result = host.execute_kind("import('./dep.mjs').then(() => $DONE(), () => $DONE());", entry.to_str().unwrap(), super::SourceKind::Module);
+        assert!(result.unwrap_err().starts_with("quench AOT capability rejection:"));
+        assert!(host.native_compilation.rejections > 0);
+    }
+
+    #[test]
+    fn unsettled_module_evaluation_is_never_a_conformance_pass() {
+        let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
+        #[cfg(feature = "aot")]
+        let modes = modes.chain([super::ExecutionMode::NativeOnly]);
+        for mode in modes {
+            let mut host = Test262RuntimeHost::new(mode);
+            let result = host.execute_kind("await new Promise(() => {});", "pending.mjs", super::SourceKind::Module);
+            assert_eq!(result.unwrap_err(), "quench runtime module: evaluation did not settle");
+            host.execute_kind("await Promise.resolve();", "settled.mjs", super::SourceKind::Module).unwrap();
+        }
     }
 
     #[test]

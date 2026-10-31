@@ -1148,6 +1148,19 @@ impl PromiseRuntime {
 const STATIC_MODULE_ANALYSIS_GOAL: &str = "static-module-analysis";
 
 impl<H: Host> Vm<H> {
+    #[cfg(feature = "native-execution")]
+    pub(super) fn register_native_module(&mut self, native: crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        let key = module_cache_key(&native.residual().source_name, "javascript");
+        if self.realm.promise.modules.contains_key(&key) {
+            return Err(JsError::validation("duplicate native module identity".into()));
+        }
+        let program = self.store_native_module_program(native)?;
+        let mut record = ModuleRecord::loading_static();
+        record.program = Some(program);
+        self.realm.promise.modules.insert(key, record);
+        Ok(())
+    }
+
     pub(super) fn abstract_module_source_to_string_tag(&mut self, receiver: Value) -> Value {
         if !self.is_object_like(receiver)
             || !self

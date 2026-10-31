@@ -136,6 +136,10 @@ impl<H: Host> Vm<H> {
         let Some(native) = self.host.kept_native_program(&module.name, &parts).map_err(JsError::validation)? else {
             return Ok(None);
         };
+        self.store_native_module_program(native).map(Some)
+    }
+
+    pub(super) fn store_native_module_program(&mut self, native: NativeJsProgram<H>) -> Result<ProgramId, JsError> {
         if native.program.kind != crate::bytecode::ProgramKind::Module {
             return Err(JsError::validation("native module has the wrong parse goal".into()));
         }
@@ -144,7 +148,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::validation("native module program store is full".into()))?;
         self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"))
             .map_err(JsError::validation)?;
-        Ok(Some(id))
+        Ok(id)
     }
 
     /// Native operands already contain atom IDs. Only an identical prefix of
@@ -174,7 +178,7 @@ impl<H: Host> Vm<H> {
         native: &NativeJsProgram<H>,
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
-        self.execute_native_with_scripts(&[], native, drain_jobs)
+        self.execute_native_with_scripts(&[], &[], native, drain_jobs)
     }
 
     pub(crate) fn execute_native_after_scripts(
@@ -182,18 +186,33 @@ impl<H: Host> Vm<H> {
         scripts: &[NativeJsProgram<H>],
         native: &NativeJsProgram<H>,
     ) -> Result<Value, JsError> {
-        self.execute_native_with_scripts(scripts, native, true)
+        self.execute_native_with_scripts(scripts, &[], native, true)
+    }
+
+    pub(crate) fn execute_native_module_graph(
+        &mut self, scripts: &[NativeJsProgram<H>], modules: &[NativeJsProgram<H>], native: &NativeJsProgram<H>,
+    ) -> Result<Value, JsError> {
+        self.execute_native_with_scripts(scripts, modules, native, true)
     }
 
     fn execute_native_with_scripts(
         &mut self,
         scripts: &[NativeJsProgram<H>],
+        modules: &[NativeJsProgram<H>],
         native: &NativeJsProgram<H>,
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
         self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
+        for module in modules {
+            if native.program.kind == crate::bytecode::ProgramKind::Module
+                && crate::module_identity::same_name(&module.program.source_name, &native.program.source_name) {
+                return Err(JsError::validation("native dependency duplicates the entry module".into()));
+            }
+            self.register_native_module(module.clone())
+                .inspect_err(|_| self.record_native_execution_rejection())?;
+        }
         for script in scripts {
             let prepared = self.prepare_native_script(script.clone())?;
             self.evaluate_prepared_global_script(&prepared)?;

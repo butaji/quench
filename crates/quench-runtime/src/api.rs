@@ -166,6 +166,15 @@ impl<H: Host> Runtime<H> {
         self.vm.execute_native_after_scripts(scripts, program).map(drop)
     }
 
+    /// Admit a precompiled dependency graph before global harness Scripts and
+    /// the entry run. Native code stays owned by this runtime's module records.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_module_graph(
+        &mut self, scripts: &[crate::NativeJsProgram<H>], modules: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>,
+    ) -> Result<(), JsError> {
+        self.vm.execute_native_module_graph(scripts, modules, program).map(drop)
+    }
+
     /// Evaluate each `(source, name)` as a global Script of the entry's realm,
     /// in order, then execute the entry. A module entry and the modules it
     /// loads observe the scripts' global bindings, as with host-run harnesses.

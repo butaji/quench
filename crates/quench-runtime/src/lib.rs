@@ -28,7 +28,8 @@ pub use wasm::{
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
 };
 
-pub use bytecode::{KeptBytes, ResidualProgram};
+pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};
+pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};

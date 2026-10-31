@@ -4186,6 +4186,12 @@ impl ResidualProgram {
         self.kind == ProgramKind::Module
     }
 
+    /// Declared module requests in source order, before execution. Hosts can
+    /// resolve and compile a static graph from the compiler's syntax result.
+    pub fn module_requests(&self) -> &[ModuleRequest] {
+        &self.module_requests
+    }
+
     pub(crate) fn root_variables_are_local(&self) -> bool {
         self.is_module()
             || (self.kind == ProgramKind::Eval

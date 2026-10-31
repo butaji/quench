@@ -103,6 +103,15 @@ impl NativeJsCompiler {
         Ok(program)
     }
 
+    /// Retain a frozen loader source without another resident copy of its text.
+    pub fn compile_module_source(&mut self, module: &crate::ModuleSource) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let mut program = self.compile_module(&module.source, &module.name)?;
+        if let Some(source) = &mut program.source {
+            source.text = SourceText::Shared(module.source.clone());
+        }
+        Ok(program)
+    }
+
     /// Compile context-free host bootstrap source, matching `eval_host_script`.
     pub fn compile_host_script(
         &mut self, source: &str, name: &str,
