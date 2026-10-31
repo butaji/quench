@@ -240,8 +240,9 @@ pub(crate) fn initialize_targets(
     Ok(())
 }
 
-/// The globals the abort and event-target polyfills define, in definition order.
+/// The globals the messaging installer defines, in definition order.
 pub(crate) const MESSAGING_GLOBALS: &[&str] = &["MessagePort", "MessageChannel"];
+/// The globals the abort and event-target polyfills define, in definition order.
 pub(crate) const EVENT_GLOBALS: &[&str] = &[
     "DOMException",
     "AbortSignal",
@@ -325,10 +326,13 @@ pub(crate) fn initialize_event_globals(
         crate::polyfills::shared_vm::EVENT_TARGET,
         "node:bootstrap/shared-vm/event-target.js",
     )?;
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("eventStateInitialize"), data,
+    )?;
     context.call_rooted(
         factory,
         undefined,
-        &[records_key, max_key, warned_key, max_default],
+        &[records_key, max_key, warned_key, max_default, initialize],
     )?;
     let event = get(context, global, "Event")?;
     set(context, data, "eventCtor", event)?;
@@ -344,6 +348,7 @@ pub(crate) fn initialize_event_globals(
         context.define_data_property_rooted(event, key, value, false, true, false)?;
     }
     let target = get(context, global, "EventTarget")?;
+    super::event_target_shared_vm::install(context, data, event, target)?;
     let yes = context.boolean(true);
     context.define_data_property_rooted(target, brand_key, yes, true, true, true)?;
     let signal = get(context, global, "AbortSignal")?;

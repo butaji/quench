@@ -99,7 +99,7 @@ fn invoke_abort_listener(
     Ok(context.undefined())
 }
 
-fn capture_abort_listener_rejection(
+pub(super) fn capture_abort_listener_rejection(
     context: &mut NativeContext<'_, NodeHost>,
     result: RootId,
 ) -> Result<(), RootedError> {
@@ -155,43 +155,46 @@ pub(crate) fn abort_dispatch_listeners(
     let event = args.get(2).copied().unwrap_or(undefined);
     let remove = args.get(3).copied().unwrap_or(undefined);
     let data = context.host_function_data()?;
-    let records = get(context, state, "listeners")?;
-    for entry in listener_records(context, records)? {
-        let current = get(context, state, "listeners")?;
-        let mut present = false;
-        for candidate in listener_records(context, current)? {
-            if context.strict_equal_rooted(candidate, entry)? {
-                present = true;
-                break;
+    super::event_target_shared_vm::with_dispatch(context, data, event, signal, |context| {
+        let records = get(context, state, "listeners")?;
+        for entry in listener_records(context, records)? {
+            let current = get(context, state, "listeners")?;
+            let mut present = false;
+            for candidate in listener_records(context, current)? {
+                if context.strict_equal_rooted(candidate, entry)? {
+                    present = true;
+                    break;
+                }
             }
-        }
-        if !present {
-            continue;
-        }
-        let stopped = get(context, event, "_quenchImmediatePropagationStopped")?;
-        let resist = get(context, entry, "resistStopPropagation")?;
-        if context.truthy_rooted(stopped)? && !context.truthy_rooted(resist)? {
-            continue;
-        }
-        let listener = super::events_weak_shared_vm::listener(context, data, entry)?;
-        let once = get(context, entry, "once")?;
-        if context.rooted_value(listener).is_some_and(|v| v.is_undefined()) {
+            if !present {
+                continue;
+            }
+            let stopped = get(context, event, "_quenchImmediatePropagationStopped")?;
+            let resist = get(context, entry, "resistStopPropagation")?;
+            if context.truthy_rooted(stopped)? && !context.truthy_rooted(resist)? {
+                continue;
+            }
+            let listener = super::events_weak_shared_vm::listener(context, data, entry)?;
+            let once = get(context, entry, "once")?;
+            if context.rooted_value(listener).is_some_and(|v| v.is_undefined()) {
+                if context.truthy_rooted(once)? {
+                    super::events_weak_shared_vm::remove_dead_once(context, data, entry, signal, state)?;
+                }
+                continue;
+            }
             if context.truthy_rooted(once)? {
-                super::events_weak_shared_vm::remove_dead_once(context, data, entry, signal, state)?;
+                context.call_rooted(remove, undefined, &[signal, state, listener])?;
             }
-            continue;
+            let delivery = invoke_abort_listener(context, listener, signal, event);
+            super::event_target_shared_vm::complete_delivery(context, data, event)?;
+            let delivery = delivery.and_then(|result| capture_abort_listener_rejection(context, result));
+            if let Err(error) = delivery {
+                let Some(reason) = error.exception else { return Err(error); };
+                queue_listener_error(context, undefined, &[reason])?;
+            }
         }
-        if context.truthy_rooted(once)? {
-            context.call_rooted(remove, undefined, &[signal, state, listener])?;
-        }
-        let delivery = invoke_abort_listener(context, listener, signal, event)
-            .and_then(|result| capture_abort_listener_rejection(context, result));
-        if let Err(error) = delivery {
-            let Some(reason) = error.exception else { return Err(error); };
-            queue_listener_error(context, undefined, &[reason])?;
-        }
-    }
-    Ok(undefined)
+        Ok(undefined)
+    })
 }
 
 pub(crate) fn add_abort_listener(
@@ -284,17 +287,14 @@ pub(crate) fn aborted_listener_job(
         let constructor = get(context, data, "eventConstructor")?;
         let kind = context.string_rooted("abort");
         let event = context.construct_rooted(constructor, constructor, &[kind])?;
-        for name in ["target", "currentTarget"] {
-            let key = context.string_rooted(name);
-            context.set_property_rooted(event, key, signal, event)?;
-        }
+        let shared = context.host_mut().shared_state().borrow().event_targets_api
+            .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
         let trusted = context.boolean(true);
         let key = context.string_rooted("_quenchIsTrusted");
         context.set_property_rooted(event, key, trusted, event)?;
-        context.call_rooted(listener, undefined, &[event])?;
-        let key = context.string_rooted("currentTarget");
-        let null = context.null();
-        context.set_property_rooted(event, key, null, event)?;
+        super::event_target_shared_vm::with_dispatch(context, shared, event, signal, |context| {
+            context.call_rooted(listener, undefined, &[event])
+        })?;
     }
     Ok(undefined)
 }

@@ -45,8 +45,6 @@ pub const ABORT: &str = quench_js_check::checked_js!(
 
   const abortEvent = (signal) => {
     const event = new Event("abort");
-    event.target = signal;
-    event.currentTarget = signal;
     event._quenchIsTrusted = true;
     event.__stopped = false;
     return event;
@@ -232,7 +230,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
 );
 
 pub const EVENT_TARGET: &str = quench_js_check::checked_js!(
-    r#"(recordsKey, maxKey, warnedKey, maxDefault) => {
+    r#"(recordsKey, maxKey, warnedKey, maxDefault, initializeEvent) => {
 if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
   value: class Event {
   constructor(type, options = {}) {
@@ -243,6 +241,7 @@ if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
     this.composed = Boolean(options.composed);
     this.defaultPrevented = false;
     this._quenchImmediatePropagationStopped = false;
+    initializeEvent(this);
   }
   preventDefault() {
     if (this.cancelable && !this._quenchPassive) this.defaultPrevented = true;
@@ -281,15 +280,6 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
   removeEventListener(type, listener) {
     const records = this[recordsKey][type];
     if (records) this[recordsKey][type] = records.filter((record) => record.listener !== listener);
-  }
-  dispatchEvent(event) {
-    for (const record of (this[recordsKey][event.type] || []).slice()) {
-      if (!(this[recordsKey][event.type] || []).includes(record)) continue;
-      if (record.once) this.removeEventListener(event.type, record.listener);
-      record.listener.call(this, event);
-      if (event._quenchImmediatePropagationStopped) break;
-    }
-    return !event.defaultPrevented;
   }
   },
   writable: true,

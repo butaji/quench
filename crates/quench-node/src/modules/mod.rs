@@ -52,6 +52,7 @@ pub(crate) mod eval_globals_shared_vm;
 pub(crate) mod event_constructor_shared_vm;
 pub(crate) mod event_emitter_shared_vm;
 pub(crate) mod event_limits_shared_vm;
+pub(crate) mod event_target_shared_vm;
 pub(crate) mod events_abort_shared_vm;
 pub(crate) mod events_shared_vm;
 pub(crate) mod fetch_shared_vm;
