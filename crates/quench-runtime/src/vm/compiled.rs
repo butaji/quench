@@ -15258,6 +15258,71 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_function_artifacts_preserve_identity_kinds_and_conversion_order() {
+        use crate::{DynamicFunctionKind as Kind, NativeSourceCompilation as Compilation, NativeSourceKey};
+        let source = r#"
+            globalThis.result = 40;
+            function make() { let result = 100; return Function('x', 'return result + x;'); }
+            const first = make();
+            const second = new Function('x', 'return result + x;');
+            if (first === second || first.prototype === second.prototype) throw 'identity';
+            if (first.name !== 'anonymous' || first.length !== 1 || first(2) !== 42) throw 'scope';
+            if (first.toString() !== 'function anonymous(x\n) {\nreturn result + x;\n}') throw 'source';
+            const generator = (function*(){}).constructor('x', 'yield x;');
+            if (generator(42).next().value !== 42) throw 'generator';
+            const async = (async function(){}).constructor('x', 'return x;');
+            if (!(async(42) instanceof Promise)) throw 'async';
+            const asyncGenerator = (async function*(){}).constructor('x', 'yield x;');
+            if (!(asyncGenerator(42).next() instanceof Promise)) throw 'async generator';
+            let trace = '';
+            try { Function({toString() { trace += 'p'; return 'a) {}); globalThis.injected = 1; (function('; }},
+                           {toString() { trace += 'b'; return 'return 1;'; }}); throw 'accepted'; }
+            catch (error) { if (!(error instanceof SyntaxError) || trace !== 'pb') throw 'syntax/order'; }
+            if ('injected' in globalThis) throw 'parameter injection';
+            trace = '';
+            try { Function({toString() { trace += 'p'; return '#!bad'; }},
+                           {toString() { trace += 'b'; return 'return 1;'; }}); }
+            catch (error) { if (!(error instanceof SyntaxError) || trace !== 'pb') throw 'hashbang order'; }
+
+            const cause = {};
+            try { Function({toString() { throw cause; }}, 'return 1;'); }
+            catch (error) { if (error !== cause) throw 'coercion cause'; }
+            if (false) Function('let invalid = ;');
+            throw 42;
+        "#;
+        let mut compiler = crate::NativeJsCompiler::new(true);
+        let entry = compiler.compile_script(source, "entry.js", Default::default()).unwrap();
+        let requests = [
+            (Kind::Ordinary, "x", "return result + x;"),
+            (Kind::Generator, "x", "yield x;"),
+            (Kind::Async, "x", "return x;"),
+            (Kind::AsyncGenerator, "x", "yield x;"),
+            (Kind::Ordinary, "a) {}); globalThis.injected = 1; (function(", "return 1;"),
+            (Kind::Ordinary, "", "let invalid = ;"),
+        ];
+        let artifacts = requests.into_iter().map(|(kind, parameters, body)| {
+            let key = NativeSourceKey::function_constructor(true, kind, parameters, body);
+            let artifact = match compiler.compile_function_source(&key).unwrap() {
+                Compilation::Program(program) => Ok(linked_test_residual(program).0),
+                Compilation::SyntaxError(message) => Err(crate::NativeSourceError::Syntax(message)),
+            };
+            (key, artifact)
+        }).collect::<Vec<_>>();
+        let entry = linked_test_residual(compiler.finish(entry).unwrap()).0;
+        let host = crate::test_host::TestHost::default().with_native_programs(move |name, parts| {
+            Ok(match artifacts.iter().find(|(key, _)| key.name() == name && key.parts().eq(parts.iter().copied())) {
+                Some((_, artifact)) => Some(artifact.clone()?),
+                None => None,
+            })
+        });
+        let mut vm = Vm::new(host);
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&entry, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_only_rejects_source_before_parsing_and_preserves_function_argument_coercion() {
         for source in [
             "eval('let compilationOnly = ;');",

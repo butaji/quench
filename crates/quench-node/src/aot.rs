@@ -13,7 +13,7 @@ pub use graph::{DependencyGraph, GraphRequirement};
 #[cfg(feature = "aot")]
 mod compiler;
 #[cfg(feature = "aot")]
-pub use compiler::{SourceManifest, CompiledSource, CompiledSources, NativeImageInputs};
+pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError, NativeImageInputs};
 #[cfg(feature = "aot")]
 pub(crate) use compiler::{HostSourceDemands, stage_host_sources};
 
@@ -35,8 +35,11 @@ macro_rules! linked_native_sources {
     (entry $entry:ident: $entry_symbol:ident => ($entry_link:literal, $entry_metadata:literal);
      resolver $resolve:ident {
          $($symbol:ident => ($link:literal, $metadata:literal, $name:literal, [$($part:expr),*] $(, source $source:expr)?),)*
-     }) => {
-        pub const NATIVE_SOURCE_COUNT: usize = (&[$(stringify!($symbol)),*] as &[&str]).len();
+     } $(errors {
+         $(($error_name:literal, [$($error_part:expr),*]) => $message:expr,)*
+     })?) => {
+        pub const NATIVE_SOURCE_COUNT: usize = (&[$(stringify!($symbol)),*] as &[&str]).len()
+            + (&[$($(stringify!($error_name)),*)?] as &[&str]).len();
         /// # Safety
         /// Metadata, host ABI and all entry tables must be emitted together by
         /// this compiler, linked unmodified, and kept alive for the process.
@@ -49,14 +52,17 @@ macro_rules! linked_native_sources {
         }
         /// # Safety
         /// Every catalog record must meet the linked-image contract above.
-        pub unsafe fn $resolve(namespace: &quench_runtime::NativeProgramNamespace, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<$crate::NodeHost>>, String> {
+        pub unsafe fn $resolve(namespace: &quench_runtime::NativeProgramNamespace, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<$crate::NodeHost>>, quench_runtime::NativeSourceError> {
             $(if name == $name && parts == [$($part),*] {
                 unsafe extern "C" { #[link_name = $link] static $symbol: u8; }
                 let bytes: quench_runtime::KeptBytes = std::rc::Rc::new(&include_bytes!($metadata)[..]);
                 let program = $crate::linked_native_sources!(@decode namespace, bytes $(, $source)?)?;
                 // SAFETY: as above, including the compiler-wide atom namespace.
-                return unsafe { quench_runtime::NativeJsProgram::from_linked_image(program, std::ptr::addr_of!($symbol)) }.map(Some);
+                return unsafe { quench_runtime::NativeJsProgram::from_linked_image(program, std::ptr::addr_of!($symbol)) }.map(Some).map_err(Into::into);
             })*
+            $($(if name == $error_name && parts == [$($error_part),*] {
+                return Err(quench_runtime::NativeSourceError::Syntax($message.to_owned()));
+            })*)?
             Ok(None)
         }
     };

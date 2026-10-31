@@ -169,6 +169,9 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: source_type.is_script(), ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() { return Err(format!("{name}: {:?}", parsed.diagnostics)); }
         quench_runtime::Engine::erase_type_only_module_syntax(&mut parsed.program);
+        for key in quench_runtime::Engine::literal_function_constructor_sources(&parsed.program, true) {
+            manifest.insert_key(key);
+        }
         let mut requests = Requests::default();
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));

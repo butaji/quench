@@ -1207,3 +1207,87 @@ fn qualify_captured_references(profile: &str, support: Option<String>) {
         eprintln!("Captured references ({extension}, {profile}) matched Test262 semantics after source removal: {}", binary.display());
     }
 }
+
+#[test]
+fn graph_compiles_literal_function_inputs_and_defers_syntax_errors() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench-function-inputs-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    for extension in ["cjs", "cts", "mjs", "mts"] {
+        let entry = directory.join(format!("entry.{extension}"));
+        fs::write(&entry, r#"
+            throw 'must not execute';
+            Function('x', 'return x + 1;');
+            new Function('x', 'return x + 1;');
+            globalThis.Function('let invalid = ;');
+            (function*(){}).constructor('yield 42;');
+            (async function(){}).constructor('return 42;');
+            (async function*(){}).constructor('yield 42;');
+            Function(dynamicBody);
+        "#).unwrap();
+        let mut manifest = SourceManifest::default();
+        manifest.add_module_graph(&entry).unwrap();
+        assert_eq!(manifest.units().filter(|key| key.is_function_constructor()).count(), 5);
+        let compiled = manifest.compile().unwrap();
+        assert_eq!(compiled.units.len(), 5);
+        assert_eq!(compiled.syntax_errors.len(), 1);
+        assert!(compiled.syntax_errors[0].key.is_function_constructor());
+        assert!(!compiled.syntax_errors[0].message.is_empty());
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "explicit source-deleted native Function constructor qualification"]
+fn compile_command_preserves_literal_function_constructors() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench function native, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    for extension in ["cjs", "cts", "mjs", "mts"] {
+        let sources = directory.join(extension);
+        fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        fs::write(&entry, r#"
+            globalThis.answer = 40;
+            async function exercise() {
+                const first = Function('x', 'return answer + x;');
+                const second = new Function('x', 'return answer + x;');
+                const generator = (function*(){}).constructor('yield 42;');
+                const async = (async function(){}).constructor('return 42;');
+                const asyncGenerator = (async function*(){}).constructor('yield 42;');
+                let syntax;
+                try { Function('let invalid = ;'); } catch(error) { syntax = [error.name, error instanceof SyntaxError]; }
+                if (false) Function('let uncalled = ;');
+                let trace = '';
+                const converted = Function({toString() { trace += 'p'; return 'x'; }},
+                    {toString() { trace += 'b'; return 'return answer + x;'; }});
+                const shadowed = (function(Function) { return Function('return answer + x;'); })(() => 7);
+                console.log(JSON.stringify({value:first(2), converted:converted(2), trace,
+                    fresh:first !== second && first.prototype !== second.prototype,
+                    name:first.name, length:first.length, source:first.toString(),
+                    generator:generator().next(), async:await async(), asyncGenerator:await asyncGenerator().next(),
+                    syntax, shadowed}));
+            }
+            exercise();
+        "#).unwrap();
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+        let binary = directory.join(format!("{extension}-native"));
+        let report = directory.join(format!("{extension}.json"));
+        let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node")).arg("compile").arg(&entry)
+            .arg("-o").arg(&binary).args(["--profile", "iteration"]).arg("--sdk-report").arg(&sdk)
+            .arg("--report").arg(&report).output().unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        fs::remove_dir_all(sources).unwrap();
+        let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+        assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, oracle.stdout);
+        assert_eq!(native.stderr, oracle.stderr);
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(report["deferred_syntax_errors"], 2);
+        assert_reduced_payload(&report, &binary);
+        eprintln!("Function constructors ({extension}) matched Node after source removal: {}", binary.display());
+    }
+}

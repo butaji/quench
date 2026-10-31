@@ -32,7 +32,7 @@ impl InlineSource {
 }
 
 #[cfg(feature = "native-execution")]
-pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, String>;
+pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, quench_runtime::NativeSourceError>;
 
 pub struct NodeHost {
     #[cfg(feature = "native-execution")]
@@ -70,7 +70,7 @@ pub struct NodeHost {
 impl NodeHost {
     /// Resolve linked code by the loader's exact name, source and shaping inputs.
     #[cfg(feature = "native-execution")]
-    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, String> + 'static) -> Self {
+    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static) -> Self {
         self.native_program_resolver = Some(Box::new(resolver));
         self
     }

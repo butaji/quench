@@ -1,6 +1,31 @@
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// A frozen source failure is distinct from an incompatible native image.
+#[cfg(feature = "native-execution")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NativeSourceError {
+    InvalidImage(String),
+    Syntax(String),
+}
+
+#[cfg(feature = "native-execution")]
+impl From<String> for NativeSourceError {
+    fn from(message: String) -> Self { Self::InvalidImage(message) }
+}
+
+#[cfg(feature = "native-execution")]
+impl From<&str> for NativeSourceError {
+    fn from(message: &str) -> Self { Self::InvalidImage(message.to_owned()) }
+}
+
+#[cfg(feature = "native-execution")]
+impl std::fmt::Display for NativeSourceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self { Self::InvalidImage(message) | Self::Syntax(message) => formatter.write_str(message) }
+    }
+}
+
 /// Opaque operation index owned by the embedding's host-function table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WasmHostFunctionId(pub u32);
@@ -139,7 +164,7 @@ pub trait Host {
     #[cfg(feature = "native-execution")]
     fn kept_native_program(
         &mut self, _name: &str, _parts: &[&str],
-    ) -> Result<Option<crate::NativeJsProgram<Self>>, String>
+    ) -> Result<Option<crate::NativeJsProgram<Self>>, NativeSourceError>
     where Self: Sized,
     {
         Ok(None)

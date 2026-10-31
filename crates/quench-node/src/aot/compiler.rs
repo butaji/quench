@@ -1,6 +1,6 @@
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, ResidualProgram, Runtime, emit_native_module, lower_native_js_module};
+use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, ResidualProgram, Runtime, emit_native_module, lower_native_js_module};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -21,9 +21,15 @@ pub struct CompiledSource {
     pub program: ResidualProgram,
 }
 
+pub struct DeferredSourceSyntaxError {
+    pub key: NativeSourceKey,
+    pub message: String,
+}
+
 pub struct CompiledSources {
     pub entry: ResidualProgram,
     pub units: Vec<CompiledSource>,
+    pub syntax_errors: Vec<DeferredSourceSyntaxError>,
     pub assets: ModuleAssets,
 }
 
@@ -51,6 +57,10 @@ impl CompiledSources {
         for unit in &self.units {
             texts.extend(unit.key.parts());
             texts.extend(unit.program.source_text());
+        }
+        for error in &self.syntax_errors {
+            texts.extend(error.key.parts());
+            texts.push(&error.message);
         }
         for file in self.assets.files.values() {
             if let Ok(text) = std::str::from_utf8(&file.bytes) { texts.push(text); }
@@ -94,6 +104,12 @@ impl CompiledSources {
             let parts = unit.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
             let source = unit.program.source_text().map_or_else(|| "None".to_owned(), |text| format!("Some({})", pool.reference(text)));
             writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, [{parts}], source {source}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name())
+                .map_err(|error| error.to_string())?;
+        }
+        writeln!(catalog, "}} errors {{").map_err(|error| error.to_string())?;
+        for error in &self.syntax_errors {
+            let parts = error.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
+            writeln!(catalog, "({:?}, [{parts}]) => {},", error.key.name(), pool.reference(&error.message))
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
@@ -281,10 +297,19 @@ impl SourceManifest {
             },
             _ => compiler.compile_script("", NATIVE_ENTRY_NAME, Default::default()),
         }.map_err(|errors| format!("{errors:?}"))?;
-        let units = self.units.into_iter().map(|key| {
-            let program = compiler.compile_source(&key).map_err(|error| format!("{}: {error}", key.name()))?;
-            Ok(CompiledSource { key, program })
-        }).collect::<Result<Vec<_>, String>>()?;
-        Ok(CompiledSources { entry: compiler.finish(entry)?, units, assets: self.assets })
+        let mut units = Vec::new();
+        let mut syntax_errors = Vec::new();
+        for key in self.units {
+            let compiled = if key.is_function_constructor() {
+                compiler.compile_function_source(&key)
+            } else {
+                compiler.compile_source(&key).map(NativeSourceCompilation::Program)
+            }.map_err(|error| format!("{}: {error}", key.name()))?;
+            match compiled {
+                NativeSourceCompilation::Program(program) => units.push(CompiledSource { key, program }),
+                NativeSourceCompilation::SyntaxError(message) => syntax_errors.push(DeferredSourceSyntaxError { key, message }),
+            }
+        }
+        Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets })
     }
 }

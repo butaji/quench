@@ -42,7 +42,7 @@ pub(crate) struct TestHost {
 }
 
 #[cfg(feature = "native-execution")]
-type NativeLookup = dyn Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, String>;
+type NativeLookup = dyn Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, crate::NativeSourceError>;
 
 impl Default for TestHost {
     fn default() -> Self {
@@ -63,7 +63,7 @@ impl Default for TestHost {
 
 impl TestHost {
     #[cfg(feature = "aot")]
-    pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, String> + 'static) -> Self {
+    pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, crate::NativeSourceError> + 'static) -> Self {
         Self { native_lookup: Some(Rc::new(lookup)), ..self }
     }
 
@@ -130,7 +130,7 @@ impl Host for TestHost {
         self.wasm_validation.is_some_and(|validate| validate(self, bytes, mode))
     }
     #[cfg(feature = "native-execution")]
-    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram<Self>>, String> {
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<crate::NativeJsProgram<Self>>, crate::NativeSourceError> {
         match &self.native_lookup {
             Some(lookup) => lookup(name, parts),
             None => Ok(None),

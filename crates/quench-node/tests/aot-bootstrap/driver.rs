@@ -27,9 +27,11 @@ fn run() -> Result<std::process::ExitCode, String> {
     let host = NodeHost::new(argv).with_exec_argv(Vec::new())?
         .with_native_programs(move |name, parts| {
             // SAFETY: this catalog and its objects are emitted from one CompiledSources.
-            let image = unsafe { resolve(&namespace, name, parts) }?.ok_or_else(|| format!("source outside native manifest: {name}"))?;
-            observed.borrow_mut().insert((name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>()));
-            Ok(Some(image))
+            let image = unsafe { resolve(&namespace, name, parts) };
+            if !matches!(image, Ok(None)) {
+                observed.borrow_mut().insert((name.to_owned(), parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>()));
+            }
+            image
         });
     let host = host.with_embedded_modules(assets);
     let completion = quench_node::aot::execute_native(host, &entry)?;

@@ -90,8 +90,8 @@ pub use vm::{
 };
 
 #[cfg(feature = "aot")]
-pub use compile::{NativeJsCompiler, NativeSourceKey};
-pub use compile::{HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
+pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
 
 /// Ordinary builds and producers support dynamic compilation and execution.
 /// Execution-only native support requires linked code and archived records.
@@ -101,3 +101,6 @@ pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
+
+#[cfg(feature = "native-execution")]
+pub use host::NativeSourceError;

@@ -184,6 +184,8 @@ fn compile(options: Options) -> Result<(), String> {
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = manifest.compile()?;
+    report["native_code_units"] = json!(compiled.units.len());
+    report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let inputs = compiled.emit(&work.0.join("images"))?;
     let support_report = match &options.sdk_report {
         Some(path) => {

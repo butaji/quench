@@ -1138,7 +1138,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     #[cfg(feature = "native-execution")]
-    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, String> {
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> {
         match self.native_program_resolver.as_mut() {
             Some(resolve) => resolve(name, parts),
             None => Ok(None),

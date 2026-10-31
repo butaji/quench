@@ -1,6 +1,6 @@
 //! Compile source units into one stable atom namespace before host initialization.
 
-use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
+use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, DynamicFunctionKind, DynamicFunctionSource, DYNAMIC_FUNCTION_GOAL, DYNAMIC_FUNCTION_SOURCE_NAME, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
 use crate::bytecode::{Atom, AtomSequence, AtomTable, SourceText};
 use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;
@@ -20,10 +20,21 @@ impl NativeSourceKey {
             ["specialized" | "unspecialized", _] => {},
             ["specialized" | "unspecialized", STATIC_MODULE_GOAL | STATIC_TYPESCRIPT_MODULE_GOAL, _] => {},
             ["specialized" | "unspecialized", goal, _] => { script_options(goal)?; },
+            ["specialized" | "unspecialized", DYNAMIC_FUNCTION_GOAL, kind, _, _]
+                if DynamicFunctionKind::from_source_prefix(kind).is_some() => {},
             ["specialized" | "unspecialized", _, _, _] => {},
             _ => return Err("unknown native host source key".into()),
         }
         Ok(Self { name: name.into(), parts: parts.iter().map(|part| (*part).into()).collect() })
+    }
+
+    pub fn function_constructor(specialized: bool, kind: DynamicFunctionKind, parameters: &str, body: &str) -> Self {
+        let mode = if specialized { "specialized" } else { "unspecialized" };
+        Self { name: DYNAMIC_FUNCTION_SOURCE_NAME.into(), parts: kind.native_parts(mode, parameters, body).into_iter().map(str::to_owned).collect() }
+    }
+
+    pub fn is_function_constructor(&self) -> bool {
+        matches!(self.parts.as_slice(), [_, goal, _, _, _] if goal == DYNAMIC_FUNCTION_GOAL)
     }
 
     pub fn name(&self) -> &str { &self.name }
@@ -45,6 +56,12 @@ fn script_options(goal: &str) -> Result<HostScriptOptions, String> {
     };
     if options.cache_goal() != goal { return Err(invalid()); }
     Ok(options)
+}
+
+/// Source validation produces either code or a deferred guest syntax failure.
+pub enum NativeSourceCompilation {
+    Program(ResidualProgram),
+    SyntaxError(String),
 }
 
 /// A compilation's append-only namespace. All emitted images use these IDs;
@@ -77,8 +94,40 @@ impl NativeJsCompiler {
                 .map_err(|errors| format!("{errors:?}")),
             [_, goal, source] => self.compile_script(source, key.name(), script_options(goal)?)
                 .map_err(|errors| format!("{errors:?}")),
+            [_, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] => {
+                let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
+                self.compile_function_constructor(kind, parameters, body).map_err(|errors| format!("{errors:?}"))
+            },
             [_, prefix, body, suffix] => self.compile_library_body(prefix, std::sync::Arc::from(*body), suffix, key.name()),
             _ => Err("unknown native host source key".into()),
+        }
+    }
+
+    pub fn compile_function_constructor(
+        &mut self, kind: DynamicFunctionKind, parameters: &str, body: &str,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let source = DynamicFunctionSource::new(parameters, body, kind);
+        let mut program = Engine::specialize_function_constructor(&source, DYNAMIC_FUNCTION_SOURCE_NAME, self)?;
+        self.adopt(&mut program);
+        Ok(program)
+    }
+
+    /// A Function request keeps ECMAScript syntax failures as data until invocation.
+    pub fn compile_function_source(&mut self, key: &NativeSourceKey) -> Result<NativeSourceCompilation, String> {
+        let parts: Vec<_> = key.parts().collect();
+        let [mode, DYNAMIC_FUNCTION_GOAL, kind, parameters, body] = parts.as_slice() else {
+            return Err("native source is not a Function request".into());
+        };
+        if *mode != if self.specialized { "specialized" } else { "unspecialized" } {
+            return Err("native source specialization does not match compiler".into());
+        }
+        let kind = DynamicFunctionKind::from_source_prefix(kind).ok_or("invalid native Function kind")?;
+        match self.compile_function_constructor(kind, parameters, body) {
+            Ok(program) => Ok(NativeSourceCompilation::Program(program)),
+            Err(errors) if !errors.is_empty() && errors.iter().all(Diagnostic::is_syntax_error) => {
+                Ok(NativeSourceCompilation::SyntaxError(errors[0].syntax_message().to_owned()))
+            },
+            Err(errors) => Err(format!("{errors:?}")),
         }
     }
 
@@ -199,4 +248,54 @@ impl AtomPrefix for NativeJsCompiler {
     fn find(&self, name: &str) -> Option<Atom> { self.index.get(name).copied() }
     fn table(&self) -> AtomTable { AtomTable::shared(self.atoms.clone(), self.atoms.len()) }
     fn specialized(&self) -> bool { self.specialized }
+}
+
+impl Engine {
+    /// Potential constructor inputs, never proof of the callee's identity. The
+    /// actual intrinsic performs an exact key lookup after argument conversion.
+    pub fn literal_function_constructor_sources(program: &oxc_ast::ast::Program<'_>, specialized: bool) -> Vec<NativeSourceKey> {
+        use oxc_ast::ast::{Argument, CallExpression, Expression, NewExpression};
+        use oxc_ast_visit::{Visit, walk};
+        struct Requests { specialized: bool, keys: std::collections::BTreeSet<NativeSourceKey> }
+        impl Requests {
+            fn record(&mut self, callee: &Expression<'_>, arguments: &[Argument<'_>]) {
+                let kind = match callee.get_inner_expression() {
+                    Expression::Identifier(name) if name.name == "Function" => DynamicFunctionKind::Ordinary,
+                    Expression::StaticMemberExpression(member) if member.property.name == "Function"
+                        && matches!(member.object.get_inner_expression(), Expression::Identifier(name) if name.name == "globalThis") => DynamicFunctionKind::Ordinary,
+                    Expression::StaticMemberExpression(member) if member.property.name == "constructor" => {
+                        let Expression::FunctionExpression(function) = member.object.get_inner_expression() else { return; };
+                        match (function.r#async, function.generator) {
+                            (false, false) => DynamicFunctionKind::Ordinary,
+                            (true, false) => DynamicFunctionKind::Async,
+                            (false, true) => DynamicFunctionKind::Generator,
+                            (true, true) => DynamicFunctionKind::AsyncGenerator,
+                        }
+                    },
+                    _ => return,
+                };
+                let Some(mut strings) = arguments.iter().map(|argument| {
+                    match argument.as_expression()?.get_inner_expression() {
+                        Expression::StringLiteral(text) => Some(text.value.as_str()),
+                        _ => None,
+                    }
+                }).collect::<Option<Vec<_>>>() else { return; };
+                let body = strings.pop().unwrap_or_default();
+                self.keys.insert(NativeSourceKey::function_constructor(self.specialized, kind, &strings.join(","), body));
+            }
+        }
+        impl<'a> Visit<'a> for Requests {
+            fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+                self.record(&call.callee, &call.arguments);
+                walk::walk_call_expression(self, call);
+            }
+            fn visit_new_expression(&mut self, call: &NewExpression<'a>) {
+                self.record(&call.callee, &call.arguments);
+                walk::walk_new_expression(self, call);
+            }
+        }
+        let mut requests = Requests { specialized, keys: Default::default() };
+        requests.visit_program(program);
+        requests.keys.into_iter().collect()
+    }
 }

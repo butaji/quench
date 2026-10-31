@@ -40,7 +40,7 @@ mod atoms;
 #[cfg(feature = "aot")]
 mod native_sources;
 #[cfg(feature = "aot")]
-pub use native_sources::{NativeJsCompiler, NativeSourceKey};
+pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
 pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
@@ -222,12 +222,15 @@ pub struct Engine;
 const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DynamicFunctionKind {
+pub enum DynamicFunctionKind {
     Ordinary,
     Async,
     Generator,
     AsyncGenerator,
 }
+
+#[cfg(feature = "native-execution")]
+pub(crate) const DYNAMIC_FUNCTION_GOAL: &str = "dynamic-function";
 
 pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 
@@ -263,6 +266,19 @@ impl DynamicFunctionSource {
 }
 
 impl DynamicFunctionKind {
+    #[cfg(feature = "aot")]
+    const ALL: [Self; 4] = [Self::Ordinary, Self::Async, Self::Generator, Self::AsyncGenerator];
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn from_source_prefix(prefix: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.source_prefix() == prefix)
+    }
+
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn native_parts<'a>(self, mode: &'a str, parameters: &'a str, body: &'a str) -> [&'a str; 5] {
+        [mode, DYNAMIC_FUNCTION_GOAL, self.source_prefix(), parameters, body]
+    }
+
     fn source_prefix(self) -> &'static str {
         match self {
             Self::Ordinary => "function",
@@ -1187,10 +1203,12 @@ impl Engine {
             }
         };
         if !dynamic_function_shape {
-            return Err(vec![Diagnostic::unsupported(
-                name,
-                "SyntaxError: invalid dynamic Function source shape",
-            )]);
+            return Err(vec![Diagnostic {
+                kind: DiagnosticKind::Syntax,
+                source: name.into(),
+                message: "SyntaxError: invalid dynamic Function source shape".into(),
+                span: Span::default(),
+            }]);
         }
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);

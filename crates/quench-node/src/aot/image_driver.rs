@@ -29,9 +29,7 @@ fn run() -> Result<std::process::ExitCode, String> {
         .with_embedded_modules(assets)
         .with_native_programs(move |name, parts| {
             // SAFETY: this resolver belongs to the same compiler-owned image.
-            unsafe { resolve(&namespace, name, parts) }?
-                .ok_or_else(|| format!("source outside native image: {name}"))
-                .map(Some)
+            unsafe { resolve(&namespace, name, parts) }
         });
     quench_node::aot::execute_native_process_entry(host, &entry)
         .map(|completion| completion.exit_code())

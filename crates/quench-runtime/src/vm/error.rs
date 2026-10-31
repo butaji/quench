@@ -1405,68 +1405,78 @@ impl<H: Host> Vm<H> {
         let function_realm = self.realm.globals;
         let mut argument_strings = Vec::with_capacity(args.len());
         for argument in args {
-            let text = self.to_string(program, *argument)?;
-            if text.trim().starts_with("#!") {
-                let message = self.heap.alloc_string(
-                    "hashbang is not allowed in Function source".into(),
-                );
-                let error =
-                    self.construct_error_native(program, Native::SyntaxError, &[message])?;
-                return Err(JsError::thrown(
-                    error,
-                    "SyntaxError: hashbang is not allowed in Function source".into(),
-                ));
-            }
-            argument_strings.push(text);
+            argument_strings.push(self.to_string(program, *argument)?);
+        }
+        if argument_strings.iter().any(|text| text.trim().starts_with("#!")) {
+            return self.syntax_error_result(program, "hashbang is not allowed in Function source");
         }
         let source = argument_strings.pop().unwrap_or_default();
         let parameters = argument_strings.join(",");
-        self.require_source_compilation(program)?;
         let kind = match native {
             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
             Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,
             Native::AsyncGeneratorFunction => crate::compile::DynamicFunctionKind::AsyncGenerator,
             _ => crate::compile::DynamicFunctionKind::Ordinary,
         };
-        let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
-        let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
-        // A Function body compiles from its text alone, so its compiled form goes through the
-        // host's compile cache as a host script's does (`eval_host_script`).
-        let kept_key = [self.specialization_part(), dynamic.text.as_str()];
-        let kept = self.host.kept_compiled_program(source_name, &kept_key).and_then(|bytes| {
-            let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(dynamic.text.as_str()));
-            let specialized = self.specialized;
-            self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
-        });
-        let compiled = kept.is_none();
-        let residual = match kept {
-            Some(residual) => residual,
-            None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self)
-                .map_err(|diagnostics| {
-                    if diagnostics
-                        .iter()
-                        .any(crate::compile::Diagnostic::is_stack_exhausted)
-                    {
-                        return self.stack_exhaustion_error();
-                    }
-                    let message = diagnostics
-                        .first()
-                        .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
-                    self.syntax_error_result(program, &message)
-                        .expect_err("dynamic Function syntax errors must throw")
-                })?,
+        #[cfg(feature = "native-execution")]
+        let native_program = {
+            let parts = kind.native_parts(self.specialization_part(), &parameters, &source);
+            match self.host.kept_native_program(crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
+                Ok(program) => program,
+                Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(program, &message),
+                Err(error) => return Err(JsError::validation(error.to_string())),
+            }
         };
-        let Some(program_id) = self.store_dynamic_program(residual) else {
-            return Err(self.type_error(program, "dynamic program store is full".into()));
+        #[cfg(feature = "native-execution")]
+        let native_program_id = if let Some(native) = native_program {
+            let prepared = self.prepare_native_script(native)?;
+            Some(self.store_prepared_script(&prepared)?.ok_or_else(|| self.type_error(program, "dynamic program store is full".into()))?)
+        } else { None };
+        #[cfg(not(feature = "native-execution"))]
+        let native_program_id: Option<super::program_store::ProgramId> = None;
+        let program_id = if let Some(id) = native_program_id { id } else {
+            self.require_source_compilation(program)?;
+            let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
+            let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
+            // A Function body compiles from its text alone, so its compiled form goes through the
+            // host's compile cache as a host script's does (`eval_host_script`).
+            let kept_key = [self.specialization_part(), dynamic.text.as_str()];
+            let kept = self.host.kept_compiled_program(source_name, &kept_key).and_then(|bytes| {
+                let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(dynamic.text.as_str()));
+                let specialized = self.specialized;
+                self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
+            });
+            let compiled = kept.is_none();
+            let residual = match kept {
+                Some(residual) => residual,
+                None => crate::Engine::specialize_function_constructor(&dynamic, source_name, &*self)
+                    .map_err(|diagnostics| {
+                        if diagnostics
+                            .iter()
+                            .any(crate::compile::Diagnostic::is_stack_exhausted)
+                        {
+                            return self.stack_exhaustion_error();
+                        }
+                        let message = diagnostics
+                            .first()
+                            .map_or("invalid Function source".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                        self.syntax_error_result(program, &message)
+                            .expect_err("dynamic Function syntax errors must throw")
+                    })?,
+            };
+            let Some(program_id) = self.store_dynamic_program(residual) else {
+                return Err(self.type_error(program, "dynamic program store is full".into()));
+            };
+            if compiled
+                && self.dynamic_functions_to_keep > 0
+                && let Some(compiled) = self.programs.get(program_id)
+                && let Some(bytes) = self.encode_cached_program(&compiled)
+            {
+                self.host.keep_compiled_program(source_name, &kept_key, &bytes);
+                self.dynamic_functions_to_keep -= 1;
+            }
+            program_id
         };
-        if compiled
-            && self.dynamic_functions_to_keep > 0
-            && let Some(compiled) = self.programs.get(program_id)
-            && let Some(bytes) = self.encode_cached_program(&compiled)
-        {
-            self.host.keep_compiled_program(source_name, &kept_key, &bytes);
-            self.dynamic_functions_to_keep -= 1;
-        }
         let origin = self.capture_eval_origin(program)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::FunctionConstructor { caller: origin });
         let residual = self

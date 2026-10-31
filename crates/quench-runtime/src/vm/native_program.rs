@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
         &mut self, module: &crate::ModuleSource,
     ) -> Result<Option<ProgramId>, JsError> {
         let parts = [self.specialization_part(), module.compilation_goal(), &module.source];
-        let Some(native) = self.host.kept_native_program(&module.name, &parts).map_err(JsError::validation)? else {
+        let Some(native) = self.host.kept_native_program(&module.name, &parts).map_err(|error| JsError::validation(error.to_string()))? else {
             return Ok(None);
         };
         self.store_native_module_program(native).map(Some)
