@@ -938,6 +938,11 @@ fn write_literal_import_fixture(directory: &Path, extension: &str) -> std::path:
     let entry = directory.join(format!("entry.{extension}"));
     let source = r#"
 globalThis.importEvents = [];
+const entryTurn = [];
+let initialTurn;
+process.nextTick(() => entryTurn.push('tick'));
+queueMicrotask(() => entryTurn.push('queue'));
+Promise.resolve().then(() => { entryTurn.push('promise'); initialTurn = entryTurn.slice(); });
 function uncalled() { return import('./uncalled.mjs'); }
 async function main() {
   const pending = import(('./dep.mts'));
@@ -970,7 +975,7 @@ async function main() {
   const prefixed = await import('node:fs');
   const one = await import('./instance.mjs?tag=/../one');
   const two = await import('./instance.mjs?tag=/../two');
-  console.log(JSON.stringify({events:importEvents, identity:first === second, value:first.value,
+  console.log(JSON.stringify({events:importEvents, initialTurn, identity:first === second, value:first.value,
     typed:first.add('text'), cachedOrder, jsonOrder, thenable, sameError,
     error:[firstError.name, firstError.message], json:json.default.answer, legacy:legacy.answer,
     builtin:bare === prefixed, reader:typeof bare.readFile, instances:[one.id,two.id],

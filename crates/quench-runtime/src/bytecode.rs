@@ -4182,7 +4182,8 @@ impl ResidualProgram {
         ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
     };
 
-    pub(crate) fn is_module(&self) -> bool {
+    /// Whether the entry uses module semantics, including an import-only bootstrap.
+    pub fn is_module(&self) -> bool {
         self.kind == ProgramKind::Module
     }
 

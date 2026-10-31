@@ -1920,8 +1920,7 @@ fn integer_argument(
     Err(RootedError::host(format!("invalid process.kill {name}")))
 }
 
-/// Run shared-host nextTick callbacks before VM jobs, then emit process exit
-/// without restarting the VM or invalidating callback roots.
+/// Finish the entry turn and Node job/exit lifecycle without invalidating callback roots.
 pub(crate) fn finish_execution(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
@@ -1942,23 +1941,30 @@ pub(crate) fn finish_execution(
     let _native_context = super::async_hooks_shared_vm::enter_context(
         &native_state, super::async_hooks_state::NATIVE_ASYNC_ID,
     );
-    let checkpoint = (|| loop {
-        drain_checkpoint(runtime, program)?;
-        if process_control.requested_exit_code().is_some() {
-            return Ok(());
+    let checkpoint = (|| {
+        // ESM evaluation is already a microtask turn. Finish that turn before
+        // Node drains nextTick callbacks; CommonJS enters the usual checkpoint.
+        if program.is_module() {
+            run_host_jobs_with_uncaught(runtime, program)?;
         }
-        let state = runtime.host_mut().shared_state();
-        let span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "BeforeExit");
-        let code = runtime.root(Value::number(
-            process_control.exit_code().unwrap_or(0) as f64
-        ));
-        let emitted = emit_before_exit(runtime, program, code);
-        runtime.release_root(code);
-        drop(span);
-        emitted?;
-        drain_shared_jobs(runtime, program, &state)?;
-        if process_control.requested_exit_code().is_some() || !has_referenced_shared_work(&state) {
-            return Ok(());
+        loop {
+            drain_checkpoint(runtime, program)?;
+            if process_control.requested_exit_code().is_some() {
+                return Ok(());
+            }
+            let state = runtime.host_mut().shared_state();
+            let span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "BeforeExit");
+            let code = runtime.root(Value::number(
+                process_control.exit_code().unwrap_or(0) as f64
+            ));
+            let emitted = emit_before_exit(runtime, program, code);
+            runtime.release_root(code);
+            drop(span);
+            emitted?;
+            drain_shared_jobs(runtime, program, &state)?;
+            if process_control.requested_exit_code().is_some() || !has_referenced_shared_work(&state) {
+                return Ok(());
+            }
         }
     })();
     if process_control.requested_exit_code().is_some() {
