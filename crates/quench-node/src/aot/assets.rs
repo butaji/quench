@@ -152,6 +152,7 @@ pub(crate) enum ModuleAssetState {
     Embedded {
         modules: &'static EmbeddedModules,
         source_cache: BTreeMap<&'static str, Arc<str>>,
+        missing_source: Option<PathBuf>,
     },
 }
 
@@ -163,7 +164,7 @@ impl crate::NodeHost {
         if let Some(entry) = modules.entry.filter(|entry| modules.file(Path::new(entry)).is_none_or(|file| file.kind != SourceKind::Module)) {
             self = self.with_commonjs_entry(entry.into());
         }
-        self.module_assets = ModuleAssetState::Embedded { modules, source_cache: BTreeMap::new() };
+        self.module_assets = ModuleAssetState::Embedded { modules, source_cache: BTreeMap::new(), missing_source: None };
         self
     }
 
@@ -176,7 +177,7 @@ impl crate::NodeHost {
 
     pub(crate) fn embedded_import(&mut self, referrer: &str, specifier: &str) -> Result<Option<quench_runtime::ModuleSource>, String> {
         match &mut self.module_assets {
-            ModuleAssetState::Embedded { modules, source_cache } => {
+            ModuleAssetState::Embedded { modules, source_cache, .. } => {
                 let module = modules.import_source(referrer, specifier)
                     .ok_or_else(|| format!("module import outside frozen image: {specifier} from {referrer}"))?;
                 // ModuleSource's owned contract needs one Arc per immutable
@@ -209,10 +210,14 @@ impl crate::NodeHost {
     }
 
     pub(crate) fn module_bytes(&mut self, path: &Path, _kind: SourceKind) -> std::io::Result<Vec<u8>> {
-        if let ModuleAssetState::Embedded { modules, .. } = &self.module_assets {
-            return modules.file(path).map(|file| file.bytes.to_vec()).ok_or_else(|| std::io::Error::new(
-                std::io::ErrorKind::NotFound, format!("module source outside frozen image: {}", path.display()),
-            ));
+        if let ModuleAssetState::Embedded { modules, missing_source, .. } = &mut self.module_assets {
+            return modules.file(path).map(|file| file.bytes.to_vec()).ok_or_else(|| {
+                // A caught loader error cannot turn an incomplete frozen image
+                // into successful native execution. Retain only its first cause.
+                missing_source.get_or_insert_with(|| path.to_owned());
+                std::io::Error::new(std::io::ErrorKind::NotFound,
+                    format!("module source outside frozen image: {}", path.display()))
+            });
         }
         let bytes = std::fs::read(path).or_else(|error| {
             #[cfg(feature = "aot")]
@@ -225,6 +230,13 @@ impl crate::NodeHost {
         #[cfg(feature = "aot")]
         self.record_module_bytes(path, _kind, &bytes)?;
         Ok(bytes)
+    }
+
+    pub(crate) fn missing_frozen_source(&self) -> Option<&Path> {
+        match &self.module_assets {
+            ModuleAssetState::Embedded { missing_source, .. } => missing_source.as_deref(),
+            _ => None,
+        }
     }
 
     #[cfg(feature = "aot")]

@@ -142,6 +142,9 @@ fn execute_native_with_teardown(
     if rejected != 0 {
         return Err(format!("native AOT execution rejected {rejected} unsupported operation(s)"));
     }
+    if let Some(path) = runtime.host_mut().missing_frozen_source() {
+        return Err(format!("native AOT image omitted required module source: {}", path.display()));
+    }
     Ok(completion)
 }
 
