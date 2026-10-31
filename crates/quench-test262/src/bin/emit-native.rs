@@ -102,7 +102,7 @@ fn run() -> Result<(), String> {
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     let source = quench_test262::script_source(&original, metadata.only_strict);
     let mut host = quench_test262::Test262RuntimeHost::new(ExecutionMode::NativeOnly);
-    let prepared = host.prepare_native_programs(
+    let prepared = host.prepare_native_programs_typed(
         &harness,
         &source,
         path.to_str().ok_or("test path must be UTF-8")?,
@@ -111,7 +111,21 @@ fn run() -> Result<(), String> {
         } else {
             SourceKind::Script
         },
-    )?;
+    );
+    let prepared = match prepared {
+        Err(error) if error.expected_syntax_negative(&metadata) => {
+            let report=serde_json::json!({"schema_version":quench_test262::NATIVE_COMPILE_REPORT_SCHEMA,"outcome":quench_test262::EXPECTED_COMPILER_NEGATIVE,
+                "test":path,"variant":variant.name(),"expected_phase":metadata.negative_phase,"expected_type":metadata.negative_type,
+                "observed_type":"SyntaxError","observed_site":match &error {quench_test262::runtime_host::NativePreparationError::Source {site,..}=>format!("{site:?}"),_=>unreachable!()},
+                "diagnostic":error.to_string(),"native_objects":0});
+            fs::write(root.join(quench_test262::NATIVE_COMPILE_REPORT_FILENAME),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+            println!("compiled expected negative {} {:?}",path.display(),variant);
+            return Ok(());
+        },
+        Err(error)=>return Err(error.to_string()),
+        Ok(_) if matches!(metadata.negative_phase.as_deref(),Some("parse"|"early"))=>return Err("expected frontend rejection was not produced".into()),
+        Ok(prepared)=>prepared,
+    };
     let quench_test262::NativeCasePrograms {
         harness: scripts,
         modules,

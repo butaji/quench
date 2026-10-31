@@ -34,6 +34,9 @@ use quench_runtime::ExecutionMode;
 pub const JIT_FLAG: &str = "--jit";
 pub const AOT_FLAG: &str = "--aot";
 pub const DYNAMIC_SOURCE_FLAG: &str = "--dynamic-source";
+pub const NATIVE_COMPILE_REPORT_FILENAME:&str = "compile-report.json";
+pub const NATIVE_COMPILE_REPORT_SCHEMA:u32 = 1;
+pub const EXPECTED_COMPILER_NEGATIVE:&str = "expected-compiler-negative";
 
 /// Dynamic source support is orthogonal to ahead-of-time object publication.
 pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {

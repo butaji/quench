@@ -8,7 +8,8 @@ mod measurement;
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(300);
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
-const REPORT_SCHEMA: u32 = 2;
+const REPORT_SCHEMA: u32 = 3;
+const NATIVE_OBJECT_EXTENSION:&str = "o";
 
 fn main() -> ExitCode {
     match run() { Ok(()) => ExitCode::SUCCESS, Err(error) => { eprintln!("{error}"); ExitCode::FAILURE } }
@@ -54,20 +55,37 @@ fn run() -> Result<(), String> {
                 let compilation = measurement::run(&emitter,&arguments,&case_root,"compile",COMPILE_TIMEOUT,false)?;
                 let compiled = compilation["success"] == true;
                 let binary = image_root.join("native-test");
+                let compiler_negative = fs::read_to_string(image_root.join(quench_test262::NATIVE_COMPILE_REPORT_FILENAME)).ok()
+                    .map(|source|serde_json::from_str::<Value>(&source).map_err(|e|e.to_string())).transpose()?;
+                let no_native_objects = fs::read_dir(&image_root).ok().is_some_and(|mut entries|entries.all(|entry|
+                    entry.is_ok_and(|entry|entry.path().extension().and_then(|ext|ext.to_str())!=Some(NATIVE_OBJECT_EXTENSION))));
+                let negative_valid = compiler_negative.as_ref().is_some_and(|proof|proof["outcome"]==quench_test262::EXPECTED_COMPILER_NEGATIVE
+                    && proof["schema_version"]==quench_test262::NATIVE_COMPILE_REPORT_SCHEMA
+                    && proof["variant"]==variant.name() && proof["expected_phase"].as_str()==metadata.negative_phase.as_deref()
+                    && metadata.negative_type.as_deref()==Some("SyntaxError") && proof["expected_type"]=="SyntaxError" && proof["observed_type"]=="SyntaxError"
+                    && proof["native_objects"]==0 && no_native_objects && !binary.exists()
+                    && match metadata.negative_phase.as_deref() {
+                        Some("parse"|"early")=>proof["observed_site"]=="Entry",
+                        Some("resolution")=>proof["observed_site"]=="Dependency",
+                        _=>false,
+                    });
+                let linked = compiled && compiler_negative.is_none() && binary.is_file();
                 let mut observations = Vec::new();
-                if compiled {
+                if linked {
                     for round in 0..rounds {
                         observations.push(measurement::run(&binary,&[],&case_root,&format!("run-{round}"),EXECUTE_TIMEOUT,true)?);
                     }
                 }
-                let memory = if compiled { Some(measurement::run_with_tree(&binary,&[],&case_root,"memory",EXECUTE_TIMEOUT,true)?) } else { None };
+                let memory = if linked { Some(measurement::run_with_tree(&binary,&[],&case_root,"memory",EXECUTE_TIMEOUT,true)?) } else { None };
                 let memory_valid = memory.as_ref().is_some_and(|record|record["success"]==true
                     && record["sampled_process_tree"]["observed_samples"].as_u64().is_some_and(|samples|samples>0));
-                let passed = compiled && !compilation["maximum_resident_bytes"].is_null() && observations.len() == rounds
-                    && memory_valid && observations.iter().all(|run| run["success"] == true && !run["maximum_resident_bytes"].is_null());
+                let passed = compiled && !compilation["maximum_resident_bytes"].is_null()
+                    && (negative_valid || (linked && observations.len() == rounds && memory_valid
+                        && observations.iter().all(|run| run["success"] == true && !run["maximum_resident_bytes"].is_null())));
                 let record = json!({"path":path.strip_prefix(root.join("test")).map_err(|e| e.to_string())?,"stage":stage.id,"variant":variant.name(),
                     "negative_phase":metadata.negative_phase,"negative_type":metadata.negative_type,"compilation":compilation,"observations":observations,
                     "memory_observation":memory,
+                    "compiler_negative":compiler_negative,
                     "binary_bytes":fs::metadata(&binary).ok().map(|m|m.len()),"outcome":if passed {"pass"} else {"fail"},
                     "link_report":fs::read_to_string(image_root.join("link-report.json")).ok().and_then(|s|serde_json::from_str::<Value>(&s).ok())});
                 fs::write(case_root.join("record.json"),serde_json::to_vec_pretty(&record).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
@@ -76,9 +94,11 @@ fn run() -> Result<(), String> {
             }
         }
         let passed = records.iter().filter(|r|r["outcome"]=="pass").count();
+        let compiler_negatives = records.iter().filter(|r|r["compiler_negative"].is_object() && r["outcome"]=="pass").count();
         let summary = json!({"schema":REPORT_SCHEMA,"stage":stage.id,"path":stage.path,"files":files.len(),"variants":records.len(),"passed":passed,"failed":records.len()-passed,
             "rounds":rounds,"dynamic_source":dynamic,"emitter":emitter,"sdk_report":sdk,"records":records,
-            "scope":"Separately linked variants; timing includes startup and OS time but excludes tree sampling. Separate memory observation reports a sampled process-tree resident sum, a lower bound. No matched JIT/Node performance claim. Compile failures, including unsupported typed negative emission, remain failures."});
+            "compiler_negative_variants":compiler_negatives,
+            "scope":"Linked variants execute; typed expected compiler negatives require no image and have no runtime observations. Timing includes startup and OS time but excludes tree sampling. Separate memory observation reports a sampled process-tree resident sum, a lower bound. No matched JIT/Node performance claim. Unmatched compiler failures remain failures."});
         fs::write(stage_root.join("report.json"),serde_json::to_vec_pretty(&summary).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
         summaries.push(json!({"stage":stage.id,"files":files.len(),"variants":summary["variants"],"passed":passed,"failed":summary["failed"]}));
         fs::write(output.join("stages.json"),serde_json::to_vec_pretty(&summaries).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;

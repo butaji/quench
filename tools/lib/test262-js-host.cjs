@@ -41,6 +41,7 @@ function metadata(source) {
     includes: yamlList(yaml, 'includes'),
     features: yamlList(yaml, 'features'),
     negativeType: negative < 0 ? null : (/type:\s*(\w+)/.exec(yaml.slice(negative)) || [])[1],
+    negativePhase: negative < 0 ? null : (/phase:\s*(\w+)/.exec(yaml.slice(negative)) || [])[1],
   };
 }
 
@@ -90,8 +91,9 @@ function realm(onPrint, referrer) {
     linking = result.catch(() => {});
     return result;
   };
-  const evaluate = async (entry) => {
+  const evaluate = async (entry, linked) => {
     await link(entry);
+    linked?.();
     // Keep the evaluation promise, not status: Node can report "evaluated"
     // while a module's top-level await is still pending.
     entry.evaluation ??= entry.module.evaluate();
@@ -102,6 +104,10 @@ function realm(onPrint, referrer) {
     if (Object.keys(attributes ?? {}).length) unsupported('oracle typed module imports are unavailable');
     return evaluate(record(resolve(specifier, parent.identifier ?? referrer)));
   }
+  const compileScript = (source, filename = referrer) => new vm.Script(source, {
+    filename, importModuleDynamically: dynamicImport,
+  });
+  const executeScript = (compiled) => compiled.runInContext(context);
   const script = (source, filename = referrer) => vm.runInContext(source, context, {
     filename, importModuleDynamically: dynamicImport,
   });
@@ -116,8 +122,9 @@ function realm(onPrint, referrer) {
   global.$262 = $262;
   global.print = (...values) => onPrint(values.join(' '));
   return {
-    host: $262, script,
-    async module(source) {
+    host: $262, script, compileScript, executeScript,
+    async module(source, phaseChanged) {
+      phaseChanged?.('parse');
       if (typeof vm.SourceTextModule !== 'function') unsupported('oracle needs vm.SourceTextModule');
       const entry = { module: new vm.SourceTextModule(source, {
         context, identifier: referrer,
@@ -125,7 +132,8 @@ function realm(onPrint, referrer) {
         importModuleDynamically: dynamicImport,
       }), evaluation: null };
       modules.set(referrer, entry);
-      await evaluate(entry);
+      phaseChanged?.('resolution');
+      await evaluate(entry, () => phaseChanged?.('runtime'));
     },
     missingCapability: () => missingCapability,
   };
@@ -144,6 +152,7 @@ async function runMode(relative, source, meta, strict) {
     : [...DEFAULT_HARNESS, ...(meta.flags.includes('async') ? [ASYNC_HARNESS] : []), ...meta.includes];
   let timer;
   let phase = 'module evaluation';
+  let failurePhase = 'harness';
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve(new Error(`${phase} did not complete`)), ASYNC_DONE_TIMEOUT_MS);
   });
@@ -152,10 +161,15 @@ async function runMode(relative, source, meta, strict) {
       instance.script(fs.readFileSync(path.join(SUITE, 'harness', file), 'utf8'), file);
     }
     if (meta.flags.includes('module')) {
-      const error = await Promise.race([instance.module(source).then(() => null), timeout]);
+      const error = await Promise.race([instance.module(source, observed => { failurePhase = observed; }).then(() => null), timeout]);
       if (error) throw error;
     }
-    else instance.script((strict ? '"use strict";\n' : '') + source);
+    else {
+      failurePhase = 'parse';
+      const compiled = instance.compileScript((strict ? '"use strict";\n' : '') + source);
+      failurePhase = 'runtime';
+      instance.executeScript(compiled);
+    }
     if (meta.flags.includes('async')) {
       phase = '$DONE';
       const error = await Promise.race([completion, timeout]);
@@ -166,7 +180,9 @@ async function runMode(relative, source, meta, strict) {
   } catch (error) {
     if (instance.missingCapability()) return { unverifiable: instance.missingCapability() };
     const name = error?.constructor?.name;
-    if (meta.negativeType && name === meta.negativeType) return null;
+    if (meta.negativeType && name === meta.negativeType && failurePhase !== 'harness'
+        && (!meta.negativePhase || meta.negativePhase === failurePhase || (meta.negativePhase === 'early' && failurePhase === 'parse'))) return null;
+    if (meta.negativeType && name === meta.negativeType) return `expected ${meta.negativeType} during ${meta.negativePhase}; observed ${failurePhase}`;
     return error?.message === undefined ? String(error) : `${name}: ${error.message}`;
   } finally {
     clearTimeout(timer);

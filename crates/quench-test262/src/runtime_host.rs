@@ -10,8 +10,10 @@ use std::time::{Duration, Instant};
 
 use crate::Test262Host;
 
-#[derive(Clone, Copy)]
-enum CompilationSite {
+#[derive(Clone, Copy, Debug)]
+pub enum CompilationSite {
+    #[cfg(feature = "aot")]
+    Harness,
     Entry,
     #[cfg(feature = "aot")]
     Dependency,
@@ -20,6 +22,8 @@ enum CompilationSite {
 fn compile_failure(errors: &[quench_runtime::Diagnostic], site: CompilationSite) -> String {
     if !errors.is_empty() && errors.iter().all(quench_runtime::Diagnostic::is_syntax_error) {
         let phase = match site {
+            #[cfg(feature = "aot")]
+            CompilationSite::Harness => "harness",
             CompilationSite::Entry => "runtime",
             #[cfg(feature = "aot")]
             CompilationSite::Dependency => "resolution",
@@ -27,6 +31,41 @@ fn compile_failure(errors: &[quench_runtime::Diagnostic], site: CompilationSite)
         format!("quench {phase} SyntaxError: {errors:?}")
     } else {
         format!("quench compilation failed: {errors:?}")
+    }
+}
+
+#[cfg(feature = "aot")]
+#[derive(Debug)]
+pub enum NativePreparationError {
+    Source { site: CompilationSite, diagnostics: Vec<quench_runtime::Diagnostic> },
+    Other(String),
+}
+#[cfg(feature = "aot")]
+impl From<String> for NativePreparationError {
+    fn from(message:String)->Self { Self::Other(message) }
+}
+#[cfg(feature = "aot")]
+impl std::fmt::Display for NativePreparationError {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {
+        match self {
+            Self::Source {site:CompilationSite::Harness,diagnostics}=>write!(f,"quench AOT harness SyntaxError: {diagnostics:?}"),
+            Self::Source {site,diagnostics}=>f.write_str(&compile_failure(diagnostics,*site)),
+            Self::Other(message)=>f.write_str(message),
+        }
+    }
+}
+#[cfg(feature = "aot")]
+impl NativePreparationError {
+    pub fn expected_syntax_negative(&self,metadata:&crate::TestMetadata)->bool {
+        match self {
+            Self::Source {site,diagnostics} if !diagnostics.is_empty() && diagnostics.iter().all(quench_runtime::Diagnostic::is_syntax_error)
+                && metadata.negative_type.as_deref()==Some("SyntaxError") => match site {
+                    CompilationSite::Entry=>matches!(metadata.negative_phase.as_deref(),Some("parse"|"early")),
+                    CompilationSite::Dependency=>metadata.negative_phase.as_deref()==Some("resolution"),
+                    CompilationSite::Harness=>false,
+                },
+            _=>false,
+        }
     }
 }
 
@@ -76,7 +115,7 @@ fn compile_native_dependencies(
     compiler: &mut quench_runtime::NativeJsCompiler,
     entry: &quench_runtime::ResidualProgram,
     name: &str,
-) -> Result<Vec<(ModuleSource, quench_runtime::ResidualProgram)>, String> {
+) -> Result<Vec<(ModuleSource, quench_runtime::ResidualProgram)>, NativePreparationError> {
     use std::collections::{BTreeSet, VecDeque};
     let mut seen = BTreeSet::from([quench_runtime::normalized_module_name(name).into_owned()]);
     let mut pending = VecDeque::from([(name.to_owned(), entry.module_requests().to_vec())]);
@@ -87,11 +126,11 @@ fn compile_native_dependencies(
                 || request.module_type.as_deref().unwrap_or("javascript") != "javascript" { continue; }
             let Some(mut module) = host.resolve_dynamic_import(&referrer, &request.source)
                 .map_err(|error| format!("quench AOT dependency resolution: {}", error.message))? else {
-                return Err(format!("quench AOT dependency unresolved: {} from {referrer}", request.source));
+                return Err(format!("quench AOT dependency unresolved: {} from {referrer}", request.source).into());
             };
             module.name = quench_runtime::normalized_module_name(&module.name).into_owned();
             if !seen.insert(module.name.clone()) { continue; }
-            let program = compiler.compile_module_source(&module).map_err(|errors| compile_failure(&errors, CompilationSite::Dependency))?;
+            let program = compiler.compile_module_source(&module).map_err(|diagnostics| NativePreparationError::Source {site:CompilationSite::Dependency,diagnostics})?;
             pending.push_back((module.name.clone(), program.module_requests().to_vec()));
             modules.push((module, program));
         }
@@ -309,6 +348,12 @@ impl Test262RuntimeHost {
         name: &str,
         kind: SourceKind,
     ) -> Result<NativeCasePrograms, String> {
+        self.prepare_native_programs_typed(harness,source,name,kind).map_err(|error|error.to_string())
+    }
+
+    pub fn prepare_native_programs_typed(
+        &mut self,harness:&[&str],source:&str,name:&str,kind:SourceKind,
+    )->Result<NativeCasePrograms,NativePreparationError> {
         self.native_module_sources.clear();
         self.module_input_access = ModuleInputAccess::Filesystem;
         self.missing_module_input = None;
@@ -317,7 +362,7 @@ impl Test262RuntimeHost {
         let mut scripts = Vec::new();
         for script in harness {
             scripts.push(compiler.compile_script(script, HARNESS_SCRIPT_NAME, Default::default())
-                .map_err(|errors| format!("quench AOT harness SyntaxError: {errors:?}"))?);
+                .map_err(|diagnostics|NativePreparationError::Source {site:CompilationSite::Harness,diagnostics})?);
         }
         let entry_module = (kind == SourceKind::Module).then(||
             ModuleSource::text(quench_runtime::normalized_module_name(name).into_owned(), source));
@@ -328,8 +373,8 @@ impl Test262RuntimeHost {
                 compiler.compile_module_source(module)
             }
             SourceKind::Script => compiler.compile_script(source, name, Default::default()),
-            SourceKind::Eval => return Err("quench AOT: eval source goal is not a static entry".into()),
-        }.map_err(|errors| compile_failure(&errors, CompilationSite::Entry))?;
+            SourceKind::Eval => return Err(NativePreparationError::Other("quench AOT: eval source goal is not a static entry".into())),
+        }.map_err(|diagnostics|NativePreparationError::Source {site:CompilationSite::Entry,diagnostics})?;
         let modules = compile_native_dependencies(self, &mut compiler, &program, name)?;
         let source_requests = compiler.compile_discovered_sources()
             .map_err(|error| format!("quench AOT source compilation: {error}"))?;
@@ -923,6 +968,25 @@ mod tests {
     fn strict_call_assignment_is_a_syntax_error_not_a_backend_rejection() {
         let errors = super::Engine::specialize("'use strict'; f() = 1;", "strict-call-assignment.js").unwrap_err();
         assert!(super::compile_failure(&errors, super::CompilationSite::Entry).starts_with("quench runtime SyntaxError:"));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn compiler_negatives_require_matching_type_phase_and_compilation_site() {
+        let mut host=Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
+        let error=host.prepare_native_programs_typed(&[],"'use strict'; arguments=7;","negative.js",super::SourceKind::Script)
+            .err().expect("strict assignment compiled");
+        let mut metadata=crate::TestMetadata {negative_phase:Some("parse".into()),negative_type:Some("SyntaxError".into()),..Default::default()};
+        assert!(error.expected_syntax_negative(&metadata));
+        metadata.negative_phase=Some("runtime".into());
+        assert!(!error.expected_syntax_negative(&metadata));
+        metadata.negative_phase=Some("parse".into());metadata.negative_type=Some("TypeError".into());
+        assert!(!error.expected_syntax_negative(&metadata));
+        metadata.negative_type=Some("SyntaxError".into());
+        let harness=host.prepare_native_programs_typed(&["let invalid = ;"],"'use strict'; arguments=7;","negative.js",super::SourceKind::Script)
+            .err().expect("invalid harness compiled");
+        assert!(!harness.expected_syntax_negative(&metadata));
+        assert!(!super::NativePreparationError::Other("SyntaxError: fabricated backend text".into()).expected_syntax_negative(&metadata));
     }
 
     #[test]

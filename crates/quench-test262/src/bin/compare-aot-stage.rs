@@ -33,6 +33,11 @@ fn run()->Result<(),String> {
     for (index,record) in records.iter().enumerate() {
         let relative=record["path"].as_str().ok_or("test path missing")?;
         let variant=record["variant"].as_str().ok_or("variant missing")?;
+        if record["compiler_negative"].is_object() {
+            results.push(json!({"path":relative,"variant":variant,"passed":record["outcome"]=="pass",
+                "compiler_negative":record["compiler_negative"],"runtime_comparison":"not-applicable: expected compiler rejection has no executable"}));
+            continue;
+        }
         let aot=record["link_report"]["binary"].as_str().ok_or("AOT executable missing")?;
         let path=suite.join("test").join(relative);
         let config=vec![format!("TEST262_DIR={}",suite.display()),format!("TEST262_TEST_TIMEOUT_MS={}",TIMEOUT.as_millis())];
@@ -60,7 +65,7 @@ fn run()->Result<(),String> {
         results.push(result);
     }
     let passed=results.iter().all(|row|row["passed"]==true) && results.len()==records.len() && !results.is_empty();
-    let production=jit["profile"]["opt_level"]=="3" && records.iter().all(|row|row["link_report"]["support_artifacts"]["optimization_level"]=="3");
+    let production=jit["profile"]["opt_level"]=="3" && records.iter().filter(|row|!row["compiler_negative"].is_object()).all(|row|row["link_report"]["support_artifacts"]["optimization_level"]=="3");
     let report=json!({"schema":1,"passed":passed,"stage_report":stage_path,"jit_cargo_report":jit_report,"jit_artifact":jit,"node":node,"oracle":oracle,"rounds":rounds,"production_optimization":production,"records":results,
         "scope":"Same declared variants through AOT/shared JIT/Node, rotating engine order. Fresh-process startup-inclusive timing; premeasurement setup separate. Memory observation separate from timing, sampled resident sum is a lower bound. No steady-state throughput claim; production optimization is a prerequisite, not sufficient performance qualification."});
     fs::write(output.join("report.json"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
