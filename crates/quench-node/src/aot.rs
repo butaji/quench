@@ -1,7 +1,7 @@
 //! Linked native execution and build-time Node source inputs.
 
 use crate::NodeHost;
-use quench_runtime::Runtime;
+use quench_runtime::{Runtime, NativeImageSupport};
 
 mod assets;
 pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceView, EmbeddedModules, EmbeddedImportResolution, EmbeddedModuleSource, ModuleAssets, ModuleFile, PreparedModuleSource};
@@ -80,20 +80,26 @@ macro_rules! linked_module_assets {
 pub fn execute_native(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
-    execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free)
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, NativeImageSupport::Static)
 }
 
 pub fn execute_native_process_entry(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
-    execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit)
+    execute_native_process_entry_with_support(host, program, NativeImageSupport::Static)
+}
+
+pub fn execute_native_process_entry_with_support(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, support: NativeImageSupport,
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support)
 }
 
 fn execute_native_with_teardown(
-    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, teardown: crate::shared_run::Teardown,
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, teardown: crate::shared_run::Teardown, support: NativeImageSupport,
 ) -> Result<crate::shared_run::SharedCompletion, String> {
     let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), teardown);
-    runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
+    runtime.set_execution_mode(support.execution_mode());
     runtime.set_memory_policy(crate::shared_run::select_memory_policy(None)?);
     let execution = runtime.execute_native_deferred_jobs(program);
     let completion = crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)?;

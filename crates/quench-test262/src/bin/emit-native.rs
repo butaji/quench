@@ -68,6 +68,11 @@ fn run() -> Result<(), String> {
         6 if args[5] == "--dynamic-source" => true,
         _ => return Err(USAGE.into()),
     };
+    let support = if dynamic_source {
+        quench_runtime::NativeImageSupport::DynamicSource
+    } else {
+        quench_runtime::NativeImageSupport::Static
+    };
     let path = PathBuf::from(&args[1]);
     let root = PathBuf::from(&args[2]);
     fs::create_dir(&root).map_err(|e| e.to_string())?;
@@ -199,7 +204,8 @@ fn run() -> Result<(), String> {
     let driver = format!(
         r#"
 use quench_test262::Test262Host;
-const _:()=assert!(if {dynamic_source} {{ quench_test262::NATIVE_SUPPORT_HAS_JIT && !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY }} else {{ quench_test262::NATIVE_SUPPORT_IS_EXECUTION_ONLY && quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY }});
+const SUPPORT:quench_runtime::NativeImageSupport=quench_runtime::NativeImageSupport::{support:?};
+const _:()=assert!(SUPPORT.is_available());
 include!({catalog:?});
 fn source_error(error:quench_runtime::NativeSourceError)->String{{format!("{{error:?}}")}}
 fn run()->Result<(),String>{{
@@ -207,13 +213,13 @@ fn run()->Result<(),String>{{
  let harness=vec![{binders}];
  let graph=quench_test262::LinkedCasePrograms{{harness,modules:vec![{module_binders}],entry,module_sources:vec![{source_binders}]}};
  let metadata=quench_test262::TestMetadata{{is_module:{is_module},is_async:{is_async},can_block:{can_block},only_strict:{strict},negative_phase:{phase},negative_type:{negative},..Default::default()}};
- let mut host=quench_test262::Test262RuntimeHost::new(if {dynamic_source} {{ quench_runtime::ExecutionMode::Compiled }} else {{ quench_runtime::ExecutionMode::NativeOnly }});host.configure(&metadata);
+ let mut host=quench_test262::Test262RuntimeHost::new(quench_runtime::ExecutionMode::NativeOnly).with_native_dynamic_source(SUPPORT.allows_dynamic_source())?;host.configure(&metadata);
  let completion=host.execute_linked_programs(graph,move|name,parts|unsafe{{resolve(&namespace,name,parts)}});
  match quench_test262::classify_test_outcome(quench_test262::execution_outcome(completion),&metadata){{quench_test262::TestOutcome::Pass=>Ok(()),quench_test262::TestOutcome::Fail{{reason}}=>Err(reason)}}
 }}
 fn main()->std::process::ExitCode{{match run(){{Ok(())=>std::process::ExitCode::SUCCESS,Err(error)=>{{eprintln!("{{error}}");std::process::ExitCode::FAILURE}}}}}}
 "#,
-        dynamic_source = dynamic_source,
+        support = support,
         catalog = root.join("catalog.rs").to_str().unwrap(),
         binders = binders,
         module_binders = module_binders,

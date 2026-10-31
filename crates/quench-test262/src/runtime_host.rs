@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use quench_runtime::{
-    CapabilityId, Engine, ExecutionMode, ExecutionRequest, Host, HostFunction, HostFunctionId,
+    CapabilityId, Engine, ExecutionMode, ExecutionRequest, NativeImageSupport, Host, HostFunction, HostFunctionId,
     HostGlobal, ModuleSource, NativeContext, RootId, RootedError, Runtime, SourceKind, SystemHost,
 };
 use std::time::{Duration, Instant};
@@ -125,7 +125,7 @@ pub struct Test262RuntimeHost {
     done: Option<String>,
     /// The execution every case's runtime uses: the interpreter, or compiled (JIT) execution.
     execution_mode: ExecutionMode,
-    native_dynamic_source: bool,
+    native_support: NativeImageSupport,
     native_compilation: crate::NativeCompilation,
     native_variant: &'static str,
     timers: Vec<TestTimer>,
@@ -279,13 +279,13 @@ impl Test262RuntimeHost {
         if enabled && (self.execution_mode != ExecutionMode::NativeOnly || !crate::NATIVE_SUPPORT_HAS_JIT) {
             return Err("dynamic native source requires AOT compilation and JIT support".into());
         }
-        self.native_dynamic_source = enabled;
-        self.native_compilation.dynamic_source = enabled;
+        self.native_support = if enabled { NativeImageSupport::DynamicSource } else { NativeImageSupport::Static };
+        self.native_compilation.dynamic_source = self.native_support.allows_dynamic_source();
         Ok(self)
     }
 
     fn runtime_execution_mode(&self) -> ExecutionMode {
-        if self.native_dynamic_source { ExecutionMode::Compiled } else { self.execution_mode }
+        if self.execution_mode == ExecutionMode::NativeOnly { self.native_support.execution_mode() } else { self.execution_mode }
     }
 
     fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
@@ -508,7 +508,7 @@ impl Test262Host for Test262RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         self.async_test = metadata.is_async;
         self.can_block = metadata.can_block;
-        self.native_compilation = crate::NativeCompilation { dynamic_source: self.native_dynamic_source, ..Default::default() };
+        self.native_compilation = crate::NativeCompilation { dynamic_source: self.native_support.allows_dynamic_source(), ..Default::default() };
         self.native_variant = if metadata.is_module { "module" } else if metadata.is_raw { "raw" } else if metadata.only_strict { "strict" } else { "sloppy" };
     }
 

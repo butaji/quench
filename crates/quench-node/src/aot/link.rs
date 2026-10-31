@@ -1,4 +1,5 @@
 use super::NativeImageInputs;
+use quench_runtime::NativeImageSupport;
 use serde_json::Value;
 use serde::Serialize;
 use std::{
@@ -21,17 +22,22 @@ impl NativeLinkAudit {
     }
 }
 
-/// Cargo's exact execution-only support artifacts and their native search paths.
+/// Cargo's exact selected support artifacts and their native search paths.
 pub struct NativeSupport {
     node: PathBuf,
     runtime: PathBuf,
     native_paths: BTreeSet<PathBuf>,
     optimization: String,
     rust_lto: bool,
+    support: NativeImageSupport,
 }
 
 impl NativeSupport {
     pub fn from_cargo_report(report: &str) -> Result<Self, String> {
+        Self::from_cargo_report_with_support(report, NativeImageSupport::Static)
+    }
+
+    pub fn from_cargo_report_with_support(report: &str, support: NativeImageSupport) -> Result<Self, String> {
         let mut node = None;
         let mut runtime = None;
         let mut native_paths = BTreeSet::new();
@@ -49,13 +55,13 @@ impl NativeSupport {
                         .ok_or("Cargo artifact has no feature list")?;
                     if matches!(
                         name,
-                        "cranelift_native" | "cranelift_object" | "cranelift_module"
-                    ) {
+                        "cranelift_object" | "cranelift_module"
+                    ) || (name == "cranelift_native" && !support.allows_dynamic_source()) {
                         return Err(format!(
                             "native support includes compiler dependency {name}"
                         ));
                     }
-                    if name == "cranelift_codegen"
+                    if !support.allows_dynamic_source() && name == "cranelift_codegen"
                         && features.iter().any(|feature| {
                             matches!(
                                 feature.as_str(),
@@ -77,10 +83,14 @@ impl NativeSupport {
                     if matches!(name, "quench_node" | "quench_runtime") {
                         if !features.iter().any(|feature| feature == "native-execution")
                             || features.iter().any(|feature| {
-                                matches!(feature.as_str(), Some("jit" | "aot" | "bundled-sources"))
+                                matches!(feature.as_str(), Some("aot" | "bundled-sources"))
+                                    || (!support.allows_dynamic_source() && feature == "jit")
                             })
                         {
-                            return Err(format!("{name} is not execution-only native support"));
+                            return Err(format!("{name} is not valid {support:?} native support"));
+                        }
+                        if support.allows_dynamic_source() && !features.iter().any(|feature| feature == "jit") {
+                            return Err(format!("{name} has no JIT support for dynamic source"));
                         }
                         let files = artifact["filenames"]
                             .as_array()
@@ -136,6 +146,7 @@ impl NativeSupport {
         let rust_lto = requires_rust_lto(&node)?;
         Ok(Self {
             node,
+            support,
             rust_lto,
             runtime: runtime.ok_or("Cargo report has no runtime support library")?,
             native_paths,
@@ -146,7 +157,8 @@ impl NativeSupport {
     pub fn report(&self) -> Value {
         serde_json::json!({ "node_library": self.node, "runtime_library": self.runtime,
             "optimization_level": self.optimization, "native_search_paths": self.native_paths,
-            "driver_panic_strategy": "abort", "rust_lto": self.rust_lto })
+            "driver_panic_strategy": "abort", "rust_lto": self.rust_lto,
+            "dynamic_source": self.support.allows_dynamic_source() })
     }
 
     pub fn link(
@@ -197,6 +209,9 @@ impl NativeSupport {
             .arg("-o")
             .arg(executable)
             .env("QUENCH_NATIVE_CATALOG", inputs.catalog());
+        if self.support.allows_dynamic_source() {
+            command.args(["--cfg", "quench_native_dynamic_source"]);
+        }
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
@@ -240,7 +255,7 @@ impl NativeSupport {
             .arg(format!("link-arg={}", map.display()));
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
-        audit(inputs, executable)?;
+        audit(inputs, executable, self.support)?;
         let dynamic_interface = interface.verify(executable)?;
         Ok(NativeLinkAudit { dynamic_interface })
     }
@@ -372,7 +387,7 @@ fn is_compiler_symbol(symbol: &str) -> bool {
         || (symbol.contains("quench_runtime") && JS_SOURCE_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name)))
 }
 
-fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
+fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<(), String> {
     let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     let mut exports = BTreeSet::new();
@@ -380,7 +395,7 @@ fn audit(inputs: &NativeImageInputs, executable: &Path) -> Result<(), String> {
         // Demangled names omit the instantiating crate: a core generic first
         // emitted by OXC can be required without retaining any OXC operation.
         // Inspect the full line because Rust types may contain spaces.
-        if is_compiler_symbol(line) || is_interpreter_symbol(line) {
+        if !support.allows_dynamic_source() && (is_compiler_symbol(line) || is_interpreter_symbol(line)) {
             return Err(format!("native image retained compilation or interpretation support: {line}"));
         }
         let mut fields = line.split_whitespace().rev();
@@ -465,7 +480,24 @@ mod tests {
         ] {
             let report = serde_json::json!({"reason": "compiler-artifact", "target": {"name": name}, "features": features}).to_string();
             let error = NativeSupport::from_cargo_report(&report).err().expect("unsupported SDK accepted");
-            assert!(error.contains("execution-only") || error.contains("compiler dependency") || error.contains("architecture code generator"), "{error}");
+            assert!(error.contains("native support") || error.contains("compiler dependency") || error.contains("architecture code generator"), "{error}");
+        }
+    }
+
+    #[test]
+    fn dynamic_source_support_requires_jit_and_excludes_build_time_compilers() {
+        for (name, features, reason) in [
+            ("quench_node", vec!["native-execution"], "no JIT"),
+            ("quench_runtime", vec!["native-execution"], "no JIT"),
+            ("quench_node", vec!["native-execution", "jit", "bundled-sources"], "native support"),
+            ("quench_runtime", vec!["native-execution", "jit", "aot"], "native support"),
+            ("cranelift_object", vec![], "compiler dependency"),
+            ("cranelift_module", vec![], "compiler dependency"),
+        ] {
+            let report = serde_json::json!({"reason":"compiler-artifact","target":{"name":name},"features":features}).to_string();
+            let error = NativeSupport::from_cargo_report_with_support(&report, NativeImageSupport::DynamicSource)
+                .err().expect("incompatible hybrid SDK accepted");
+            assert!(error.contains(reason), "{name}: {error}");
         }
     }
 

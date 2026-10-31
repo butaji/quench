@@ -52,3 +52,35 @@ macro_rules! linked_native_sources {
     (@decode $namespace:ident, $bytes:ident) => { $namespace.decode($bytes) };
     (@decode $namespace:ident, $bytes:ident, $source:expr) => { $namespace.decode_with_static_source($bytes, $source) };
 }
+
+/// Support selected by the compiler for a linked image. Static roots use the
+/// same native entries in both policies; only dynamic source execution differs.
+#[cfg(feature = "native-execution")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeImageSupport {
+    #[default]
+    Static,
+    DynamicSource,
+}
+
+#[cfg(feature = "native-execution")]
+impl NativeImageSupport {
+    pub const fn allows_dynamic_source(self) -> bool {
+        matches!(self, Self::DynamicSource)
+    }
+
+    pub const fn execution_mode(self) -> crate::ExecutionMode {
+        match self {
+            Self::Static => crate::ExecutionMode::NativeOnly,
+            Self::DynamicSource => crate::ExecutionMode::Compiled,
+        }
+    }
+
+    /// Generated drivers check the actual SDK, independently of producer flags.
+    pub const fn is_available(self) -> bool {
+        match self {
+            Self::Static => crate::NATIVE_SUPPORT_IS_EXECUTION_ONLY,
+            Self::DynamicSource => cfg!(feature = "jit") && crate::DYNAMIC_EXECUTION_ENABLED,
+        }
+    }
+}

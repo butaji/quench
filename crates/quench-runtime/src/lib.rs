@@ -106,3 +106,5 @@ pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
 pub use host::NativeSourceError;
 
 mod native_image;
+#[cfg(feature = "native-execution")]
+pub use native_image::NativeImageSupport;

@@ -21,9 +21,9 @@ pub use runtime_host::{Test262RuntimeHost, LinkedCasePrograms};
 pub use runtime_host::NativeCasePrograms;
 
 /// Whether the linked host omits source compilation and dynamic execution.
-pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && !cfg!(any(feature = "jit", feature = "aot"));
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = quench_runtime::NativeImageSupport::Static.is_available();
 /// A hybrid native image requires the shared interpreter and JIT.
-pub const NATIVE_SUPPORT_HAS_JIT: bool = cfg!(feature = "jit");
+pub const NATIVE_SUPPORT_HAS_JIT: bool = quench_runtime::NativeImageSupport::DynamicSource.is_available();
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 use quench_runtime::ExecutionMode;

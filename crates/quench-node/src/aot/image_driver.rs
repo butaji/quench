@@ -1,10 +1,10 @@
 use quench_node::NodeHost;
 
-const _: () = assert!(
-    quench_node::NATIVE_SUPPORT_IS_EXECUTION_ONLY
-        && quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY,
-    "native images require execution-only support artifacts"
-);
+#[cfg(quench_native_dynamic_source)]
+const SUPPORT: quench_runtime::NativeImageSupport = quench_runtime::NativeImageSupport::DynamicSource;
+#[cfg(not(quench_native_dynamic_source))]
+const SUPPORT: quench_runtime::NativeImageSupport = quench_runtime::NativeImageSupport::Static;
+const _: () = assert!(SUPPORT.is_available() && (SUPPORT.allows_dynamic_source() || quench_node::NATIVE_SUPPORT_IS_EXECUTION_ONLY), "native image SDK does not provide its selected execution support");
 
 include!(env!("QUENCH_NATIVE_CATALOG"));
 
@@ -31,7 +31,7 @@ fn run() -> Result<std::process::ExitCode, String> {
             // SAFETY: this resolver belongs to the same compiler-owned image.
             unsafe { resolve(&namespace, name, parts) }
         });
-    quench_node::aot::execute_native_process_entry(host, &entry)
+    quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT)
         .map(|completion| completion.exit_code())
 }
 
