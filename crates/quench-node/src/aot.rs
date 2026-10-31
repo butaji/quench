@@ -137,7 +137,12 @@ fn execute_native_with_teardown(
     runtime.set_execution_mode(quench_runtime::ExecutionMode::NativeOnly);
     runtime.set_memory_policy(crate::shared_run::select_memory_policy(None)?);
     let execution = runtime.execute_native_deferred_jobs(program);
-    crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)
+    let completion = crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)?;
+    let rejected = runtime.native_execution_rejections();
+    if rejected != 0 {
+        return Err(format!("native AOT execution rejected {rejected} unsupported operation(s)"));
+    }
+    Ok(completion)
 }
 
 #[cfg(feature = "aot")]

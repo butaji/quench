@@ -1330,3 +1330,51 @@ fn qualify_literal_function_constructors(profile: &str, support: Option<String>)
         eprintln!("Function constructors ({extension}, {profile}) matched Node after source removal: {}", binary.display());
     }
 }
+
+#[test]
+#[ignore = "explicit native completion compile/link qualification"]
+fn compile_command_rejects_guest_caught_native_capability_errors() {
+    use std::{fs, process::Command};
+    let directory = std::env::temp_dir().join(format!("quench native completion, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, r#"
+        const mode = process.argv[2];
+        const body = process.argv[3];
+        function dynamic() { try { Function(body); } catch (_) {} }
+        if (mode === 'sync') dynamic();
+        if (mode === 'job') Promise.resolve().then(dynamic);
+        if (mode === 'exit') process.on('exit', dynamic);
+        if (mode === 'ordinary') {
+            try { null.member; } catch (error) { if (!(error instanceof TypeError)) throw error; }
+        }
+        if (mode === 'syntax') {
+            try { Function('let invalid = ;'); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+        }
+        console.log('completed');
+    "#).unwrap();
+    let binary = directory.join("native");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+        .arg("compile").arg(&entry).arg("-o").arg(&binary)
+        .arg("--sdk-report").arg(&sdk).args(["--profile", "iteration"]).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    for mode in ["ordinary", "syntax", "sync", "job", "exit"] {
+        let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+            .arg(&entry).args([mode, "return 42;"]).output().unwrap();
+        assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+        assert!(oracle.stderr.is_empty());
+        let native = Command::new(&binary).args([mode, "return 42;"]).output().unwrap();
+        assert_eq!(native.stdout, oracle.stdout, "{mode}");
+        if matches!(mode, "ordinary" | "syntax") {
+            assert_eq!(native.status.code(), oracle.status.code(), "{mode}");
+            assert_eq!(native.stderr, oracle.stderr, "{mode}");
+        } else {
+            assert!(!native.status.success(), "caught capability rejection was hidden: {mode}");
+            assert!(String::from_utf8_lossy(&native.stderr).contains("native AOT execution rejected 1 unsupported operation"),
+                "{mode}: {}", String::from_utf8_lossy(&native.stderr));
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
