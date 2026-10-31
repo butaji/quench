@@ -1238,6 +1238,32 @@ fn graph_compiles_literal_function_inputs_and_defers_syntax_errors() {
 }
 
 #[test]
+fn constructor_alias_discovery_uses_values_without_type_assertion_proofs() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench-constructor-type-facts-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    for extension in ["cts", "mts"] {
+        let entry = directory.join(format!("entry.{extension}"));
+        fs::write(&entry, r#"
+            const actual: unknown = Function;
+            const casted = actual as unknown as (source: string) => number;
+            casted('return "text";');
+            const fake = ((source: string) => 7) as unknown as FunctionConstructor;
+            fake('let invalid = ;');
+        "#).unwrap();
+        let mut manifest = SourceManifest::default();
+        manifest.add_module_graph(&entry).unwrap();
+        let requests = manifest.units().filter(|key| key.is_function_constructor()).collect::<Vec<_>>();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].parts().last(), Some("return \"text\";"));
+        let compiled = manifest.compile().unwrap();
+        assert_eq!(compiled.units.len(), 2);
+        assert!(compiled.syntax_errors.is_empty());
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 #[ignore = "explicit source-deleted native Function constructor qualification"]
 fn compile_command_preserves_literal_function_constructors() {
     qualify_literal_function_constructors("iteration", Some(pinned_support_report()));
