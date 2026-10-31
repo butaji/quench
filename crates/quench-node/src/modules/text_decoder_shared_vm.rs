@@ -81,6 +81,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
+pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder", "TextEncoder"];
+
 /// Installs `TextDecoder` and `TextEncoder` as lazy data properties, built on first use.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let initializer =
@@ -88,7 +90,7 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
     let global = context.global_root()?;
     context.define_lazy_data_properties_rooted(
         global,
-        &["TextDecoder", "TextEncoder"],
+        GLOBAL_NAMES,
         false,
         initializer,
     )?;

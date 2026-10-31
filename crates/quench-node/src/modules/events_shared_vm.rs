@@ -232,7 +232,7 @@ pub(crate) fn initialize_targets(
     )?;
     context.define_lazy_data_properties_rooted(global, EVENT_GLOBALS, false, initialize)?;
     let messaging = context.host_function(crate::host::shared_vm::operation("messagingGlobalsInitialize"))?;
-    context.define_lazy_data_properties_rooted(global, &["MessagePort", "MessageChannel"], false, messaging)?;
+    context.define_lazy_data_properties_rooted(global, MESSAGING_GLOBALS, false, messaging)?;
     let abort_state = context.host_function(crate::host::shared_vm::operation(
         "eventAbortStateInitialize",
     ))?;
@@ -241,7 +241,8 @@ pub(crate) fn initialize_targets(
 }
 
 /// The globals the abort and event-target polyfills define, in definition order.
-const EVENT_GLOBALS: &[&str] = &[
+pub(crate) const MESSAGING_GLOBALS: &[&str] = &["MessagePort", "MessageChannel"];
+pub(crate) const EVENT_GLOBALS: &[&str] = &[
     "DOMException",
     "AbortSignal",
     "AbortController",

@@ -909,6 +909,11 @@ const LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
     ("__nodeURLSearchParams", "internal/url", "URLSearchParams", false),
 ];
 
+#[cfg(feature = "aot")]
+pub(crate) fn lazy_global_names() -> impl Iterator<Item = &'static str> {
+    LAZY_GLOBALS.iter().map(|&(property, _, _, _)| property)
+}
+
 pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     for &(property, id, export, enumerable) in LAZY_GLOBALS {

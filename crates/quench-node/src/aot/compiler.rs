@@ -377,10 +377,12 @@ mod tests {
             let directory = std::env::temp_dir().join(format!("quench-staged-global-exports-{}", std::process::id()));
             fs::create_dir(&directory).unwrap();
             let entry = directory.join("entry.cts");
-            fs::write(&entry, "require('node:buffer'); (performance as unknown as {now(): number}).now(); throw new Error('entry must not execute during staging');").unwrap();
+            fs::write(&entry, "require('node:buffer'); (performance as unknown as {now(): number}).now(); new globalThis.TextEncoder(); new globalThis['TextDecoder'](); new EventTarget(); throw new Error('entry must not execute during staging');").unwrap();
             let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
             assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
-            assert!(graph.host_globals.contains("performance"));
+            for name in ["performance", "TextEncoder", "TextDecoder", "EventTarget"] {
+                assert!(graph.host_globals.contains(name), "missing {name}: {:?}", graph.host_globals);
+            }
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
             let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
             assert!(staged.units().any(|key| key.name() == "node:perf_hooks.js"));
@@ -398,6 +400,21 @@ mod tests {
         let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
         assert!(graph.host_globals.is_empty(), "{:?}", graph.host_globals);
         assert!(!graph.builtins.contains("node:console"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn type_queries_and_asserted_local_global_objects_do_not_request_sdk_sources() {
+        let directory = std::env::temp_dir().join(format!("quench-type-only-sdk-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        fs::write(&entry, r#"
+            function typed(clock: typeof performance, encoder: typeof TextEncoder, loader: typeof require): typeof EventTarget { throw 1; }
+            function local(globalThis: unknown) { return (globalThis as typeof globalThis).TextEncoder; }
+        "#).unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.host_globals.is_empty(), "{:?}", graph.host_globals);
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
         fs::remove_dir_all(directory).unwrap();
     }
 

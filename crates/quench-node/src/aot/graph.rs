@@ -3,7 +3,7 @@
 
 use super::{SourceManifest, ModuleFile};
 use crate::host::shared_vm::commonjs;
-use oxc_ast::ast::{CallExpression, Expression, IdentifierReference, ImportExpression, UnaryExpression};
+use oxc_ast::ast::{CallExpression, ComputedMemberExpression, Expression, IdentifierReference, ImportExpression, StaticMemberExpression, UnaryExpression};
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
 use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
@@ -56,6 +56,28 @@ impl<'s> Requests<'s> {
             dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
             literal_imports: BTreeSet::new(), host_globals: BTreeSet::new() }
     }
+
+    fn runtime_reference(&self, name: &IdentifierReference<'_>) -> Option<&oxc_syntax::reference::Reference> {
+        let reference = self.scoping.get_reference(name.reference_id.get()?);
+        (reference.is_value() && !reference.flags().is_value_as_type()).then_some(reference)
+    }
+
+    fn is_global_object(&self, expression: &Expression<'_>) -> bool {
+        matches!(expression.get_inner_expression(), Expression::Identifier(name)
+            if name.name == "globalThis" && self.runtime_reference(name).is_some_and(|reference|reference.symbol_id().is_none()))
+    }
+
+    fn record_host_global(&mut self, name: &str) {
+        if name == "console" { self.specifiers.insert("node:console".into()); }
+        let interfaces = commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS).copied()
+            .chain(crate::modules::events_shared_vm::EVENT_GLOBALS.iter().copied())
+            .chain(crate::modules::events_shared_vm::MESSAGING_GLOBALS.iter().copied())
+            .chain(crate::modules::text_decoder_shared_vm::GLOBAL_NAMES.iter().copied())
+            .chain(crate::modules::util_shared_vm::lazy_global_names());
+        if name == "performance" || interfaces.into_iter().any(|global|global == name) {
+            self.host_globals.insert(name.to_owned());
+        }
+    }
 }
 
 impl<'a> Visit<'a> for Requests<'_> {
@@ -83,22 +105,25 @@ impl<'a> Visit<'a> for Requests<'_> {
     }
 
     fn visit_identifier_reference(&mut self, name: &IdentifierReference<'a>) {
-        // The global facade delegates rich values and formatting to the same SDK
-        // module as require('node:console'), even when an entry only uses writers.
-        let global = name.reference_id.get().is_some_and(|reference| {
-            self.scoping.get_reference(reference).symbol_id().is_none()
-        });
-        if global {
-            if name.name == "console" { self.specifiers.insert("node:console".into()); }
-            if name.name == "performance"
-                || commonjs::WEB_STREAM_GLOBALS.iter().chain(commonjs::WEB_API_GLOBALS).chain(commonjs::FETCH_API_GLOBALS)
-                    .any(|global| *global == name.name.as_str()) {
-                self.host_globals.insert(name.name.to_string());
-            }
-        }
+        let Some(reference) = self.runtime_reference(name) else { return };
+        let global = reference.symbol_id().is_none();
+        if global { self.record_host_global(name.name.as_str()); }
         if name.name == "require" && !self.classified_requires.contains(&name.span.start) {
             self.dynamic_requires.insert(name.span.start);
         }
+    }
+
+    fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
+        if self.is_global_object(&member.object) { self.record_host_global(member.property.name.as_str()); }
+        walk::walk_static_member_expression(self, member);
+    }
+
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        if let (true, Expression::StringLiteral(name)) =
+            (self.is_global_object(&member.object), member.expression.get_inner_expression()) {
+            self.record_host_global(name.value.as_str());
+        }
+        walk::walk_computed_member_expression(self, member);
     }
 
     fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
