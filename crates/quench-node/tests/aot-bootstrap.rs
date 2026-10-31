@@ -53,6 +53,10 @@ fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
     assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/internal/process/report.js")));
     assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/fs.js")));
     assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with("lib/fs.js")));
+    for source in ["lib/internal/fs/glob.js", "deps/minimatch/index.js"] {
+        assert!(staged.assets().files.keys().any(|path| path.ends_with(source)), "{source}");
+        assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(source)), "{source}");
+    }
     for source in ["lib/internal/fs/promises.js", "lib/internal/abort_controller.js"] {
         assert!(staged.assets().views.keys().any(|(path, _)| path.ends_with(source)), "{source}");
     }

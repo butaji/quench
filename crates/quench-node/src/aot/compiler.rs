@@ -225,7 +225,8 @@ pub(crate) fn stage_host_sources(
                     // Namespace readers can observe directory/glob policy as well
                     // as streams, including fs.promises reached through fs.
                     crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs")?;
-                    return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs/promises");
+                    crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs/promises")?;
+                    return crate::modules::fs_shared_vm::stage_glob_policy(context);
                 }
                 // Domain's capture callback preserves the process report flag.
                 "domain" => (process, "report"),
