@@ -101,6 +101,7 @@ static LIMIT_THREAD_CACHE: extern "C" fn(
 /// faulted in with their neighbours are released.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 extern "C" fn fault_only_touched_pages() {
+    quench_node::host::resident_pages::phase_peak("load");
     quench_node::host::resident_pages::map_touched_pages_only();
     quench_node::host::resident_pages::release_read_only_pages();
     quench_runtime::set_compile_phase_boundary(quench_node::host::resident_pages::at_compile_phase);
@@ -111,7 +112,14 @@ extern "C" fn fault_only_touched_pages() {
 #[unsafe(link_section = ".init_array")]
 static FAULT_ONLY_TOUCHED_PAGES: extern "C" fn() = fault_only_touched_pages;
 
+/// Reports the last phase's peak at exit (`resident_pages::phase_peak`).
+extern "C" fn report_exit_peak() {
+    quench_node::host::resident_pages::phase_peak("run to exit");
+}
+
 fn main() -> std::process::ExitCode {
+    // SAFETY: registers a handler that only reads and writes this process's proc files.
+    unsafe { libc::atexit(report_exit_peak) };
     #[cfg(target_os = "linux")]
     if let Err(error) = quench_node::shared_run::initialize_cli_process_signals() {
         eprintln!("initialize CLI process signals: {error}");
