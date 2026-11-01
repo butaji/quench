@@ -104,10 +104,7 @@ pub(crate) fn install(
 ) -> Result<(), RootedError> {
     let prototype = get(context, constructor, "prototype")?;
     let undefined = context.undefined();
-    let factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!("operation=>function(){'use strict';return operation(this);}"),
-        "node:net/endpoint-method.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:net/endpoint-method.js")?;
     for (name, operation) in [
         ("_getpeername", "netSocketPeerName"),
         ("_getsockname", "netSocketLocalName"),

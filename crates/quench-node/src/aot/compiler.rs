@@ -185,7 +185,7 @@ pub(crate) fn stage_host_sources(
     // Process is an implicit Node entry capability and can escape through
     // aliases or reflection. Materialize its declared lazy groups, without
     // invoking ordinary accessor getters or any process operation.
-    for name in crate::polyfills::post_bootstrap::process_surface_00::LAZY_MEMBERS {
+    for name in crate::modules::process_surface::LAZY_MEMBERS {
         context.materialize_lazy_data_property_rooted(process, name)?;
     }
     let env = context.string_rooted("env");
@@ -338,67 +338,7 @@ impl SourceManifest {
 mod tests {
     use super::*;
 
-    #[test]
-    fn host_staging_uses_builtin_loaders_without_a_secondary_cache() {
-        std::thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(|| {
-            let directory = std::env::temp_dir().join(format!("quench-staged-builtin-loaders-{}", std::process::id()));
-            fs::create_dir(&directory).unwrap();
-            let entry = directory.join("entry.mjs");
-            fs::write(&entry, r#"
-                import 'node:process';
-                import 'node:path';
-                import 'node:path/posix';
-                import 'node:path/win32';
-                import 'node:assert';
-                import 'node:assert/strict';
-                import 'node:async_hooks';
-                import 'node:diagnostics_channel';
-                throw new Error('application entry must not execute during staging');
-            "#).unwrap();
-            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
-            assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::node_sources::NODE_SOURCE_DIR);
-            SourceManifest::capture_for_graph(&root, &graph).unwrap();
-            fs::remove_dir_all(directory).unwrap();
-        }).unwrap().join().unwrap();
-    }
 
-    #[test]
-    fn commonjs_import_facades_stage_create_require_url_policy() {
-        std::thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(|| {
-            let directory = std::env::temp_dir().join(format!("quench-staged-create-require-{}", std::process::id()));
-            fs::create_dir(&directory).unwrap();
-            let entry = directory.join("entry.mjs");
-            fs::write(&entry, "import value from './dependency.cjs'; throw new Error('application must not execute during staging');").unwrap();
-            fs::write(directory.join("dependency.cjs"), "module.exports = 42;").unwrap();
-            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
-            assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
-            assert!(graph.esm_builtins.contains("node:module"));
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::node_sources::NODE_SOURCE_DIR);
-            let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
-            assert!(staged.assets().files.keys().any(|path|path.ends_with("lib/internal/url.js")));
-            fs::remove_dir_all(directory).unwrap();
-        }).unwrap().join().unwrap();
-    }
-    #[test]
-    fn host_staging_captures_performance_and_lazy_buffer_exports() {
-        std::thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(|| {
-            let directory = std::env::temp_dir().join(format!("quench-staged-global-exports-{}", std::process::id()));
-            fs::create_dir(&directory).unwrap();
-            let entry = directory.join("entry.cts");
-            fs::write(&entry, "require('node:buffer'); (performance as unknown as {now(): number}).now(); new globalThis.TextEncoder(); new globalThis['TextDecoder'](); new EventTarget(); throw new Error('entry must not execute during staging');").unwrap();
-            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
-            assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
-            for name in ["performance", "TextEncoder", "TextDecoder", "EventTarget"] {
-                assert!(graph.host_globals.contains(name), "missing {name}: {:?}", graph.host_globals);
-            }
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::node_sources::NODE_SOURCE_DIR);
-            let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
-            assert!(staged.units().any(|key| key.name() == "node:perf_hooks.js"));
-            assert!(staged.assets().files.keys().any(|path|path.ends_with("lib/internal/blob.js")));
-            fs::remove_dir_all(directory).unwrap();
-        }).unwrap().join().unwrap();
-    }
 
     #[test]
     fn local_names_and_typescript_assertions_do_not_create_host_global_demands() {

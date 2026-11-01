@@ -7,7 +7,6 @@ pub(crate) mod commonjs;
 pub(crate) mod commonjs_exports;
 mod esm_errors;
 pub(crate) mod esm_wasm;
-pub(crate) mod policy_projection;
 pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
@@ -1536,10 +1535,7 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
     let dispatch =
         context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
-    let emitter_factory = context.evaluate_script_rooted(
-        crate::polyfills::bootstrap::event_emitter::JS,
-        "node:bootstrap/event-emitter.js",
-    )?;
+    let emitter_factory = crate::host::removed_javascript("node:bootstrap/event-emitter.js")?;
     let undefined = context.undefined();
     let inspector = context.host_function(operation("emitterErrorInspector"))?;
     let event_emitter = context.call_rooted(
@@ -1599,16 +1595,8 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
         || shared.workers.inherited_expose_gc;
     drop(shared);
     if expose_gc {
-        let collect = context.host_function(operation("gc"))?;
-        let schedule = context.host_function(operation("setImmediate"))?;
-        let factory = context.evaluate_script_rooted(
-            // Async collection starts in the next host job, after the current
-            // job's WeakRef kept-alive roots have been cleared.
-            "(collect, schedule) => function gc(...args) {\n  if (args[0]?.execution !== 'async') return collect();\n  return new Promise((resolve, reject) => schedule(() => {\n    try { resolve(collect()); } catch (error) { reject(error); }\n  }));\n}",
-            "node:bootstrap/gc.js",
-        )?;
-        let undefined = context.undefined();
-        let gc = context.call_rooted(factory, undefined, &[collect, schedule])?;
+        // `gc()` collects at once; Node's `{ execution: 'async' }` form is not implemented.
+        let gc = context.host_function(operation("gc"))?;
         let key = context.string_rooted("gc");
         let global = context.global_root()?;
         context.define_data_property_rooted(global, key, gc, true, true, false)?;

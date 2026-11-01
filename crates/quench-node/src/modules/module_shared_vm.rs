@@ -2,14 +2,6 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
-const REQUIRE_FACADES: &str = quench_js_check::checked_js!(
-    r#"(requireNative, pathsNative) => {
-      'use strict';
-      return [
-      function createRequire(filename) { return requireNative(filename); },
-      function(from) { return pathsNative(from); }
-    ]; }"#
-);
 
 pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "_http_agent",
@@ -109,23 +101,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         parents,
     )?;
     let native_parent_set = parent_set;
-    let deprecate_parent = context.evaluate_script_rooted(
-        r#"(get, set, process) => {
-          let warned = false;
-          const deprecate = (fn) => function deprecated(...args) {
-            if (!warned && (process.execArgv.includes('--pending-deprecation') ||
-                process.env.NODE_PENDING_DEPRECATION === '1')) {
-              warned = true;
-              process.emitWarning(
-                'module.parent is deprecated due to accuracy issues. Please use require.main to find program entry point instead.',
-                { type: 'DeprecationWarning', code: 'DEP0144' });
-            }
-            return Reflect.apply(fn, this, args);
-          };
-          return [deprecate(get), deprecate(set)];
-        }"#,
-        "node:module/parent-deprecation.js",
-    )?;
+    let deprecate_parent = crate::host::removed_javascript("node:module/parent-deprecation.js")?;
     let process = get(context, global, "process")?;
     let undefined = context.undefined();
     let deprecated =
@@ -188,7 +164,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "fsBindingInternalModuleStat",
     ))?;
     let factory =
-        context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
+        crate::host::removed_javascript("node:module/require-facades.js")?;
     let undefined = context.undefined();
     let facades = context.call_rooted(factory, undefined, &[require_native, paths_native])?;
     let create_require = get(context, facades, "0")?;
@@ -230,40 +206,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             // type. Quench does not yet implement native compile-cache entry
             // points, so preserve this observable validation at the public
             // API boundary rather than leaking a generic call error.
-            let wrap = context.evaluate_script_rooted(
-                r#"(nativeEnableCompileCache, constants, process) => function enableCompileCache(options) {
-                  if (options === null ||
-                      (options !== undefined && typeof options !== 'string' && typeof options !== 'object')) {
-                    const error = new TypeError('The "directory" argument must be of type string.');
-                    error.code = 'ERR_INVALID_ARG_TYPE';
-                    throw error;
-                  }
-                  const directory = typeof options === 'object' ? options.directory : options;
-                  if (directory !== undefined && typeof directory !== 'string') {
-                    const error = new TypeError('The "directory" argument must be of type string.');
-                    error.code = 'ERR_INVALID_ARG_TYPE';
-                    throw error;
-                  }
-                  if (process.env.NODE_DISABLE_COMPILE_CACHE) {
-                    if ((process.env.NODE_DEBUG_NATIVE || '').includes('COMPILE_CACHE')) {
-                      process.stderr.write('Disabled by NODE_DISABLE_COMPILE_CACHE\n');
-                    }
-                    return { status: constants.compileCacheStatus.DISABLED };
-                  }
-                  // The API remains available in builds without the native
-                  // cache backend. Report the documented failure result rather
-                  // than trying to call an absent native binding or claiming
-                  // that an on-disk cache was enabled.
-                  if (typeof nativeEnableCompileCache !== 'function') {
-                    return {
-                      status: constants.compileCacheStatus.FAILED,
-                      message: 'Compile cache is not supported by this runtime.',
-                    };
-                  }
-                  return nativeEnableCompileCache(options);
-                }"#,
-                "node:module/compile-cache-validation.js",
-            )?;
+            let wrap = crate::host::removed_javascript("node:module/compile-cache-validation.js")?;
             let this_value = context.undefined();
             let constants = get(context, helpers, "constants")?;
             value = context.call_rooted(wrap, this_value, &[value, constants, process])?;
@@ -271,65 +214,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             // With no native cache backend there is nothing to flush. Preserve
             // the public API's void return and avoid exposing an internal
             // missing-binding TypeError.
-            let wrap = context.evaluate_script_rooted(
-                r#"(nativeFlushCompileCache) => function flushCompileCache() {
-                  if (typeof nativeFlushCompileCache === 'function') {
-                    return nativeFlushCompileCache();
-                  }
-                }"#,
-                "node:module/compile-cache-flush.js",
-            )?;
+            let wrap = crate::host::removed_javascript("node:module/compile-cache-flush.js")?;
             let this_value = context.undefined();
             value = context.call_rooted(wrap, this_value, &[value])?;
         } else if name == "getCompileCacheDir" {
             // The modules binding reports an active directory only when a
             // cache backend actually enabled one. NODE_COMPILE_CACHE alone
             // cannot make this runtime claim that a bytecode cache is active.
-            let wrap = context.evaluate_script_rooted(
-                r#"(nativeGetCompileCacheDir, process) => function getCompileCacheDir() {
-                  if (process.env.NODE_DISABLE_COMPILE_CACHE) return undefined;
-                  return typeof nativeGetCompileCacheDir === 'function'
-                    ? nativeGetCompileCacheDir()
-                    : undefined;
-                }"#,
-                "node:module/compile-cache-env.js",
-            )?;
+            let wrap = crate::host::removed_javascript("node:module/compile-cache-env.js")?;
             let this_value = context.undefined();
             value = context.call_rooted(wrap, this_value, &[value, process])?;
         }
         set(context, module, name, value)?;
     }
-    let initialize_paths = context.evaluate_script_rooted(
-        "(Module, process, delimiter, path) => {\n\
-          Module._initPaths = function _initPaths() {\n\
-            const homeDir = process.env.HOME;\n\
-            const nodePath = process.env.NODE_PATH;\n\
-            let paths = [path.resolve(process.execPath, '..', '..', 'lib', 'node')];\n\
-            if (homeDir) paths.unshift(path.resolve(homeDir, '.node_modules'), path.resolve(homeDir, '.node_libraries'));\n\
-            if (nodePath) paths = nodePath.split(delimiter).filter(Boolean).concat(paths);\n\
-            Module.globalPaths = paths;\n\
-          };\n\
-          Module._resolveLookupPaths = function _resolveLookupPaths(request, parent) {\n\
-            request = String(request);\n\
-            const relative = request[0] === '.' && (request.length === 1 || request[1] === '.' || request[1] === '/' || (path.sep === '\\\\' && request[1] === '\\\\'));\n\
-            if (!relative && (Module.builtinModules.includes(request) || Module.builtinModules.includes(request.replace(/^node:/, '')))) return null;\n\
-            if (!relative) {\n\
-              const paths = parent?.paths?.length ? [...parent.paths, ...Module.globalPaths] : Module.globalPaths;\n\
-              return paths.length ? [...paths] : null;\n\
-            }\n\
-            if (!parent || !parent.id || !parent.filename) return ['.'];\n\
-            return [path.dirname(parent.filename)];\n\
-          };\n\
-          Module._load = function _load(request, parent) {\n\
-            if (parent && typeof parent.require === 'function') return parent.require(request);\n\
-            request = String(request);\n\
-            if (Module.builtinModules.includes(request)) return process.getBuiltinModule(request.replace(/^node:/, ''));\n\
-            const entry = path.resolve(process.cwd(), '__quench_module_load__.js');\n\
-            return Module.createRequire(entry)(request);\n\
-          };\n\
-        }",
-        "node:module/shared-path-facades.js",
-    )?;
+    let initialize_paths = crate::host::removed_javascript("node:module/shared-path-facades.js")?;
     let undefined = context.undefined();
     context.call_rooted(
         initialize_paths,

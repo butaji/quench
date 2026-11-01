@@ -115,7 +115,7 @@ fn api(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let path = crate::host::shared_vm::commonjs::path_module(c)?;
     let url = crate::host::shared_vm::commonjs::url_module(c)?;
     let file_url_to_path = get(c, url, "fileURLToPath")?;
-    let factory = c.evaluate_script_rooted(js::MESSAGING_JS, "node:internal/worker/io.js")?;
+    let factory = crate::host::removed_javascript("node:internal/worker/io.js")?;
     let undefined = c.undefined();
     let api = c.call_rooted(factory, undefined, &[native, events, path, file_url_to_path, readable])?;
     let api = c.retain(api)?;

@@ -152,16 +152,7 @@ fn fetch_blob_url(
     let this = buffer;
     let url = context.string_rooted(url);
     let blob = context.call_rooted(resolver, this, &[url])?;
-    let make_response = context.evaluate_script_rooted(
-        r#"(blob) => {
-          if (blob === undefined) return Promise.reject(new TypeError("Invalid blob URL"));
-          return Promise.resolve(new Response(blob, {
-            status: 200,
-            headers: blob.type ? { "content-type": blob.type } : {},
-          }));
-        }"#,
-        "node:internal/fetch/blob-url.js",
-    )?;
+    let make_response = crate::host::removed_javascript("node:internal/fetch/blob-url.js")?;
     let undefined = context.undefined();
     context.call_rooted(make_response, undefined, &[blob])
 }

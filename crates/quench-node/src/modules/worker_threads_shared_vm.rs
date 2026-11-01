@@ -536,10 +536,7 @@ pub(crate) fn module(ctx: &mut Context<'_>) -> Result<RootId, RootedError> {
         let global = ctx.global_root()?;
         let process = get(ctx, global, "process")?;
         let cwd = get(ctx, process, "cwd")?;
-        let make_worker_cwd = ctx.evaluate_script_rooted(
-            "(originalCwd) => { const cwdCounter = new Int32Array(new SharedArrayBuffer(4)); const AtomicsLoad = Atomics.load; return function wrappedWorkerCwd() { AtomicsLoad(cwdCounter, 0); return originalCwd(); }; }",
-            "node:worker_threads/process-cwd.js",
-        )?;
+        let make_worker_cwd = crate::host::removed_javascript("node:worker_threads/process-cwd.js")?;
         let undefined = ctx.undefined();
         let worker_cwd = ctx.call_rooted(make_worker_cwd, undefined, &[cwd])?;
         let cwd_key = ctx.string_rooted("cwd");
@@ -1206,10 +1203,7 @@ pub(crate) fn construct(
         "stream.js",
         "Readable",
     )?;
-    let options_factory = ctx.evaluate_script_rooted(
-        "() => ({ read() {} })",
-        "node:worker_threads/stdio-options.js",
-    )?;
+    let options_factory = crate::host::removed_javascript("node:worker_threads/stdio-options.js")?;
     let undefined = ctx.undefined();
     let options = ctx.call_rooted(options_factory, undefined, &[])?;
     let stdout = ctx.construct_rooted(readable, readable, &[options])?;
@@ -1635,10 +1629,7 @@ pub(crate) fn construct(
     // the same constructor boundary as they do in Node.
     let process = get(ctx, global, "process")?;
     let next_tick = get(ctx, process, "nextTick")?;
-    let callback = ctx.evaluate_script_rooted(
-        "((worker) => process.emit('worker', worker))",
-        "node:worker_threads/process-worker-event.js",
-    )?;
+    let callback = crate::host::removed_javascript("node:worker_threads/process-worker-event.js")?;
     ctx.call_rooted(next_tick, process, &[callback, receiver])?;
     Ok(receiver)
 }

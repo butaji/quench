@@ -3,8 +3,6 @@
 //! its boundary; source byte offsets are never inferred from marker strings.
 use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
-use oxc_ast::ast::Statement;
-use oxc_span::GetSpan;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn original_aborted(
@@ -58,56 +56,10 @@ pub(crate) fn original_aborted(
 /// Load an unchanged configured SDK declaration; OXC owns source boundaries.
 /// Binding names are the original lexical imports supplied by native providers.
 pub(crate) fn bind_original(
-    context: &mut NativeContext<'_, NodeHost>,
-    name: &str,
-    asynchronous: bool,
-    bindings: &[(&str, RootId)],
+    _: &mut NativeContext<'_, NodeHost>,
+    _: &str,
+    _: bool,
+    _: &[(&str, RootId)],
 ) -> Result<RootId, RootedError> {
-    let root = context.host_mut().node_library_root.clone();
-    let filename = root.join("lib/internal/abort_controller.js");
-    let declaration = context
-        .host_mut()
-        .node_library_view(
-            &filename,
-            crate::node_sources::LibrarySource::Configured,
-            crate::node_sources::SourceView::Declaration { name, asynchronous },
-            |source| {
-                let allocator = oxc_allocator::Allocator::default();
-                let parsed =
-                    oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs())
-                        .parse();
-                if !parsed.diagnostics.is_empty() {
-                    return Err("configured abort controller source does not parse".to_owned());
-                }
-                let mut declaration = None;
-                for statement in &parsed.program.body {
-                    if let Statement::FunctionDeclaration(function) = statement {
-                        if function.id.as_ref().is_some_and(|id| id.name == name) {
-                            if declaration.is_some() || function.r#async != asynchronous {
-                                return Err(
-                                    "ambiguous configured abort policy declaration".to_owned()
-                                );
-                            }
-                            let span = function.span();
-                            declaration = source.get(span.start as usize..span.end as usize);
-                        }
-                    }
-                }
-                Ok(declaration
-                    .ok_or("configured abort policy declaration missing")?
-                    .to_owned())
-            },
-        )
-        .map_err(RootedError::host)?;
-
-    let names = bindings
-        .iter()
-        .map(|(name, _)| *name)
-        .collect::<Vec<_>>()
-        .join(",");
-    let factory = format!("(function({names}) {{ 'use strict';\n{declaration}\nreturn {name}; }})");
-    let factory = context.evaluate_script_rooted(&factory, &filename.to_string_lossy())?;
-    let values = bindings.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-    let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &values)
+    crate::host::removed_javascript("node:internal/abort_controller.js")
 }

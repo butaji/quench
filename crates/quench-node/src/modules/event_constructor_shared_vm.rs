@@ -99,7 +99,7 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
         crate::host::shared_vm::operation("emitterCaptureDefaultSet"),
         data,
     )?;
-    let factory = context.evaluate_script_rooted("(getNative, setNative) => ({get: function get() { return getNative(); }, set: function set(value) { return setNative(value); }})", "node:events/capture-default.js")?;
+    let factory = crate::host::removed_javascript("node:events/capture-default.js")?;
     let api = context.call_rooted(factory, undefined, &[get_native, set_native])?;
     let descriptor = context.null_object_rooted()?;
     for name in ["get", "set"] {

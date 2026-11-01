@@ -95,19 +95,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
         return Ok(api);
     }
     let api = context.null_object_rooted()?;
-    let fatal_error = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            r#"(function asyncHookFatalError(error) {
-            if (typeof error?.stack === 'string') {
-              process._rawDebug(error.stack);
-            } else {
-              process._rawDebug(`Error: ${String(error)}`);
-            }
-            process.exit(1);
-          })"#
-        ),
-        "node:async_hooks/fatal-error.js",
-    )?;
+    let fatal_error = crate::host::removed_javascript("node:async_hooks/fatal-error.js")?;
     let fatal_error_key = context.string_rooted("fatalError");
     context.define_data_property_rooted(api, fatal_error_key, fatal_error, true, false, true)?;
     let operations = context

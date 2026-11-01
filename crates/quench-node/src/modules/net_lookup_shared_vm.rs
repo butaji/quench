@@ -4,12 +4,6 @@ use super::net_shared_vm;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const SINGLE_CALLBACK: &str = quench_js_check::checked_js!(
-    r#"native => function emitLookup(err, ip, addressType) { 'use strict'; return native(err, ip, addressType); }"#
-);
-const MULTIPLE_CALLBACK: &str = quench_js_check::checked_js!(
-    r#"native => function emitLookup(err, addresses) { 'use strict'; return native(err, addresses); }"#
-);
 
 const IPV4_FAMILY: f64 = super::net_config::IPV4_FAMILY as f64;
 const IPV6_FAMILY: f64 = super::net_config::IPV6_FAMILY as f64;
@@ -116,14 +110,7 @@ pub(super) fn start(
     }
     let callback = context
         .host_function_with_data(crate::host::shared_vm::operation("netLookupResult"), owner)?;
-    let factory = context.evaluate_script_rooted(
-        if all {
-            MULTIPLE_CALLBACK
-        } else {
-            SINGLE_CALLBACK
-        },
-        "node:net/lookup-callback.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:net/lookup-callback.js")?;
     let callback = context.call_rooted(factory, undefined, &[callback])?;
     let name = context.string_rooted("_host");
     context.set_property_rooted(socket, name, host, socket)?;

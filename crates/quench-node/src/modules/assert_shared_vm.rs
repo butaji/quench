@@ -104,34 +104,7 @@ fn install_async_rejects_stack(
     {
         return Ok(());
     }
-    let source = r#"((assertModule) => {
-      function patchRejects(target) {
-        if (!target) return;
-        const descriptor = Object.getOwnPropertyDescriptor(target, 'rejects');
-        if (!descriptor || typeof descriptor.value !== 'function') return;
-        const original = descriptor.value;
-        function rejects(...args) {
-          return Reflect.apply(original, this, args).catch((error) => {
-            // The engine cannot reconstruct V8's async parent frames after an
-            // await. Keep Node's visible async `rejects` frame when the
-            // assertion stack was otherwise trimmed to only its message.
-            if (error?.code === 'ERR_ASSERTION' &&
-                error.operator === 'rejects' &&
-                typeof error.stack === 'string' &&
-                !error.stack.includes('rejects')) {
-              error.stack += '\n    at async rejects';
-            }
-            throw error;
-          });
-        }
-        Object.defineProperty(rejects, 'name', { value: original.name, configurable: true });
-        Object.defineProperty(rejects, 'length', { value: original.length });
-        Object.defineProperty(target, 'rejects', { ...descriptor, value: rejects });
-      }
-      patchRejects(assertModule);
-      patchRejects(assertModule.strict);
-    })"#;
-    let installer = context.evaluate_script_rooted(source, "assert/async-rejects-stack.js")?;
+    let installer = crate::host::removed_javascript("assert/async-rejects-stack.js")?;
     let undefined = context.undefined();
     context.call_rooted(installer, undefined, &[module])?;
     let retained = context.retain(module)?;

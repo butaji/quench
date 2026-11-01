@@ -69,7 +69,6 @@ impl SharedNodeState {
             buffer_pool,
             commonjs_cache,
             primordials_module,
-            realm_module_programs,
             crypto_handle_symbol,
             library_originals,
             event_targets_api,
@@ -139,7 +138,6 @@ impl SharedNodeState {
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
         require_quiescent(fs.snapshot_quiescent(), "open file descriptors")?;
         require_quiescent(process_signals.snapshot_quiescent(), "signal listeners")?;
-        require_quiescent(realm_module_programs.is_empty(), "realm module programs")?;
         require_quiescent(active_esm_requires.is_empty(), "an ESM require")?;
         require_quiescent(
             net_sockets.is_empty()

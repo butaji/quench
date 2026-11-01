@@ -377,10 +377,7 @@ fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let process_surface = context.evaluate_script_rooted(
-        crate::polyfills::post_bootstrap::process_surface_00::JS,
-        "node:bootstrap/process-surface.js",
-    )?;
+    let process_surface = crate::host::removed_javascript("node:bootstrap/process-surface.js")?;
     context.release_root(process_surface);
     let global = context.global_root()?;
     let process_key = context.string_rooted("process");
@@ -393,7 +390,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let initializer = context.host_function(super::operation("processSurfaceInitialize"))?;
     context.define_lazy_data_properties_rooted(
         process,
-        crate::polyfills::post_bootstrap::process_surface_00::LAZY_MEMBERS,
+        crate::modules::process_surface::LAZY_MEMBERS,
         true,
         initializer,
     )?;
@@ -442,10 +439,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
         // so seed stable symbols for Node's internal modules first.
-        let seed_disposal_symbols = context.evaluate_script_rooted(
-            "() => { Symbol.dispose ||= Symbol('Symbol.dispose'); Symbol.asyncDispose ||= Symbol('Symbol.asyncDispose'); }",
-            "node:bootstrap/disposal-symbols.js",
-        )?;
+        let seed_disposal_symbols = crate::host::removed_javascript("node:bootstrap/disposal-symbols.js")?;
         let undefined = context.undefined();
         context.call_rooted(seed_disposal_symbols, undefined, &[])?;
     }
@@ -525,22 +519,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // descriptors by default, so normalize their public descriptors before
     // user preloads inspect globalThis. Node 26 also provides navigator by
     // default; retain the standard getter shape even when the engine lacks it.
-    let install_node_global_descriptors = context.evaluate_script_rooted(
-        "() => {\n\
-          for (const name of ['queueMicrotask', 'clearImmediate', 'clearInterval', 'clearTimeout', 'setImmediate', 'setInterval', 'setTimeout', 'structuredClone', 'fetch', 'crypto', 'performance']) {\n\
-            const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);\n\
-            if (descriptor && !descriptor.enumerable) Object.defineProperty(globalThis, name, { ...descriptor, enumerable: true });\n\
-          }\n\
-          if (!Object.getOwnPropertyDescriptor(globalThis, 'navigator')) {\n\
-            const navigator = { userAgent: `Node.js/${process.versions.node.split('.')[0]}` };\n\
-            Object.defineProperty(globalThis, 'navigator', { configurable: true, enumerable: true, get: Object.defineProperty(() => navigator, 'name', { value: 'get navigator' }) });\n\
-          }\n\
-          if (!Object.hasOwn(globalThis, Symbol.toStringTag)) {\n\
-            Object.defineProperty(globalThis, Symbol.toStringTag, { value: 'global', configurable: true });\n\
-          }\n\
-        }",
-        "node:bootstrap/global-descriptors.js",
-    )?;
+    let install_node_global_descriptors = crate::host::removed_javascript("node:bootstrap/global-descriptors.js")?;
     let undefined = context.undefined();
     context.call_rooted(install_node_global_descriptors, undefined, &[])?;
     context.scoped(preload_modules)?;
@@ -614,10 +593,7 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     let stream = cached_builtin(context, BuiltinModule::Stream)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_stream_module");
-    let install = context.evaluate_script_rooted(
-        "(path, stream) => Object.defineProperties(globalThis, { __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
-        "node:bootstrap/vfs-globals.js",
-    )?;
+    let install = crate::host::removed_javascript("node:bootstrap/vfs-globals.js")?;
     let undefined = context.undefined();
     context.call_rooted(install, undefined, &[path, stream])?;
     let vfs_constructor = node_library_export(
@@ -626,163 +602,7 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
         "internal/vfs/file_system.js",
         "VirtualFileSystem",
     )?;
-    let install_loader_projection = context.evaluate_script_rooted(
-        r###"((VirtualFileSystem) => {
-  const mounted = globalThis.__quenchVfsMountedLayers || new Set();
-  Object.defineProperty(globalThis, '__quenchVfsMountedLayers', {
-    configurable: true, value: mounted,
-  });
-  const prototype = VirtualFileSystem.prototype;
-  const wrapped = Symbol.for('quench.node.vfs.loaderProjection');
-  if (!prototype[wrapped]) {
-    const mount = prototype.mount;
-    const unmount = prototype.unmount;
-    Object.defineProperty(prototype, 'mount', {
-      configurable: true, writable: true,
-      value: function mountWithLoaderProjection(...args) {
-        const result = Reflect.apply(mount, this, args);
-        mounted.add(this);
-        return result;
-      },
-    });
-    Object.defineProperty(prototype, 'unmount', {
-      configurable: true, writable: true,
-      value: function unmountWithLoaderProjection(...args) {
-        const mountPoint = this.mountPoint;
-        const result = Reflect.apply(unmount, this, args);
-        mounted.delete(this);
-        if (typeof mountPoint === 'string') {
-          const require = globalThis['\0quench:require'];
-          if (typeof require === 'function') {
-            const Module = require('module');
-            const prefix = `${path.resolve(mountPoint)}${path.sep}`;
-            const cache = Module && Module._cache;
-            if (cache && typeof cache === 'object') {
-              for (const filename of Object.keys(cache)) {
-                if (filename === mountPoint || filename.startsWith(prefix)) delete cache[filename];
-              }
-            }
-            const pathCache = Module && Module._pathCache;
-            if (pathCache && typeof pathCache === 'object') {
-              for (const key of Object.keys(pathCache)) {
-                const filename = pathCache[key];
-                if (typeof filename === 'string' &&
-                    (filename === mountPoint || filename.startsWith(prefix))) delete pathCache[key];
-              }
-            }
-          }
-        }
-        return result;
-      },
-    });
-    Object.defineProperty(prototype, wrapped, { value: true });
-  }
-  const path = globalThis.__nodePath;
-  const findLayer = (filename) => {
-    const candidate = path.resolve(String(filename));
-    return [...mounted].reverse().find((layer) => {
-      if (!layer.mounted || typeof layer.mountPoint !== 'string') return false;
-      const mountPoint = path.resolve(layer.mountPoint);
-      return candidate === mountPoint || candidate.startsWith(`${mountPoint}${path.sep}`);
-    });
-  };
-  const moduleType = (filename) => {
-    const candidate = path.resolve(String(filename));
-    const layer = findLayer(candidate);
-    if (!layer) return undefined;
-    const mountPoint = path.resolve(layer.mountPoint);
-    let directory = path.dirname(candidate);
-    for (;;) {
-      const packagePath = path.join(directory, 'package.json');
-      try {
-        if (layer.statSync(packagePath).isFile()) {
-          const pkg = JSON.parse(layer.readFileSync(packagePath, 'utf8'));
-          return pkg && pkg.type === 'module' ? 'module' : 'commonjs';
-        }
-      } catch (cause) {
-        if (cause && cause.code !== 'ENOENT' && cause.code !== 'ENOTDIR') {
-          const error = new Error(`Invalid package config ${packagePath}. ${cause.message}`);
-          error.code = 'ERR_INVALID_PACKAGE_CONFIG';
-          error.path = packagePath;
-          throw error;
-        }
-      }
-      if (directory === mountPoint) break;
-      const parent = path.dirname(directory);
-      if (parent === directory ||
-          !(parent === mountPoint || parent.startsWith(`${mountPoint}${path.sep}`))) break;
-      directory = parent;
-    }
-    return 'commonjs';
-  };
-  const resolveModulePath = (base, request) => {
-    if (typeof base !== 'string' || typeof request !== 'string') return undefined;
-    const candidate = path.isAbsolute(request)
-      ? path.resolve(request)
-      : path.resolve(base, request);
-    const layer = findLayer(candidate);
-    if (!layer) return undefined;
-    const isFile = (filename) => {
-      try { return layer.statSync(filename).isFile(); } catch { return false; }
-    };
-    const isDirectory = (filename) => {
-      try { return layer.statSync(filename).isDirectory(); } catch { return false; }
-    };
-    const extensions = ['.js', '.json', '.node', '.mjs', '.cjs'];
-    const resolveFile = (filename) => {
-      if (isFile(filename)) return filename;
-      if (path.extname(filename)) return undefined;
-      for (const extension of extensions) {
-        const withExtension = `${filename}${extension}`;
-        if (isFile(withExtension)) return withExtension;
-      }
-      return undefined;
-    };
-    const resolveDirectory = (directory, depth = 0) => {
-      if (!isDirectory(directory) || depth > 4) return undefined;
-      const packagePath = path.join(directory, 'package.json');
-      if (isFile(packagePath)) {
-        let pkg;
-        try { pkg = JSON.parse(layer.readFileSync(packagePath, 'utf8')); }
-        catch (cause) {
-          const error = new Error(`Invalid package config ${packagePath}. ${cause.message}`);
-          error.code = 'ERR_INVALID_PACKAGE_CONFIG';
-          error.path = packagePath;
-          throw error;
-        }
-        if (typeof pkg.main === 'string' && pkg.main.length > 0) {
-          const main = path.resolve(directory, pkg.main);
-          const file = resolveFile(main);
-          if (file) return file;
-          const nested = resolveDirectory(main, depth + 1);
-          if (nested) return nested;
-        }
-      }
-      for (const extension of extensions) {
-        const index = path.join(directory, `index${extension}`);
-        if (isFile(index)) return index;
-      }
-      return undefined;
-    };
-    return resolveFile(candidate) || resolveDirectory(candidate);
-  };
-  Object.defineProperty(globalThis, '__quenchVfsResolveModulePath', {
-    configurable: true, value: resolveModulePath,
-  });
-  Object.defineProperty(globalThis, '__quenchVfsModuleType', {
-    configurable: true, value: moduleType,
-  });
-  Object.defineProperty(globalThis, '__quenchVfsReadModuleSource', {
-    configurable: true,
-    value(filename) {
-      const candidate = path.resolve(String(filename));
-      const layer = findLayer(candidate);
-      return layer ? layer.readFileSync(candidate, 'utf8') : undefined;
-    },
-  });
-})"###,
-        "node:bootstrap/vfs-module-loader-projection.js",
-    )?;
+    let install_loader_projection = crate::host::removed_javascript("node:bootstrap/vfs-module-loader-projection.js")?;
     context.call_rooted(
         install_loader_projection,
         undefined,
@@ -961,30 +781,7 @@ pub(crate) fn vfs_position_set(
 
 /// Node's replaceable `performance` global loads `perf_hooks` on first access.
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let root = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            r#"(() => {
-  let value;
-  let loaded = false;
-  const accessors = {
-    get performance() {
-      if (!loaded) {
-        value = globalThis["\0quench:require"]("perf_hooks").performance;
-        loaded = true;
-      }
-      return value;
-    },
-    set performance(replacement) {
-      value = replacement;
-      loaded = true;
-    },
-  };
-  Object.defineProperty(globalThis, "performance",
-    Object.getOwnPropertyDescriptor(accessors, "performance"));
-})()"#
-        ),
-        "node:bootstrap/performance-global.js",
-    )?;
+    let root = crate::host::removed_javascript("node:bootstrap/performance-global.js")?;
     context.release_root(root);
     Ok(())
 }
@@ -1055,17 +852,6 @@ fn web_global_enabled(context: &mut Context<'_>, name: &str) -> bool {
         || context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-websocket")
 }
 
-/// Evaluates a polyfill as a block, so its declarations stay its own instead of becoming
-/// global lexical bindings that script could collide with.
-fn evaluate_polyfill_block(
-    context: &mut Context<'_>,
-    source: &str,
-    label: &str,
-) -> Result<RootId, RootedError> {
-    let root = context.evaluate_script_rooted(&format!("{{\n{source}\n}}"), label)?;
-    context.release_root(root);
-    Ok(context.undefined())
-}
 
 pub(super) fn initialize_web_streams(
     context: &mut Context<'_>,
@@ -1113,11 +899,7 @@ pub(super) fn initialize_process_surface(
 ) -> Result<RootId, RootedError> {
     #[cfg(unix)]
     crate::modules::process_memory_shared_vm::install(context)?;
-    evaluate_polyfill_block(
-        context,
-        crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS,
-        "node:bootstrap/process-surface-lazy.js",
-    )?;
+    crate::host::removed_javascript("node:bootstrap/process-surface-lazy.js")?;
     #[cfg(unix)]
     crate::modules::process_metrics_shared_vm::install(context)?;
     Ok(context.undefined())
@@ -1152,16 +934,8 @@ pub(super) fn initialize_web_apis(
         let undefined = context.undefined();
         context.call_rooted(expose_lazy_interfaces, undefined, &[global, id, keys])?;
     }
-    evaluate_polyfill_block(
-        context,
-        crate::polyfills::bootstrap::globals_extra::web_api_source(),
-        "node:bootstrap/shared-vm/web-apis.js",
-    )?;
-    evaluate_polyfill_block(
-        context,
-        crate::polyfills::bootstrap::broadcast_channel::JS,
-        "node:bootstrap/shared-vm/broadcast-channel.js",
-    )?;
+    crate::host::removed_javascript("node:bootstrap/shared-vm/web-apis.js")?;
+    crate::host::removed_javascript("node:bootstrap/shared-vm/broadcast-channel.js")?;
     // Keep the global constructor identical to Node's internal EventTarget
     // export. This is observable in Node's own global-surface assertions and
     // avoids a second, subtly incompatible CustomEvent implementation.
@@ -1486,64 +1260,7 @@ fn require_for_module_inner(
         return Err(context.throw(error));
     }
     if specifier == "internal/bootstrap/realm" {
-        let builtin_ids = BUILTIN_SPECIFIERS
-            .iter()
-            .filter_map(|(name, _)| {
-                (!name.starts_with("node:") && !name.starts_with("internal/")).then_some(*name)
-            })
-            .collect::<std::collections::BTreeSet<_>>();
-        let builtin_ids = serde_json::to_string(&builtin_ids)
-            .map_err(|error| RootedError::host(error.to_string()))?;
-        let source = format!(
-            r#"((nativeUtil) => {{
-  const ids = new Set({builtin_ids});
-  class BuiltinModule {{
-    static map = new Map(Array.from(ids, (id) => [id, new BuiltinModule(id)]));
-    constructor(id) {{ this.id = id; this.filename = `${{id}}.js`; this.exports = {{}}; this.loaded = false; this.loading = false; }}
-    static exists(id) {{ return this.map.has(id); }}
-    static canBeRequiredByUsers(id) {{ return ids.has(id); }}
-    static canBeRequiredWithoutScheme(id) {{ return ids.has(id); }}
-    static normalizeRequirableId(id) {{ const name = String(id).replace(/^node:/, ""); return ids.has(name) ? name : undefined; }}
-    static isBuiltin(id) {{ return this.normalizeRequirableId(id) !== undefined; }}
-    static getSchemeOnlyModuleNames() {{ return []; }}
-    static getAllBuiltinModuleIds() {{ return Array.from(ids); }}
-    static allowRequireByUsers(id) {{ ids.add(id); this.map.set(id, new BuiltinModule(id)); }}
-    static allowOptionGatedBuiltins(getOptionValue) {{
-      for (const [id, option] of [
-        ["bench", "--experimental-bench"],
-        ["bench/reporters", "--experimental-bench"],
-        ["dtls", "--experimental-dtls"],
-        ["ffi", "--experimental-ffi"],
-        ["sqlite", "--experimental-sqlite"],
-        ["quic", "--experimental-quic"],
-        ["stream/iter", "--experimental-stream-iter"],
-        ["vfs", "--experimental-vfs"],
-        ["zlib/iter", "--experimental-stream-iter"],
-      ]) {{
-        if (getOptionValue(option)) this.allowRequireByUsers(id);
-      }}
-    }}
-    static exposeInternals() {{}}
-    compileForInternalLoader() {{ return this.exports; }}
-    compileForPublicLoader() {{ return this.exports; }}
-  }}
-  const internalBinding = (name) => {{
-    if (name === "constants") return {{
-      fs: Object.assign({{ UV_DIRENT_UNKNOWN: 0, UV_DIRENT_FILE: 1, UV_DIRENT_DIR: 2, UV_DIRENT_LINK: 3, UV_DIRENT_FIFO: 4, UV_DIRENT_SOCKET: 5, UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7 }}, globalThis["\0quench:require"]("fs").constants),
-      os: {{ errno: {{ EISDIR: -21 }}, signals: {{}} }}
-    }};
-    if (name === "types") return {{ isNativeError: (value) => value instanceof Error, isPromise: (value) => value instanceof Promise }};
-    if (name === "string_decoder") return {{ encodings: ["ascii", "utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "base64", "base64url", "latin1", "binary", "hex"] }};
-    if (name === "util") return nativeUtil;
-    return {{}};
-  }};
-  return {{ BuiltinModule, internalBinding, require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
-}})"#
-        );
-        let factory = context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js")?;
-        let util = crate::modules::util_shared_vm::key_binding(context)?;
-        let undefined = context.undefined();
-        return context.call_rooted(factory, undefined, &[util]);
+        return crate::host::removed_javascript("internal/bootstrap/realm.js");
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
@@ -1595,20 +1312,14 @@ fn require_for_module_inner(
             );
         }
         Some(BuiltinModule::InternalBlockList) => {
-            let module = context.evaluate_script_rooted(
-                "({ kHandle: Symbol.for('quench.internal.blocklist.handle') })",
-                "internal/blocklist.js",
-            )?;
+            let module = crate::host::removed_javascript("internal/blocklist.js")?;
             let net = cached_builtin(context, BuiltinModule::Net)?;
             let constructor = get(context, net, "BlockList")?;
             set(context, module, "BlockList", constructor)?;
             return Ok(module);
         }
         Some(BuiltinModule::InternalSocketAddress) => {
-            let module = context.evaluate_script_rooted(
-                "({ kHandle: Symbol.for('quench.internal.socketaddress.handle') })",
-                "internal/socketaddress.js",
-            )?;
+            let module = crate::host::removed_javascript("internal/socketaddress.js")?;
             let net = cached_builtin(context, BuiltinModule::Net)?;
             let constructor = get(context, net, "SocketAddress")?;
             // cached_builtin may return the cache's retained root: ownership
@@ -2825,30 +2536,7 @@ fn task_queues_module(context: &mut Context<'_>) -> Result<RootId, RootedError> 
     let raw_queue_key = context.string_rooted("\0quench:queueMicrotaskRaw");
     let raw_enqueue = context.get_property_rooted(global, raw_queue_key)?;
     let require = get(context, global, BOOTSTRAP_REQUIRE)?;
-    let factory = context.evaluate_script_rooted(
-        r#"(enqueue, require) => {
-          // async_hooks loads on the first queued callback, not at bootstrap.
-          let AsyncResource;
-          function queueMicrotask(callback) {
-            // Delegate invalid inputs to the host operation so its established
-            // validation and error wording remain intact.
-            if (typeof callback !== "function") return enqueue(callback);
-            AsyncResource ??= require("async_hooks").AsyncResource;
-            const resource = new AsyncResource("Microtask", {
-              requireManualDestroy: true,
-            });
-            resource.callback = callback;
-            enqueue(() => {
-              resource.runInAsyncScope(() => {
-                try { resource.callback(); }
-                finally { resource.emitDestroy(); }
-              });
-            });
-          }
-          return { queueMicrotask };
-        }"#,
-        "node:internal/process/task_queues-quench.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:internal/process/task_queues-quench.js")?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[raw_enqueue, require])
 }
@@ -2889,26 +2577,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             // maps are disabled. The full Node implementation depends on
             // internals that Quench does not yet provide, so expose its
             // disabled-state contract without evaluating it during bootstrap.
-            context.evaluate_script_rooted(
-                r#"(() => {
-                  const support = Object.freeze({
-                    enabled: false,
-                    nodeModules: false,
-                    generatedCode: false,
-                  });
-                  const noop = () => undefined;
-                  return {
-                    getSourceMapsSupport: () => support,
-                    findSourceMap: noop,
-                    getSourceLine: noop,
-                    maybeCacheSourceMap: noop,
-                    maybeCacheGeneratedSourceMap: noop,
-                    sourceMapCacheToObject: () => ({}),
-                    setSourceMapsSupport: noop,
-                  };
-                })()"#,
-                "internal/source_map/source_map_cache-quench.js",
-            )
+            crate::host::removed_javascript("internal/source_map/source_map_cache-quench.js")
         }
         BuiltinModule::Internal("internal/zip") => {
             node_library_module(context, "zlib.js", "internal/zip.js")
@@ -3106,10 +2775,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let mut markers = Vec::new();
             for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
                 let operation = context.host_function(super::operation(name))?;
-                let factory = context.evaluate_script_rooted(
-                    &format!("(operation)=>function {name}(object){{return operation(object)}}"),
-                    "node:worker_threads/marker.js",
-                )?;
+                let factory = crate::host::removed_javascript("node:worker_threads/marker.js")?;
                 let undefined = context.undefined();
                 markers.push((name, context.call_rooted(factory, undefined, &[operation])?));
             }
@@ -3131,28 +2797,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             context.call_rooted(initialize, undefined, &[])?;
             node_library_module(context, "dns.js", "dns.js")
         }
-        BuiltinModule::Dgram => {
-            let dgram_tail = crate::polyfills::bootstrap::dgram_tail::JS
-                .split("globalThis.require = (specifier) =>")
-                .next()
-                .unwrap_or(crate::polyfills::bootstrap::dgram_tail::JS);
-            let source = format!(
-                "(__quenchDgramBufferSystemError => {{\n{}\n{}\n{}\n{}\n}})",
-                crate::polyfills::bootstrap::dgram_head::JS,
-                crate::polyfills::bootstrap::dgram::JS,
-                crate::polyfills::bootstrap::membership::JS,
-                dgram_tail,
-            );
-            let root = context.evaluate_script_rooted(&source, "node:dgram/bootstrap.js")?;
-            let codes =
-                node_library_export(context, "internal/errors.js", "internal/errors.js", "codes")?;
-            let constructor = get(context, codes, "ERR_SOCKET_BUFFER_SIZE")?;
-            let undefined = context.undefined();
-            context.call_rooted(root, undefined, &[constructor])?;
-            context.release_root(root);
-            let global = context.global_root()?;
-            get(context, global, "\0quench:dgram_module")
-        }
+        BuiltinModule::Dgram => crate::host::removed_javascript("node:dgram"),
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
         BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),
@@ -3225,10 +2870,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             node_library_module(context, "repl.js", "repl.js")
         }
         BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
-        BuiltinModule::Sea => context.evaluate_script_rooted(
-            "({ isSea: function isSea() { return false; } })",
-            "node:sea.js",
-        ),
+        BuiltinModule::Sea => crate::host::removed_javascript("node:sea.js"),
         BuiltinModule::Process
         | BuiltinModule::Assert
         | BuiltinModule::AssertStrict
@@ -4151,48 +3793,13 @@ fn load_with_resolution(
                 }
                 file_text
             }
-            _ => match library_relative {
-            Some(path) if path == Path::new("lib/internal/streams/duplexify.js") => {
-                // Quench's global Blob is supplied by the host rather than
-                // internal/blob.js, so it does not carry Node's private blob
-                // handle symbol. Preserve Node's brand check and accept a Blob
-                // from the active global realm as well.
-                file_text.replace(
-                    "if (isBlob(body)) {",
-                    "if (isBlob(body) || (typeof globalThis.Blob === 'function' && body instanceof globalThis.Blob)) {",
-                ).into()
+            _ => {
+                if library_relative.is_some() {
+                    return Err(RootedError::host(format!("{}: Node library module is not implemented in Rust", filename.display())));
+                }
+                file_text
             }
-            Some(path) if path == Path::new("lib/internal/test_runner/utils.js") => {
-                // Keep Node's public test-runner error contract stable across
-                // engines: V8 reports invalid RegExp flags with the flag list,
-                // while the host engine's native message is less specific.
-                // Validate flags before constructing the RegExp so
-                // convertStringToRegExp can still wrap pattern syntax errors.
-                file_text.replace(
-                    "  try {\n    return new RegExp(pattern, flags);",
-                    "  if ([...flags].some((flag, index) =>\n      !'dgimsuvy'.includes(flag) || flags.indexOf(flag) !== index) ||\n      (flags.includes('u') && flags.includes('v'))) {\n    throw new ERR_INVALID_ARG_VALUE(\n      name, str,\n      `is an invalid regular expression. Invalid flags supplied to RegExp constructor '${flags}'`,\n    );\n  }\n\n  try {\n    return new RegExp(pattern, flags);",
-                ).into()
-            }
-            Some(path) if path == Path::new("lib/internal/child_process.js") =>
-                super::policy_projection::project(&file_text, &["setupChannel", "kChannelHandle", "getValidStdio"]).map_err(RootedError::host)?.into(),
-            Some(path) if path == Path::new("lib/net.js") =>
-                super::policy_projection::project(&file_text, &["BoundSocket", "_TransferredBoundSocket"]).map_err(RootedError::host)?.into(),
-            Some(path) if path == Path::new("lib/child_process.js") =>
-                super::policy_projection::project(&file_text, &["_forkChild"]).map_err(RootedError::host)?.into(),
-            Some(path) if path == Path::new("lib/internal/buffer.js") =>
-                crate::modules::buffer_shared_vm::project_internal_buffer(&file_text)?.into(),
-            Some(path) if path == Path::new("lib/buffer.js") =>
-                crate::modules::buffer_shared_vm::project_buffer(&file_text)?.into(),
-            // Node's stream-iterator library consumes `PromiseWithResolvers` from
-            // primordials, which an engine without `Promise.withResolvers` copies none of.
-            // Add it before the primordials object is frozen.
-            Some(_) if is_primordials => crate::modules::primordials_shared_vm::project_primordials(&file_text.replace(
-                "ObjectSetPrototypeOf(primordials, null);",
-                "primordials.PromiseWithResolvers ??= primordials.Promise.withResolvers.bind(primordials.Promise);\nObjectSetPrototypeOf(primordials, null);",
-            ))?
-            .into(),
-            _ => file_text,
-        }, };
+        };
         let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
         let file_text = if prepared.is_none() && typed_commonjs {
             match quench_runtime::Engine::project_typescript_module_syntax(&file_text) {
@@ -4260,41 +3867,15 @@ fn load_with_resolution(
                     Some(root) => root,
                     None => context.undefined(),
                 };
-                let is_realm_bootstrap =
-                    library_relative == Some(Path::new("lib/internal/bootstrap/realm.js"));
-                let internal_binding = if is_realm_bootstrap {
-                    r#"const getInternalBinding = (name) => {
-  if (name === "builtins") return { builtinIds: [], compileFunction() {}, setInternalLoaders() {} };
-  if (name === "module_wrap") return { ModuleWrap: class ModuleWrap {} };
-  return {};
-};
-const getLinkedBinding = () => ({});
-"#
-                } else if library_relative == Some(Path::new("lib/internal/test/binding.js")) {
-                    // Node's test binding exposes the same internal bindings as
-                    // engine code. Route those lookups through Quench's adapters
-                    // too, so the narrow compatibility methods missing from the
-                    // host engine remain available to the Node test suite.
-                    node_internal_binding_source()
-                } else if library_relative
-                    == Some(Path::new("lib/internal/per_context/domexception.js"))
-                {
-                    // This SDK per-context source has two explicit native symbol
-                    // capabilities in Node's wrapper. Reuse existing symbol owners.
-                    "const privateSymbols=__nativeInternalBinding('util').privateSymbols; const perIsolateSymbols=__nativeInternalBinding('symbols');"
-                } else if in_node_internal {
-                    node_internal_binding_source()
-                } else {
-                    ""
-                };
-                let undici = library_relative == Some(Path::new(crate::modules::webidl_shared_vm::UNDICI));
-                let prefix = if in_node_internal {
-                    format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ 'use strict'; {internal_binding}")
-                } else if undici {
-                    crate::modules::webidl_shared_vm::UNDICI_WRAPPER_PREFIX.to_owned()
-                } else {
-                    format!("{WRAPPER_PREFIX}{internal_binding}")
-                };
+                // Node's own library carries an internal-binding preamble; quench runs none
+                // of that library (decision 38).
+                if library_relative.is_some() {
+                    return Err(RootedError::host(format!(
+                        "{}: Node library module is not implemented in Rust",
+                        filename.display()
+                    )));
+                }
+                let prefix = WRAPPER_PREFIX.to_owned();
                 if parent.is_none() {
                     crate::host::resident_pages::release_before_entry_compile();
                 }
@@ -4366,9 +3947,6 @@ const getLinkedBinding = () => ({});
                         context
                             .host_function(crate::host::shared_vm::operation("traceInternal"))?,
                     );
-                } else if undici {
-                    arguments.push(context.host_function(crate::host::shared_vm::operation("byteStringEnd"))?);
-                    arguments.push(context.host_function(crate::host::shared_vm::operation("headerFields"))?);
                 }
                 context.call_rooted(wrapper, exports, &arguments)?;
                 if let Some(root) = primordial_seed {
@@ -4614,592 +4192,14 @@ fn set(
     }
 }
 
-pub(crate) fn node_internal_binding_source() -> &'static str {
-    r#"const internalBinding = (name) => {
-  // Node may keep small, length-constructed views on-heap until their
-  // `buffer` property is observed. Quench stores an ArrayBuffer for every
-  // view, so remember the observable transition in this compatibility
-  // binding and use V8's 64-byte on-heap cutoff for fresh small views.
-  const kArrayBufferViewsWithBuffer = Symbol.for("quench.node.arrayBufferViewsWithBuffer");
-  const arrayBufferViewsWithBuffer = globalThis[kArrayBufferViewsWithBuffer] ||
-    (globalThis[kArrayBufferViewsWithBuffer] = new WeakSet());
-  const kTrackedArrayBufferGetter = Symbol.for("quench.node.trackedArrayBufferGetter");
-  const trackArrayBufferGetter = (prototype) => {
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, "buffer");
-    if (!descriptor || typeof descriptor.get !== "function" || descriptor.get[kTrackedArrayBufferGetter]) return;
-    const getter = descriptor.get;
-    const trackedGetter = function() {
-      arrayBufferViewsWithBuffer.add(this);
-      return Reflect.apply(getter, this, []);
-    };
-    Object.defineProperty(trackedGetter, kTrackedArrayBufferGetter, { value: true });
-    Object.defineProperty(prototype, "buffer", {
-      ...descriptor,
-      get: trackedGetter,
-    });
-  };
-  trackArrayBufferGetter(Object.getPrototypeOf(Uint8Array.prototype));
-  trackArrayBufferGetter(DataView.prototype);
-  switch (String(name)) {
-    case "heap_utils": return Object.assign(Object.create(__nativeInternalBinding(name)), {
-      // Heap graph inspection is an embedder-only testing hook. Preserve the
-      // identity semantics of the native graph builder for values supplied
-      // by the test harness, even when the host does not expose V8's graph
-      // traversal API.
-      buildEmbedderGraph(...values) {
-        const nodes = [];
-        for (const value of values) {
-          if (!nodes.some((node) => Object.is(node.value, value))) nodes.push({ value });
-        }
-        return nodes;
-      },
-    });
-    case "js_stream": return {
-      JSStream: class JSStream {
-        constructor() { this.__quenchJSStream = true; }
-        readBuffer(buffer) {
-          if (this.__quenchOwner) this.__quenchOwner.push(buffer);
-          else this.onread?.(0, buffer);
-        }
-        emitEOF() {
-          if (this.__quenchOwner) this.__quenchOwner.push(null);
-          else this.onread?.(-4095);
-        }
-        readStart() { return this.onreadstart?.() ?? 0; }
-        readStop() { return this.onreadstop?.() ?? 0; }
-        shutdown(req) { return this.onshutdown?.(req) ?? 0; }
-        finishWrite(req, status) {
-          req.oncomplete?.(status ? Object.assign(new Error("write failed"), { errno: status }) : undefined);
-        }
-        finishShutdown(req, status) { req.oncomplete?.(status); }
-      },
-    };
-    case "pipe_wrap":
-    case "tcp_wrap":
-    case "stream_wrap":
-    case "tty_wrap":
-    case "udp_wrap":
-    case "os":
-    case "timers":
-    case "config":
-    case "icu":
-    case "encoding_binding":
-    case "zlib":
-    case "symbols":
-    case "cares_wrap":
-    case "fs_event_wrap":
-    case "errors":
-    case "report": return __nativeInternalBinding(name);
-    case "modules": {
-      let native;
-      try { native = __nativeInternalBinding(name); } catch { /* Package traversal is not native here. */ }
-      native ||= Object.create(null);
-      const compileCacheStatuses = ["FAILED", "ENABLED", "ALREADY_ENABLED", "DISABLED"];
-      const compileCachePath = require("path");
-      const permissionFailure = (directory, readOnly) => {
-        const permission = process.permission;
-        if (!permission || typeof permission.has !== "function") return undefined;
-        const resolved = compileCachePath.resolve(directory);
-        if (!readOnly && !permission.has("fs.write", resolved)) {
-          return `Skipping compile cache because write permission for ${resolved} is not granted`;
-        }
-        if (!permission.has("fs.read", resolved)) {
-          return `Skipping compile cache because read permission for ${resolved} is not granted`;
-        }
-        return undefined;
-      };
-      const debugCompileCache = (message) => {
-        if ((process.env.NODE_DEBUG_NATIVE || "").includes("COMPILE_CACHE")) {
-          process.stderr.write(`${message}\n`);
-        }
-      };
-      // NODE_COMPILE_CACHE is enabled by Node during startup. Quench has no
-      // V8 cache backend, but it must still honor the permission-model failure
-      // path instead of silently touching a denied directory or logging fake
-      // cache reads/writes.
-      if (process.env.NODE_COMPILE_CACHE && !process.env.NODE_DISABLE_COMPILE_CACHE) {
-        const failure = permissionFailure(
-          process.env.NODE_COMPILE_CACHE,
-          process.env.NODE_COMPILE_CACHE_READONLY === "1",
-        );
-        if (failure) debugCompileCache(failure);
-      }
-      const enableCompileCache = (directory, _portable, readOnly) => {
-        if (process.env.NODE_DISABLE_COMPILE_CACHE) return [3];
-        const selected = process.env.NODE_COMPILE_CACHE || directory;
-        if (typeof selected !== "string" || selected.length === 0) return [0, "Invalid compile cache directory"];
-        const failure = permissionFailure(selected, readOnly);
-        if (failure) {
-          debugCompileCache(failure);
-          return [0, failure];
-        }
-        // This runtime does not expose V8's compiled-code cache API. Keep the
-        // Node public binding shape and report the documented failure result;
-        // never claim that a marker file is a usable bytecode cache.
-        return [0, "Compile cache is not supported by this runtime"];
-      };
-      native = Object.assign(Object.create(native), {
-        compileCacheStatus: native.compileCacheStatus ?? compileCacheStatuses,
-        enableCompileCache: typeof native.enableCompileCache === "function" ? native.enableCompileCache : enableCompileCache,
-        getCompileCacheDir: typeof native.getCompileCacheDir === "function" ? native.getCompileCacheDir : () => undefined,
-        flushCompileCache: typeof native.flushCompileCache === "function" ? native.flushCompileCache : () => undefined,
-      });
-      const fs = require("fs");
-      const path = require("path");
-      const { fileURLToPath } = require("url");
-      const readPackage = (jsonPath) => {
-        try {
-          const source = fs.readFileSync(jsonPath, "utf8").replace(/^\uFEFF/, "");
-          const value = JSON.parse(source);
-          const plain = (field) => value[field] === undefined ? undefined :
-            (typeof value[field] === "string" ? value[field] : JSON.stringify(value[field]));
-          return [value.name, value.main, value.type || "none", plain("imports"), plain("exports"), jsonPath];
-        } catch (error) {
-          if (error && error.code === "ENOENT") return undefined;
-          throw error;
-        }
-      };
-      // Node's internal/vfs/setup.js parses package.json bytes obtained from a
-      // virtual provider through this internal binding entry point. The host
-      // engine does not expose it, so provide the same tuple shape consumed by
-      // Node's package_json_reader and preserve its invalid-config error code.
-      const parsePackageJSON = (content, jsonPath, isESM, base, specifier) => {
-        let value;
-        try {
-          value = JSON.parse(Buffer.from(content).toString("utf8").replace(/^\uFEFF/, ""));
-        } catch (cause) {
-          const from = base == null ? "" : ` while importing ${base}`;
-          const message = cause && cause.message ? cause.message : String(cause);
-          const error = new Error(`Invalid package config ${jsonPath}${from}. ${message}`);
-          error.code = "ERR_INVALID_PACKAGE_CONFIG";
-          error.path = jsonPath;
-          if (base !== undefined) error.base = base;
-          if (specifier !== undefined) error.specifier = specifier;
-          throw error;
-        }
-        const plain = (field) => value[field] === undefined ? undefined :
-          (typeof value[field] === "string" ? value[field] : JSON.stringify(value[field]));
-        return [value.name, value.main, value.type || "none", plain("imports"), plain("exports"), jsonPath];
-      };
-      const nearest = (checkPath) => {
-        let current = String(checkPath);
-        if (!current.endsWith(path.sep)) current = path.dirname(current);
-        else current = current.slice(0, -path.sep.length) || path.sep;
-        for (;;) {
-          const parent = path.dirname(current);
-          if (parent === current || path.basename(current) === "node_modules") return undefined;
-          const found = readPackage(path.join(current, "package.json"));
-          if (found !== undefined) return found;
-          current = parent;
-        }
-      };
-      const scope = (resolved) => {
-        let filename = String(resolved);
-        if (filename.startsWith("file:")) filename = fileURLToPath(filename);
-        const result = nearest(filename);
-        return result === undefined ? path.join(path.dirname(filename), "package.json") : result;
-      };
-      return Object.assign(Object.create(native), {
-        parsePackageJSON: typeof native.parsePackageJSON === "function" ? native.parsePackageJSON : parsePackageJSON,
-        readPackageJSON: typeof native.readPackageJSON === "function" ? native.readPackageJSON : (jsonPath) => readPackage(String(jsonPath)),
-        getNearestParentPackageJSON: typeof native.getNearestParentPackageJSON === "function" ? native.getNearestParentPackageJSON : nearest,
-        getNearestParentPackageJSONType: typeof native.getNearestParentPackageJSONType === "function" ? native.getNearestParentPackageJSONType : (checkPath) => nearest(checkPath)?.[2],
-        getPackageScopeConfig: typeof native.getPackageScopeConfig === "function" ? native.getPackageScopeConfig : scope,
-        getPackageType: typeof native.getPackageType === "function" ? native.getPackageType : (resolved) => {
-          const result = scope(resolved);
-          return Array.isArray(result) ? result[2] : "none";
-        },
-      });
-    }
-    case "contextify": {
-      const native = __nativeInternalBinding(name);
-      return Object.assign(Object.create(native), {
-        compileFunctionForCJSLoader: typeof native.compileFunctionForCJSLoader === "function" ? native.compileFunctionForCJSLoader :
-          (code, filename) => native.compileFunction(code, filename, undefined, undefined, undefined, false, undefined, undefined,
-            ["exports", "require", "module", "__filename", "__dirname"]),
-        containsModuleSyntax: typeof native.containsModuleSyntax === "function" ? native.containsModuleSyntax : () => false,
-      });
-    }
-    case "http2": {
-      const binding = __nativeInternalBinding(name) || Object.create(null);
-      if (binding.optionsBuffer !== undefined) {
-        if (typeof binding.setCallbackFunctions !== "function") {
-          binding.setCallbackFunctions = (...callbacks) => {
-            globalThis[Symbol.for("quench.node.http2CallbackFunctions")] = callbacks;
-          };
-        }
-        return binding;
-      }
-      const stateKey = Symbol.for("quench.node.http2BindingState");
-      const state = globalThis[stateKey] || (globalThis[stateKey] = {
-        optionsBuffer: new Float64Array(15),
-        settingsBuffer: new Float64Array(8),
-        sessionState: new Float64Array(9),
-        streamState: new Float64Array(6),
-      });
-      if (state.binding) return state.binding;
-      // Keep native binding exports available through the prototype while
-      // supplying the typed state buffers expected by Node's JS helpers.
-      const augmented = Object.assign(Object.create(binding), state);
-      // Node's internal/http2/core registers callbacks consumed by the native
-      // nghttp2 session wrapper. Quench's public HTTP/2 adapter dispatches its
-      // own events, but the registration API must still exist when Node's
-      // internal core module is loaded by compatibility tests.
-      if (typeof augmented.setCallbackFunctions !== "function") {
-        augmented.setCallbackFunctions = (...callbacks) => {
-          state.callbackFunctions = callbacks;
-        };
-      }
-      state.binding = augmented;
-      return augmented;
-    }
-    case "process_methods": return __nativeInternalBinding(name);
-    case "trace_events": return __nativeInternalBinding(name);
-    case "util": return Object.assign({}, {
-      privateSymbols: __nativeInternalBinding("util").privateSymbols,
-      constants: __nativeInternalBinding("util").constants,
-      getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
-      getPromiseDetails: __nativeInternalBinding("util").getPromiseDetails,
-      markPromiseAsHandled: __nativeInternalBinding("util").markPromiseAsHandled,
-      getProxyDetails: __nativeInternalBinding("util").getProxyDetails,
-      previewEntries: __nativeInternalBinding("util").previewEntries,
-      getConstructorName: __nativeInternalBinding("util").getConstructorName,
-      getCallSites: __nativeInternalBinding("util").getCallSites,
-      getCallerLocation: __nativeInternalBinding("util").getCallerLocation,
-      getExternalValue: __nativeInternalBinding("util").getExternalValue,
-      getSharedArrayBufferGrowable:
-        __nativeInternalBinding("util").getSharedArrayBufferGrowable,
-      arrayBufferViewHasBuffer(view) {
-        if (!ArrayBuffer.isView(view)) return false;
-        if (arrayBufferViewsWithBuffer.has(view)) return true;
-        return view.byteLength > 64;
-      },
-      constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
-      guessHandleType: __nativeInternalBinding("util").guessHandleType,
-      defineLazyProperties: __nativeInternalBinding("util").defineLazyProperties,
-      isInsideNodeModules: __nativeInternalBinding("util").isInsideNodeModules,
-      sleep: () => undefined,
-    });
-    case "types": return __nativeInternalBinding("types");
-    case "block_list": return { AF_INET: 2, AF_INET6: 10 };
-    case "constants": {
-      const native = __nativeInternalBinding("constants");
-      // Node exposes internal constants as a null-prototype tree, including
-      // the stable top-level internal and trace namespaces. Clone recursively
-      // so embedding-provided constants do not leak Object.prototype into the
-      // Node internalBinding surface.
-      const nullPrototypeCopy = (value) => {
-        if (value === null || typeof value !== "object") return value;
-        const copy = Object.create(null);
-        for (const key of Object.keys(value)) copy[key] = nullPrototypeCopy(value[key]);
-        return copy;
-      };
-      const crypto = Object.assign({}, native.crypto, {
-        POINT_CONVERSION_COMPRESSED: 2,
-        POINT_CONVERSION_UNCOMPRESSED: 4,
-      });
-      return Object.assign(Object.create(null), {
-        fs: nullPrototypeCopy(native.fs),
-        zlib: nullPrototypeCopy(native.zlib),
-        os: nullPrototypeCopy(native.os || { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } }),
-        crypto: nullPrototypeCopy(crypto),
-        internal: Object.create(null),
-        trace: Object.create(null),
-      });
-    }
-    case "http_parser": return __nativeInternalBinding(name);
-    case "options": return __nativeInternalBinding("options");
-    case "credentials": {
-      let native;
-      try { native = __nativeInternalBinding(name); } catch { /* No native credentials binding. */ }
-      native ||= Object.create(null);
-      if (typeof native.safeGetenv === "function") return native;
-      return Object.assign(Object.create(native), {
-        safeGetenv(name) { return process.env[String(name)]; },
-      });
-    }
-    case "module_wrap": {
-      let native;
-      try { native = __nativeInternalBinding(name); } catch { /* V8 module hooks are owned by Quench. */ }
-      native ||= Object.create(null);
-      return Object.assign(Object.create(native), {
-        ModuleWrap: native.ModuleWrap || class ModuleWrap {},
-        // Quench's module runtime owns import-meta and dynamic-import dispatch;
-        // these callbacks are only registration hooks for Node's V8 wrapper.
-        setImportMetaResolveInitializer() {},
-        setImportModuleDynamicallyCallback() {},
-        setInitializeImportMetaObjectCallback() {},
-      });
-    }
-    case "worker": {
-      let native;
-      try { native = __nativeInternalBinding(name); } catch { /* No native worker binding. */ }
-      native ||= Object.create(null);
-      return Object.assign(Object.create(native), {
-        isMainThread: typeof native.isMainThread === "boolean"
-          ? native.isMainThread
-          : process.getBuiltinModule("worker_threads").isMainThread,
-        resourceLimits: native.resourceLimits || new Float64Array(4),
-        getEnvMessagePort: typeof native.getEnvMessagePort === "function"
-          ? native.getEnvMessagePort
-          : () => {
-            const port = require("worker_threads").parentPort;
-            return {
-              postMessage(message) { return port.__quenchInternalPost(message); },
-            };
-          },
-      });
-    }
-    case "diagnostics_channel": {
-      // Node's bootstrap re-links native diagnostic channels after startup.
-      // Preserve any native implementation and fill the lifecycle hooks that
-      // the shared diagnostics-channel implementation does not provide.
-      const key = Symbol.for("quench.node.diagnosticsChannelBinding");
-      if (globalThis[key]) return globalThis[key];
-      let native;
-      try { native = __nativeInternalBinding(name); } catch { /* No native binding is registered. */ }
-      native ||= Object.create(null);
-      const binding = Object.create(native);
-      binding.subscribers = Array.isArray(native.subscribers) ? native.subscribers : [];
-      binding.linkNativeChannel = typeof native.linkNativeChannel === "function" ?
-        (...args) => Reflect.apply(native.linkNativeChannel, native, args) :
-        (callback) => {
-          if (typeof callback !== "function") throw new TypeError("callback must be a function");
-        };
-      binding.notifyChannelActive = typeof native.notifyChannelActive === "function" ?
-        (...args) => Reflect.apply(native.notifyChannelActive, native, args) : () => {};
-      binding.notifyChannelInactive = typeof native.notifyChannelInactive === "function" ?
-        (...args) => Reflect.apply(native.notifyChannelInactive, native, args) : () => {};
-      return globalThis[key] = binding;
-    }
-    case "string_decoder": return __nativeInternalBinding("string_decoder");
-    case "buffer":
-    case "url":
-    case "blob":
-    case "ipc_serdes": return __nativeInternalBinding(name);
-    case "fs": {
-      // All Node internal modules, including internal/test/binding, must see
-      // one fs binding object. Tests and core mutate the same binding methods
-      // (for example readdir) to exercise Dirent fallback behavior.
-      const fsBindingKey = Symbol.for("quench.node.internalBinding.fs");
-      if (globalThis[fsBindingKey]) return globalThis[fsBindingKey];
-      const native = __nativeInternalBinding("fs");
-      if (typeof native.openFileHandle === "function") {
-        Object.defineProperty(globalThis, fsBindingKey, {
-          configurable: true,
-          value: native,
-        });
-        return native;
-      }
-      const binding = Object.create(native);
-      Object.defineProperty(binding, "openFileHandle", {
-        value(path, flags, mode, req, context) {
-          if (req !== undefined || !context || typeof context !== "object") return undefined;
-          const fs = process.getBuiltinModule("fs");
-          const fd = fs.openSync(path, flags, mode);
-          setTimeout(() => {
-            try { fs.closeSync(fd); } catch {}
-            const error = new Error(
-              `A FileHandle object was closed during garbage collection. This used to be allowed with a deprecation warning but is now considered an error. Please close FileHandle objects explicitly. File descriptor: ${fd} (${String(path)})`
-            );
-            error.code = "ERR_INVALID_STATE";
-            process.emit("uncaughtException", error);
-          }, 0);
-          return undefined;
-        },
-      });
-      Object.defineProperty(globalThis, fsBindingKey, {
-        configurable: true,
-        value: binding,
-      });
-      return binding;
-    }
-    case "crypto": {
-      const native = __nativeInternalBinding("crypto");
-      if (native.getFipsCryptoGeneration) return native;
-      const crypto = require("crypto");
-      return Object.assign({}, crypto, __nativeInternalBinding("crypto_keys"), {
-        setEngine: __nativeInternalBinding("crypto").setEngine,
-        getFipsCrypto: () => crypto.getFips(),
-        getCachedAliases: () => ({}),
-        getOpenSSLSecLevelCrypto: () => 0,
-        secureHeapUsed: () => undefined,
-      });
-    }
-    case "mksnapshot": return {
-      isBuildingSnapshotBuffer: new Uint8Array(1),
-      setSerializeCallback: () => {},
-      setDeserializeCallback: () => {},
-      setDeserializeMainFunction: () => {},
-    };
-    case "process": return process;
-    case "messaging": {
-      const native = __nativeInternalBinding("messaging");
-      if (native.DOMException) return native;
-      return Object.assign({}, native, { DOMException: globalThis.DOMException });
-    }
-    case "performance": return __nativeInternalBinding("performance");
-    case "cjs_lexer": return __nativeInternalBinding(name);
-    case "uv": return __nativeInternalBinding("uv");
-    case "serdes":
-    case "v8":
-    case "internal_only_v8": return __nativeInternalBinding(name);
-    case "async_wrap": {
-      // Node's internal/async_hooks.js expects this engine-owned binding even
-      // when it is loaded from the configured Node library source. Quench
-      // keeps async identity in its host adapter, so project the public API
-      // into the narrow subset consumed by the Node source module.
-      const hooks = globalThis["\0quench:require"]("async_hooks");
-      const async_hook_fields = new Uint32Array(9);
-      const async_id_fields = new Float64Array(4);
-      const execution_async_resources = [];
-      const async_ids_stack = new Float64Array(128);
-      const constants = {
-        kInit: 0, kBefore: 1, kAfter: 2, kDestroy: 3,
-        kPromiseResolve: 4, kTotals: 5, kCheck: 6,
-        kExecutionAsyncId: 0, kTriggerAsyncId: 1,
-        kAsyncIdCounter: 2, kDefaultTriggerAsyncId: 3,
-        kStackLength: 7, kUsesExecutionAsyncResource: 8,
-      };
-      async_id_fields[constants.kExecutionAsyncId] = hooks.executionAsyncId();
-      async_id_fields[constants.kTriggerAsyncId] = hooks.triggerAsyncId();
-      return {
-        constants, async_hook_fields, async_id_fields,
-        execution_async_resources, async_ids_stack,
-        Providers: Object.freeze({}),
-        setCallbackTrampoline() {},
-        setPromiseHooks(init, before, after, settled) {
-          const callbacks = { init, before, after, settled };
-          hooks["\0quench:async_hooks:setPromiseHooks"]({
-            emit(kind, ...args) {
-              const callback = callbacks[kind];
-              if (typeof callback === "function") callback(...args);
-            },
-          });
-        },
-        registerDestroyHook() {},
-        queueDestroyAsyncId(asyncId) {
-          hooks["\0quench:async_hooks:queueDestroyAsyncId"](asyncId);
-        },
-        pushAsyncContext(asyncId, triggerAsyncId, resource) {
-          async_id_fields[constants.kExecutionAsyncId] = asyncId;
-          async_id_fields[constants.kTriggerAsyncId] = triggerAsyncId;
-          execution_async_resources.push(resource);
-        },
-        popAsyncContext() {
-          execution_async_resources.pop();
-          async_id_fields[constants.kExecutionAsyncId] = hooks.executionAsyncId();
-          async_id_fields[constants.kTriggerAsyncId] = hooks.triggerAsyncId();
-        },
-        executionAsyncResource() {
-          return execution_async_resources[execution_async_resources.length - 1] ?? hooks.executionAsyncResource();
-        },
-        clearAsyncIdStack() {
-          async_id_fields[constants.kExecutionAsyncId] = hooks.executionAsyncId();
-          async_id_fields[constants.kTriggerAsyncId] = hooks.triggerAsyncId();
-          execution_async_resources.length = 0;
-        },
-      };
-    }
-    case "task_queue": return {
-      enqueueMicrotask: globalThis["\0quench:queueMicrotaskRaw"] ?? queueMicrotask,
-    };
-    default: return {};
-  }
-};
-"#
-}
-
-/// Execute an unchanged configured Node library module in a fresh language realm.
-/// The private CJS environment supplies host services without exposing globals.
-/// Immutable code can be shared while each realm executes a fresh module body.
-pub(crate) struct PreparedRealmModule {
-    source: std::rc::Rc<str>,
-    script: quench_runtime::PreparedScript,
-}
-
 pub(crate) fn node_library_module_in_realm(
-    context: &mut Context<'_>,
-    global: RootId,
+    _: &mut Context<'_>,
+    _: RootId,
     relative: &str,
-    exports: RootId,
-    primordials: RootId,
+    _: RootId,
+    _: RootId,
 ) -> Result<RootId, RootedError> {
-    let root = context.host_mut().node_library_root.clone();
-    let path = root.join("lib").join(relative);
-    let source = match module_file_bytes(context, &path, quench_runtime::SourceKind::Script)
-        .and_then(|bytes| String::from_utf8(bytes).map_err(|error| {
-            // Preserve read_to_string's InvalidData error without copying valid input.
-            let mut invalid = error.as_bytes();
-            std::io::Read::read_to_string(&mut invalid, &mut String::new())
-                .expect_err("invalid UTF-8 cannot decode as module text")
-        })) {
-        Ok(source) => source,
-        Err(error) => return Err(RootedError::host(format!("{}: {error}", path.display()))),
-    };
-    let module = context.object_rooted()?;
-    set(context, module, "exports", exports)?;
-    let require = create_require(context, &path)?;
-    let name = context.string_rooted(&path.to_string_lossy());
-    let directory = context.string_rooted(&path.parent().unwrap().to_string_lossy());
-    let prefix = format!(
-        "(function(exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding, process) {{ 'use strict'; {}",
-        node_internal_binding_source(),
-    );
-    let wrapper = format!("{prefix}{source}\n}})");
-    let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix.as_str())
-        .ok_or_else(|| RootedError::host("realm wrapper origin exceeds compiler positions"))?;
-    let shared = context.host_mut().shared_state();
-    let cached = shared
-        .borrow()
-        .realm_module_programs
-        .get(&path)
-        .filter(|cached| cached.source.as_ref() == wrapper)
-        .map(|cached| cached.script.clone());
-    let script = match cached.filter(|script| context.prepared_script_is_current(script)) {
-        Some(script) => script,
-        None => {
-            let script = context.prepare_specialized_script_in_realm_with_origin(
-                global,
-                &wrapper,
-                &path.to_string_lossy(),
-                line_offset,
-                column_offset,
-            )?;
-            shared.borrow_mut().realm_module_programs.insert(
-                path.clone(),
-                PreparedRealmModule {
-                    source: std::rc::Rc::from(wrapper),
-                    script: script.clone(),
-                },
-            );
-            script
-        }
-    };
-    let factory = context.evaluate_prepared_script_in_realm_rooted(global, &script)?;
-    let native_binding =
-        context.host_function(crate::host::shared_vm::operation("traceInternal"))?;
-    let process = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
-        .ok_or_else(|| RootedError::host("Node process is not initialized"))?;
-    context.call_rooted(
-        factory,
-        exports,
-        &[
-            exports,
-            require,
-            module,
-            name,
-            directory,
-            primordials,
-            native_binding,
-            process,
-        ],
-    )?;
-    get(context, module, "exports")
+    crate::host::removed_javascript(format!("node:{relative}"))
 }
 
 /// Run the unchanged SDK worker policy after native process IPC and require

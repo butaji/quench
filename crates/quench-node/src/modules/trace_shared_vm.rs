@@ -7,22 +7,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 const MAX_ENABLED_TRACING_WITHOUT_WARNING: usize = 10;
 const MAX_SAFE_HANDLE: u64 = (1u64 << 53) - 1;
-const FACTORY: &str = r#"(api => {
-  'use strict';
-  class Tracing {
-    constructor(categories) { api.initialize(this, categories); }
-    enable() { return api.enable(this); }
-    disable() { return api.disable(this); }
-    get enabled() { return api.enabled(this); }
-    get categories() { return api.categories(this); }
-    [api.inspectSymbol](depth, opts) { return api.inspect(this, depth, opts); }
-  }
-  api.constructor = Tracing;
-  return {
-    createTracing: function createTracing(options) { return api.create(options); },
-    getEnabledCategories: function getEnabledCategories() { return api.getEnabledCategories(); }
-  };
-})"#;
 
 fn put(
     context: &mut NativeContext<'_, NodeHost>,
@@ -133,7 +117,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let api = context.null_object_rooted()?;
     let state =
-        context.evaluate_script_rooted("new WeakMap()", "node:trace_events/private-state")?;
+        crate::host::removed_javascript("node:trace_events/private-state")?;
     let global = context.global_root()?;
     let weak_map = get(context, global, "WeakMap")?;
     let weak_prototype = get(context, weak_map, "prototype")?;
@@ -163,7 +147,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             context.host_function_with_data(crate::host::shared_vm::operation(operation), api)?;
         put(context, api, name, function)?;
     }
-    let factory = context.evaluate_script_rooted(FACTORY, "node:trace_events/methods")?;
+    let factory = crate::host::removed_javascript("node:trace_events/methods")?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[api])
 }
@@ -544,39 +528,8 @@ pub(crate) fn cjs_lexer_parse(
 /// does not expose a terminal handle, so isTTY reports false and the handle
 /// constructor preserves the public shape while its descriptor accessors
 /// reject forged receivers like Node's native accessors do.
-fn tty_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let source = r#"(() => {
-      const streamBase = {};
-      const invalid = function() { throw new TypeError('Illegal invocation'); };
-      for (const name of ['bytesRead', 'fd', '_externalStream']) {
-        Object.defineProperty(streamBase, name, { get: invalid, configurable: true });
-      }
-      function TTY(fd, ctx) {
-        if (!(this instanceof TTY)) return new TTY(fd, ctx);
-        this._handle = this;
-        this.fd = fd;
-        if (ctx && typeof ctx === 'object') ctx.code = undefined;
-      }
-      TTY.prototype = Object.create(streamBase);
-      Object.defineProperties(TTY.prototype, {
-        constructor: { value: TTY, writable: true, configurable: true },
-        setBlocking: { value() {}, writable: true, configurable: true },
-        setRawMode: { value() { return 0; }, writable: true, configurable: true },
-        getWindowSize: { value(size) { if (size) { size[0] = 0; size[1] = 0; } return 0; }, writable: true, configurable: true },
-        readStart: { value() { return 0; }, writable: true, configurable: true },
-        readStop: { value() { return 0; }, writable: true, configurable: true },
-        close: { value() {}, writable: true, configurable: true }
-      });
-      return {
-        TTY,
-        isTTY() { return false; },
-        UV_TTY_MODE_NORMAL: 0,
-        UV_TTY_MODE_RAW: 1,
-        UV_TTY_MODE_IO: 2,
-        UV_TTY_MODE_RAW_VT: 3
-      };
-    })()"#;
-    context.evaluate_script_rooted(source, "internalBinding/tty_wrap.js")
+fn tty_binding(_: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::removed_javascript("internalBinding/tty_wrap.js")
 }
 
 fn required_string(

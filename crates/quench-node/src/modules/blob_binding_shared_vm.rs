@@ -55,9 +55,9 @@ fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result
     Ok(())
 }
 
-/// A prototype whose `constructor` is an anonymous class named `name` with `methods`.
-fn native_prototype(c: &mut Context<'_>, name: &str, methods: &[(&str, &str)], data: RootId) -> Result<RootId, RootedError> {
-    let constructor = c.evaluate_script_rooted(&format!("(class {name} {{}})"), "node:internal/blob/handle.js")?;
+/// A prototype whose `constructor` is an anonymous class with `methods`.
+fn native_prototype(c: &mut Context<'_>, methods: &[(&str, &str)], data: RootId) -> Result<RootId, RootedError> {
+    let constructor = crate::host::removed_javascript("node:internal/blob/handle.js")?;
     let prototype = get(c, constructor, "prototype")?;
     for &(method, operation) in methods {
         let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), method, data)?;
@@ -71,9 +71,9 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:blob", |c| {
         c.with_startup_intrinsics(|c| {
             let data = c.array_rooted(&[])?;
-            let handle = native_prototype(c, "Blob", &[("getReader", "blobHandleGetReader"), ("slice", "blobHandleSlice")], data)?;
+            let handle = native_prototype(c, &[("getReader", "blobHandleGetReader"), ("slice", "blobHandleSlice")], data)?;
             put(c, data, data::HANDLE_PROTOTYPE, handle)?;
-            let reader = native_prototype(c, "BlobReader", &[("pull", "blobReaderPull"), ("setWakeup", "blobReaderSetWakeup")], data)?;
+            let reader = native_prototype(c, &[("pull", "blobReaderPull"), ("setWakeup", "blobReaderSetWakeup")], data)?;
             put(c, data, data::READER_PROTOTYPE, reader)?;
             let global = c.global_root()?;
             let map = get(c, global, "Map")?;

@@ -36,15 +36,6 @@ const VIEW_TYPES: [(BuiltinBrand, u32, usize); 13] = [
 ];
 const BUFFER_INDEX: u32 = 10;
 
-/// View constructors by type index, captured from the startup intrinsics.
-const VIEWS_JS: &str = quench_js_check::checked_js!(
-    r#"(FastBuffer) => {
-  'use strict';
-  const constructors = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array,
-    Uint32Array, Float32Array, Float64Array, DataView, FastBuffer, BigInt64Array, BigUint64Array, Float16Array];
-  return (index, buffer, offset, length) => new constructors[index](buffer, offset, length);
-}"#
-);
 
 fn invalid_state(c: &mut Context<'_>, message: &str) -> RootedError {
     let error = c.error_rooted(message).and_then(|error| {
@@ -172,7 +163,7 @@ fn views(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:ipc_serdes:views", |c| {
         let fast_buffer = crate::modules::buffer_shared_vm::fast_buffer(c)?;
         c.with_startup_intrinsics(|c| {
-            let factory = c.evaluate_script_rooted(VIEWS_JS, "node:internal/ipc_serdes.js")?;
+            let factory = crate::host::removed_javascript("node:internal/ipc_serdes.js")?;
             let undefined = c.undefined();
             c.call_rooted(factory, undefined, &[fast_buffer])
         })

@@ -42,54 +42,6 @@ const COPIES: [(&str, CopyKind); 3] = [
 /// drops: it upper-cases the code unit after it.
 const WELL_KNOWN_SYMBOL_PREFIX: usize = "Symbol.".len();
 
-/// The projected `primordials.js`: each copy declaration calls the native copy with the
-/// module's own `varargsMethods`, `uncurryThis` and `applyBind`. Every other statement keeps
-/// its bytes, and each replacement keeps its declaration's line count, so later positions
-/// (stack traces) are unchanged.
-pub(crate) fn project_primordials(source: &str) -> Result<String, RootedError> {
-    let allocator = oxc_allocator::Allocator::default();
-    let parsed =
-        oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
-    if !parsed.diagnostics.is_empty() {
-        return Err(RootedError::host("primordials projection: the library does not parse"));
-    }
-    let mut spans = Vec::new();
-    for statement in &parsed.program.body {
-        let oxc_ast::ast::Statement::FunctionDeclaration(function) = statement else {
-            continue;
-        };
-        if let Some(id) = function.id.as_ref().filter(|id| COPIES.iter().any(|(name, _)| id.name == *name)) {
-            spans.push((function.span.start as usize, function.span.end as usize, id.name.as_str()));
-        }
-    }
-    let mut names = spans.iter().map(|(_, _, name)| *name).collect::<Vec<_>>();
-    names.sort_unstable();
-    let mut expected = COPIES.iter().map(|(name, _)| *name).collect::<Vec<_>>();
-    expected.sort_unstable();
-    if names != expected {
-        return Err(RootedError::host(
-            "primordials projection expects each copy declaration once",
-        ));
-    }
-    let mut projected = String::with_capacity(source.len());
-    let mut copied = 0;
-    for (index, (start, end, name)) in spans.into_iter().enumerate() {
-        projected.push_str(&source[copied..start]);
-        // The first declaration also binds the native copy; all calls follow it.
-        if index == 0 {
-            projected.push_str(&format!("const {COPY_BINDING} = require('{COPY_REQUEST}'); "));
-        }
-        let replacement = format!(
-            "function {name}(src, dest, prefix) {{ {COPY_BINDING}('{name}', src, dest, prefix, \
-             varargsMethods, uncurryThis, applyBind); }}"
-        );
-        projected.push_str(&replacement);
-        projected.push_str(&"\n".repeat(source[start..end].matches('\n').count()));
-        copied = end;
-    }
-    projected.push_str(&source[copied..]);
-    Ok(projected)
-}
 
 /// `require(COPY_REQUEST)`: the native copy function.
 pub(crate) fn copy_request(c: &mut Context<'_>) -> Result<RootId, RootedError> {

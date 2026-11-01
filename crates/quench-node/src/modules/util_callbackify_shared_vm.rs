@@ -4,10 +4,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     // Thin ordinary-function bridge preserves construction and `this`.
-    let factory = context.evaluate_script_rooted(
-        "\"use strict\"; (invoke) => function callbackified(...args) { return invoke(this, args); }",
-        "node:util/callbackified.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:util/callbackified.js")?;
     context.host_function_with_data(crate::host::shared_vm::operation("callbackify"), factory)
 }
 

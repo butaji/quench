@@ -137,10 +137,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let data = context.array_rooted(&[process, signals])?;
         let operation = context
             .host_function_with_data(crate::host::shared_vm::operation("processKill"), data)?;
-        let factory = context.evaluate_script_rooted(
-            "operation => function kill(pid, signal) { return operation(pid, signal); }",
-            "node:process/shared-kill.js",
-        )?;
+        let factory = crate::host::removed_javascript("node:process/shared-kill.js")?;
         let undefined = context.undefined();
         let kill = context.call_rooted(factory, undefined, &[operation])?;
         install(context, process, "kill", kill)?;
@@ -190,10 +187,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     )?;
     let hrtime_raw =
         context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
-    let hrtime_factory = context.evaluate_script_rooted(
-        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
-        "node:process/shared-hrtime.js",
-    )?;
+    let hrtime_factory = crate::host::removed_javascript("node:process/shared-hrtime.js")?;
     let undefined = context.undefined();
     let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
     install(context, process, "hrtime", hrtime)?;
@@ -448,31 +442,14 @@ fn create_stream(
     // any final chunk, but it must not close the underlying process file
     // descriptor. Quench writes synchronously, so an end callback can run in
     // the next microtask after the final write has completed.
-    let end_factory = context.evaluate_script_rooted(
-        r#"(stream) => function end(chunk, encoding, callback) {
-          if (typeof chunk === 'function') {
-            callback = chunk;
-            chunk = undefined;
-          } else if (typeof encoding === 'function') {
-            callback = encoding;
-            encoding = undefined;
-          }
-          if (chunk !== undefined && chunk !== null) stream.write(chunk, encoding);
-          if (typeof callback === 'function') queueMicrotask(() => callback.call(stream));
-          return stream;
-        }"#,
-        "node:process/stdio-end.js",
-    )?;
+    let end_factory = crate::host::removed_javascript("node:process/stdio-end.js")?;
     let undefined = context.undefined();
     let end = context.call_rooted(end_factory, undefined, &[stream])?;
     install(context, stream, "end", end)?;
     // Quench writes process stdio synchronously, so it has no native stream
     // handle whose reference state needs changing. Keep the Node stream API
     // shape available to callers which ref/unref stdio around IPC reads.
-    let reference = context.evaluate_script_rooted(
-        "() => function() { return this; }",
-        "node:process/stdio-reference.js",
-    )?;
+    let reference = crate::host::removed_javascript("node:process/stdio-reference.js")?;
     let undefined = context.undefined();
     let reference = context.call_rooted(reference, undefined, &[])?;
     install(context, stream, "ref", reference)?;
@@ -490,16 +467,7 @@ fn define_global_process(
     let define_key = context.string_rooted("defineProperty");
     let define = context.get_property_rooted(object, define_key)?;
     let name = context.string_rooted("process");
-    let factory = context.evaluate_script_rooted(
-        r#"(initial) => {
-          let current = initial;
-          return {
-            get() { return current; },
-            set(value) { current = value; },
-          };
-        }"#,
-        "node:process/global-accessor.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:process/global-accessor.js")?;
     let undefined = context.undefined();
     let accessors = context.call_rooted(factory, undefined, &[process])?;
     let getter_key = context.string_rooted("get");
@@ -4424,7 +4392,7 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootI
             Ok(())
         })?;
     }
-    let factory = context.evaluate_script_rooted(ENV_PROXY_SOURCE, "node:process/env.js")?;
+    let factory = crate::host::removed_javascript("node:process/env.js")?;
     let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
     let delete_env = context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
     let undefined = context.undefined();
@@ -4434,69 +4402,6 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootI
     Ok(context.undefined())
 }
 
-/// Node's `process.env` over the copied environment: a stored value becomes a string and
-/// sets the OS variable, a deleted key unsets it, and keys take only plain data descriptors.
-const ENV_PROXY_SOURCE: &str = r#"(target, setEnv, deleteEnv) => new Proxy(target, {
-  set(target, key, value) {
-    if (typeof key === "symbol" || typeof value === "symbol") {
-      throw new TypeError("Cannot convert a Symbol value to a string");
-    }
-    if (key === "") return true;
-    if (typeof value !== "string" && typeof value !== "number" &&
-        typeof value !== "boolean" &&
-        globalThis.process.execArgv.includes("--pending-deprecation")) {
-      globalThis.process.emitWarning(
-        "Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it.",
-        { type: "DeprecationWarning", code: "DEP0104" }
-      );
-    }
-    const text = String(value);
-    // A data property, as Node's environment stores every key: `Reflect.set` would reach an
-    // inherited setter such as `__proto__`'s.
-    const result = Reflect.defineProperty(target, key, {
-      value: text,
-      configurable: true,
-      writable: true,
-      enumerable: true
-    });
-    if (result && typeof key !== "symbol") setEnv(String(key), text);
-    return result;
-  },
-  defineProperty(target, key, descriptor) {
-    const invalid = (message) => {
-      const error = new TypeError(message);
-      error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
-      return error;
-    };
-    if (typeof key === "symbol") {
-      throw invalid("'process.env' does not accept symbol properties");
-    }
-    if (key === "") return true;
-    if ("get" in descriptor || "set" in descriptor) {
-      throw invalid("'process.env' does not accept an accessor(getter/setter) descriptor");
-    }
-    if (descriptor.configurable !== true || descriptor.writable !== true || descriptor.enumerable !== true) {
-      throw invalid("'process.env' only accepts a configurable, writable, and enumerable data descriptor");
-    }
-    if (typeof descriptor.value === "symbol") {
-      throw new TypeError("Cannot convert a Symbol value to a string");
-    }
-    const value = String(descriptor.value);
-    const result = Reflect.defineProperty(target, key, {
-      value,
-      configurable: true,
-      writable: true,
-      enumerable: true
-    });
-    if (result) setEnv(String(key), value);
-    return result;
-  },
-  deleteProperty(target, key) {
-    const result = Reflect.deleteProperty(target, key);
-    if (result && key !== "" && typeof key !== "symbol") deleteEnv(String(key));
-    return result;
-  }
-})"#;
 
 /// Defines `process.emitWarning` (`process_warning_shared_vm`).
 pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {

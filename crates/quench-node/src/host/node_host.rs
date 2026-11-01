@@ -123,10 +123,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) commonjs_cache: Option<CommonJsCache>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
-    pub(crate) realm_module_programs: std::collections::HashMap<
-        std::path::PathBuf,
-        crate::host::shared_vm::commonjs::PreparedRealmModule,
-    >,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     /// Library methods as their modules defined them (`commonjs::LibraryOriginal`).
     pub(crate) library_originals: crate::host::shared_vm::commonjs::LibraryOriginals,
@@ -369,7 +365,6 @@ impl SharedNodeState {
             active_esm_requires: std::collections::HashMap::new(),
             module_require_trace_active: false,
             primordials_module: None,
-            realm_module_programs: std::collections::HashMap::new(),
             crypto_handle_symbol: None,
             library_originals: Default::default(),
             event_targets_api: None,

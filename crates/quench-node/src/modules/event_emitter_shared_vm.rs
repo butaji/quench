@@ -3,116 +3,6 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(namesNative, listenersNative, rawNative, countNative, addNative, onceNative, removeNative, allNative, emitNative, emitListenersNative, captureNative, apply, call, shapeKey) => {
-  'use strict';
-  // The most listener arguments `emit` passes to a lone listener without gathering them.
-  const DIRECT_ARGUMENTS = 2;
-  // A function listener's `once` wraps it here as `onceNative` does, so registering and
-  // firing it cross no native boundary: a wrapper whose first call removes it through the
-  // emitter's `removeListener` and then calls the listener with the wrapper's arguments,
-  // registered through the emitter's own `on` or `prependListener`; `listener` names the
-  // original for `listeners` and removal. Any other listener takes the native validation.
-  function onceListener(target, type, listener, prepend) {
-    if (typeof listener !== "function") return onceNative(target, type, listener, prepend);
-    let fired = false;
-    // Named as Node's bound wrapper reads.
-    const wrapper = { "bound onceWrapper": function () {
-      if (fired) return undefined;
-      fired = true;
-      call(target.removeListener, target, type, wrapper);
-      return apply(listener, target, arguments);
-    } }["bound onceWrapper"];
-    wrapper.listener = listener;
-    call(prepend ? target.prependListener : target.on, target, type, wrapper);
-    return target;
-  }
-  return {
-    eventNames: function eventNames() { return namesNative(this); },
-    listeners: function listeners(type) { return listenersNative(this, type); },
-    rawListeners: function rawListeners(type) { return rawNative(this, type); },
-    listenerCount: function listenerCount(type, listener) { return countNative(this, type, listener); },
-    // The first listener of a type, with no "newListener" subscriber, is stored and counted
-    // here as `addNative` stores and counts it; any other registration takes the native store.
-    addListener: function addListener(type, listener) {
-      if (typeof listener === "function") {
-        const events = this._events;
-        if (events !== undefined && events.newListener === undefined && events[type] === undefined) {
-          events[type] = listener;
-          this._eventsCount++;
-          return this;
-        }
-      }
-      return addNative(this, type, listener, false);
-    },
-    prependListener: function prependListener(type, listener) { return addNative(this, type, listener, true); },
-    once: function once(type, listener) { return onceListener(this, type, listener, false); },
-    prependOnceListener: function prependOnceListener(type, listener) { return onceListener(this, type, listener, true); },
-    // Removing a type's lone listener (or the once wrapper of it) retires the type here as
-    // `removeNative` retires it (`event_removed`, then the "removeListener" notification);
-    // a listener array and every other case take the native store.
-    removeListener: function removeListener(type, listener) {
-      if (typeof listener === "function") {
-        const events = this._events;
-        if (events === undefined) return this;
-        const record = events[type];
-        if (record === undefined) return this;
-        if (typeof record === "function" && (record === listener || record.listener === listener)) {
-          const count = this._eventsCount - 1;
-          this._eventsCount = count;
-          if (this[shapeKey]) events[type] = undefined;
-          else if (count === 0) this._events = { __proto__: null };
-          else delete events[type];
-          if (events.removeListener !== undefined) {
-            const original = record.listener;
-            this.emit("removeListener", type, original ? original : listener);
-          }
-          return this;
-        }
-      }
-      return removeNative(this, type, listener);
-    },
-    removeAllListeners: function removeAllListeners(type) { return allNative(this, type, arguments.length > 0); },
-    // Any event but "error" with one function listener calls it here, as `emitListenersNative`
-    // would, so the listener runs without a native boundary; a listener array, the "error"
-    // event and every other case take the native store's dispatch. The listener arguments
-    // come from `arguments`, which a body that only reads it keeps as the values passed, so
-    // the call runs without a frame where a rest parameter's would take one. An event without
-    // a listener returns before they are gathered, and a lone listener of up to two takes
-    // them from `arguments` directly: a server emits several events per request, and each
-    // argument array was one more young allocation in flight.
-    emit: function emit(type) {
-      const count = arguments.length;
-      let handler;
-      if (type !== "error") {
-        const events = this._events;
-        if (events === undefined) return false;
-        handler = events[type];
-        if (handler === undefined) return false;
-      }
-      const direct = typeof handler === "function" && count <= DIRECT_ARGUMENTS + 1;
-      let result;
-      if (direct) {
-        result = count === 1 ? call(handler, this)
-          : count === 2 ? call(handler, this, arguments[1])
-          : call(handler, this, arguments[1], arguments[2]);
-        if (result === undefined || result === null) return true;
-      }
-      const args = [];
-      for (let index = 1; index < count; index++) args[index - 1] = arguments[index];
-      if (direct) {
-        captureNative(this, result, type, args);
-        return true;
-      }
-      if (type === "error") return emitNative(this, type, args);
-      if (typeof handler !== "function") return emitListenersNative(this, type, args, handler);
-      result = apply(handler, this, args);
-      if (result !== undefined && result !== null) captureNative(this, result, type, args);
-      return true;
-    }
-  };
-}"#
-);
 
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -178,10 +68,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
-    let once_factory = context.evaluate_script_rooted(
-        "(invoke) => function wrapper(...args) { return invoke(...args); }",
-        "node:events/once-wrapper.js",
-    )?;
+    let once_factory = crate::host::removed_javascript("node:events/once-wrapper.js")?;
     context.assign_named_property_rooted(data,
         "onceFactory",
         once_factory,
@@ -217,7 +104,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "node:events/call.js",
     )?);
     operations.push(get(context, data, "shapeKey")?);
-    let factory = context.evaluate_script_rooted(FACTORY, "node:events/inspection.js")?;
+    let factory = crate::host::removed_javascript("node:events/inspection.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &operations)?;
     for name in [

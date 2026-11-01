@@ -1,137 +1,19 @@
-//! Node's process warnings without Node's warning module's imports.
-//!
-//! `process.emitWarning` and the default `warning` listener are Node's own `emitWarning` and
-//! `onWarning`: `lib/internal/process/warning.js` runs unchanged, as a library module does,
-//! but with its own `require` and `primordials` (`PRELUDE`). Loading it as a library module
-//! requires `internal/errors`, `internal/validators`, `internal/options`, `internal/assert`
-//! and the primordials, and its `writeOut` loads the SDK console: several megabytes to print
-//! one line. Here its imports are the primordials it uses, from the startup intrinsics;
-//! `getOptionValue` over the parsed options; a validator, assertion and error constructor
-//! that load Node's own modules on the paths that throw; `path.basename`; the console's
-//! `error` (`console_shared_vm::warning_writer`); and the public builtins. Scripts that can
-//! reach Node's module (`--expose-internals`) use the library module itself.
+//! Node's process warnings: `process.emitWarning` and the default `warning` listener.
+//! Their JavaScript implementation was removed (decision 38); they await a Rust port.
 
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 use crate::host::shared_vm::commonjs;
 use crate::host::NodeHost;
 
-/// The cached `[emitWarning, onWarning]` pair.
-const BINDING: &str = "\0binding:process-warning";
 
 /// Node's warning module, relative to the library's `lib`.
 const WARNING_MODULE: &str = "internal/process/warning.js";
 
-/// The hidden global that requires the public builtins (`commonjs::initialize`).
-const BUILTIN_REQUIRE: &str = crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE;
-
-/// The module's `require` and `primordials`, built over the startup intrinsics (captured as
-/// Node's primordials are) from `library(id)` (one of Node's library modules), `builtin(id)`
-/// (a public builtin), `option(name)` (`getOptionValue`), `basename(path, suffix)` and
-/// `consoleError()`.
-/// * `SafeSet` keeps its entries in a set through the original `add` and `has`, so changes
-///   to `Set.prototype` cannot reach it, as `makeSafe` ensures; the module uses only those.
-/// * `validateString` is `hideStackFrames`-wrapped in Node: a failure's stack starts at its
-///   caller, as it does here.
-/// * `ERR_INVALID_ARG_TYPE` constructs Node's error, whose stack starts at its caller.
-/// * `isErrorStackTraceLimitWritable` is `internal/errors.js`'s, outside a snapshot build.
-/// * The console's `error` is read when `writeOut` first writes, as Node reads it.
-const PRELUDE: &str = r#"
-  const call = Function.prototype.call.bind(Function.prototype.call);
-  const NativeError = Error;
-  const NativeSet = Set;
-  const { captureStackTrace } = NativeError;
-  const errorToString = NativeError.prototype.toString;
-  const { getOwnPropertyDescriptor, isExtensible } = Object;
-  const hasOwn = Object.prototype.hasOwnProperty;
-  const setAdd = NativeSet.prototype.add;
-  const setHas = NativeSet.prototype.has;
-  function SafeSet() { this.set = new NativeSet(); }
-  SafeSet.prototype = { __proto__: null, add(value) { call(setAdd, this.set, value); return this; }, has(value) { return call(setHas, this.set, value); } };
-  const primordials = {
-    __proto__: null,
-    ArrayIsArray: Array.isArray,
-    Error: NativeError,
-    ErrorCaptureStackTrace: captureStackTrace,
-    ErrorPrototypeToString: (error) => call(errorToString, error),
-    SafeSet,
-    String,
-  };
-  function assert(value, message) {
-    if (!value) library('internal/assert')(value, message);
-  }
-  function ERR_INVALID_ARG_TYPE(...args) {
-    const error = new (library('internal/errors').codes.ERR_INVALID_ARG_TYPE)(...args);
-    captureStackTrace(error, ERR_INVALID_ARG_TYPE);
-    return error;
-  }
-  function validateString(value, name) {
-    if (typeof value === 'string') return;
-    try {
-      library('internal/validators').validateString(value, name);
-    } catch (error) {
-      captureStackTrace(error, validateString);
-      throw error;
-    }
-  }
-  function isErrorStackTraceLimitWritable() {
-    const desc = getOwnPropertyDescriptor(NativeError, 'stackTraceLimit');
-    if (desc === undefined) return isExtensible(NativeError);
-    return call(hasOwn, desc, 'writable') ? desc.writable : desc.set !== undefined;
-  }
-  const modules = {
-    __proto__: null,
-    'internal/options': { getOptionValue: option },
-    'internal/assert': assert,
-    'internal/errors': { codes: { ERR_INVALID_ARG_TYPE }, isErrorStackTraceLimitWritable },
-    'internal/validators': { validateString },
-    'path': { basename },
-  };
-  const require = (id) => id === 'internal/console/global' ? { error: consoleError() } : id in modules ? modules[id] : builtin(id);
-  const module = { exports: {} };
-"#;
 
 /// The `[emitWarning, onWarning]` pair, built once.
-fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    commonjs::cached_native_binding(context, BINDING, |context| {
-        let process = context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .process_module
-            .ok_or_else(|| RootedError::host("process is not initialized"))?;
-        let root = context.host_mut().node_library_root.clone();
-        let filename = root.join("lib").join(WARNING_MODULE);
-        let source = context.host_mut().node_library_source(&filename, crate::node_sources::LibrarySource::Configured)
-            .map_err(|error| RootedError::host(error.to_string()))?;
-        // The prelude shares the wrapper's line, so the module keeps its positions.
-        let prelude: Vec<&str> = PRELUDE.lines().map(str::trim).collect();
-        let prefix = format!(
-            "((process, library, builtin, option, basename, consoleError) => {{ 'use strict'; {} ((exports, require, module, primordials) => {{",
-            prelude.join(" "),
-        );
-        let suffix = "\n})(module.exports, require, module, primordials); return [module.exports.emitWarning, module.exports.onWarning]; })";
-        let (line, column) = quench_runtime::wrapper_origin(&prefix)
-            .ok_or_else(|| RootedError::host("warning module wrapper origin exceeds compiler positions"))?;
-        let global = context.global_root()?;
-        let key = context.string_rooted(BUILTIN_REQUIRE);
-        let builtin = context.get_property_rooted(global, key)?;
-        context.with_startup_intrinsics(|context| {
-            let factory = context.evaluate_specialized_script_with_origin_rooted(
-                &[prefix.as_str(), &source, suffix].concat(),
-                &filename.to_string_lossy(),
-                line,
-                column,
-            )?;
-            let operation = crate::host::shared_vm::operation;
-            let library = context.host_function(operation("processWarningLibrary"))?;
-            let option = context.host_function(operation("processWarningOption"))?;
-            let basename = context.host_function(operation("processWarningBasename"))?;
-            let console_error = context.host_function(operation("consoleWarningWriter"))?;
-            let undefined = context.undefined();
-            context.call_rooted(factory, undefined, &[process, library, builtin, option, basename, console_error])
-        })
-    })
+fn binding(_: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::removed_javascript(format!("node:{WARNING_MODULE}"))
 }
 
 /// Builds the functions ahead of a warning that follows a release of the compiler's pages

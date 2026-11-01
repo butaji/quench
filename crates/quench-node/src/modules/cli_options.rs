@@ -351,10 +351,7 @@ impl CliOptions {
 /// `flag`, when it is one of Node's own CLI options (`process.allowedNodeEnvironmentFlags`'s
 /// source list), which Node accepts even where this host keeps no value for it.
 fn node_listed_flag(flag: &str) -> Option<&'static str> {
-    const LIST_START: &str = "const availableFlags = \"";
-    let surface: &'static str = crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS;
-    let start = surface.find(LIST_START)? + LIST_START.len();
-    surface[start..].split('"').next()?.split(' ').find(|listed| *listed == flag)
+    crate::modules::process_surface::NODE_FLAGS.iter().copied().find(|listed| *listed == flag)
 }
 
 /// Node's double-quote tokenizer; only unquoted ASCII spaces separate arguments.

@@ -46,180 +46,12 @@ pub(crate) const DEFAULT_CIPHER_LIST: &str = concat!(
     "DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA"
 );
 
-const TLS_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(contextApi, cipherOperation, caCertificatesOperation, identityOperation, connectOperation, constructOperation, infoOperation, startOperation, serverCreateOperation, serverConstructOperation, serverContextOperation, errorOperation, releaseOperation, X509Certificate) => {
-      const caCertificatesCache = new Map();
-      function convertALPNProtocols(protocols, out) {
-        function invalid(value, reason) {
-          const error = new TypeError(`The argument 'ALPNProtocols' ${reason}. Received ${value}`);
-          error.code = 'ERR_INVALID_ARG_VALUE';
-          throw error;
-        }
-        function encode(protocols) {
-          const lengths = new Array(protocols.length);
-          let size = 0;
-          for (let i = 0; i < protocols.length; i++) {
-            const length = Buffer.byteLength(protocols[i]);
-            if (length === 0) invalid(protocols[i], `at index ${i} must be a non-empty string`);
-            if (length > 255) {
-              const error = new RangeError(`The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${length}`);
-              error.code = 'ERR_OUT_OF_RANGE';
-              throw error;
-            }
-            lengths[i] = length;
-            size += 1 + length;
-          }
-          const result = Buffer.allocUnsafe(size);
-          let offset = 0;
-          for (let i = 0; i < protocols.length; i++) {
-            result[offset++] = lengths[i];
-            offset += result.write(protocols[i], offset);
-          }
-          return result;
-        }
-        function validate(buffer) {
-          let offset = 0;
-          while (offset < buffer.length) {
-            const length = buffer[offset];
-            if (length === 0) invalid(buffer, 'must not contain zero-length protocol');
-            if (offset + 1 + length > buffer.length) invalid(buffer, 'contains truncated protocol');
-            offset += 1 + length;
-          }
-        }
-        if (Array.isArray(protocols)) {
-          out.ALPNProtocols = encode(protocols);
-        } else if (ArrayBuffer.isView(protocols)) {
-          const bytes = Buffer.from(protocols.buffer.slice(
-            protocols.byteOffset, protocols.byteOffset + protocols.byteLength));
-          validate(bytes);
-          out.ALPNProtocols = bytes;
-        }
-      }
-      function Server(options, listener) { return serverConstructOperation(this,new.target,options,listener); }
-      Server.prototype[Symbol.for('nodejs.rejection')] = function(error, event, socket) {
-        if (event === 'secureConnection') socket.destroy(error);
-        else {
-          const inherited = Object.getPrototypeOf(Server.prototype)?.[Symbol.for('nodejs.rejection')];
-          if (typeof inherited === 'function') {
-            return Reflect.apply(inherited, this, [error, event, socket]);
-          }
-          this.emit('error', error);
-        }
-      };
-      Server.prototype.setSecureContext=function setSecureContext(options){return serverContextOperation(this,options);};
-      Server.prototype.setTicketKeys=function setTicketKeys(keys){
-        const context = this._sharedCreds?.context;
-        if (!context || typeof context.setTicketKeys !== 'function') {
-          const error = new Error('TLS server context is unavailable');
-          error.code = 'ERR_TLS_INVALID_STATE';
-          throw error;
-        }
-        context.setTicketKeys(keys);
-      };
-      Server.prototype.addContext=function addContext(servername,context){
-        if (typeof servername !== 'string') throw new TypeError('"servername" must be a string');
-        const secureContext = context instanceof contextApi.SecureContext
-          ? context
-          : contextApi.createSecureContext(context);
-        this._contexts.push([servername.toLowerCase(), secureContext]);
-      };
-      function TLSSocket(socket, opts) { return constructOperation(this, new.target, socket, {...opts}); }
-      TLSSocket.prototype.getProtocol=function getProtocol(){return infoOperation(this,'protocol');};
-      TLSSocket.prototype.getPeerCertificate=function getPeerCertificate(detailed){return infoOperation(this,'peerCertificate',detailed);};
-      TLSSocket.prototype.getCertificate=function getCertificate(){return infoOperation(this,'certificate');};
-      function toX509Certificate(certificate) {
-        if (!certificate || !certificate.raw) return undefined;
-        const result = new X509Certificate(certificate.raw);
-        const issuer = certificate.issuerCertificate;
-        if (issuer && issuer !== certificate) result.issuerCertificate = toX509Certificate(issuer);
-        return result;
-      }
-      TLSSocket.prototype.getPeerX509Certificate=function getPeerX509Certificate(){
-        return toX509Certificate(this.getPeerCertificate(true));
-      };
-      TLSSocket.prototype.getX509Certificate=function getX509Certificate(){
-        return toX509Certificate(this.getCertificate());
-      };
-      TLSSocket.prototype.getCipher=function getCipher(){return infoOperation(this,'cipher');};
-      TLSSocket.prototype.getSession=function getSession(){return infoOperation(this,'session');};
-      TLSSocket.prototype.getTLSTicket=function getTLSTicket(){return infoOperation(this,'ticket');};
-      TLSSocket.prototype.isSessionReused=function isSessionReused(){return infoOperation(this,'sessionReused');};
-      TLSSocket.prototype.destroySoon=function destroySoon(){
-        if(this.writable)this.end();
-        if(this.writableFinished)this.destroy();
-        else this.once('finish',this.destroy);
-      };
-      TLSSocket.prototype._start=function(){return startOperation(this);};
-      TLSSocket.prototype._tlsError=function(err){return errorOperation(this,err);};
-      TLSSocket.prototype._releaseControl=function(){return releaseOperation(this);};
-      'use strict';
-      return {
-      getCiphers: (0, () => cipherOperation()),
-      convertALPNProtocols,
-      getCACertificates: function getCACertificates(type = 'default') {
-        if (type === 'bundled') return this.rootCertificates;
-        if (caCertificatesCache.has(type)) return caCertificatesCache.get(type);
-        const args = process.execArgv || [];
-        const disabled = args.includes('--no-use-system-ca');
-        const useSystemCA = !disabled && (args.includes('--use-system-ca') ||
-          args.includes('--use-openssl-ca') || process.env.NODE_USE_SYSTEM_CA === '1');
-        const certificates = caCertificatesOperation(type, useSystemCA);
-        caCertificatesCache.set(type, certificates);
-        return certificates;
-      },
-      setDefaultCACertificates: function setDefaultCACertificates(certs) {
-        caCertificatesOperation('setDefault', certs);
-        caCertificatesCache.delete('default');
-      },
-      checkServerIdentity: function checkServerIdentity(hostname, cert) { return identityOperation(hostname, cert); },
-      SecureContext: contextApi.SecureContext,
-      createSecureContext: contextApi.createSecureContext,
-      TLSSocket,Server,
-      createServer:function createServer(options,listener){return serverCreateOperation(options,listener);},
-      connect: function connect(...args) {
-        const socket = connectOperation(...args);
-        // If the peer closes before the TLS handshake completes, Node reports
-        // this as a TLS ECONNRESET and carries the original connection
-        // endpoint fields through from the normalized connect options.
-        // Without this listener the generic socket EOF error loses `port` and
-        // `localAddress`, which callers use to diagnose failed TLS handshakes.
-        socket.prependListener('end', function onConnectEnd() {
-          if (this._hadError || this._secureEstablished) return;
-          this._hadError = true;
-          const options = this._tlsOptions;
-          const error = Object.assign(new Error(
-            'Client network socket disconnected before secure TLS connection was established'
-          ), { code: 'ECONNRESET' });
-          error.path = options.path;
-          error.host = options.host;
-          error.port = options.port;
-          error.localAddress = options.localAddress;
-          this.destroy(error);
-        });
-        // The transport can surface a reset directly instead of delivering
-        // the peer EOF as an `end` event. Preserve the same connect metadata
-        // Node's onConnectEnd attaches to that error path.
-        socket.prependListener('error', function onConnectError(error) {
-          if (!this._secureEstablished && error?.code === 'ECONNRESET' && !this._hadError) {
-            this._hadError = true;
-            const options = this._tlsOptions;
-            error.path = options.path;
-            error.host = options.host;
-            error.port = options.port;
-            error.localAddress = options.localAddress;
-          }
-        });
-        return socket;
-      },
-    };
-    }"#
-);
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     // The library's crypto wrapper must finish before TLS policy imports it.
     let crypto = crate::host::shared_vm::commonjs::crypto_module(context)?;
     let x509_certificate = socket::get(context, crypto, "X509Certificate")?;
-    let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
+    let factory = crate::host::removed_javascript("node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
     handle::registry(context)?;
@@ -231,17 +63,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let key = context.string_rooted("standardConfigure");
     context.define_data_property_rooted(api, key, policy, false, false, false)?;
-    let patterns = context.evaluate_script_rooted(
-        quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"),
-        "node:tls/identity-patterns.js",
-    )?;
+    let patterns = crate::host::removed_javascript("node:tls/identity-patterns.js")?;
     let patterns_key = context.string_rooted("identityPatterns");
     context.define_data_property_rooted(api, patterns_key, patterns, false, false, false)?;
     let lower = context.host_function(crate::host::shared_vm::operation("tlsLowercaseName"))?;
-    let lower_factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!("(lower)=>function toLowerCase(c){return lower(c);}"),
-        "node:tls/lowercase-facade.js",
-    )?;
+    let lower_factory = crate::host::removed_javascript("node:tls/lowercase-facade.js")?;
     let lower_callback = context.call_rooted(lower_factory, undefined, &[lower])?;
     let lower_key = context.string_rooted("identityLowercase");
     context.define_data_property_rooted(api, lower_key, lower_callback, false, false, false)?;

@@ -25,30 +25,6 @@ const FAMILY_IPV4: i32 = 4;
 /// ada's IDNA input limit (`max_domain_input_bytes`).
 const MAX_DOMAIN_INPUT_BYTES: usize = 16384;
 
-/// The binding's classes; native operations arrive as `native`.
-const BINDING_JS: &str = quench_js_check::checked_js!(
-    r#"(native, queries) => {
-  'use strict';
-  function QueryReqWrap() {}
-  const channels = new WeakMap();
-  const released = new FinalizationRegistry((id) => native.release(id));
-  function ChannelWrap(timeout, tries, maxTimeout) {
-    const id = native.channel(timeout, tries, maxTimeout);
-    channels.set(this, id);
-    released.register(this, id);
-  }
-  const methods = {};
-  queries.forEach((name, kind) => {
-    methods[name] = { [name](...args) { return native.query(channels.get(this), kind, ...args); } }[name];
-  });
-  methods.getServers = function getServers(...args) { return native.getServers(channels.get(this), ...args); };
-  methods.setServers = function setServers(...args) { return native.setServers(channels.get(this), ...args); };
-  methods.setLocalAddress = function setLocalAddress(...args) { return native.setLocalAddress(channels.get(this), ...args); };
-  methods.cancel = function cancel(...args) { return native.cancel(channels.get(this), ...args); };
-  Object.assign(ChannelWrap.prototype, methods);
-  return { QueryReqWrap, ChannelWrap };
-}"#
-);
 
 struct Completion {
     request: u64,
@@ -237,7 +213,7 @@ pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<()
     }
     let names = QUERIES.iter().map(|(name, _)| c.string_rooted(name)).collect::<Vec<_>>();
     let names = c.array_rooted(&names)?;
-    let factory = c.evaluate_script_rooted(BINDING_JS, "node:internal/cares_wrap.js")?;
+    let factory = crate::host::removed_javascript("node:internal/cares_wrap.js")?;
     let undefined = c.undefined();
     let classes = c.call_rooted(factory, undefined, &[native, names])?;
     for name in ["QueryReqWrap", "ChannelWrap"] {

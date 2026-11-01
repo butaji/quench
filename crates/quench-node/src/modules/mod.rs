@@ -43,7 +43,6 @@ pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
-pub(crate) mod domain_source;
 pub(crate) mod domain_trampoline;
 pub(crate) mod emitter_async_resource_shared_vm;
 pub(crate) mod eval_globals_shared_vm;
@@ -110,6 +109,7 @@ mod process_exception_route;
 pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_signals_state;
 pub(crate) mod process_state;
+pub(crate) mod process_surface;
 pub(crate) mod process_stdin_shared_vm;
 pub(crate) mod promise_hooks_shared_vm;
 pub(crate) mod shared_event_loop;
@@ -188,7 +188,6 @@ pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_hash_source;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_source_shared_vm;
 

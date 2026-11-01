@@ -37,73 +37,6 @@ const CALLBACK_TIMER_EXPORTS: &[&str] = &[
     "clearImmediate",
 ];
 
-const PROMISE_INTERVAL_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(schedule, cancel) => function setInterval(delay, value, options = {}) {
-  const signal = options?.signal;
-  let timer;
-  let stopped = false;
-  let failure;
-  let waiter;
-  const values = [];
-  const cleanup = () => signal?.removeEventListener?.("abort", abort);
-  const stop = () => {
-    if (stopped) return;
-    stopped = true;
-    if (timer !== undefined) cancel(timer);
-    cleanup();
-  };
-  const abort = () => {
-    failure = new Error("The operation was aborted");
-    failure.name = "AbortError";
-    failure.code = "ABORT_ERR";
-    stop();
-    if (waiter) {
-      const reject = waiter.reject;
-      waiter = undefined;
-      reject(failure);
-    }
-  };
-  const iterator = {
-    [Symbol.asyncIterator]() { return this; },
-    next() {
-      if (failure) return Promise.reject(failure);
-      if (values.length) return Promise.resolve({ value: values.shift(), done: false });
-      if (stopped) return Promise.resolve({ value: undefined, done: true });
-      return new Promise((resolve, reject) => { waiter = { resolve, reject }; });
-    },
-    return() {
-      values.length = 0;
-      stop();
-      if (waiter) {
-        const resolve = waiter.resolve;
-        waiter = undefined;
-        resolve({ value: undefined, done: true });
-      }
-      return Promise.resolve({ value: undefined, done: true });
-    },
-    throw(error) { stop(); return Promise.reject(error); },
-    ref() { timer?.ref?.(); return this; },
-    unref() { timer?.unref?.(); return this; },
-    hasRef() { return timer?.hasRef?.() ?? true; },
-  };
-  if (signal?.aborted) {
-    abort();
-  } else {
-    signal?.addEventListener?.("abort", abort, { once: true });
-    timer = schedule(() => {
-      if (stopped) return;
-      if (waiter) {
-        const resolve = waiter.resolve;
-        waiter = undefined;
-        resolve({ value, done: false });
-      } else {
-        values.push(value);
-      }
-    }, delay);
-  }
-  return iterator;
-}"#
-);
 
 #[derive(Clone, Copy)]
 pub(crate) struct TimerHandleApi {
@@ -176,8 +109,7 @@ pub(crate) fn promises_module(
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, module, name, function)?;
     }
-    let factory = context
-        .evaluate_script_rooted(PROMISE_INTERVAL_FACTORY, "node:timers/promises/interval.js")?;
+    let factory = crate::host::removed_javascript("node:timers/promises/interval.js")?;
     let global = context.global_root()?;
     let schedule = property(context, global, "setInterval")?;
     let cancel = property(context, global, "clearInterval")?;
@@ -1016,18 +948,9 @@ fn timer_handle_prototype(
     owner: &str,
     has_ref_operation: &str,
 ) -> Result<RootId, RootedError> {
-    let class_source = match owner {
-        "Timeout" => {
-            "(() => class Timeout { constructor(callback, after, args, repeat, isRefed) { const schedule = repeat ? setInterval : setTimeout; const handle = Reflect.apply(schedule, undefined, [callback, after, ...(args ?? [])]); if (!isRefed) handle.unref(); return handle; } })()"
-        }
-        "Immediate" => {
-            "(() => class Immediate { constructor(callback, args) { return Reflect.apply(setImmediate, undefined, [callback, ...(args ?? [])]); } })()"
-        }
-        _ => return Err(RootedError::host("unknown timer handle kind")),
-    };
-    let constructor = context.evaluate_script_rooted(class_source, "node:timers/shared.js")?;
-    let prototype_key = context.string_rooted("prototype");
-    let prototype = context.get_property_rooted(constructor, prototype_key)?;
+    // The handle classes' constructors were JavaScript (decision 38); their prototypes
+    // carry the Rust-backed methods.
+    let prototype = context.object_rooted()?;
     let (ref_operation, unref_operation) = match owner {
         "Timeout" => ("timerRef", "timerUnref"),
         "Immediate" => ("immediateRef", "immediateUnref"),
@@ -1086,10 +1009,7 @@ fn timer_handle_prototype(
         } else {
             "immediateDispose"
         }))?;
-    let factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!("operation=>function(){'use strict';return operation(this);}"),
-        "node:timers/dispose-facade.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:timers/dispose-facade.js")?;
     let undefined = context.undefined();
     let method = context.call_rooted(factory, undefined, &[operation])?;
     let global = context.global_root()?;
@@ -1683,12 +1603,7 @@ pub(crate) fn internal_module(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            "schedule=>function setUnrefTimeout(callback,after){return schedule(callback,after);}"
-        ),
-        "node:internal/timers/set-unref-facade.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:internal/timers/set-unref-facade.js")?;
     let operation =
         context.host_function(crate::host::shared_vm::operation("internalSetUnrefTimeout"))?;
     let undefined = context.undefined();

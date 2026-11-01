@@ -7,17 +7,6 @@ pub(crate) const DEFAULT_MAX_LISTENERS: f64 = 10.0;
 // AbortSignal disables leak warnings by default, independently of emitter defaults.
 pub(crate) const ABORT_SIGNAL_MAX_LISTENERS: f64 = 0.0;
 
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(defaultGetNative, defaultSetNative, getNative, setNative, globalGetNative, globalSetNative) => ({
-  defaultGet: function get() { return defaultGetNative(); },
-  defaultSet: function set(value) { return defaultSetNative(value); },
-  get: function getMaxListeners() { 'use strict'; return getNative(this); },
-  set: function setMaxListeners(value) { 'use strict'; return setNative(this, value); },
-  globalGet: function getMaxListeners(target) { return globalGetNative(target); },
-  // Node's `EventEmitter.setMaxListeners` is an anonymous function assignment.
-  globalSet: (0, function(value = undefined, ...targets) { return globalSetNative(value, ...targets); })
-})"#
-);
 
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -97,7 +86,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         operations
             .push(context.host_function_with_data(crate::host::shared_vm::operation(name), data)?);
     }
-    let factory = context.evaluate_script_rooted(FACTORY, "node:events/limits.js")?;
+    let factory = crate::host::removed_javascript("node:events/limits.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &operations)?;
     let global = context.global_root()?;

@@ -3,15 +3,11 @@
 //! The host boundary owns Node policy and API behavior. JavaScript semantics
 //! and execution belong to the shared runtime.
 
-#[macro_use]
-mod undici_bindings;
 #[cfg(feature = "native-execution")]
 pub mod aot;
 pub mod esm_imports;
 pub mod host;
 pub mod modules;
-mod node_sources;
-pub mod polyfills;
 pub mod shared_run;
 
 pub use host::{NodeHost, NodeOutputSink};

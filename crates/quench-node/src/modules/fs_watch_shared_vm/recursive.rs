@@ -5,25 +5,6 @@ use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 pub(crate) mod iterator;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(Emitter, initialize, start, close, reference, notify, iterate, next, finish, startSymbol, MapConstructor, mapGet, mapSet, mapDelete, fs, resolve, join, relative, basename) => {
- 'use strict';
- class FSWatcher extends Emitter {
-   #state;
-   constructor(options = {}) { super(); this.#state = initialize(options); }
-   [startSymbol](filename) { return start(this, this.#state, filename); }
-   close() { return close(this, this.#state); }
-   ref() { return reference(this.#state, true); }
-   unref() { return reference(this.#state, false); }
-   [Symbol.asyncIterator]() { return iterate(this, this.#state); }
- }
- return { FSWatcher, startSymbol, MapConstructor, mapGet, mapSet, mapDelete, fs, resolve, join, relative, basename,
-   makeCallback: (owner, state, path, record) => (kind, filename) => notify(owner, state, path, record, kind, filename),
-   makeIterator: (owner, state) => ({ next: () => next(owner, state), return: () => finish(owner, state), [Symbol.asyncIterator]() { return this; } })
- };
-}"#
-);
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn install(
@@ -58,7 +39,7 @@ pub(super) fn install(
     for name in ["resolve", "join", "relative", "basename"] {
         arguments.push(get(context, path, name)?);
     }
-    let factory = context.evaluate_script_rooted(FACTORY, "node:fs/recursive-watch-facade.js")?;
+    let factory = crate::host::removed_javascript("node:fs/recursive-watch-facade.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &arguments)?;
     set(context, parent, "recursive", api)

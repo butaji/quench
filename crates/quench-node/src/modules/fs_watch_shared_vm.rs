@@ -25,24 +25,6 @@ enum EventKind {
 
 const FIRST_WATCH_ID: u64 = 1;
 const MAX_WATCH_ID: u64 = (1_u64 << f64::MANTISSA_DIGITS) - 1;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(Emitter, close, reference, hClose, hReference, hHasRef, hInitialized, nativeWatch) => {
- function FSWatcher() { Emitter.call(this); this._handle = null; this._ignoreMatcher = null; }
- Object.setPrototypeOf(FSWatcher.prototype, Emitter.prototype);
- Object.setPrototypeOf(FSWatcher, Emitter);
- FSWatcher.prototype.close = function() { 'use strict'; return close(this); };
- FSWatcher.prototype.ref = function() { 'use strict'; return reference(this, true); };
- FSWatcher.prototype.unref = function() { 'use strict'; return reference(this, false); };
- function FSEvent() {}
- FSEvent.prototype.close = function() { 'use strict'; return hClose(this); };
- FSEvent.prototype.ref = function() { 'use strict'; return hReference(this, true); };
- FSEvent.prototype.unref = function() { 'use strict'; return hReference(this, false); };
- FSEvent.prototype.hasRef = function() { 'use strict'; return hHasRef(this); };
- Object.defineProperty(FSEvent.prototype, 'initialized', { get: function() { return hInitialized(this); } });
- return { FSWatcher, FSEvent, watch: function watch(filename, options, listener) { 'use strict'; return nativeWatch(filename, options, listener); } };
-}"#
-);
 
 #[derive(Clone, Copy)]
 enum WatchTarget {
@@ -160,7 +142,7 @@ pub(crate) fn install(
         ] {
             functions.push(context.host_function(crate::host::shared_vm::operation(name))?);
         }
-        let factory = context.evaluate_script_rooted(FACTORY, "node:fs/watch-facade.js")?;
+        let factory = crate::host::removed_javascript("node:fs/watch-facade.js")?;
         let undefined = context.undefined();
         let api = context.call_rooted(factory, undefined, &functions)?;
         recursive::install(context, api, fs, emitter)?;
@@ -284,13 +266,12 @@ fn validate_encoding(
     super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_ARG_VALUE")?;
     Err(context.throw(error))
 }
-const MATCHER_FACADE: &str = quench_js_check::checked_js!("native => filename => native(filename)");
 fn wrap_matcher(
     context: &mut NativeContext<'_, NodeHost>,
     native: RootId,
 ) -> Result<RootId, RootedError> {
     let factory =
-        context.evaluate_script_rooted(MATCHER_FACADE, "node:fs/watch-ignore-forward.js")?;
+        crate::host::removed_javascript("node:fs/watch-ignore-forward.js")?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[native])
 }

@@ -1,21 +1,6 @@
 //! Callable constructor presentation delegates TLS policy to Rust.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(register, initialize, create) => {
- 'use strict';
- class NativeSecureContext { constructor() { register(this); } }
- Object.defineProperty(NativeSecureContext.prototype, '_external', {
-   configurable: true,
-   get() { throw new TypeError('Illegal invocation'); }
- });
- function SecureContext(secureProtocol, secureOptions, minVersion, maxVersion) {
-   return initialize(this, this instanceof SecureContext, secureProtocol, secureOptions, minVersion, maxVersion);
- }
- return { SecureContext, NativeSecureContext,
-   createSecureContext: function createSecureContext(options) { return create(options); } };
-}"#
-);
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -43,7 +28,7 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     let initialize =
         context.host_function(crate::host::shared_vm::operation("tlsContextOuterInit"))?;
     let create = context.host_function(crate::host::shared_vm::operation("tlsContextCreate"))?;
-    let factory = context.evaluate_script_rooted(FACTORY, "node:tls/context-facades.js")?;
+    let factory = crate::host::removed_javascript("node:tls/context-facades.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &[register, initialize, create])?;
     let native = get(context, api, "NativeSecureContext")?;

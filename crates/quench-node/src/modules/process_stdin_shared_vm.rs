@@ -39,10 +39,7 @@ mod platform {
             crate::host::shared_vm::operation("processOpenStdin"),
             process,
         )?;
-        let factory = context.evaluate_script_rooted(
-            "operation => function() { return operation(); }",
-            "node:process/open-stdin.js",
-        )?;
+        let factory = crate::host::removed_javascript("node:process/open-stdin.js")?;
         let undefined = context.undefined();
         let open = context.call_rooted(factory, undefined, &[open])?;
         set(context, process, "openStdin", open)?;

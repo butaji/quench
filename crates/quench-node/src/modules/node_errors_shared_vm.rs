@@ -131,26 +131,12 @@ enum ErrorPresentation {
     Direct,
     HiddenStackFrames,
 }
-const HIDDEN_PROTOTYPE: &str = quench_js_check::checked_js!(
-    r#"constructorNative => class HideStackFramesError {
-      get ['constructor']() { return constructorNative(); }
-    }.prototype"#
-);
-const PROTOTYPE: &str = quench_js_check::checked_js!(
-    r#"(Base, constructorNative, brandNative, stringNative, brand) =>
-    class NodeError extends Base {
-      get ['constructor']() { return constructorNative(); }
-      get [brand]() { return brandNative(); }
-      toString() { return stringNative(this); }
-    }.prototype"#
-);
-
 fn presentation_factory(context: &mut NativeContext<'_, NodeHost>, presentation: ErrorPresentation) -> Result<RootId, RootedError> {
-    let (source, name) = match presentation {
-        ErrorPresentation::Direct => (PROTOTYPE, "node:internal/errors/argument-prototype.js"),
-        ErrorPresentation::HiddenStackFrames => (HIDDEN_PROTOTYPE, "node:internal/errors/validator-prototype.js"),
-    };
-    context.evaluate_script_rooted(source, name)
+    let _ = context;
+    crate::host::removed_javascript(match presentation {
+        ErrorPresentation::Direct => "node:internal/errors/argument-prototype.js",
+        ErrorPresentation::HiddenStackFrames => "node:internal/errors/validator-prototype.js",
+    })
 }
 
 #[cfg(feature = "aot")]

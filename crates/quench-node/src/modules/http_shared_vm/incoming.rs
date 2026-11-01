@@ -24,151 +24,6 @@ const RAW_HEADERS_FIELD: &str = "rawHeaders";
 /// The version a head without a parsable `major.minor` reports.
 const DEFAULT_VERSION: (u32, u32) = (1, 1);
 
-/// The factory of the IncomingMessage a parsed head makes (`create_function`): the library
-/// message, its header lines added, each defined head field assigned in
-/// `MESSAGE_HEAD_FIELDS` order (its parameters'), then the exchange id under its side's
-/// host-private key, the shared `_read` and `_destroy`, an EventEmitter prototype for a
-/// socket without `on`, and the body pushed, then its end unless it is still open. One
-/// guest call makes the whole message, so its steps run in the lane.
-const CREATE_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(IncomingMessage, EventEmitter, read, destroy, serverKey, clientKey, setPrototypeOf, bodyBuffer, captureTemplate, copyTemplate, templateProbes, defaultHighWaterMark, captureLimit, debuglog, originalPush, originalListenerCount, originalAddHeaderLines) => {
-  'use strict';
-  // The template of `new IncomingMessage(undefined)` (`objectTemplateCapture`), and the
-  // default high water mark its ReadableState read, which no probe names: module state.
-  let template;
-  let highWaterMark;
-  let captures = 0;
-  const message = () => {
-    if (template !== undefined && highWaterMark === defaultHighWaterMark(false)) {
-      const copy = copyTemplate(template);
-      if (copy !== undefined) return copy;
-    }
-    // A read that changed, or a restored heap, takes a new template, up to `captureLimit`
-    // captures; past them every message is constructed.
-    if (captures < captureLimit) {
-      captures++;
-      highWaterMark = defaultHighWaterMark(false);
-      template = captureTemplate(new IncomingMessage(undefined), new IncomingMessage(undefined), templateProbes);
-    }
-    return new IncomingMessage(undefined);
-  };
-  // The template of a message whose end was pushed before anything observed it
-  // (`stream.push(null)` below): the push reads only the fresh stream's state, its
-  // listener count and the methods the probes name, so a copy is the stream after it
-  // while those are the library's own (`LibraryOriginal`). `undefined` while the stream
-  // debug log, which the push writes to, is on, or past the captures.
-  let endedTemplate;
-  let endedHighWaterMark;
-  let endedCaptures = 0;
-  let streamDebug;
-  const ended = () => {
-    const stream = new IncomingMessage(undefined);
-    stream.push(null);
-    return stream;
-  };
-  const endedMessage = () => {
-    if (endedTemplate !== undefined && endedHighWaterMark === defaultHighWaterMark(false)) {
-      const copy = copyTemplate(endedTemplate);
-      if (copy !== undefined) return copy;
-    }
-    streamDebug ??= debuglog("stream").enabled;
-    // A copy skips the push, which only the library's own methods leave unobserved.
-    if (!streamDebug && endedCaptures < captureLimit) {
-      endedCaptures++;
-      const fresh = new IncomingMessage(undefined);
-      if (fresh.push !== originalPush || fresh.listenerCount !== originalListenerCount) return undefined;
-      endedHighWaterMark = defaultHighWaterMark(false);
-      endedTemplate = captureTemplate(ended(), ended(), templateProbes);
-    }
-    return undefined;
-  };
-  // A server request's message as `create` makes it below, its head fields aside: the
-  // library message with the exchange id under the server's key, the shared `_read` and
-  // `_destroy`, and for a bodiless request its end pushed (as `endedMessage`). Each head
-  // field is a parameter (`objectTemplateCapture`), so a copy is that message for the
-  // request's values, assigned before the header lines are added, which only the library's
-  // own `_addHeaderLines` leaves unobserved (`LibraryOriginal`).
-  const requestParameters = ["method", "url", "httpVersion", "httpVersionMajor", "httpVersionMinor", "rawHeaders", "socket", "complete", serverKey];
-  const prepared = (ended) => {
-    const stream = new IncomingMessage(undefined);
-    stream[serverKey] = undefined;
-    stream._read = read;
-    stream._destroy = destroy;
-    if (ended) stream.push(null);
-    return stream;
-  };
-  const requestTemplate = (ended) => {
-    let requestTemplate;
-    let requestHighWaterMark;
-    let requestCaptures = 0;
-    return (method, url, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, id) => {
-      if (requestTemplate !== undefined && requestHighWaterMark === defaultHighWaterMark(false)) {
-        const copy = copyTemplate(requestTemplate, method, url, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, id);
-        if (copy !== undefined) return copy;
-      }
-      streamDebug ??= debuglog("stream").enabled;
-      if (ended && streamDebug || requestCaptures >= captureLimit) return undefined;
-      requestCaptures++;
-      const fresh = new IncomingMessage(undefined);
-      if (fresh._addHeaderLines !== originalAddHeaderLines
-        || ended && (fresh.push !== originalPush || fresh.listenerCount !== originalListenerCount)) return undefined;
-      requestHighWaterMark = defaultHighWaterMark(false);
-      requestTemplate = captureTemplate(prepared(ended), prepared(ended), templateProbes, requestParameters);
-      return undefined;
-    };
-  };
-  const openRequest = requestTemplate(false);
-  const endedRequest = requestTemplate(true);
-  return function create(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server) {
-    const pushed = typeof body === "string" && body.length !== 0;
-    const request = server && method !== undefined && statusCode === undefined && socket !== undefined
-      ? (!open && !pushed ? endedRequest : openRequest)(method, url, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, id)
-      : undefined;
-    if (request === undefined) {
-      return fields(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server, pushed);
-    }
-    request._addHeaderLines(rawHeaders, rawHeaders.length);
-    if (open) request.complete = false;
-    adoptSocket(request.socket);
-    if (pushed) {
-      request.push(bodyBuffer(body));
-      if (!open) request.push(null);
-    }
-    return request;
-  };
-  // A socket without `on` takes the EventEmitter prototype.
-  function adoptSocket(peer) {
-    if ((typeof peer === "object" && peer !== null || typeof peer === "function") && typeof peer.on !== "function") {
-      setPrototypeOf(peer, EventEmitter.prototype);
-    }
-  }
-  // The message of any other head: the template's, its header lines added, then each
-  // defined field assigned in order.
-  function fields(method, url, statusCode, statusMessage, httpVersion, httpVersionMajor, httpVersionMinor, rawHeaders, socket, complete, body, open, id, server, pushed) {
-    const copied = !open && !pushed ? endedMessage() : undefined;
-    const stream = copied ?? message();
-    stream._addHeaderLines(rawHeaders, rawHeaders.length);
-    if (method !== undefined) stream.method = method;
-    if (url !== undefined) stream.url = url;
-    if (statusCode !== undefined) stream.statusCode = statusCode;
-    if (statusMessage !== undefined) stream.statusMessage = statusMessage;
-    if (httpVersion !== undefined) stream.httpVersion = httpVersion;
-    if (httpVersionMajor !== undefined) stream.httpVersionMajor = httpVersionMajor;
-    if (httpVersionMinor !== undefined) stream.httpVersionMinor = httpVersionMinor;
-    if (rawHeaders !== undefined) stream.rawHeaders = rawHeaders;
-    if (socket !== undefined) stream.socket = socket;
-    if (complete !== undefined) stream.complete = complete;
-    if (open) stream.complete = false;
-    stream[server ? serverKey : clientKey] = id;
-    stream._read = read;
-    stream._destroy = destroy;
-    adoptSocket(stream.socket);
-    if (pushed) stream.push(bodyBuffer(body));
-    if (!open && copied === undefined) stream.push(null);
-    return stream;
-  }
-}"#
-);
 
 /// The guest function that makes an IncomingMessage from a parsed head's fields
 /// (`MessageHead::arguments`), then the body text, whether the body is still open, the
@@ -178,7 +33,7 @@ pub(super) fn create_function(
     configuration: [RootId; 6],
     template_probes: RootId,
 ) -> Result<RootId, RootedError> {
-    let factory = c.evaluate_script_rooted(CREATE_FACTORY, "node:http/incoming-message.js")?;
+    let factory = crate::host::removed_javascript("node:http/incoming-message.js")?;
     let global = c.global_root()?;
     let reflect = get(c, global, "Reflect")?;
     let set_prototype_of = get(c, reflect, "setPrototypeOf")?;
@@ -364,17 +219,7 @@ pub(crate) fn accepted_socket(
     // Keep Node's accepted-socket parser lifecycle observable. Callers
     // may wrap parser.free while handling a request; release it when the
     // shared socket facade emits close.
-    let install_parser = c.evaluate_script_rooted(
-        r#"((socket) => {
-          if (socket.parser) return;
-          const parser = { free() {}, close() {} };
-          socket.parser = parser;
-          socket.once('close', () => {
-            if (typeof parser.free === 'function') parser.free();
-          });
-        })"#,
-        "node:http/accepted-socket-parser.js",
-    )?;
+    let install_parser = crate::host::removed_javascript("node:http/accepted-socket-parser.js")?;
     let undefined = c.undefined();
     c.call_rooted(install_parser, undefined, &[socket])?;
     c.release_root(install_parser);
@@ -579,13 +424,7 @@ pub(crate) fn abort_request(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let abort = c.evaluate_script_rooted(
-        r#"((request, error) => {
-          if (request.listenerCount('error') === 0) request.on('error', () => {});
-          request.destroy(error);
-        })"#,
-        "node:http/server-request-abort.js",
-    )?;
+    let abort = crate::host::removed_javascript("node:http/server-request-abort.js")?;
     let undefined = c.undefined();
     c.call_rooted(abort, undefined, args)?;
     c.release_root(abort);
