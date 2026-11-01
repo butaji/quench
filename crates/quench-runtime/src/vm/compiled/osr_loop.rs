@@ -2040,7 +2040,9 @@ enum Representation {
 /// The values a compilation starts from: what the region's registers and captures held when
 /// it compiled, and what earlier compilations found was no `i32` (`Widening`).
 pub(crate) struct Observation<'a> {
-    pub(crate) register: &'a dyn Fn(Register) -> Value,
+    /// JIT observations refine representation; AOT has no execution to observe.
+    /// Absence retains the full Number domain and cannot prove a constant value.
+    pub(crate) register: Option<&'a dyn Fn(Register) -> Value>,
     /// Whether the array in a register looks to hold `i32` elements.
     pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
     pub(crate) captures: &'a [Value],
@@ -2128,7 +2130,7 @@ impl Webs {
 }
 
 /// The Number registers an instruction reads.
-fn number_reads(instruction: WideInstruction) -> Vec<Register> {
+pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
     let register = |operand: Operand| operand.register_index();
     match instruction.op() {
         Op::Move | Op::IncDec | Op::Unary | Op::ToNumeric => vec![instruction.register_b()],
@@ -2238,9 +2240,13 @@ fn webs(region: &LoopRegion) -> Webs {
         }
         // Native code may leave at any instruction of the region, before its effects, and
         // resumes the lane where a jump leaves the region; each writes back what is live.
-        let leave = |webs: &mut Webs, at: u32, reads: &mut Vec<Definition>| {
+        let leave = |webs: &mut Webs, at: u32, after: bool, reads: &mut Vec<Definition>| {
             for register in region.entry_registers().filter(|register| region.is_live(at, *register)) {
-                let mut definitions = webs.reaching[offset].get(&register).cloned().unwrap_or_default();
+                let mut definitions = if after && number_definition(instruction) == Some(register) {
+                    BTreeSet::from([entries + offset])
+                } else {
+                    webs.reaching[offset].get(&register).cloned().unwrap_or_default()
+                };
                 if let Some(previous) = webs.leaves.get(&(at, register)) {
                     definitions.insert(*previous);
                 }
@@ -2249,9 +2255,11 @@ fn webs(region: &LoopRegion) -> Webs {
                 }
             }
         };
-        leave(&mut webs, pc, &mut reads);
+        leave(&mut webs, pc, false, &mut reads);
         for successor in successors(region, pc).into_iter().filter(|pc| !inside(*pc)) {
-            leave(&mut webs, successor, &mut reads);
+            // A fallthrough exit sees this instruction's completed definition;
+            // an exit before its effects sees the incoming web instead.
+            leave(&mut webs, successor, true, &mut reads);
         }
     }
     let read_webs: BTreeSet<Definition> = reads.iter().map(|definition| webs.find(*definition)).collect();
@@ -2304,7 +2312,9 @@ fn representations(
         let representation = if region.tagged.contains(&register) {
             Representation::Tagged
         } else {
-            of((observation.register)(register), Widening::Register(register))
+            observation.register.map_or(Representation::Float64, |read| {
+                of(read(register), Widening::Register(register))
+            })
         };
         if webs.entry_read[entry] {
             webs_representation[webs.find(entry)] = representation;
@@ -3524,7 +3534,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .filter(|register| {
                 !written.contains(register)
                     && !observation.widened.contains(&Widening::Unit(*register))
-                    && (observation.register)(*register) == one
+                    && observation.register.is_some_and(|read| read(*register) == one)
             })
             .collect();
         Self {

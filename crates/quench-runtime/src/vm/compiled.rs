@@ -49,6 +49,10 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+#[cfg(feature = "aot")]
+mod scalar_region;
+#[cfg(feature = "aot")]
+pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
 pub(super) use osr_loop::{
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
@@ -1878,7 +1882,7 @@ pub(super) fn compile_js_general_dispatch(
         .ok_or("target-isa-unavailable")?;
     let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
         program, function_id, unresolved_names_are_global, &*isa,
-        JsGeneralCallout::Dynamic,
+        JsGeneralCallout::Dynamic, &[],
     )?;
     let function = program.function_get(function_id as usize).ok_or("missing-function")?;
     let code = compile_native_function(
@@ -1913,6 +1917,7 @@ pub(super) fn lower_js_general_dispatch(
     unresolved_names_are_global: bool,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     callout_kind: JsGeneralCallout,
+    _scalar_regions: &[(std::ops::Range<usize>, u32)],
 ) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
@@ -1973,6 +1978,15 @@ pub(super) fn lower_js_general_dispatch(
     let blocks: Vec<_> = (0..instruction_count)
         .map(|_| builder.create_block())
         .collect();
+    let entries = std::borrow::Cow::Borrowed(blocks.as_slice());
+    #[cfg(feature = "aot")]
+    let entries = {
+        let mut entries = entries;
+        for (range, _) in _scalar_regions {
+            entries.to_mut()[range.start] = builder.create_block();
+        }
+        entries
+    };
     let mut general_dispatch_native_pcs = vec![0; instruction_count];
     // Start from the caller's exact resume PC. The artifact is shared by normal
     // function entry, call-return re-entry and hot-loop OSR; its canonical frame
@@ -2045,7 +2059,7 @@ pub(super) fn lower_js_general_dispatch(
         }
         let packed = function.code[pc];
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-        let next = blocks.get(pc + 1).copied();
+        let next = entries.get(pc + 1).copied();
         if instruction.op().js_denotation() == JsDenotation::Return
             && instruction.result_flags() == 0
             && !instruction.writes_current_this()
@@ -2312,7 +2326,7 @@ pub(super) fn lower_js_general_dispatch(
                 {
                     let target = usize::try_from(instruction.jump_target()).ok();
                     if let Some(target) = target.filter(|target| *target < instruction_count)
-                        && let Some(target) = blocks.get(target).copied()
+                        && let Some(target) = entries.get(target).copied()
                     {
                         if usize::try_from(instruction.jump_target())
                             .is_ok_and(|target| target <= pc)
@@ -2641,7 +2655,7 @@ pub(super) fn lower_js_general_dispatch(
         if let (Some(next), Some(direct_branch)) = (next, direct_branch)
             && let Ok(target) = usize::try_from(instruction.jump_target())
             && target < instruction_count
-            && let Some(target_block) = blocks.get(target).copied()
+            && let Some(target_block) = entries.get(target).copied()
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
@@ -3067,6 +3081,11 @@ pub(super) fn lower_js_general_dispatch(
             pc,
         );
     }
+    #[cfg(feature = "aot")]
+    for (range, symbol) in _scalar_regions {
+        scalar_region::emit_entry(&mut builder, isa, range.clone(), *symbol,
+            context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc);
+    }
     builder.switch_to_block(continue_block);
     let select_block = builder.create_block();
     let in_range = builder.ins().icmp_imm_u(
@@ -3078,7 +3097,7 @@ pub(super) fn lower_js_general_dispatch(
     );
     builder.switch_to_block(select_block);
     let selector = builder.ins().ireduce(types::I32, continue_pc);
-    let cases: Vec<_> = blocks
+    let cases: Vec<_> = entries
         .iter()
         .map(|target| builder.func.dfg.block_call(*target, &[]))
         .collect();

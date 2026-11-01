@@ -161,17 +161,33 @@ pub fn lower_native_js_module_with_options(
             boolean_regions.push((function_id, region));
         }
     }
-    let boolean_base = (first_definition as usize)
+    let scalar_regions: Vec<_> = (0..program.function_count()).map(|id| {
+        let body = program.function(id);
+        if id == 0 || options.regions(body).is_some()
+            || !super::compiled::js_general_dispatch_candidate(program, body)
+        {
+            Vec::new()
+        } else {
+            super::compiled::lower_static_scalar_regions(program, id as u32, &*isa)
+        }
+    }).collect();
+    let scalar_count = scalar_regions.iter().try_fold(0usize, |count, regions|
+        count.checked_add(regions.len())).ok_or("native scalar symbol count overflow")?;
+    let scalar_base = (first_definition as usize)
         .checked_add(program.function_count())
         .and_then(|base| base.checked_add(region_count))
+        .ok_or("native scalar symbol count overflow")?;
+    let boolean_base = scalar_base.checked_add(scalar_count)
         .ok_or("native boolean symbol count overflow")?;
+    u32::try_from(boolean_base).map_err(|_| "native scalar symbol count exceeds u32")?;
     let fallback_base = boolean_base.checked_add(boolean_regions.len())
         .ok_or("native fallback symbol count overflow")?;
     let mut data = Vec::with_capacity(program.function_count());
     let mut region_definitions = Vec::new();
     let mut fallback_definitions = Vec::new();
     let mut fallback_tables = Vec::new();
-    for id in 0..program.function_count() {
+    let mut scalar_definitions = Vec::new();
+    for (id, scalar_regions) in scalar_regions.into_iter().enumerate() {
         let body = program.function(id);
         let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
         let byte_len = body
@@ -252,6 +268,10 @@ pub fn lower_native_js_module_with_options(
             match super::compiled::lower_js_general_dispatch(
                 program, function_id, false, &*isa,
                 super::compiled::JsGeneralCallout::Relocatable(fallback),
+                &scalar_regions.iter().enumerate().map(|(offset, region)| {
+                    (region.range.clone(), u32::try_from(scalar_base + scalar_definitions.len() + offset)
+                        .expect("native scalar symbol index"))
+                }).collect::<Vec<_>>(),
             ) {
                 Ok((native, _)) => {
                     let table = program.function_count().checked_add(fallback_tables.len())
@@ -280,6 +300,12 @@ pub fn lower_native_js_module_with_options(
             name: format!("{namespace}_function_{id}"),
             function: native,
         });
+        for (index, region) in scalar_regions.into_iter().enumerate() {
+            scalar_definitions.push(NativeFunction::Definition {
+                name: format!("{namespace}_function_{id}_scalar_{index}"),
+                function: region.function,
+            });
+        }
     }
     data.extend(fallback_tables);
     let pointer_bytes = usize::from(isa.pointer_bytes());
@@ -368,6 +394,7 @@ pub fn lower_native_js_module_with_options(
         });
     }
     functions.extend(region_definitions);
+    functions.extend(scalar_definitions);
     functions.extend(boolean_regions.into_iter().map(|(id, region)| NativeFunction::Definition {
         name: format!("{namespace}_function_{id}_boolean"), function: region.function,
     }));

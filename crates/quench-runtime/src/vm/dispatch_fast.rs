@@ -6842,7 +6842,7 @@ fn lane_loop_run<H: Host>(
         // nothing at entry.
         let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
         let observation = super::compiled::Observation {
-            register: &|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED },
+            register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
             int32_elements: &int32_elements,
             captures: &captures,
             fields: &fields,
