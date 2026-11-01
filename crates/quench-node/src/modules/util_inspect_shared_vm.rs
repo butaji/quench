@@ -585,7 +585,7 @@ impl Inspector {
         let mut value = value;
         let proxy = c.proxy_details_rooted(value)?;
         if let Some((target, handler)) = proxy {
-            if is_nullish(c, target) && type_of(c, target) == ValueType::Null {
+            if type_of(c, target) == ValueType::Null {
                 return self.stylize(c, "<Revoked Proxy>", "special");
             }
             if self.options.show_proxy {
