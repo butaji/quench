@@ -112,7 +112,7 @@ const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
     /// The not-entered word of an entry guard's widening: an array's elements are named by
-    /// the entry scan of an array whose reads drop their guard (`Lowering::scan_int32`).
+    /// the entry kind proof of an array whose reads drop their guard (`Lowering::prove_int32_kinds`).
     fn code(self) -> u32 {
         match self {
             Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
@@ -3649,9 +3649,9 @@ struct Lowering<'a, 'b> {
     registers: ir::Value,
     /// An inlining region's scratch registers (`LoopEntry::scratch`).
     scratch: Option<ir::Value>,
-    /// The entry words' address while `enter` runs; every later read reloads it
-    /// (`Handoff::Entry`).
-    entry: Option<ir::Value>,
+    /// The entry words' address, which hot reads use; a cold path reloads it
+    /// (`cold_word`), so a loop holds a register for it only where a hot read needs it.
+    entry: ir::Value,
     /// Count the region's taken backedges only for the opt-in shared-tier admission path.
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
@@ -3666,8 +3666,8 @@ struct Lowering<'a, 'b> {
     resident: Resident,
     /// The registers innermost nested counted loops park (`Parking`).
     parking: Parking,
-    /// The arrays whose elements entry found all `i32`s, which the region keeps so, so
-    /// their reads need no tag guard (`Lowering::scan_int32`).
+    /// The arrays whose element kind entry found `Int32`, which the region keeps so, so
+    /// their reads need no tag guard (`Lowering::prove_int32_kinds`).
     int32_arrays: std::collections::BTreeSet<Register>,
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Per block, the first block of the chain it continues: each block after the first
@@ -3950,7 +3950,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             straight,
             registers,
             scratch: None,
-            entry: Some(entry),
+            entry,
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
             elements: std::collections::BTreeMap::new(),
@@ -4190,14 +4190,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    /// Proves at entry, for each array an innermost nested loop reads as `i32`s, that every
-    /// element is one, when every store of the region stores an `i32` (so each stays one,
-    /// whichever array it writes): the reads then take the payload with no tag guard. A
-    /// region without nested loops runs too few iterations per entry to repay the scan. An
-    /// element of another kind, or a hole, widens the array's reads for the next compilation.
-    fn scan_int32(&mut self) {
+    /// Proves at entry, from its element kind (`crate::heap::ElementKind`), that each array
+    /// the region reads as `i32`s holds only int32s, when every store of the region stores
+    /// an `i32` (so each stays one, whichever array it writes): the reads then take the
+    /// payload with no tag guard. One load per array; another kind widens the array's
+    /// reads for the next compilation. A region that stores other values demotes the kind
+    /// of each array it writes before any store (`demote_written_kinds`).
+    fn prove_int32_kinds(&mut self) {
         let region = self.region;
-        let nested = self.counted.iter().any(|counted| counted.header != region.header);
         let stores_int32 = (region.header..=region.backedge).all(|pc| {
             let instruction = region.instructions[(pc - region.header) as usize];
             instruction.op() != Op::SetIndex || {
@@ -4205,7 +4205,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.representations[web] == Representation::Int32
             }
         });
-        if !nested || !stores_int32 {
+        if !stores_int32 {
+            self.demote_written_kinds();
             return;
         }
         let read_int32: std::collections::BTreeSet<Register> = region
@@ -4221,32 +4222,30 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .collect();
         for register in read_int32 {
             let Some(view) = self.arrays.get(&register).copied() else { continue };
-            let length = self.length(view);
-            let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
-            let test = self.body.builder.create_block();
-            let element = self.body.builder.create_block();
-            let next = self.body.builder.create_block();
-            let done = self.body.builder.create_block();
-            let index = self.body.builder.append_block_param(test, types::I64);
-            let zero = self.body.builder.ins().iconst(types::I64, 0);
-            self.body.builder.ins().jump(test, &[ir::BlockArg::Value(zero)]);
-            self.body.builder.switch_to_block(test);
-            let finished = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
-            self.body.builder.ins().brif(finished, done, &[], element, &[]);
-            self.body.builder.switch_to_block(element);
-            let offset = self.body.builder.ins().imul_imm_u(index, i64::from(WORD_BYTES));
-            let address = self.body.builder.ins().iadd(view.elements, offset);
-            let bits = self.body.builder.ins().load(types::I64, flags(), address, 0);
-            let tag = self.body.builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
-            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INT_TAG as i64);
+            let elements = self.array_elements(view);
+            let kind = self.body.builder.ins().load(types::I32, flags(), elements, crate::heap::KIND_FROM_VALUES);
+            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, kind, crate::heap::ElementKind::Int32 as i64);
             let widen = self.not_entered(Some(Widening::Elements(register)));
-            self.body.builder.ins().brif(other, widen, &[], next, &[]);
-            self.body.builder.switch_to_block(next);
-            let stepped = self.body.builder.ins().iadd_imm_s(index, 1);
-            self.body.builder.ins().jump(test, &[ir::BlockArg::Value(stepped)]);
-            self.body.builder.switch_to_block(done);
-            self.chains.insert(done, head);
+            self.pass_unless(other, widen);
             self.int32_arrays.insert(register);
+        }
+    }
+
+    /// Marks each array the region writes as holding any value, since a store may write a
+    /// non-int32 there; a written entry array is its activation's own backing, never the
+    /// shared empty one.
+    fn demote_written_kinds(&mut self) {
+        let written: Vec<ArrayView> = self
+            .region
+            .arrays
+            .iter()
+            .filter(|array| array.written)
+            .filter_map(|array| self.arrays.get(&array.register).copied())
+            .collect();
+        for view in written {
+            let elements = self.array_elements(view);
+            let tagged = self.body.builder.ins().iconst(types::I32, crate::heap::ElementKind::Tagged as i64);
+            self.body.builder.ins().store(flags(), tagged, elements, crate::heap::KIND_FROM_VALUES);
         }
     }
 
@@ -4360,13 +4359,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let array = *self.region.arrays.iter().find(|array| array.register == register).expect("a region array");
         match array.field {
             Some(index) => self.word(ENTRY_CAPTURES + self.region.captures.len() + index),
-            None => {
-                let file = match self.entry {
-                    Some(_) => self.registers,
-                    None => self.handed_off(Handoff::Registers),
-                };
-                self.body.builder.ins().load(types::I64, flags(), file, i32::from(array.register) * WORD_BYTES)
-            }
+            None => self.body.builder.ins().load(types::I64, flags(), self.registers, i32::from(array.register) * WORD_BYTES),
         }
     }
 
@@ -4375,8 +4368,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn entry_array_identity(&mut self, array: ArrayView) -> ir::Value {
         let arrays_start = ENTRY_CAPTURES + self.region.captures.len() + self.region.fields.len();
         let base = array.entry_index.expect("an appended array is an entry array");
-        let register = self.region.arrays[(base - arrays_start) / ARRAY_WORDS].register;
-        self.array_identity(register)
+        let entry = *self.region.arrays.get((base - arrays_start) / ARRAY_WORDS).expect("an entry array");
+        match entry.field {
+            Some(index) => self.cold_word(ENTRY_CAPTURES + self.region.captures.len() + index),
+            None => {
+                let file = self.handed_off(Handoff::Registers);
+                self.body.builder.ins().load(types::I64, flags(), file, i32::from(entry.register) * WORD_BYTES)
+            }
+        }
     }
 
     fn array(&mut self, register: Register) -> ArrayView {
@@ -4389,18 +4388,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
-        let entry = self.entry_words();
         self.body.builder
             .ins()
-            .load(types::I64, flags(), entry, index as i32 * WORD_BYTES)
+            .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
     }
 
-    /// The entry words' address: the parameter while `enter` runs, else reloaded.
-    fn entry_words(&mut self) -> ir::Value {
-        match self.entry {
-            Some(entry) => entry,
-            None => self.handed_off(Handoff::Entry),
-        }
+    /// Entry word `index` read on a cold path, from the entry address reloaded there.
+    fn cold_word(&mut self, index: usize) -> ir::Value {
+        let entry = self.handed_off(Handoff::Entry);
+        self.body.builder.ins().load(types::I64, flags(), entry, index as i32 * WORD_BYTES)
     }
 
     /// The callout, its context and the result word it writes, reloaded at the call so
@@ -4512,7 +4508,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.reside(self.resident.fields[index], value);
             self.fields.push(Typed { value, representation });
         }
-        self.scan_int32();
+        self.prove_int32_kinds();
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // field-resolved callee is still the function it held when the region was made.
@@ -4567,7 +4563,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         let header = self.target_block(None, self.region.header)?;
         self.body.builder.ins().jump(header, &[]);
-        self.entry = None;
         Some(())
     }
 
@@ -5298,7 +5293,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             if self.track_backedges && pc == self.region.backedge && target == self.region.header {
                 let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
                     .expect("OSR entry counter offset fits i32");
-                let entry = self.entry_words();
+                let entry = self.entry;
                 let count = self.body.builder.ins().load(types::I64, flags(), entry, offset);
                 let count = self.body.builder.ins().iadd_imm_s(count, 1);
                 self.body.builder.ins().store(flags(), count, entry, offset);
@@ -5522,7 +5517,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.seal_block(append);
         let past = self.body.builder.ins().icmp(IntCC::NotEqual, index, length);
         self.guard(pc, past);
-        let capacity = self.word(array.entry_index.expect("an appended array is an entry array") + 2);
+        let capacity = self.cold_word(array.entry_index.expect("an appended array is an entry array") + 2);
         let full = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, length, capacity);
         let grow = self.cold_block();
         let ready = self.body.builder.create_block();
@@ -5540,7 +5535,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
         self.guard(pc, miss);
         for (entry_index, variable) in self.elements.clone() {
-            let elements = self.word(entry_index);
+            let elements = self.cold_word(entry_index);
             self.body.builder.def_var(variable, elements);
         }
         self.body.builder.ins().jump(ready, &[]);

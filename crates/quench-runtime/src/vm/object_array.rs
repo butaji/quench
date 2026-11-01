@@ -443,7 +443,7 @@ impl<H: Host> Vm<H> {
             if let Some(elements) = self.heap.array_elements_mut(target)
                 && index < elements.len()
             {
-                elements.make_mut()[index] = Value::DELETED;
+                elements.make_mut().set(index, Value::DELETED);
             } else {
                 self.heap.sparse_set(target, index, Value::DELETED);
             }

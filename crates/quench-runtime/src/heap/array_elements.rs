@@ -12,6 +12,31 @@ struct Header {
     owners: u32,
     len: u32,
     capacity: u32,
+    /// What every value below `len` is. Every write keeps it true (`UniqueElements::note`),
+    /// so a reader proves it with one load instead of a scan.
+    kind: ElementKind,
+}
+
+/// What every value of a backing is: a one-way lattice, `Int32` above `Tagged`, as V8's
+/// elements kinds and JavaScriptCore's indexing types. A hole (`Value::DELETED`) is not an
+/// int32, so an `Int32` backing is also packed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
+pub(crate) enum ElementKind {
+    Int32,
+    Tagged,
+}
+
+impl ElementKind {
+    /// The kind of a backing holding only `value`.
+    #[inline(always)]
+    fn of(value: Value) -> Self {
+        if value.as_int().is_some() { Self::Int32 } else { Self::Tagged }
+    }
+
+    fn of_all(values: &[Value]) -> Self {
+        if values.iter().all(|value| Self::of(*value) == Self::Int32) { Self::Int32 } else { Self::Tagged }
+    }
 }
 
 /// The values start right after the header, at their own alignment.
@@ -21,12 +46,16 @@ const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length: native code that
 /// appends within capacity advances the length there.
 pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
+/// The byte offset from a backing's first value to its `u32` element kind
+/// (`ElementKind`), which native code reads at entry and demotes where it stores others.
+pub(crate) const KIND_FROM_VALUES: i32 = std::mem::offset_of!(Header, kind) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
     owners: 0,
     len: 0,
     capacity: 0,
+    kind: ElementKind::Int32,
 };
 
 /// The smallest capacity a growing backing takes, as `Vec` grows from empty.
@@ -73,10 +102,16 @@ impl ArrayElements {
         if values.is_empty() {
             return Self::new();
         }
+        Self::copied(values, ElementKind::of_all(values))
+    }
+
+    /// A backing of `values`, whose kind is `kind`.
+    fn copied(values: &[Value], kind: ElementKind) -> Self {
         let elements = Self::allocate(values.len(), values.len());
         // SAFETY: the new allocation holds `values.len()` slots after the header.
         unsafe {
             std::ptr::copy_nonoverlapping(values.as_ptr(), elements.values(), values.len());
+            (*elements.header.as_ptr()).kind = kind;
         }
         elements
     }
@@ -92,12 +127,15 @@ impl ArrayElements {
         if len == 0 {
             return Self::new();
         }
-        let elements = Self::allocate(len, len);
+        let mut elements = Self::allocate(len, len);
+        let mut kind = ElementKind::Int32;
         for slot in 0..len {
             let written = value(slot);
+            kind = kind.max(ElementKind::of(written));
             // SAFETY: the new allocation holds `len` slots after the header.
             unsafe { elements.values().add(slot).write(written) };
         }
+        elements.make_mut().set_kind(kind);
         elements
     }
 
@@ -125,6 +163,7 @@ impl ArrayElements {
                 owners: 1,
                 len: len as u32,
                 capacity: capacity_word,
+                kind: ElementKind::Int32,
             });
         }
         Self { header }
@@ -151,6 +190,11 @@ impl ArrayElements {
     #[inline(always)]
     pub(crate) fn capacity(&self) -> usize {
         self.header().capacity as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn kind(&self) -> ElementKind {
+        self.header().kind
     }
 
     /// Whether this array alone owns its backing, so writes reach no other array.
@@ -188,7 +232,7 @@ impl ArrayElements {
     #[cold]
     #[inline(never)]
     fn detach(&mut self) {
-        *self = Self::from_slice(self);
+        *self = Self::copied(self, self.kind());
     }
 }
 
@@ -264,6 +308,63 @@ impl PartialEq for ArrayElements {
 }
 
 impl UniqueElements {
+    fn set_kind(&mut self, kind: ElementKind) {
+        if self.0.capacity() != 0 {
+            // SAFETY: a unique backing with a capacity is this array's own allocation.
+            unsafe { (*self.0.header.as_ptr()).kind = kind };
+        }
+    }
+
+    /// Keeps the kind true of a written `value`.
+    #[inline(always)]
+    fn note(&mut self, value: Value) {
+        if ElementKind::of(value) == ElementKind::Tagged && self.0.kind() == ElementKind::Int32 {
+            self.set_kind(ElementKind::Tagged);
+        }
+    }
+
+    /// Keeps the kind true of written `values`.
+    fn note_all(&mut self, values: &[Value]) {
+        if self.0.kind() == ElementKind::Int32 && ElementKind::of_all(values) == ElementKind::Tagged {
+            self.set_kind(ElementKind::Tagged);
+        }
+    }
+
+    /// Writes `value` at `index`, below the length.
+    #[inline(always)]
+    pub(crate) fn set(&mut self, index: usize, value: Value) {
+        assert!(index < self.0.len(), "array store index out of bounds");
+        self.note(value);
+        // SAFETY: the index is below the length of this unique backing.
+        unsafe { self.0.values().add(index).write(value) };
+    }
+
+    /// `value` at every index of `range`.
+    pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
+        assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
+        if !range.is_empty() {
+            self.note(value);
+        }
+        for index in range {
+            // SAFETY: the range is within the length of this unique backing.
+            unsafe { self.0.values().add(index).write(value) };
+        }
+    }
+
+    /// `values` at the indices from `start`.
+    pub(crate) fn copy_from(&mut self, start: usize, values: &[Value]) {
+        assert!(start + values.len() <= self.0.len(), "array copy out of bounds");
+        self.note_all(values);
+        // SAFETY: the range is within the length; `values` cannot alias this unique backing.
+        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(start), values.len()) };
+    }
+
+    /// The first value, for native code that writes the backing and keeps its kind
+    /// (`KIND_FROM_VALUES`).
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut Value {
+        self.0.values()
+    }
+
     fn set_len(&mut self, len: usize) {
         debug_assert!(len <= self.0.capacity());
         if self.0.capacity() != 0 {
@@ -308,6 +409,7 @@ impl UniqueElements {
     pub(crate) fn push(&mut self, value: Value) {
         let len = self.0.len();
         self.reserve(1);
+        self.note(value);
         // SAFETY: `reserve` made room for one more value.
         unsafe { self.0.values().add(len).write(value) };
         self.set_len(len + 1);
@@ -333,6 +435,7 @@ impl UniqueElements {
             return;
         }
         self.reserve(len - current);
+        self.note(value);
         // SAFETY: `reserve` made room for the values up to `len`.
         unsafe {
             for slot in current..len {
@@ -345,6 +448,7 @@ impl UniqueElements {
     pub(crate) fn extend_from_slice(&mut self, values: &[Value]) {
         let len = self.0.len();
         self.reserve(values.len());
+        self.note_all(values);
         // SAFETY: `reserve` made room; `values` cannot alias this unique backing's spare room.
         unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(len), values.len()) };
         self.set_len(len + values.len());
@@ -372,6 +476,7 @@ impl UniqueElements {
             self.reserve(values.len() - removed);
         }
         let new_len = len - removed + values.len();
+        self.note_all(values);
         // SAFETY: the tail moves within the reserved allocation, then `values` fills the gap.
         unsafe {
             let base = self.0.values();
@@ -392,15 +497,6 @@ impl std::ops::Deref for UniqueElements {
     #[inline(always)]
     fn deref(&self) -> &[Value] {
         &self.0
-    }
-}
-
-impl std::ops::DerefMut for UniqueElements {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut [Value] {
-        // SAFETY: the backing is this array's own (or empty), and the first `len` values are
-        // initialized.
-        unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }
     }
 }
 
@@ -481,6 +577,40 @@ mod tests {
     }
 
     #[test]
+    fn every_write_keeps_the_element_kind_true() {
+        let ints = || ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
+        assert_eq!(ints().kind(), ElementKind::Int32);
+        assert_eq!(ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).kind(), ElementKind::Tagged);
+        assert_eq!(ArrayElements::filled(3, Value::integer(0)).kind(), ElementKind::Int32);
+        assert_eq!(ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).kind(), ElementKind::Tagged);
+        let demotions: [(&str, fn(&mut UniqueElements)); 6] = [
+            ("set", |elements| elements.set(0, Value::DELETED)),
+            ("push", |elements| elements.push(Value::number(0.5))),
+            ("resize", |elements| elements.resize(4, Value::UNDEFINED)),
+            ("fill", |elements| elements.fill(0..1, Value::TRUE)),
+            ("copy_from", |elements| elements.copy_from(1, &[Value::NULL])),
+            ("splice", |elements| elements.splice(0..1, &[Value::FALSE])),
+        ];
+        for (write, demote) in demotions {
+            let mut elements = ints();
+            demote(elements.make_mut());
+            assert_eq!(elements.kind(), ElementKind::Tagged, "{write}");
+        }
+        let mut grown = ints();
+        for value in 3..64 {
+            grown.make_mut().push(Value::integer(value));
+        }
+        grown.make_mut().set(5, Value::integer(-5));
+        assert_eq!(grown.kind(), ElementKind::Int32, "int32 writes and growth keep the kind");
+        let mut shared = ArrayElements::from(vec![Value::integer(1), Value::NULL]);
+        let mut copy = shared.clone();
+        copy.make_mut().set(1, Value::integer(2));
+        assert_eq!((shared.kind(), copy.kind()), (ElementKind::Tagged, ElementKind::Tagged), "a detached copy keeps its source's kind");
+        shared.make_mut().truncate(1);
+        assert_eq!(ArrayElements::new().kind(), ElementKind::Int32);
+    }
+
+    #[test]
     fn shared_backings_copy_on_write_and_empty_arrays_allocate_nothing() {
         let empty = ArrayElements::new();
         assert_eq!(empty.capacity(), 0);
@@ -492,7 +622,7 @@ mod tests {
         assert_ne!(first.as_ptr(), second.as_ptr());
         assert_eq!(&*first, &[Value::integer(1), Value::integer(2)]);
         assert_eq!(&*second, &[Value::integer(1), Value::integer(2), Value::integer(3)]);
-        first.make_mut()[0] = Value::integer(9);
+        first.make_mut().set(0, Value::integer(9));
         assert_eq!(first[0], Value::integer(9));
 
         let mut grown = ArrayElements::new();

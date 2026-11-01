@@ -530,7 +530,7 @@ impl<H: Host> Vm<H> {
             let Some(array_object) = self.heap.array_store_mut(array, value) else {
                 unreachable!("matched an array above");
             };
-            super::index::mutable_array_elements(array_object.elements_mut())[in_dense].fill(value);
+            super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
         }
         for index in dense.max(indices.start)..indices.end {
             self.store_validated_array_element(array, index, value);
@@ -688,7 +688,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(array) else {
             unreachable!("matched an array above");
         };
-        super::index::mutable_array_elements(object.elements_mut()).copy_from_slice(values);
+        super::index::mutable_array_elements(object.elements_mut()).copy_from(0, values);
         true
     }
 
@@ -766,7 +766,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         if index < length {
-            super::index::mutable_array_elements(object.elements_mut())[index] = value;
+            super::index::mutable_array_elements(object.elements_mut()).set(index, value);
             return true;
         }
         self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
@@ -805,7 +805,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        super::index::mutable_array_elements(object.elements_mut())[index] = value;
+        super::index::mutable_array_elements(object.elements_mut()).set(index, value);
         true
     }
 

@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
         };
         let elements = super::index::mutable_array_elements(object.elements_mut());
         if index < elements.len() {
-            elements[index] = value;
+            elements.set(index, value);
             return;
         }
         debug_assert_eq!(index, elements.len(), "a fresh array grows by one element at a time");
@@ -895,7 +895,7 @@ impl<H: Host> Vm<H> {
             let Some(array) = self.heap.array_mut(object) else {
                 unreachable!("matched an array above");
             };
-            super::index::mutable_array_elements(array.elements_mut()).copy_from_slice(values);
+            super::index::mutable_array_elements(array.elements_mut()).copy_from(0, values);
             return Ok(object);
         }
         for (index, value) in values.iter().enumerate() {

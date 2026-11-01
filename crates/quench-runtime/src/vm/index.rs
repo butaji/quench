@@ -461,7 +461,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements)[index] = value;
+        mutable_array_elements(elements).set(index, value);
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
         true
@@ -479,7 +479,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements)[index] = value;
+        mutable_array_elements(elements).set(index, value);
         if mapped {
             self.sync_mapped_argument(object, index, value);
         }
@@ -616,7 +616,7 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .array_write_ownership(elements.owner_count() != 1);
-            mutable_array_elements(elements)[index] = value;
+            mutable_array_elements(elements).set(index, value);
             self.sync_mapped_argument(object, index, value);
             return true;
         }
@@ -631,7 +631,7 @@ impl<H: Host> Vm<H> {
             }
             self.heap.grow_array_elements(object, |elements| {
                 elements.resize(index + 1, Value::DELETED);
-                elements[index] = value;
+                elements.set(index, value);
             });
         }
         self.sync_mapped_argument(object, index, value);
@@ -915,7 +915,7 @@ mod tests {
     fn unique_array_mutation_keeps_the_allocation() {
         let mut elements = crate::heap::ArrayElements::from(vec![Value::FALSE]);
         let allocation = elements.as_ptr();
-        mutable_array_elements(&mut elements)[0] = Value::TRUE;
+        mutable_array_elements(&mut elements).set(0, Value::TRUE);
         assert_eq!(elements.as_ptr(), allocation);
         assert_eq!(elements[0], Value::TRUE);
     }
@@ -924,7 +924,7 @@ mod tests {
     fn shared_array_mutation_detaches_the_template() {
         let template = crate::heap::ArrayElements::from(vec![Value::FALSE]);
         let mut elements = template.clone();
-        mutable_array_elements(&mut elements)[0] = Value::TRUE;
+        mutable_array_elements(&mut elements).set(0, Value::TRUE);
         assert_eq!(template[0], Value::FALSE);
         assert_eq!(elements[0], Value::TRUE);
         assert_ne!(template.as_ptr(), elements.as_ptr());
