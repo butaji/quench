@@ -9,15 +9,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 /// The global console (`facade`).
 const CONSOLE: &str = "\0node/console/global";
 
-/// Freeze the writer's lazy color policy, including its environment-dependent TTY
-/// branch, without writing output or keeping the compiler process's color state.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_formatting(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    for relative in ["internal/util/colors.js", "internal/tty.js"] {
-        crate::host::shared_vm::commonjs::node_library_module(context, relative, relative)?;
-    }
-    Ok(())
-}
 /// The process streams the global console writes to, read when first written.
 const STDOUT: &str = "\0node/console/stdout";
 const STDERR: &str = "\0node/console/stderr";

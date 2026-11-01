@@ -267,6 +267,14 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     Ok(module)
 }
 
+/// `internal/dgram`: the key a socket's state is held under (`kStateSymbol`).
+pub(crate) fn internal_module(c: &mut Context<'_>) -> Outcome {
+    let module = c.object_rooted()?;
+    let slot = intrinsics(c)?.state_slot;
+    put(c, module, "kStateSymbol", slot)?;
+    Ok(module)
+}
+
 fn state(c: &mut Context<'_>, socket: RootId) -> Outcome {
     let slot = intrinsics(c)?.state_slot;
     let state = c.get_property_rooted(socket, slot)?;

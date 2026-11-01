@@ -200,7 +200,6 @@ pub(crate) fn stage_host_sources(
     for name in &builtins {
         context.scoped(|context| {
             let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
-                "console" => return crate::modules::console_shared_vm::stage_formatting(context),
                 // Namespace copies can observe every public lazy export: buffer
                 // Blob/File, util codecs, and crypto's WebCrypto policy.
                 "buffer" | "util" | "crypto" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, name),
@@ -208,11 +207,6 @@ pub(crate) fn stage_host_sources(
                 // createRequire tests URL-like inputs through the SDK URL policy,
                 // including the static CommonJS facade used by ESM imports.
                 "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
-                // Object-shaped throws/rejects matchers and guarded deep-equality
-                // fallbacks load the SDK comparison policy lazily.
-                "assert" | "assert/strict" => return crate::host::shared_vm::commonjs::node_library_module(
-                    context, "assert.js", "internal/util/comparisons.js",
-                ).map(drop),
                 "fs" | "fs/promises" => {
                     // Namespace readers can observe directory/glob policy as well
                     // as streams, including fs.promises reached through fs.

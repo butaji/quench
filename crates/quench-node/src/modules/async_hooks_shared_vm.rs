@@ -1022,28 +1022,6 @@ pub(crate) fn emit_destroy(
     Ok(receiver)
 }
 
-/// A resource's destroy hooks, run now instead of queued: a worker's `exit` listeners
-/// observe its MessagePort resource already destroyed.
-pub(crate) fn emit_destroy_immediate(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-) -> Result<(), RootedError> {
-    let id = number_property(context, receiver, ASYNC_ID)?
-        .ok_or_else(|| RootedError::host("AsyncResource has no async ID"))?;
-    let state = context.host_mut().shared_state();
-    // The caller destroys each resource once, as Node's owner does; taking the stores
-    // releases nothing twice either way.
-    for root in take_context_stores(&state, id) {
-        context.release_root(root);
-    }
-    let async_id = context.number(id as f64);
-    super::async_hook_registry_shared_vm::emit(
-        context,
-        super::async_hook_registry_shared_vm::HookKind::Destroy,
-        &[async_id],
-    )
-}
-
 pub(crate) fn initialize_storage(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,

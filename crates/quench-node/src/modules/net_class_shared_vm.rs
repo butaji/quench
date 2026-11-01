@@ -367,7 +367,7 @@ pub(crate) fn socket_pending(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
     Ok(c.boolean(pending))
 }
 
-fn clear_timeout_timer(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
+pub(crate) fn clear_timeout_timer(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
     let timer = get(c, socket, TIMEOUT_TIMER)?;
     if !c.rooted_value(timer).is_some_and(|value| value.is_null()) && !is_undefined(c, timer) {
         let global = c.global_root()?;

@@ -507,7 +507,7 @@ fn clear_disabled(c: &mut Context<'_>, state: RootId, options: RootId) -> Result
 
 /// `new StringDecoder(encoding)`.
 pub(crate) fn string_decoder(c: &mut Context<'_>, encoding: RootId) -> Outcome {
-    let module = crate::host::shared_vm::commonjs::library_require(c, "string_decoder")?;
+    let module = crate::host::shared_vm::commonjs::builtin_require(c, "string_decoder")?;
     let constructor = get(c, module, "StringDecoder")?;
     c.construct_rooted(constructor, constructor, &[encoding])
 }

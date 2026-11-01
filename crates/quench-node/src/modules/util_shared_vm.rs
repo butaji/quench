@@ -298,6 +298,21 @@ pub(crate) fn argument_type_description(
     Ok(received)
 }
 
+/// `ERR_OUT_OF_RANGE`: `The value of "name" is out of range. It must be range. Received value`.
+pub(crate) fn out_of_range_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+    range: &str,
+    value: RootId,
+) -> Result<RootedError, RootedError> {
+    let received = range_error_received(context, value)?;
+    let error = context.range_error_rooted(&format!(
+        "The value of \"{name}\" is out of range. It must be {range}. Received {received}"
+    ))?;
+    super::node_errors_shared_vm::decorate_range_error(context, error, "ERR_OUT_OF_RANGE")?;
+    Ok(context.throw(error))
+}
+
 /// ERR_OUT_OF_RANGE rendering shares Node inspection and integer separators.
 pub(crate) fn range_error_received(
     context: &mut NativeContext<'_, NodeHost>,
@@ -984,7 +999,7 @@ pub(crate) fn initialize_lazy_property(
     let export = if context.rooted_value(export).is_some_and(|value| value.is_undefined()) { key } else { export };
     let enumerable = context.truthy_rooted(flag)?;
     let id = context.to_string(id)?;
-    let module = crate::host::shared_vm::commonjs::library_require(context, &id)?;
+    let module = crate::host::shared_vm::commonjs::builtin_require(context, &id)?;
     let value = context.get_property_rooted(module, export)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())

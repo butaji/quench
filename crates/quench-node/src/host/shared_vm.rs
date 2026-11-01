@@ -207,7 +207,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "streamPumpFailed" (1) => crate::modules::stream_shared_vm::pipeline::pump_failed,
         method "streamPumpEnded" (0) => crate::modules::stream_shared_vm::pipeline::pump_ended,
         method "streamPromisesPipelineSettle" (2) => crate::modules::stream_shared_vm::pipeline::promises_pipeline_settle,
-        method "workerRawUmask" (0) => crate::modules::worker_threads_shared_vm::raw_umask,
+        method "processRawUmask" (0) => crate::modules::process_shared_vm::raw_umask,
         method "v8QueryObjects" (1) => crate::modules::v8_shared_vm::query_objects,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
@@ -517,7 +517,12 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
         method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
         method "reportConfigSet" (0) => crate::modules::report_configuration_shared_vm::set,
-        method "reportBindingGetReport" (0) => crate::modules::report_configuration_shared_vm::binding_get_report,
+        method "reportBindingGet" (1) => crate::modules::report_configuration_shared_vm::binding_get_report,
+        method "reportBindingWrite" (4) => crate::modules::report_configuration_shared_vm::binding_write_report,
+        method "reportGet" (1) => crate::modules::report_configuration_shared_vm::get_report,
+        method "reportWrite" (2) => crate::modules::report_configuration_shared_vm::write_report,
+        method "reportPropertySet" (1) => crate::modules::report_configuration_shared_vm::set_property,
+        method "reportSignal" (1) => crate::modules::report_configuration_shared_vm::signal_report,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
         method "processEnvSet" (4) => crate::modules::process_shared_vm::env_set,
@@ -555,8 +560,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "errorSourcePositions" (0) => crate::modules::node_errors_shared_vm::source_positions,
         method "errorSetSourceMapsEnabled" (1) => crate::modules::node_errors_shared_vm::set_source_maps_enabled,
         method "errorTriggerUncaughtException" (2) => crate::modules::node_errors_shared_vm::trigger_uncaught_exception,
-        method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
-        method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
         method "consoleWrite" (0) => crate::modules::console_shared_vm::write,
         method "consoleLoad" (0) => crate::modules::console_shared_vm::load,
@@ -605,7 +608,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "styleText" (2) => crate::modules::util_style_shared_vm::style_text,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
-        method "childProcessForkChildProjection" (0) => crate::modules::child_process_shared_vm::fork_child_projection,
+        #[cfg(unix)]
+        method "childProcessForkChild" (2) => crate::modules::child_process_ipc_shared_vm::fork_child,
         method "childProcessForkPlan" (3) => crate::modules::child_process_fork_shared_vm::plan,
         method "ipcSend" (4) => crate::modules::child_process_ipc_shared_vm::send,
         method "ipcDisconnect" (0) => crate::modules::child_process_ipc_shared_vm::disconnect,
@@ -722,7 +726,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netSetAutoSelectFamily" (1) => crate::modules::net_lookup_shared_vm::set_default,
         method "netGetAutoSelectFamilyAttemptTimeout" (0) => crate::modules::net_shared_vm::get_timeout,
         method "netSetAutoSelectFamilyAttemptTimeout" (1) => crate::modules::net_shared_vm::set_timeout,
-        method "netBoundSocketProjection" (0) => crate::modules::net_shared_vm::bound_socket_projection,
         method "netIsIP" (1) => crate::modules::net_shared_vm::is_ip,
         method "netIsIPv4" (1) => crate::modules::net_shared_vm::is_ipv4,
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
@@ -1147,6 +1150,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "messagingReceiveMessageOnPort" (1) => crate::modules::worker_shared_vm::receive_message_on_port,
         method "messagingBroadcastConstructor" (1) => crate::modules::worker_shared_vm::broadcast_constructor,
         method "messagingBroadcastName" (0) => crate::modules::worker_shared_vm::broadcast_name,
+        method "messagingBroadcastInspect" (2) => crate::modules::worker_shared_vm::broadcast_inspect,
         method "messagingBroadcastClose" (0) => crate::modules::worker_shared_vm::broadcast_close,
         method "messagingBroadcastPostMessage" (1) => crate::modules::worker_shared_vm::broadcast_post_message,
         method "messagingBroadcastRef" (0) => crate::modules::worker_shared_vm::broadcast_ref,
@@ -1271,10 +1275,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fetchNetwork" (0) => crate::modules::fetch_shared_vm::fetch::member,
         method "messageEvent" (0) => crate::modules::message_event_shared_vm::member,
         method "streamConsumers" (0) => crate::modules::web_stream_consumers_shared_vm::member,
-        method "broadcastChannel" (0) => crate::modules::broadcast_channel_shared_vm::member,
         method "webSocket" (0) => crate::modules::websocket_shared_vm::member,
         method "webSocketInitialize" (0) => crate::modules::websocket_shared_vm::initialize_global,
-        method "webBroadcastChannelInitialize" (0) => crate::modules::broadcast_channel_shared_vm::initialize_global,
         method "assertCall" (0) => crate::modules::assert_shared_vm::call,
         method "assertAssertionError" (1) => crate::modules::assert_shared_vm::error_constructor,
         method "assertErrorToString" (0) => crate::modules::assert_shared_vm::error_to_string,
@@ -1528,6 +1530,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoCreatePublicKey" (1) => crate::modules::crypto_node::keys::create_public_key,
         #[cfg(quench_openssl_provider)]
         method "cryptoCreateSecretKey" (2) => crate::modules::crypto_node::keys::create_secret_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoIsKeyObject" (1) => crate::modules::crypto_node::keys::is_key_object,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoIsCryptoKey" (1) => crate::modules::crypto_node::web::is_crypto_key,
         #[cfg(quench_openssl_provider)]
         method "cryptoCreateSign" (2) => crate::modules::crypto_node::sign::create_sign,
         #[cfg(quench_openssl_provider)]
@@ -2442,21 +2448,6 @@ impl quench_runtime::Host for NodeHost {
         true
     }
 
-    fn initialize_shadow_realm(
-        context: &mut quench_runtime::NativeContext<'_, Self>,
-        global: quench_runtime::RootId,
-    ) -> Result<Option<quench_runtime::RootId>, quench_runtime::RootedError> {
-        crate::modules::node_errors_shared_vm::initialize_shadow_policy(context, global).map(Some)
-    }
-
-    fn error_stack_formatter(&self) -> Option<quench_runtime::RootId> {
-        self.shared_state()
-            .borrow()
-            .builtin_cache
-            .get(crate::modules::node_errors_shared_vm::DEFAULT_STACK_FORMATTER)
-            .copied()
-    }
-
     fn write_line(&mut self, text: &str) {
         let output = self.shared_state().borrow().output.clone();
         match output {
@@ -2753,8 +2744,7 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
     let expose_gc = shared
         .exec_argv
         .iter()
-        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc")
-        || shared.workers.inherited_expose_gc;
+        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
     drop(shared);
     if expose_gc {
         // `gc()` collects at once; Node's `{ execution: 'async' }` form is not implemented.

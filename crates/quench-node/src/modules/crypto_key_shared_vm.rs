@@ -271,26 +271,6 @@ pub(crate) fn secret_handle(
     }
     Ok(Some(get(c, slots, "4")?))
 }
-/// Source algorithms and the existing key provider share private slot access.
-pub(crate) fn install_provider_accessors(
-    c: &mut Context<'_>,
-    module: RootId,
-) -> Result<(), RootedError> {
-    let state = state(c)?;
-    for (name, op) in [
-        ("getKeyObjectHandle", "getKeyObjectHandle"),
-        ("getKeyObjectType", "getKeyObjectType"),
-        ("isKeyObject", "isKey"),
-        ("isCryptoKey", "isCryptoKey"),
-    ] {
-        let f = function(c, state, op, false)?;
-        let key = c.string_rooted("length");
-        let length = c.number(1.0);
-        c.define_data_property_rooted(f, key, length, false, false, true)?;
-        set(c, module, name, f)?;
-    }
-    Ok(())
-}
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let state = state(c)?;
     let cached = get(c, state, "binding")?;

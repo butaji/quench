@@ -49,7 +49,6 @@ impl NodeHost {
 impl SharedNodeState {
     fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         let Self {
-            workers,
             vm_scripts,
             async_hooks,
             native_tasks,
@@ -161,7 +160,6 @@ impl SharedNodeState {
             crypto_signatures.write_snapshot(writer)?;
         }
         dns_channels.write_snapshot(writer)?;
-        workers.write_snapshot(writer)?;
         vm_scripts.write_snapshot(writer)?;
         async_hooks.write_snapshot(writer)?;
         dns.write_snapshot(writer)?;
@@ -234,7 +232,6 @@ impl SharedNodeState {
             self.crypto_signatures.read_snapshot(reader)?;
         }
         self.dns_channels.read_snapshot(reader)?;
-        self.workers.read_snapshot(reader)?;
         self.vm_scripts.read_snapshot(reader)?;
         self.async_hooks.read_snapshot(reader)?;
         self.dns.read_snapshot(reader)?;

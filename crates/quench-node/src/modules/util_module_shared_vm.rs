@@ -381,8 +381,8 @@ fn legacy_length(test: LegacyTest) -> u8 {
     }
 }
 
-/// `deprecate(fn, message, code)` for one of the module's own deprecated exports.
-fn deprecated_export(c: &mut Context<'_>, target: RootId, (code, message): (&str, &str)) -> Result<RootId, RootedError> {
+/// `deprecate(fn, message, code)` for a deprecated export of Node's own.
+pub(crate) fn deprecated_export(c: &mut Context<'_>, target: RootId, (code, message): (&str, &str)) -> Result<RootId, RootedError> {
     let message = c.string_rooted(message);
     let code = c.string_rooted(code);
     deprecated_wrapper(c, target, message, code)
@@ -405,7 +405,7 @@ pub(crate) fn key_type_check(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
     }
     let global = c.global_root()?;
     let constructor = if class == "KeyObject" {
-        let crypto = crate::host::shared_vm::commonjs::library_require(c, "crypto")?;
+        let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
         get(c, crypto, &class)?
     } else {
         get(c, global, &class)?
@@ -429,7 +429,7 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         LegacyTest::Array => c.is_array_rooted(value)?,
         LegacyTest::Boolean => kind == ValueType::Boolean,
         LegacyTest::Buffer => {
-            let buffer = crate::host::shared_vm::commonjs::library_require(c, "buffer")?;
+            let buffer = crate::host::shared_vm::commonjs::builtin_require(c, "buffer")?;
             let buffer = get(c, buffer, "Buffer")?;
             let is_buffer = get(c, buffer, "isBuffer")?;
             let result = c.call_rooted(is_buffer, buffer, &[value])?;

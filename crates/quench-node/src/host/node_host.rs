@@ -102,7 +102,6 @@ pub(crate) enum CommonJsCache {
 
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
-    pub(crate) workers: crate::modules::worker_threads_shared_vm::State,
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
@@ -302,7 +301,6 @@ impl SharedNodeState {
         self.module_parent_api = None;
         self.active_esm_requires.clear();
         self.module_require_trace_active = false;
-        self.workers.reset_vm_roots();
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
         self.library_originals = Default::default();
@@ -347,7 +345,6 @@ impl SharedNodeState {
         async_identity: crate::modules::async_hooks_state::AsyncIdentity,
     ) -> Self {
         Self {
-            workers: Default::default(),
             vm_scripts: Default::default(),
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
