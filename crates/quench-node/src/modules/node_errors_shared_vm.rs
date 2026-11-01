@@ -131,21 +131,54 @@ enum ErrorPresentation {
     Direct,
     HiddenStackFrames,
 }
-fn presentation_factory(context: &mut NativeContext<'_, NodeHost>, presentation: ErrorPresentation) -> Result<RootId, RootedError> {
-    let _ = context;
-    crate::host::removed_javascript(match presentation {
-        ErrorPresentation::Direct => "node:internal/errors/argument-prototype.js",
-        ErrorPresentation::HiddenStackFrames => "node:internal/errors/validator-prototype.js",
-    })
+/// Defines `key` on `prototype` as a class member does: a non-enumerable, configurable
+/// accessor when `accessor`, otherwise a writable method.
+fn class_member(
+    context: &mut NativeContext<'_, NodeHost>,
+    prototype: RootId,
+    key: RootId,
+    function: RootId,
+    accessor: bool,
+) -> Result<(), RootedError> {
+    let descriptor = context.null_object_rooted()?;
+    let yes = context.boolean(true);
+    let no = context.boolean(false);
+    if accessor {
+        context.assign_named_property_rooted(descriptor, "get", function)?;
+    } else {
+        context.assign_named_property_rooted(descriptor, "value", function)?;
+        context.assign_named_property_rooted(descriptor, "writable", yes)?;
+    }
+    context.assign_named_property_rooted(descriptor, "enumerable", no)?;
+    context.assign_named_property_rooted(descriptor, "configurable", yes)?;
+    context.define_property_descriptor_rooted(prototype, key, descriptor)?;
+    Ok(())
+}
+
+/// `class HideStackFramesError { get constructor() }.prototype`, or with `Direct`
+/// `class NodeError extends Base { get constructor(); get [brand](); toString() }.prototype`.
+fn presentation_prototype(
+    context: &mut NativeContext<'_, NodeHost>,
+    presentation: ErrorPresentation,
+    constructor: RootId,
+    direct: Option<(RootId, RootId, RootId, RootId)>,
+) -> Result<RootId, RootedError> {
+    let prototype = context.object_rooted()?;
+    let key = context.string_rooted("constructor");
+    class_member(context, prototype, key, constructor, true)?;
+    if let (ErrorPresentation::Direct, Some((base, brand, string, brand_key))) = (presentation, direct) {
+        let base_prototype = get(context, base, "prototype")?;
+        context.set_prototype_rooted(prototype, base_prototype)?;
+        class_member(context, prototype, brand_key, brand, true)?;
+        let key = context.string_rooted("toString");
+        class_member(context, prototype, key, string, false)?;
+    }
+    Ok(prototype)
 }
 
 #[cfg(feature = "aot")]
 pub(crate) fn stage_coded_error_support(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    prepare_coded_error_support(context)?;
-    for presentation in ERROR_PRESENTATIONS {
-        presentation_factory(context, presentation)?;
-    }
-    Ok(())
+    prepare_coded_error_support(context)
 }
 
 fn coded_error_prototype(
@@ -202,10 +235,12 @@ fn coded_error_prototype(
         crate::host::shared_vm::operation("nodeErrorToString"),
         code_root,
     )?;
-    let factory = presentation_factory(context, ErrorPresentation::Direct)?;
-    let undefined = context.undefined();
-    let prototype =
-        context.call_rooted(factory, undefined, &[base, constructor, brand, string, key])?;
+    let prototype = presentation_prototype(
+        context,
+        ErrorPresentation::Direct,
+        constructor,
+        Some((base, brand, string, key)),
+    )?;
     let prototype = context.retain(prototype)?;
     state
         .borrow_mut()
@@ -257,9 +292,8 @@ fn hide_error(
             crate::host::shared_vm::operation("nodeErrorConstructor"),
             constructor,
         )?;
-        let factory = presentation_factory(context, ErrorPresentation::HiddenStackFrames)?;
-        let undefined = context.undefined();
-        let prototype = context.call_rooted(factory, undefined, &[constructor])?;
+        let prototype =
+            presentation_prototype(context, ErrorPresentation::HiddenStackFrames, constructor, None)?;
         context.set_prototype_rooted(prototype, base)?;
         let prototype = context.retain(prototype)?;
         state
@@ -405,13 +439,12 @@ pub(crate) fn brand(
     Ok(context.boolean(true))
 }
 
+/// A coded error's `toString()`: `${name} [${code}]: ${message}`.
 pub(crate) fn to_string(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    error: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let error = args.first().copied().unwrap_or(undefined);
     let code = context.host_function_data()?;
     let name = get(context, error, "name")?;
     let name = context.to_string(name)?;

@@ -3,9 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    // Thin ordinary-function bridge preserves construction and `this`.
-    let factory = crate::host::removed_javascript("node:util/callbackified.js")?;
-    context.host_function_with_data(crate::host::shared_vm::operation("callbackify"), factory)
+    context.host_function_named(crate::host::shared_vm::operation("callbackify"), "callbackify")
 }
 
 pub(crate) fn callbackify(
@@ -19,13 +17,11 @@ pub(crate) fn callbackify(
             context, original, "original", "function",
         )?);
     }
-    let factory = context.host_function_data()?;
-    let invoke = context.host_function_with_data(
+    let function = context.host_function_named_with_data(
         crate::host::shared_vm::operation("utilCallbackified"),
+        "callbackified",
         original,
     )?;
-    let undefined = context.undefined();
-    let function = context.call_rooted(factory, undefined, &[invoke])?;
     let null = context.null();
     for key in context.own_keys_rooted(original)? {
         let descriptor = context.own_property_descriptor_rooted(original, key)?;
@@ -53,22 +49,11 @@ pub(crate) fn callbackify(
 
 pub(crate) fn callbackified(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
+    receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let original = context.host_function_data()?;
-    let receiver = args[0];
-    let arguments = args[1];
-    let length = get(context, arguments, "length")?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or(0.0) as usize;
-    let callback = if length == 0 {
-        context.undefined()
-    } else {
-        get(context, arguments, &(length - 1).to_string())?
-    };
+    let callback = args.last().copied().unwrap_or_else(|| context.undefined());
     if !context.is_callable_rooted(callback)? {
         return Err(super::util_shared_vm::argument_type_error(
             context,
@@ -77,10 +62,7 @@ pub(crate) fn callbackified(
             "function",
         )?);
     }
-    let original_args = (0..length.saturating_sub(1))
-        .map(|index| get(context, arguments, &index.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    let promise = context.call_rooted(original, receiver, &original_args)?;
+    let promise = context.call_rooted(original, receiver, &args[..args.len() - 1])?;
     let then = get(context, promise, "then")?;
     let mut handlers = Vec::with_capacity(2);
     for rejection in [false, true] {

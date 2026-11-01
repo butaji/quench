@@ -2,52 +2,7 @@
 
 use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
-use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
-
-const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
-    ("isDate", BuiltinBrand::Date),
-    ("isRegExp", BuiltinBrand::RegExp),
-    ("isNativeError", BuiltinBrand::NativeError),
-    ("isPromise", BuiltinBrand::Promise),
-    ("isMap", BuiltinBrand::Map),
-    ("isSet", BuiltinBrand::Set),
-    ("isWeakMap", BuiltinBrand::WeakMap),
-    ("isWeakSet", BuiltinBrand::WeakSet),
-    ("isProxy", BuiltinBrand::Proxy),
-    ("isArrayBuffer", BuiltinBrand::ArrayBuffer),
-    ("isSharedArrayBuffer", BuiltinBrand::SharedArrayBuffer),
-    ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
-    ("isExternal", BuiltinBrand::External),
-    ("isDataView", BuiltinBrand::DataView),
-    ("isArgumentsObject", BuiltinBrand::ArgumentsObject),
-    ("isAsyncFunction", BuiltinBrand::AsyncFunction),
-    ("isGeneratorFunction", BuiltinBrand::GeneratorFunction),
-    ("isGeneratorObject", BuiltinBrand::GeneratorObject),
-    ("isMapIterator", BuiltinBrand::MapIterator),
-    ("isSetIterator", BuiltinBrand::SetIterator),
-    (
-        "isModuleNamespaceObject",
-        BuiltinBrand::ModuleNamespaceObject,
-    ),
-    ("isBooleanObject", BuiltinBrand::BooleanObject),
-    ("isNumberObject", BuiltinBrand::NumberObject),
-    ("isStringObject", BuiltinBrand::StringObject),
-    ("isSymbolObject", BuiltinBrand::SymbolObject),
-    ("isBigIntObject", BuiltinBrand::BigIntObject),
-    ("isBoxedPrimitive", BuiltinBrand::BoxedPrimitive),
-    ("isUint8Array", BuiltinBrand::Uint8Array),
-    ("isUint8ClampedArray", BuiltinBrand::Uint8ClampedArray),
-    ("isUint16Array", BuiltinBrand::Uint16Array),
-    ("isUint32Array", BuiltinBrand::Uint32Array),
-    ("isInt8Array", BuiltinBrand::Int8Array),
-    ("isInt16Array", BuiltinBrand::Int16Array),
-    ("isInt32Array", BuiltinBrand::Int32Array),
-    ("isBigInt64Array", BuiltinBrand::BigInt64Array),
-    ("isBigUint64Array", BuiltinBrand::BigUint64Array),
-    ("isFloat16Array", BuiltinBrand::Float16Array),
-    ("isFloat32Array", BuiltinBrand::Float32Array),
-    ("isFloat64Array", BuiltinBrand::Float64Array),
-];
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 // Node src/node_util.cc validates the native stack-frame request against this limit.
 const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
@@ -60,46 +15,36 @@ pub(crate) struct UtilIntrinsics {
     pub(crate) module: RootId,
     pub(crate) inspect: RootId,
     pub(crate) formatters: RootId,
+    /// The originals and tables the formatter reads (`util_module_shared_vm::build_primordials`).
+    pub(crate) primordials: RootId,
+}
+
+fn intrinsics(context: &mut NativeContext<'_, NodeHost>) -> Result<UtilIntrinsics, RootedError> {
+    module(context)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .util_intrinsics
+        .ok_or_else(|| RootedError::host("util intrinsics missing"))
 }
 
 pub(crate) fn internal_formatters(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
-    module(context)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .util_intrinsics
-        .map(|api| api.formatters)
-        .ok_or_else(|| RootedError::host("util formatters missing"))
+    intrinsics(context).map(|api| api.formatters)
 }
 
 pub(crate) fn internal_inspect(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
-    module(context)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .util_intrinsics
-        .map(|api| api.inspect)
-        .ok_or_else(|| RootedError::host("util intrinsics missing"))
+    intrinsics(context).map(|api| api.inspect)
 }
 
-/// Captures the configured call-site policy: the original Node module retains its
-/// validator imports whatever a script later does to their exports.
-pub(crate) fn initialize_call_site_policy(
+pub(crate) fn primordials(
     context: &mut NativeContext<'_, NodeHost>,
-) -> Result<(), RootedError> {
-    crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "util.js",
-        "util.js",
-        "getCallSites",
-    )?;
-    Ok(())
+) -> Result<RootId, RootedError> {
+    intrinsics(context).map(|api| api.primordials)
 }
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -107,79 +52,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     if let Some(api) = cached {
         return Ok(api.module);
     }
-    let module =
-        crate::host::shared_vm::commonjs::node_library_module(context, "util.js", "util.js")?;
-    // Transfer and signal tracing still need native backends. The original
-    // aborted export now uses the native weak listener retention substrate.
-    let global = context.global_root()?;
-    let reflect = get(context, global, "Reflect")?;
-    let delete = get(context, reflect, "deleteProperty")?;
-    for name in [
-        "transferableAbortSignal",
-        "transferableAbortController",
-        "setTraceSigInt",
-    ] {
-        let key = context.string_rooted(name);
-        let removed = context.call_rooted(delete, reflect, &[module, key])?;
-        if !context.truthy_rooted(removed)? {
-            return Err(RootedError::host(
-                "unimplemented utility policy is not configurable",
-            ));
-        }
-    }
-    let inspect = get(context, module, "inspect")?;
-    super::util_style_shared_vm::install(context, module, inspect)?;
-    // Keep the already qualified native adapters while the remaining policies
-    // come directly from the unchanged SDK exports (including their accessors).
-    let parse_env = context.host_function(crate::host::shared_vm::operation("parseEnv"))?;
-    let key = context.string_rooted("parseEnv");
-    context.set_property_rooted(module, key, parse_env, module)?;
-    let callbackify = super::util_callbackify_shared_vm::function(context)?;
-    let parse_args = super::util_parse_args_shared_vm::function(context)?;
-    for (name, function) in [("callbackify", callbackify), ("parseArgs", parse_args)] {
-        let key = context.string_rooted(name);
-        context.set_property_rooted(module, key, function, module)?;
-    }
-    // Retain original identities before publishing mutable util exports. Console
-    // can request these lazily without observing later public export replacement.
-    let formatters = context.null_object_rooted()?;
-    for name in ["format", "formatWithOptions"] {
-        let key = context.string_rooted(name);
-        let function = context.get_property_rooted(module, key)?;
-        context.define_data_property_rooted(formatters, key, function, false, true, false)?;
-    }
-    let module = context.retain(module)?;
+    let primordials = super::util_module_shared_vm::build_primordials(context)?;
+    let primordials = context.retain(primordials)?;
+    let inspect = get(context, primordials, "inspect")?;
     let inspect = context.retain(inspect)?;
+    let (module, formatters) = super::util_module_shared_vm::build(context, primordials)?;
+    let module = context.retain(module)?;
     let formatters = context.retain(formatters)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .util_intrinsics = Some(UtilIntrinsics {
+    context.host_mut().shared_state().borrow_mut().util_intrinsics = Some(UtilIntrinsics {
         module,
         inspect,
         formatters,
+        primordials,
     });
     Ok(module)
-}
-
-pub(crate) fn type_check(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let index = context
-        .rooted_value(data)
-        .and_then(|value| value.as_number())
-        .ok_or_else(|| RootedError::host("missing util predicate brand"))? as usize;
-    let brand = TYPE_PREDICATES
-        .get(index)
-        .ok_or_else(|| RootedError::host("invalid util predicate brand"))?
-        .1;
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    let matches = context.has_builtin_brand_rooted(value, brand)?;
-    Ok(context.boolean(matches))
 }
 
 pub(crate) fn parse_env(
@@ -211,53 +97,8 @@ pub(crate) fn inspect_quote(
     let units = context
         .string_code_units(value)?
         .ok_or_else(|| RootedError::host("inspect quote requires string code units"))?;
-    let delimiter = if !units.contains(&(b'\'' as u16)) {
-        b'\''
-    } else if !units.contains(&(b'"' as u16)) {
-        b'"'
-    } else if !units.contains(&(b'`' as u16))
-        && !units
-            .windows(2)
-            .any(|pair| pair == [b'$' as u16, b'{' as u16])
-    {
-        b'`'
-    } else {
-        b'\''
-    };
-    let mut output = vec![u16::from(delimiter)];
-    let mut index = 0;
-    while index < units.len() {
-        let unit = units[index];
-        let escape = match unit {
-            8 => Some("\\b".to_owned()),
-            9 => Some("\\t".to_owned()),
-            10 => Some("\\n".to_owned()),
-            12 => Some("\\f".to_owned()),
-            13 => Some("\\r".to_owned()),
-            92 => Some("\\\\".to_owned()),
-            _ if unit == u16::from(delimiter) && delimiter == b'\'' => Some("\\'".to_owned()),
-            0..=31 | 127..=159 => Some(format!("\\x{unit:02X}")),
-            0xd800..=0xdbff
-                if units
-                    .get(index + 1)
-                    .is_some_and(|unit| (0xdc00..=0xdfff).contains(unit)) =>
-            {
-                output.extend_from_slice(&units[index..index + 2]);
-                index += 2;
-                continue;
-            }
-            0xd800..=0xdfff => Some(format!("\\u{unit:04x}")),
-            _ => None,
-        };
-        if let Some(escape) = escape {
-            output.extend(escape.encode_utf16());
-        } else {
-            output.push(unit);
-        }
-        index += 1;
-    }
-    output.push(u16::from(delimiter));
-    Ok(context.string_units_rooted(&output))
+    let quoted = super::util_inspect_shared_vm::quote_units(&units);
+    Ok(context.string_units_rooted(&quoted))
 }
 
 /// Shared Node AbortSignal shape validation. HasProperty observes Proxy traps
@@ -886,10 +727,9 @@ pub(crate) fn types_binding(
     )
 }
 fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    // node_types.cc's raw native slot predicates, in its export order. The
-    // configured internal/util/types.js owns JavaScript predicates and aliases.
-    use BuiltinBrand as B;
-    const NATIVE_BRANDS: &[BuiltinBrand] = &[
+    // node_types.cc's raw native slot predicates, in its export order.
+    use quench_runtime::BuiltinBrand as B;
+    const NATIVE_BRANDS: &[B] = &[
         B::ArgumentsObject,
         B::ArrayBuffer,
         B::AsyncFunction,
@@ -919,7 +759,7 @@ fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Root
     ];
     let types = context.object_rooted()?;
     for brand in NATIVE_BRANDS {
-        let (index, (name, _)) = TYPE_PREDICATES
+        let (index, &(name, _)) = super::util_module_shared_vm::TYPES
             .iter()
             .enumerate()
             .find(|(_, (_, candidate))| candidate == brand)
@@ -1025,9 +865,18 @@ pub(crate) fn get_call_sites(
         return Err(context.throw(error));
     };
     // Node's native operation drops the util.js caller frame, even when borrowed directly.
-    let frames = context.source_stack_frames(count as usize + 1);
-    let mut sites = Vec::with_capacity(frames.len().saturating_sub(1));
-    for frame in frames.into_iter().skip(1) {
+    call_sites(context, count as usize, 1)
+}
+
+/// The `count` innermost source frames past the `skip` innermost, as call-site records.
+pub(crate) fn call_sites(
+    context: &mut NativeContext<'_, NodeHost>,
+    count: usize,
+    skip: usize,
+) -> Result<RootId, RootedError> {
+    let frames = context.source_stack_frames(count + skip);
+    let mut sites = Vec::with_capacity(frames.len().saturating_sub(skip));
+    for frame in frames.into_iter().skip(skip) {
         let site = context.null_object_rooted()?;
         let function = context.string_units_rooted(&frame.function_name);
         let id = context.string_rooted(&frame.script_id.to_string());
@@ -1202,4 +1051,4 @@ pub(crate) fn guess_handle_type(
     Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }
 
-crate::host::startup_snapshot::host_snap_struct!(UtilIntrinsics { module, inspect, formatters });
+crate::host::startup_snapshot::host_snap_struct!(UtilIntrinsics { module, inspect, formatters, primordials });

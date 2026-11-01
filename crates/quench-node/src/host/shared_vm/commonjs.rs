@@ -484,7 +484,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         // that can require internal modules can replace those exports before a policy's
         // first use, so only then are the policies captured before it runs.
         if internals_exposed(context) {
-            context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
             // Capture SDK process policies before exposed internal exports can be replaced.
             #[cfg(target_os = "linux")]
             {
@@ -2900,7 +2899,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Ok(module)
         }
         // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
-        BuiltinModule::UtilTypes => node_library_module(context, "util/types.js", "util/types.js"),
+        BuiltinModule::UtilTypes => {
+            let util = crate::modules::util_shared_vm::module(context)?;
+            get(context, util, "types")
+        }
         BuiltinModule::FsPromises => {
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
