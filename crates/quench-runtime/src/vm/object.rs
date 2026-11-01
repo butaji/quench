@@ -317,7 +317,41 @@ impl<H: Host> Vm<H> {
     /// slot when the shape keeps it there (`SLOT_GETTER`).
     pub(super) fn slot_attributes(&self, object: &Object, slot: usize) -> Option<PropertyAttributes> {
         let attributes = self.shape_slot_attributes(object.shape(), slot)?;
-        Some(attributes.attributes(&self.shape_accessors, || self.heap.property_get(object, slot)))
+        Some(attributes.attributes(&self.shape_accessors, || {
+            self.slot_held_accessors(self.heap.property_get(object, slot))
+        }))
+    }
+    /// Whether a raw slot read of an object whose shape chain made an accessor with a setter
+    /// (`ShapeFacts::ACCESSOR_PAIRS`) met a pair cell (`SLOT_ACCESSOR_PAIR`) rather than a
+    /// value: only such a slot holds one, and a value's tag rules out most others at once.
+    #[inline(always)]
+    pub(super) fn is_accessor_pair(&self, shape: u32, value: Value) -> bool {
+        self.shapes[shape as usize].facts.accessor_pairs()
+            && matches!(value.heap_reference(), Some(crate::value::HeapReference::LegacySlot(_)))
+            && matches!(self.heap.get(value), Some(Cell::AccessorPair { .. }))
+    }
+    /// The accessor functions an accessor's slot `value` holds (`ShapeAttributes::slot_accessors`):
+    /// those of its pair cell, else the getter it is.
+    pub(super) fn slot_held_accessors(&self, value: Option<Value>) -> super::ShapeAccessors {
+        match value.and_then(|value| self.heap.get(value)) {
+            Some(Cell::AccessorPair { getter, setter }) => (Some(*getter), Some(*setter)),
+            _ => (value, None),
+        }
+    }
+    /// The value an accessor's slot holds for `attributes` recorded as `recorded`: its getter
+    /// (`SLOT_GETTER`), a new pair cell of its getter and setter (`SLOT_ACCESSOR_PAIR`), or
+    /// `undefined` where the shape's accessor table holds them.
+    fn slot_accessor_value(&mut self, attributes: PropertyAttributes, recorded: super::ShapeAttributes) -> Value {
+        if recorded.slot_getter() {
+            attributes.getter.expect("a slot getter record has a getter")
+        } else if recorded.slot_accessor_pair() {
+            self.heap.alloc(Cell::AccessorPair {
+                getter: attributes.getter.expect("a slot pair record has a getter"),
+                setter: attributes.setter.expect("a slot pair record has a setter"),
+            })
+        } else {
+            Value::UNDEFINED
+        }
     }
     /// `object`'s data value at `slot`, as a raw read sees it: `undefined` for an accessor,
     /// whose slot holds its getter or nothing.
@@ -328,6 +362,7 @@ impl<H: Host> Vm<H> {
             && self
                 .shape_slot_attributes(shape, slot)
                 .is_some_and(ShapeAttributes::slot_getter)
+            || self.is_accessor_pair(shape, value)
         {
             return Some(Value::UNDEFINED);
         }
@@ -485,13 +520,13 @@ impl<H: Host> Vm<H> {
         let entry = &self.shapes[shape as usize];
         entry.dictionary_trigger.is_some() || entry.facts.accessors()
     }
-    /// Whether a property of `shape` may be an accessor whose functions `shape_accessors`
-    /// holds: a dictionary shape keeps its attributes outside its transitions, any other knows
-    /// from its chain (`ShapeFacts`).
+    /// Whether a property of `shape` may be an accessor with a setter (`ShapeFacts::ACCESSOR_PAIRS`):
+    /// a dictionary shape keeps its attributes outside its transitions, any other knows from
+    /// its chain.
     #[inline(always)]
-    pub(super) fn shape_may_have_table_accessors(&self, shape: u32) -> bool {
+    pub(super) fn shape_may_have_accessor_pairs(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.table_accessors()
+        entry.dictionary_trigger.is_some() || entry.facts.accessor_pairs()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         let Some(shape) = self.object_data(object).map(Object::shape) else {
@@ -925,7 +960,8 @@ impl<H: Host> Vm<H> {
         }
     }
     /// Keeps the slot of `object`'s property at `slot` as its new `attributes` need it: an
-    /// accessor's slot holds its `SLOT_GETTER` getter or `undefined`, and a data property made
+    /// accessor's slot holds its getter, its pair cell or `undefined` (`slot_accessor_value`),
+    /// and a data property made
     /// from an accessor starts as `undefined` (ValidateAndApplyPropertyDescriptor).
     fn store_accessor_slot(
         &mut self,
@@ -935,10 +971,8 @@ impl<H: Host> Vm<H> {
         attributes: PropertyAttributes,
         recorded: ShapeAttributes,
     ) {
-        let value = if recorded.slot_getter() {
-            attributes.getter.expect("a slot getter record has a getter")
-        } else if attributes.accessor || current.is_some_and(|current| current.accessor) {
-            Value::UNDEFINED
+        let value = if recorded.slot_accessors() || attributes.accessor || current.is_some_and(|current| current.accessor) {
+            self.slot_accessor_value(attributes, recorded)
         } else {
             return;
         };
@@ -1261,7 +1295,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let slot = self.shape_slot(object.shape(), self.length_atom)?;
-        self.heap.property_get(object, slot)
+        self.heap.property_get(object, slot).filter(|value| !self.is_accessor_pair(object.shape(), *value))
     }
 
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
@@ -2501,7 +2535,7 @@ impl<H: Host> Vm<H> {
                         prototype,
                         holder: OWN_ACCESSOR,
                         slot: slot as u16,
-                        getter_in_slot: self.getter_in_slot(receiver_shape, slot),
+                        slot_accessor: self.slot_accessor(receiver_shape, slot),
                         epoch,
                     },
                 );
@@ -2536,7 +2570,7 @@ impl<H: Host> Vm<H> {
         {
             return;
         }
-        let getter_in_slot = self.getter_in_slot(holder_object.shape(), slot);
+        let slot_accessor = self.slot_accessor(holder_object.shape(), slot);
         let mut link = prototype;
         for _ in 0..depth {
             self.heap.mark_prototype(link);
@@ -2553,16 +2587,20 @@ impl<H: Host> Vm<H> {
                 prototype,
                 holder,
                 slot: slot as u16,
-                getter_in_slot,
+                slot_accessor,
                 epoch,
             },
         );
     }
 
-    /// Whether `shape` keeps the getter of the accessor at `slot` in the slot itself.
-    fn getter_in_slot(&self, shape: u32, slot: usize) -> bool {
-        !self.shape_is_dictionary(shape)
-            && self.shape_slot_attributes(shape, slot).is_some_and(ShapeAttributes::slot_getter)
+    /// Where `shape` keeps the getter of the accessor at `slot` (`SlotAccessor`).
+    fn slot_accessor(&self, shape: u32, slot: usize) -> super::SlotAccessor {
+        match self.shape_slot_attributes(shape, slot) {
+            _ if self.shape_is_dictionary(shape) => super::SlotAccessor::Attributes,
+            Some(attributes) if attributes.slot_getter() => super::SlotAccessor::Getter,
+            Some(attributes) if attributes.slot_accessor_pair() => super::SlotAccessor::Pair,
+            _ => super::SlotAccessor::Attributes,
+        }
     }
 
     /// Records `entry` among the site's accessor entries: one for its receiver shape is
@@ -2596,10 +2634,14 @@ impl<H: Host> Vm<H> {
         } else {
             self.heap.ordinary_object(cache.holder)?
         };
-        if cache.getter_in_slot {
-            return self.heap.property_get(holder, usize::from(cache.slot));
+        match cache.slot_accessor {
+            super::SlotAccessor::Getter => self.heap.property_get(holder, usize::from(cache.slot)),
+            super::SlotAccessor::Pair => match self.heap.get(self.heap.property_get(holder, usize::from(cache.slot))?) {
+                Some(Cell::AccessorPair { getter, .. }) => Some(*getter),
+                _ => None,
+            },
+            super::SlotAccessor::Attributes => self.slot_attributes(holder, usize::from(cache.slot))?.getter,
         }
-        self.slot_attributes(holder, usize::from(cache.slot))?.getter
     }
 
     /// What native accessor `getter` returns for `this` where its call is a read of the
@@ -3395,11 +3437,7 @@ impl<H: Host> Vm<H> {
             added,
             ShapeTransition::Descriptor { slot, attributes: recorded },
         );
-        let value = if recorded.slot_getter() {
-            attributes.getter.expect("a slot getter record has a getter")
-        } else {
-            Value::UNDEFINED
-        };
+        let value = self.slot_accessor_value(attributes, recorded);
         self.heap.property_add(object, value, next_shape);
         // A getter and setter pair is held by the shape's accessor table, not by the slot, so
         // the add's store passes no barrier for it: the owner is logged as a descriptor

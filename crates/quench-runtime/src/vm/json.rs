@@ -1803,6 +1803,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmBits64(_))
             | Some(Cell::WasmGc { .. })
             | Some(Cell::WasmExtern(_))
+            | Some(Cell::AccessorPair { .. })
             | Some(Cell::WasmTag { .. })
             | Some(Cell::WasmException { .. })
             | Some(Cell::WasmV128(_))

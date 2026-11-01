@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
                 .flatten()
             {
                 // `values` already holds a slot getter.
-                let (getter, setter) = attributes.functions(&self.shape_accessors, || None);
+                let (getter, setter) = attributes.functions(&self.shape_accessors, || (None, None));
                 roots.extend(key.symbol_value().into_iter().chain(getter).chain(setter));
             }
         }
@@ -214,8 +214,8 @@ impl<H: Host> Vm<H> {
             .filter_map(|(slot, entry)| {
                 let (key, attributes) = entry?;
                 let raw = sealed.values.get(slot).copied();
-                let value = if attributes.slot_getter() { None } else { raw };
-                let attributes = attributes.attributes(&self.shape_accessors, || raw);
+                let value = if attributes.slot_accessors() { None } else { raw };
+                let attributes = attributes.attributes(&self.shape_accessors, || self.slot_held_accessors(raw));
                 let value = value.unwrap_or(Value::UNDEFINED);
                 Some((key, SlotProperty { value, attributes }))
             })

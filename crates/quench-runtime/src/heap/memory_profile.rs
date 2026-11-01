@@ -719,6 +719,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::WasmBits64(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
+            | Cell::AccessorPair { .. }
             | Cell::WasmTag { .. }
             | Cell::WasmGlobal { .. }
             | Cell::BindingReference { .. } => 0,

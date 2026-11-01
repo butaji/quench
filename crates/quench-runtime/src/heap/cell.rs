@@ -3464,6 +3464,11 @@ pub(crate) enum Cell {
     WasmV128([u8; crate::wasm::V128_BYTES]),
     /// Opaque external payload in the internal anyref hierarchy, outside eqref.
     WasmExtern(Value),
+    /// The getter and setter of an accessor property whose shape keeps them in its slot
+    /// (`ShapeAttributes::SLOT_ACCESSOR_PAIR`), so objects that each define their own pair, as
+    /// an object literal's `get x() {}` and `set x(v) {}` do, share one shape. Only that slot
+    /// holds one; no guest code sees it as a value.
+    AccessorPair { getter: Value, setter: Value },
     /// One exception identity owns its original tag and traced payload.
     WasmException { tag: Value, payload: Box<Vec<Value>> },
     /// A tag retains its original declaration; identity is independent of type equality.
@@ -3594,6 +3599,7 @@ impl Cell {
             Self::WasmBits64(_) => "wasm_bits64",
             Self::WasmV128(_) => "wasm_v128",
             Self::WasmExtern(_) => "wasm_extern",
+            Self::AccessorPair { .. } => "accessor_pair",
             Self::WasmException { .. } => "wasm_exception",
             Self::WasmTag { .. } => "wasm_tag",
             Self::WasmGc { .. } => "wasm_gc",

@@ -515,6 +515,46 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn accessor_pairs_live_in_their_slots() {
+    // An accessor with a getter and a setter keeps them in its slot as one pair cell
+    // (`SLOT_ACCESSOR_PAIR`), so objects that each define their own pair share a shape; its
+    // descriptor, redefinition of either half, conversion to data and back, copies that run
+    // the getter, freezing, deletion, inheritance and collection see the same functions.
+    let source = r#"
+const out = [];
+const make = (v) => { let e = v; return { ok: true, get error() { return "g" + e; }, set error(x) { e = x; } }; };
+const objects = [];
+for (let i = 0; i < 2000; i++) objects.push(make(i));
+for (let round = 0; round < 3; round++) out.push(objects[5].error + objects[1999].error);
+objects[7].error = "x"; out.push(objects[7].error, objects[8].error);
+const d = Object.getOwnPropertyDescriptor(objects[3], "error");
+out.push(typeof d.get, typeof d.set, d.enumerable, d.configurable, d.get === Object.getOwnPropertyDescriptor(objects[3], "error").get);
+out.push(d.get === Object.getOwnPropertyDescriptor(objects[4], "error").get);
+Object.defineProperty(objects[9], "error", { get() { return "redefined"; } });
+out.push(objects[9].error); objects[9].error = 5; out.push(objects[9].error);
+Object.defineProperty(objects[10], "error", { set(x) { out.push("setter2:" + x); } });
+out.push(String(objects[10].error)); objects[10].error = 1;
+Object.defineProperty(objects[11], "error", { value: 42, writable: true });
+out.push(objects[11].error, JSON.stringify(Object.getOwnPropertyDescriptor(objects[11], "error")));
+Object.defineProperty(objects[11], "error", { get() { return "back"; }, set(v) {} });
+out.push(objects[11].error);
+out.push(JSON.stringify({ ...objects[12] }), JSON.stringify(Object.assign({}, objects[13])), JSON.stringify(objects[14]));
+out.push(Object.keys(objects[15]).join(), Object.entries(objects[16]).flat().join());
+Object.freeze(objects[17]); objects[17].error = "frozen"; out.push(objects[17].error, Object.isFrozen(objects[17]));
+delete objects[18].error; out.push("error" in objects[18], objects[18].error);
+const child = Object.create(objects[19]); child.error = "via-proto"; out.push(objects[19].error, Object.hasOwn(child, "error"));
+class Box { #v = 1; get v() { return this.#v; } set v(x) { this.#v = x * 2; } }
+const boxes = [new Box(), new Box()]; boxes[0].v = 5; out.push(boxes[0].v, boxes[1].v);
+let sum = 0; for (const o of objects) sum += String(o.error).length; out.push(sum);
+if (typeof gc === "function") gc();
+for (let i = 0; i < 2000; i++) objects[i] = make(-i);
+out.push(objects[1500].error);
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["g5g1999|g5g1999|g5g1999|gx|g8|function|function|true|true|true|false|redefined|redefined|g10|setter2:1|42|{\"value\":42,\"writable\":true,\"enumerable\":true,\"configurable\":true}|back|{\"ok\":true,\"error\":\"g12\"}|{\"ok\":true,\"error\":\"g13\"}|{\"ok\":true,\"error\":\"g14\"}|ok,error|ok,true,error,g16|gfrozen|true|false||gvia-proto|false|10|1|8915|g-1500".to_string()]);
+}
+
+#[test]
 fn own_name_reads_load_the_callee() {
     // A function expression reads its own name as `LoadCallee`; with no closure, eval or
     // `with` able to reach the name's slot, the slot goes (`drop_unread_self_binding`) and

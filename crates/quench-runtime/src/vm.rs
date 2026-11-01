@@ -688,6 +688,15 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = u32::MAX;
+/// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
+/// in the slot itself (`ShapeAttributes::slot_getter`), in the slot's pair cell
+/// (`slot_accessor_pair`), or where its attributes say (the shape's accessor table).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotAccessor {
+    Getter,
+    Pair,
+    Attributes,
+}
 /// A field site's read of an accessor of a shaped receiver, its own or on a prototype: it
 /// holds while the receiver keeps its shape and prototype and the chain to `holder` keeps the
 /// layout it was proved under, `holder`'s `slot` attributes carrying the getter.
@@ -700,10 +709,10 @@ struct AccessorFieldCache {
     /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
     slot: u16,
-    /// Whether the holder's shape keeps the getter in the slot itself
-    /// (`ShapeAttributes::slot_getter`): the shape the entry proves (the receiver's for
-    /// `OWN_ACCESSOR`, else the prototype holder's, which the epoch covers) fixes it.
-    getter_in_slot: bool,
+    /// Where the holder's shape keeps the accessor at `slot` (`SlotAccessor`): the shape the
+    /// entry proves (the receiver's for `OWN_ACCESSOR`, else the prototype holder's, which the
+    /// epoch covers) fixes it.
+    slot_accessor: SlotAccessor,
     /// The `prototype_layout_epoch` the chain was proved under.
     epoch: u64,
 }
@@ -761,7 +770,7 @@ const NO_INHERITED_FIELD: u32 = u32::MAX;
 // the streams' five with room and halves the sixteen an inherited read keeps.
 const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 8;
 /// Bits of a keyed add's index into `Vm::keyed_adds`.
-const KEYED_ADD_INDEX_BITS: u32 = 6;
+const KEYED_ADD_INDEX_BITS: u32 = 8;
 /// Keyed adds the VM remembers, direct-mapped by source shape and key: express's JSON body
 /// path makes fifteen a request into header and parameter objects, whose shapes repeat.
 const KEYED_ADD_ENTRIES: usize = 1 << KEYED_ADD_INDEX_BITS;
@@ -1228,10 +1237,11 @@ enum ShapeTransitionKey {
     /// not indexed.
     Delete(property_key::PropertyKey),
 }
-/// A property's attributes as a shape records them. A getter-only accessor keeps its getter
-/// in the property's slot (`SLOT_GETTER`), so its shape names no function and every object
-/// defining the same keys shares it. Other accessor functions are rare among shapes and live
-/// in `Vm::shape_accessors`, which `accessors` indexes, so every shape stays small.
+/// A property's attributes as a shape records them. An accessor keeps its functions in the
+/// property's slot, its getter alone (`SLOT_GETTER`) or its getter and setter as one pair
+/// cell (`SLOT_ACCESSOR_PAIR`), so its shape names no function and every object defining the
+/// same keys shares it. A lone setter is rare among shapes and lives in
+/// `Vm::shape_accessors`, which `accessors` indexes, so every shape stays small.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ShapeAttributes {
     writable: bool,
@@ -1286,15 +1296,22 @@ const NO_SHAPE_ACCESSORS: u32 = u32::MAX;
 /// property's slot value. Re-exports (`__createBinding`, `__export`, Babel's interop getters)
 /// define these by the thousand, each with its own getter.
 const SLOT_GETTER: u32 = u32::MAX - 1;
+/// `ShapeAttributes::accessors` of an accessor with both a getter and a setter: the slot
+/// holds a `Cell::AccessorPair` of them. An object literal's `get x() {}` and `set x(v) {}` make a pair of their own on every object (Zod's
+/// parse results); in the shape's accessor table each would give its object a shape of its
+/// own, which no field cache could keep.
+const SLOT_ACCESSOR_PAIR: u32 = u32::MAX - 2;
 /// A shape-held accessor property's getter and setter.
 type ShapeAccessors = (Option<Value>, Option<Value>);
 impl ShapeAttributes {
     /// `attributes` for a shape, appending its accessor functions to `accessors`.
-    /// A `SLOT_GETTER` record leaves storing the getter in the slot to the caller.
+    /// A `SLOT_GETTER` or `SLOT_ACCESSOR_PAIR` record leaves storing the getter, or the pair
+    /// cell, in the slot to the caller (`Vm::slot_accessor_value`).
     fn record(attributes: PropertyAttributes, accessors: &mut Vec<ShapeAccessors>) -> Self {
         let index = match (attributes.getter, attributes.setter) {
             (None, None) => NO_SHAPE_ACCESSORS,
             (Some(_), None) if attributes.accessor => SLOT_GETTER,
+            (Some(_), Some(_)) if attributes.accessor => SLOT_ACCESSOR_PAIR,
             (getter, setter) => {
                 accessors.push((getter, setter));
                 u32::try_from(accessors.len() - 1).expect("shape accessor table exhausted")
@@ -1323,7 +1340,7 @@ impl ShapeAttributes {
         if !self.table_accessors() {
             return self;
         }
-        accessors.push(self.functions(old, || None));
+        accessors.push(self.functions(old, || (None, None)));
         Self {
             accessors: u32::try_from(accessors.len() - 1).expect("shape accessor table exhausted"),
             ..self
@@ -1335,15 +1352,27 @@ impl ShapeAttributes {
         self.accessors == SLOT_GETTER
     }
 
-    /// Whether `Vm::shape_accessors` holds this property's functions.
-    fn table_accessors(self) -> bool {
-        !matches!(self.accessors, NO_SHAPE_ACCESSORS | SLOT_GETTER)
+    /// Whether the property's slot holds the pair cell of its getter and setter.
+    fn slot_accessor_pair(self) -> bool {
+        self.accessors == SLOT_ACCESSOR_PAIR
     }
 
-    /// The accessor functions, given the property's slot value for a `SLOT_GETTER` record.
-    fn functions(self, accessors: &[ShapeAccessors], slot_value: impl FnOnce() -> Option<Value>) -> ShapeAccessors {
-        if self.slot_getter() {
-            return (slot_value(), None);
+    /// Whether the property's slot holds its accessor functions rather than a value: a getter
+    /// (`SLOT_GETTER`) or a pair cell (`SLOT_ACCESSOR_PAIR`).
+    fn slot_accessors(self) -> bool {
+        self.slot_getter() || self.slot_accessor_pair()
+    }
+
+    /// Whether `Vm::shape_accessors` holds this property's functions.
+    fn table_accessors(self) -> bool {
+        !matches!(self.accessors, NO_SHAPE_ACCESSORS | SLOT_GETTER | SLOT_ACCESSOR_PAIR)
+    }
+
+    /// The accessor functions; `slot` gives those the property's slot holds
+    /// (`slot_accessors`, `Vm::slot_held_accessors`).
+    fn functions(self, accessors: &[ShapeAccessors], slot: impl FnOnce() -> ShapeAccessors) -> ShapeAccessors {
+        if self.slot_accessors() {
+            return slot();
         }
         accessors
             .get(self.accessors as usize)
@@ -1351,8 +1380,8 @@ impl ShapeAttributes {
             .unwrap_or((None, None))
     }
 
-    fn attributes(self, accessors: &[ShapeAccessors], slot_value: impl FnOnce() -> Option<Value>) -> PropertyAttributes {
-        let (getter, setter) = self.functions(accessors, slot_value);
+    fn attributes(self, accessors: &[ShapeAccessors], slot: impl FnOnce() -> ShapeAccessors) -> PropertyAttributes {
+        let (getter, setter) = self.functions(accessors, slot);
         PropertyAttributes {
             writable: self.writable,
             enumerable: self.enumerable,
@@ -1525,16 +1554,18 @@ impl ShapeFacts {
     /// A symbol key or a table accessor of the chain may be a GC root.
     const MAY_HAVE_GC_ROOTS: u8 = 1 << 0;
     /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
-    /// whether the slot holds a getter rather than a value.
+    /// whether the slot holds a getter rather than a value. A pair cell's slot is told by its
+    /// value instead (`Vm::is_accessor_pair`), under `ACCESSOR_PAIRS`, so a shape of data
+    /// properties and pairs, as a logger object with a `level` pair, keeps reading raw.
     const SLOT_GETTERS: u8 = 1 << 1;
     /// Some property of the chain was made an accessor. Only a descriptor transition makes
     /// one, as an add carries data attributes, so a chain without this fact holds data
     /// properties alone and a read of any slot is its value.
     const ACCESSORS: u8 = 1 << 2;
-    /// Some property of the chain was made an accessor whose functions
-    /// `Vm::shape_accessors` holds (`ShapeAttributes::table_accessors`): one with a setter, as
-    /// every lazy data property is, rather than a getter alone.
-    const TABLE_ACCESSORS: u8 = 1 << 3;
+    /// Some property of the chain was made an accessor with a setter, as every lazy data
+    /// property is, rather than a getter alone: its functions in `Vm::shape_accessors`
+    /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
+    const ACCESSOR_PAIRS: u8 = 1 << 3;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1546,12 +1577,15 @@ impl ShapeFacts {
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
                 | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
                 | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
-                | introduced(descriptor(ShapeAttributes::table_accessors), Self::TABLE_ACCESSORS),
+                | introduced(
+                    descriptor(|attributes| attributes.table_accessors() || attributes.slot_accessor_pair()),
+                    Self::ACCESSOR_PAIRS,
+                ),
         )
     }
 
-    fn table_accessors(self) -> bool {
-        self.0 & Self::TABLE_ACCESSORS != 0
+    fn accessor_pairs(self) -> bool {
+        self.0 & Self::ACCESSOR_PAIRS != 0
     }
 
     fn accessors(self) -> bool {
