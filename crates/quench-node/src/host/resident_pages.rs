@@ -139,16 +139,24 @@ pub fn release_read_only_pages() {
     }
 }
 
+/// How far apart the default policy's collection-time releases are kept
+/// (`release_at_collection`): V8-v7 Richards no-JIT max RSS 3196-3296 KiB at
+/// `LOAD_RELEASE_INTERVAL`, 3048 at 10 ms and at 2 ms, Score unchanged (static incremental
+/// production build, pinned, x86_64 4 vCPU, 2026-11-01): past 10 ms what stays resident between
+/// releases is the run's working set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// The release at a collection boundary (`at_collection_boundary`): the read-only pages and
 /// the allocator's free pages. A policy that returns pages at collections releases at every
-/// boundary; the default releases at most once per `LOAD_RELEASE_INTERVAL` on the shared
+/// boundary; the default releases at most once per `COLLECTION_RELEASE_INTERVAL` on the shared
 /// release clock, so a run's hot code refaults at most that often. Without it the default
 /// kept every code page a run had touched and every free page its sweeps left: V8-v7
 /// Richards max RSS about 10 MB against 3.8 MB released at every boundary, while releasing at
 /// every young collection cost RayTrace about 40% of its Score in refaults.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_at_collection(returns_pages: bool) {
-    if !returns_pages && released_within(LOAD_RELEASE_INTERVAL) {
+    if !returns_pages && released_within(COLLECTION_RELEASE_INTERVAL) {
         return;
     }
     release_read_only_pages();
