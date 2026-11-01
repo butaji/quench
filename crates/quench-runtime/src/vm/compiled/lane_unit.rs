@@ -60,6 +60,66 @@ pub(crate) struct Unit {
 }
 
 impl Unit {
+    /// Project the original functions' recovery liveness onto unit registers.
+    /// A suspended caller retains both its call inputs and continuation state;
+    /// callee facts include implicit observations such as legacy f.arguments.
+    pub(crate) fn register_masks<'a>(
+        &self, program: &'a crate::ResidualProgram, caller: u32,
+    ) -> Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>> {
+        use crate::compile::liveness::{ROOT_MAP_REGISTERS, RegisterMasks};
+        let caller = program.register_root_masks(caller)?;
+        if self.frames.is_empty() {
+            return Some(std::borrow::Cow::Borrowed(caller));
+        }
+        if self.registers > ROOT_MAP_REGISTERS { return None; }
+        let frames = self.frames.iter().map(|frame| {
+            Some((caller.get(frame.call as usize)? | caller.get(frame.call as usize + 1)?,
+                program.register_root_masks(frame.target.function)?))
+        }).collect::<Option<Vec<_>>>()?;
+        let mut masks = self.origins.iter().map(|origin| match *origin {
+            Origin::Caller(pc) => caller.get(pc as usize),
+            Origin::Inlined { frame, pc } => {
+                let (suspended, callee) = frames[frame];
+                Some(suspended | callee.get(pc as usize)?.checked_shl(u32::from(self.frames[frame].base))?)
+            }
+        }).collect::<Option<Vec<_>>>()?;
+        masks.push(caller.get(self.end as usize)?);
+        // Source recovery alone misses uses introduced by the splice (the
+        // result move after a returning operation, for example). Feed those
+        // instructions through the same transfer/CFG solver as ordinary code.
+        let mut transfers: Vec<_> = self.instructions.iter().map(|instruction|
+            crate::compile::liveness::transfer(*instruction, program,
+                &program.field_sites, &program.superinstructions)).collect();
+        for (frame, pc) in self.frames.iter().zip(&self.markers) {
+            transfers[*pc].1 = (0..frame.registers).fold(0, |mask, register|
+                mask | crate::compile::liveness::register_bit(frame.base + register));
+        }
+        let mut starts = Vec::with_capacity(self.instructions.len() + 1);
+        let mut successors = Vec::new();
+        for (pc, instruction) in self.instructions.iter().enumerate() {
+            starts.push(successors.len());
+            if instruction.returns_from_frame() {
+                let terminal = self.instructions.len().checked_sub(1)?;
+                if self.instructions[terminal].op() != Op::Return { return None; }
+                transfers[pc].1 |= crate::compile::liveness::register_bit(self.instructions[terminal].register_a());
+                successors.push(terminal);
+            } else {
+                match instruction.op().control_flow_layout() {
+                    crate::bytecode::ControlFlowLayout::Terminal => {},
+                    crate::bytecode::ControlFlowLayout::Jump => successors.push(instruction.jump_target() as usize),
+                    crate::bytecode::ControlFlowLayout::ConditionalJump => {
+                        successors.push(instruction.jump_target() as usize);
+                        successors.push(pc + 1);
+                    }
+                    _ => successors.push(pc + 1),
+                }
+            }
+        }
+        starts.push(successors.len());
+        let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
+        Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
+    }
+
     /// The closure whose depth-zero binding this instruction reads.
     pub(crate) fn capture_key(&self, pc: usize) -> (Option<usize>, u16) {
         let frame = match self.origins[pc] {
@@ -219,4 +279,38 @@ pub(crate) fn unit<'f>(
         }
     }
     Some(unit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_at_entry() {
+        let program = crate::Engine::specialize(
+            "function leaf(x) { return x + 1; } function caller(x) { return this.leaf(x) + 2; }",
+            "inline-liveness.js",
+        ).unwrap();
+        let id = |name: &str| program.functions.iter().position(|function|
+            function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
+        let caller = id("caller");
+        let leaf = id("leaf");
+        let body = program.function(caller as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
+        let mut targets = vec![None; body.code.len()];
+        targets[call] = Some(CallTarget { callee: Value::UNDEFINED, function: leaf });
+        let mut unit = unit(body, &targets, &|function| program.function_get(function as usize)).unwrap();
+        assert_eq!(unit.frames.len(), 1);
+        let masks = unit.register_masks(&program, caller).expect("covered remapped graph");
+        for register in unit.caller_registers..unit.registers {
+            assert!(!masks.is_live(0, register), "callee register {register} is defined by call admission");
+        }
+        let (pc, instruction) = unit.instructions.iter().enumerate().find(|(pc, instruction)|
+            instruction.op() == Op::Move && matches!(unit.origins[*pc], Origin::Inlined { .. })
+                && instruction.result_register() < unit.caller_registers).expect("synthesized result move");
+        assert!(masks.is_live(pc, instruction.register_b()), "return projection must retain its produced result");
+        drop(masks);
+        unit.registers = crate::compile::liveness::ROOT_MAP_REGISTERS + 1;
+        assert!(unit.register_masks(&program, caller).is_none(), "uncovered widths retain conservative recovery");
+    }
 }

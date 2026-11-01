@@ -21174,6 +21174,61 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
 }
 
 #[test]
+fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
+    let program = Engine::specialize(r#"(function () {
+      function add(k, unused) { k = k + 1; this.calls = this.calls + 1; return add.arguments; }
+      function step(k) { k = k + 1; const a = this.add(k, 9); return a[0] + a[1] + step.arguments[0]; }
+      globalThis.receiver = { calls: 0, add };
+      globalThis.entry = step;
+      let sum = 0;
+      for (let i = 0; i < 2000; i++) sum += step.call(receiver, 1);
+      globalThis.answer = sum;
+    })();"#, "inline-legacy-recovery.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("answer");
+        assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(28000.0)));
+        let atom = vm.intern_atom("receiver");
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let atom = vm.intern_atom("entry");
+        let caller = vm.own_property(vm.realm.globals, atom).unwrap();
+        let atom = vm.intern_atom("add");
+        let callee = vm.own_property(receiver, atom).unwrap();
+        let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("script caller") };
+        let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("script callee") };
+        let body = program.function(caller_id as usize);
+        let callee_body = program.function(callee_id as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
+        let mut targets = vec![None; body.code.len()];
+        targets[call] = Some(super::compiled::CallTarget { callee, function: callee_id });
+        let method = vm.compile_lane_method(&program, caller_id, &targets).expect("legacy-observable inlined unit");
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = Value::number(5.0);
+        let env = vm.heap.function(caller).unwrap().env;
+        let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
+        let slots = std::ptr::from_ref(slots);
+        let exit = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, slots);
+        assert_eq!(registers[usize::from(parameter)], Value::number(6.0), "suspended caller retains its reflected parameter");
+        let super::compiled::LaneExit::Inlined { frame, pc } = exit else { panic!("expected exact callee exit, got {exit:?}") };
+        assert_eq!(frame, 0);
+        assert_eq!(callee_body.instructions().nth(pc as usize).unwrap().op(), crate::bytecode::Op::GetField);
+        let parameter = callee_body.parameter_registers.or_else(|| callee_body.promoted_register(0)).unwrap();
+        let mut recovered = Value::UNDEFINED;
+        Vm::<TestHost>::lane_scratch(usize::from(callee_body.registers), |register, value| {
+            if register == parameter { recovered = value; }
+        });
+        assert_eq!(recovered, Value::number(7.0), "recovery retains the changed reflected parameter");
+        let atom = vm.intern_atom("calls");
+        assert_eq!(vm.own_property(receiver, atom), Some(Value::number(2001.0)), "store runs exactly once before recovery");
+    }
+}
+
+#[test]
 fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
     // body. A string total makes `add` leave inside it, a double makes its int path

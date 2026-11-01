@@ -456,9 +456,8 @@ fn lower(
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     );
     let count = usize::from(unit.registers);
-    // Original masks address the caller's PCs. Inlined units conservatively
-    // retain caller/callee state until a shared remapped mask is available.
-    let live = if unit.frames.is_empty() { program.register_root_masks(function_id) } else { None };
+    let masks = unit.register_masks(program, function_id);
+    let live = masks.as_deref();
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
         int: (0..count).map(|_| builder.declare_var(types::I32)).collect(),
@@ -573,23 +572,27 @@ fn lower(
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the scratch window it is made from, then leave at the origin.
     let exits: Vec<_> = lowering.exits.iter().map(|(pc, block)| (*pc, *block)).collect();
-    for (pc, block) in exits {
+    for (unit_pc, block) in exits {
         lowering.builder.switch_to_block(block);
         for register in lowering.written.clone().into_iter().filter(|register| *register < unit.caller_registers) {
-            if !lowering.is_live(pc as usize, register) { continue; }
+            if !lowering.is_live(unit_pc as usize, register) { continue; }
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
         }
-        let word = match unit.origins.get(pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
+        let word = match unit.origins.get(unit_pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
             super::lane_unit::Origin::Caller(pc) => u64::from(pc),
-            super::lane_unit::Origin::Inlined { frame, pc } => {
+            super::lane_unit::Origin::Inlined { frame, pc: source_pc } => {
                 let inlined = unit.frames[frame];
                 let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
                 for register in 0..inlined.registers {
-                    let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)]);
+                    let bits = if lowering.is_live(unit_pc as usize, inlined.base + register) {
+                        lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)])
+                    } else {
+                        lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
+                    };
                     lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register));
                 }
-                LaneExit::Inlined { frame, pc }.word()
+                LaneExit::Inlined { frame, pc: source_pc }.word()
             }
         };
         let pc_value = lowering.builder.ins().iconst(types::I64, word as i64);
