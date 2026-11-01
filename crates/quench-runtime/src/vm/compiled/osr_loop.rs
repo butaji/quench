@@ -821,7 +821,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// Whether an inlined callee's instruction computes its result and returns it in one
 /// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
 /// the computation and the `Return` it makes.
-fn inlined_returning(instruction: WideInstruction) -> bool {
+pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
         && instruction.op() != Op::Return
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister

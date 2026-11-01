@@ -20444,7 +20444,7 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
 #[test]
 fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
-    // body. A string total makes `add` leave inside it, a double makes its int path
+    // body. A boolean total makes `add` leave inside it, a double makes its int path
     // leave, and swapping `add` makes the call's guard leave at the call itself. The callee
     // reads no capture: its environment is not its caller's.
     let source = r#"(function () {
@@ -20463,15 +20463,15 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
       for (let i = 0; i < 6; i++) counters.push(new Counter(i));
       let sum = 0;
       for (let round = 0; round < 4000; round++) {
-        for (const c of counters) sum = (sum + c.step(round & 31)) % 1000003;
-        if (round === 1500) counters[2].total = "x";
+        for (let i = 0; i < counters.length; i++) sum = (sum + counters[i].step(round & 31)) % 1000003;
+        if (round === 1500) counters[2].total = true;
         if (round === 1501) counters[2].total = 0;
         if (round === 2200) counters[3].total = 0.25;
         if (round === 2201) counters[3].total = 0;
         if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
       }
       let calls = 0;
-      for (const c of counters) calls += c.calls;
+      for (let i = 0; i < counters.length; i++) calls += counters[i].calls;
       globalThis.answer = sum + calls;
     })();"#;
     let program = Engine::specialize(source, "lane-inline.js").unwrap();

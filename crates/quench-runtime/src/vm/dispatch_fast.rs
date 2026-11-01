@@ -521,13 +521,20 @@ struct ActivationShape {
     initial: Value,
 }
 
-/// A lane view's frameless body (`LaneView::tier_lane`). Specialization moves it out of
-/// `Unspecialized`; a shape compaction moves a body that names shape ids back to it.
+/// A lane view's frameless body (`LaneView::tier_lane`). It specializes after
+/// `LANE_BODY_WARMUP_ENTRIES` entries; a shape compaction moves a body that names shape ids
+/// back to `Unspecialized`.
 enum LaneBody {
-    Unspecialized,
+    /// Counting its entries toward specialization.
+    Unspecialized { entries: u16 },
     Specialized(super::compiled::LaneMethod),
     Declined,
 }
+
+/// The entries a function makes before its lane body specializes: enough that its call
+/// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
+/// only a function called repeatedly pays for compiling one.
+const LANE_BODY_WARMUP_ENTRIES: u16 = 32;
 
 impl LaneView {
     /// The specialized frameless body, if there is one.
@@ -536,18 +543,22 @@ impl LaneView {
         // no body of this view runs and no reference into it is held.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized(method) => Some(method),
-            LaneBody::Unspecialized | LaneBody::Declined => None,
+            LaneBody::Unspecialized { .. } | LaneBody::Declined => None,
         }
     }
 
-    /// Specializes the frameless body unless it was tried; whether there is one.
+    /// Counts an entry toward the frameless body and specializes it at the warm-up; whether
+    /// the body is still warming or specialized, so its prologue stays.
     fn specialize_lane_body(&self, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) -> bool {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Unspecialized = body {
-            *body = specialize().map_or(LaneBody::Declined, LaneBody::Specialized);
+        if let LaneBody::Unspecialized { entries } = body {
+            *entries += 1;
+            if *entries >= LANE_BODY_WARMUP_ENTRIES {
+                *body = specialize().map_or(LaneBody::Declined, LaneBody::Specialized);
+            }
         }
-        matches!(body, LaneBody::Specialized(_))
+        !matches!(body, LaneBody::Declined)
     }
 
     /// Forgets every own-field hint of its records (`LaneInstruction::field_hint`), and the
@@ -558,7 +569,7 @@ impl LaneView {
         if let LaneBody::Specialized(method) = body
             && method.names_shapes
         {
-            *body = LaneBody::Unspecialized;
+            *body = LaneBody::Unspecialized { entries: 0 };
         }
         for &pc in &self.field_records {
             let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
@@ -10483,7 +10494,7 @@ impl<H: Host> Vm<H> {
             && !body.rest
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
-            && self.js_tier_may_claim(code, program, function)
+            && (self.js_tier_may_claim(code, program, function) || self.programs.js_jit_lane_methods_enabled())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
@@ -13718,10 +13729,11 @@ fn lane_body_inlined_activation<H: Host>(
     // SAFETY: as `Vm::script_call_entry`; the record is the call's in the running view.
     let (target, record) = unsafe { (&*target, base.add(call.call as usize)) };
     let this = lane_call_this(vm, target, r.get(call.receiver)).expect("a direct-object receiver binds itself");
-    let (registers, callee_base) = lane_push_activation::<H, false, false>(cx, r, record, target, call.window, this, false);
+    let (registers, _) = lane_push_activation::<H, false, false>(cx, r, record, target, call.window, this, false);
     Vm::<H>::lane_scratch(usize::from(call.registers), |register, value| registers.set(register, value));
-    // SAFETY: the callee's view holds a record for each of its function's PCs.
-    let resume = unsafe { callee_base.add(pc as usize) };
+    // The activation's records start at the context's base, past any tier prologue its
+    // entry record is. SAFETY: the callee's view holds a record for each of its PCs.
+    let resume = unsafe { (*cx).base.add(pc as usize) };
     let mut carried = Carried::script(cx);
     // SAFETY: a resolved target's view outlives the lane run.
     if let Some(&register) = unsafe { &*target.view }.accumulator_registers.get(pc as usize)
@@ -17922,7 +17934,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0 }),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()

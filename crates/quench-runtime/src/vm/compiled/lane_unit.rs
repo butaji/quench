@@ -65,9 +65,10 @@ pub(crate) struct Unit {
 const MAX_INLINED_INSTRUCTIONS: usize = 48;
 
 /// Whether the lane-body lowering runs `instruction` of an inlined callee: no call (one level),
-/// no capture (its environment is the callee's), no returning fusion.
+/// no capture (its environment is the callee's), no fusion but a returning one, which splits
+/// into the computation and the return (`osr_loop::inlined_returning`).
 fn inlinable(instruction: WideInstruction) -> bool {
-    let plain = instruction.result_flags() == 0;
+    let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
     match instruction.op() {
         Op::Return => plain,
         Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
@@ -75,6 +76,18 @@ fn inlinable(instruction: WideInstruction) -> bool {
         Op::GetField => plain && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { .. })),
         Op::SetThisField | Op::SetThisFieldStrict => plain,
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
+    }
+}
+
+/// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
+/// an instruction that computes and returns) adds the result's move and the jump past the call.
+fn completion_length(instruction: WideInstruction) -> u32 {
+    if instruction.op() == Op::Return {
+        2
+    } else if super::osr_loop::inlined_returning(instruction) {
+        3
+    } else {
+        1
     }
 }
 
@@ -105,7 +118,7 @@ pub(crate) fn unit<'f>(
         if callee_code.len() > MAX_INLINED_INSTRUCTIONS
             || arguments > callee.registers
             || !callee_code.iter().all(|instruction| inlinable(*instruction))
-            || !callee_code.iter().any(|instruction| instruction.op() == Op::Return)
+            || !callee_code.iter().any(|instruction| completion_length(*instruction) > 1)
         {
             continue;
         }
@@ -131,7 +144,7 @@ pub(crate) fn unit<'f>(
     for site in &inlined {
         caller_flat.push(length as u32);
         length += match site {
-            Some((_, code)) => 1 + code.iter().map(|instruction| if instruction.op() == Op::Return { 2 } else { 1 }).sum::<usize>(),
+            Some((_, code)) => 1 + code.iter().map(|instruction| completion_length(*instruction) as usize).sum::<usize>(),
             None => 1,
         };
     }
@@ -170,12 +183,20 @@ pub(crate) fn unit<'f>(
         let mut at = unit.instructions.len() as u32;
         for instruction in code {
             callee_flat.push(at);
-            at += if instruction.op() == Op::Return { 2 } else { 1 };
+            at += completion_length(*instruction);
         }
         let register = |register: Register| frame.base + register;
         let callee_target = |target: u32| callee_flat.get(target as usize).copied();
         for (callee_pc, instruction) in code.iter().copied().enumerate() {
             let origin = Origin::Inlined { frame: index, pc: callee_pc as u32 };
+            if super::osr_loop::inlined_returning(instruction) {
+                let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
+                unit.instructions.push(super::osr_loop::renamed(plain, &register, frame.receiver, &callee_target)?);
+                unit.instructions.push(WideInstruction::new(Op::Move, caller[pc].result_register(), register(instruction.result_register()), 0, 0));
+                unit.instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
+                unit.origins.extend([origin; 3]);
+                continue;
+            }
             let rewritten = match instruction.op() {
                 Op::Return => {
                     let result = caller[pc].result_register();
