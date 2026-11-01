@@ -16,9 +16,14 @@ const FIRST_LOCAL_STORAGE_ID: u64 = 1;
 /// ALS ownership is tagged: public resources and private reaction snapshots
 /// remain disjoint even when their integer payloads are equal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum StoreContext { Resource(u64), Job(u64) }
+pub(super) enum StoreContext {
+    Resource(u64),
+    Job(u64),
+}
 impl From<u64> for StoreContext {
-    fn from(id: u64) -> Self { Self::Resource(id) }
+    fn from(id: u64) -> Self {
+        Self::Resource(id)
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct JobContext {
@@ -67,7 +72,9 @@ impl AsyncIdentity {
         self.0.current_async_id.replace(id)
     }
 
-    pub(super) fn store_context(&self) -> StoreContext { self.0.current_store.get() }
+    pub(super) fn store_context(&self) -> StoreContext {
+        self.0.current_store.get()
+    }
     pub(super) fn replace_store_context(&self, key: StoreContext) -> StoreContext {
         self.0.current_store.replace(key)
     }
@@ -102,6 +109,12 @@ pub(crate) struct SharedAsyncHooksState {
     /// The collection epoch `promise_resources` was last pruned at: entries can only have
     /// died when a collection ran since.
     pub(crate) promise_resources_pruned_epoch: u64,
+    /// Each tracked promise's parent promise identity, while V8 promise hooks are observed:
+    /// their `init` hook reports the parent Promise without rooting either object.
+    pub(super) promise_parents: FxHashMap<u64, Option<u64>>,
+    /// The V8 `promiseHooks` registry is guest-owned, but retained here so
+    /// Promise lifecycle callbacks can reach it without loading `v8` eagerly.
+    pub(super) promise_hook_registry: Option<RootId>,
     pub(super) scoped_resource: Option<(u64, RootId)>,
     /// The scopes `AsyncResource#runInAsyncScope` entered and has not left, innermost last
     /// (`async_hooks_shared_vm::enter_async_scope`).
@@ -128,6 +141,8 @@ impl SharedAsyncHooksState {
             job_stack: Vec::new(),
             promise_resources: FxHashMap::default(),
             promise_resources_pruned_epoch: 0,
+            promise_parents: FxHashMap::default(),
+            promise_hook_registry: None,
             scoped_resource: None,
             entered_scopes: Vec::new(),
             local_stores: FxHashMap::default(),
@@ -137,14 +152,19 @@ impl SharedAsyncHooksState {
     }
 
     pub(crate) fn tracks_promise_lifecycle_resources(&self) -> bool {
-        self.registry.tracks_promise_lifecycle_resources()
+        self.registry.tracks_promise_lifecycle_resources() || self.observes_promise_hooks()
+    }
+
+    /// Whether `v8.promiseHooks` is loaded: its hooks see every promise's lifecycle.
+    pub(crate) fn observes_promise_hooks(&self) -> bool {
+        self.promise_hook_registry.is_some()
     }
 
     /// Node internal/async_hooks getDefaultTriggerAsyncId: a negative slot
     /// means inherit executionAsyncId; scope never changes execution or ALS.
     /// Node gives Promises async resources only while its promise hook is installed.
     pub(crate) fn tracks_promises(&self) -> bool {
-        self.registry.tracks_promises()
+        self.registry.tracks_promises() || self.observes_promise_hooks()
     }
 
     /// Whether a Promise job boundary has work: Promise resources to prune or hooks that
@@ -154,7 +174,8 @@ impl SharedAsyncHooksState {
     }
 
     pub(super) fn default_trigger_async_id(&self) -> f64 {
-        self.default_trigger_async_id.filter(|id| !(*id < 0.0))
+        self.default_trigger_async_id
+            .filter(|id| !(*id < 0.0))
             .unwrap_or(self.identity.current_async_id() as f64)
     }
 
@@ -194,6 +215,8 @@ impl SharedAsyncHooksState {
             job_stack,
             promise_resources,
             promise_resources_pruned_epoch: _,
+            promise_parents,
+            promise_hook_registry,
             scoped_resource,
             entered_scopes,
             local_stores,
@@ -215,6 +238,8 @@ impl SharedAsyncHooksState {
                 && job_resources.is_empty()
                 && job_stack.is_empty()
                 && promise_resources.is_empty()
+                && promise_parents.is_empty()
+                && promise_hook_registry.is_none()
                 && local_stores.is_empty()
                 && store_references.is_empty()
                 && enabled_local_storages.is_empty(),

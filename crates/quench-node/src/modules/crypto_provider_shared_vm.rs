@@ -28,10 +28,12 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         "getFipsCrypto",
         "getFipsCryptoGeneration",
         "setFipsCrypto",
+        "testFipsCrypto",
         "getCiphers",
         "getHashes",
         "getCachedAliases",
         "getMacs",
+        "timingSafeEqual",
         "isKeyAlgorithmAvailable",
         "getOpenSSLSecLevelCrypto",
     ] {
@@ -53,6 +55,40 @@ pub(crate) fn operation(
     let op = c.host_function_data()?;
     let op = c.to_string(op)?;
     match op.as_str() {
+        "timingSafeEqual" => {
+            let left = args.first().copied().unwrap_or_else(|| c.undefined());
+            let right = args.get(1).copied().unwrap_or_else(|| c.undefined());
+            let mut bytes = Vec::with_capacity(2);
+            for (value, name) in [(left, "buf1"), (right, "buf2")] {
+                if !c.has_builtin_brand_rooted(
+                    value,
+                    quench_runtime::BuiltinBrand::ArrayBufferView,
+                )? {
+                    let error = c.type_error_rooted(&format!(
+                        "The \"{name}\" argument must be an instance of Buffer, TypedArray, or DataView"
+                    ))?;
+                    let key = c.string_rooted("code");
+                    let code = c.string_rooted("ERR_INVALID_ARG_TYPE");
+                    c.define_data_property_rooted(error, key, code, true, true, true)?;
+                    return Err(c.throw(error));
+                }
+                bytes.push(c.view_bytes_rooted(value).ok_or_else(|| {
+                    RootedError::host("ArrayBufferView lost its byte storage")
+                })?);
+            }
+            if bytes[0].len() != bytes[1].len() {
+                let error = c.range_error_rooted("Input buffers must have the same byte length")?;
+                let key = c.string_rooted("code");
+                let code = c.string_rooted("ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH");
+                c.define_data_property_rooted(error, key, code, true, true, true)?;
+                return Err(c.throw(error));
+            }
+            let mut difference = 0u8;
+            for (left, right) in bytes[0].iter().zip(&bytes[1]) {
+                difference |= left ^ right;
+            }
+            Ok(c.boolean(difference == 0))
+        }
         "getHashes" => super::crypto_secret_job_shared_vm::digest_inventory(c, false),
         "getCachedAliases" => super::crypto_secret_job_shared_vm::digest_inventory(c, true),
         "secureHeapUsed" => Ok(c.bigint_rooted(native::secure_heap_used() as i128)),
@@ -91,6 +127,11 @@ pub(crate) fn operation(
             }
             Ok(c.undefined())
         }
+        "testFipsCrypto" => Ok(c.number(if native::test_fips_provider() {
+            1.0
+        } else {
+            0.0
+        })),
         "isKeyAlgorithmAvailable" => {
             let arg = args.first().copied().unwrap_or_else(|| c.undefined());
             let Some(name) = c.string_text(arg)? else {
@@ -108,7 +149,29 @@ pub(crate) fn operation(
                 "getCiphers" => native::Kind::Cipher,
                 _ => native::Kind::Mac,
             };
-            let values = native::names(kind)
+            let mut names = native::names(kind);
+            if matches!(kind, native::Kind::Mac) {
+                // Node's public MAC inventory is normalized to lowercase and
+                // deduplicated even when OpenSSL advertises mixed-case aliases.
+                names = names
+                    .into_iter()
+                    .filter(|name| {
+                        let mut parts = name.split('.');
+                        let first = parts.next().unwrap_or_default();
+                        let rest = parts.collect::<Vec<_>>();
+                        !(rest.len() >= 1
+                            && !first.is_empty()
+                            && first.bytes().all(|byte| byte.is_ascii_digit())
+                            && rest.iter().all(|part| {
+                                !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+                            }))
+                    })
+                    .map(|name| name.to_ascii_lowercase())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+            }
+            let values = names
                 .into_iter()
                 .map(|name| c.string_rooted(&name))
                 .collect::<Vec<_>>();
@@ -178,7 +241,12 @@ pub(crate) fn fips_generation() -> u64 {
     native::fips_generation()
 }
 
-pub(crate) fn random_destination(c: &mut Context<'_>, input: RootId, offset: usize, size: usize) -> Result<(RootId, RootId), RootedError> {
+pub(crate) fn random_destination(
+    c: &mut Context<'_>,
+    input: RootId,
+    offset: usize,
+    size: usize,
+) -> Result<(RootId, RootId), RootedError> {
     use quench_runtime::BuiltinBrand;
     c.with_startup_intrinsics(|c| {
         let global = c.global_root()?;
@@ -230,8 +298,13 @@ pub(crate) fn random_destination(c: &mut Context<'_>, input: RootId, offset: usi
             c.construct_rooted(constructor, constructor, &[backing, offset, length])?;
         Ok((destination, setter))
     })
- }
-pub(crate) fn random_write(c: &mut Context<'_>, destination: RootId, set: RootId, bytes: &[u8]) -> Result<(), RootedError> {
+}
+pub(crate) fn random_write(
+    c: &mut Context<'_>,
+    destination: RootId,
+    set: RootId,
+    bytes: &[u8],
+) -> Result<(), RootedError> {
     let source = c.uint8_array_rooted(bytes)?;
     c.call_rooted(set, destination, &[source])?;
     Ok(())

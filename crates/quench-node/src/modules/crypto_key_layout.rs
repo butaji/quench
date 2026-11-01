@@ -25,6 +25,14 @@ pub(crate) enum Encoding {
     Spki = 2,
     Sec1 = 3,
 }
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebCryptoFormat {
+    Raw = 0,
+    Pkcs8 = 1,
+    Spki = 2,
+    Jwk = 3,
+}
 impl Format {
     pub(crate) fn from_native(value: u32) -> Option<Self> {
         Some(match value {
@@ -64,6 +72,10 @@ pub(crate) const CONSTANTS: &[(&str, u32)] = &[
     ("kKeyTypeSecret", Kind::Secret as u32),
     ("kKeyTypePublic", Kind::Public as u32),
     ("kKeyTypePrivate", Kind::Private as u32),
+    ("kWebCryptoKeyFormatRaw", WebCryptoFormat::Raw as u32),
+    ("kWebCryptoKeyFormatPKCS8", WebCryptoFormat::Pkcs8 as u32),
+    ("kWebCryptoKeyFormatSPKI", WebCryptoFormat::Spki as u32),
+    ("kWebCryptoKeyFormatJWK", WebCryptoFormat::Jwk as u32),
     ("kKeyFormatDER", Format::Der as u32),
     ("kKeyFormatPEM", Format::Pem as u32),
     ("kKeyFormatJWK", Format::Jwk as u32),

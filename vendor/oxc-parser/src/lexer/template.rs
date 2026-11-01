@@ -29,9 +29,11 @@ static TEMPLATE_LITERAL_TABLE: SafeByteMatchTable =
     safe_byte_match_table!(|b| matches!(b, b'$' | b'`' | b'\r' | b'\\'));
 
 // Same as above, but with 1st byte of lossy replacement character added
-static TEMPLATE_LITERAL_ESCAPED_MATCH_TABLE: SafeByteMatchTable = safe_byte_match_table!(
-    |b| matches!(b, b'$' | b'`' | b'\r' | b'\\' | LOSSY_REPLACEMENT_CHAR_FIRST_BYTE)
-);
+static TEMPLATE_LITERAL_ESCAPED_MATCH_TABLE: SafeByteMatchTable =
+    safe_byte_match_table!(|b| matches!(
+        b,
+        b'$' | b'`' | b'\r' | b'\\' | LOSSY_REPLACEMENT_CHAR_FIRST_BYTE
+    ));
 
 /// 12.8.6 Template Literal Lexical Components
 impl<'a, C: Config> Lexer<'a, C> {
@@ -401,7 +403,8 @@ impl<'a, C: Config> Lexer<'a, C> {
 
     /// Save escaped template string
     fn save_template_string(&mut self, is_valid_escape_sequence: bool, s: &'a str) {
-        self.escaped_templates.insert(self.token.start(), is_valid_escape_sequence.then_some(s));
+        self.escaped_templates
+            .insert(self.token.start(), is_valid_escape_sequence.then_some(s));
         self.token.set_escaped(true);
     }
 
@@ -460,22 +463,42 @@ mod test {
             let token = lexer.next_token();
             assert_eq!(
                 token.kind(),
-                if is_only_part { Kind::NoSubstitutionTemplate } else { Kind::TemplateHead }
+                if is_only_part {
+                    Kind::NoSubstitutionTemplate
+                } else {
+                    Kind::TemplateHead
+                }
             );
             let escaped = lexer.escaped_templates[&token.start()];
             assert_eq!(escaped, Some(expected_escaped.as_str()));
         }
 
         for (source_fragment, escaped_fragment) in escapes {
-            run_test(format!("`{source_fragment}`"), escaped_fragment.to_string(), true);
-            run_test(format!("`{source_fragment}${{x}}`"), escaped_fragment.to_string(), false);
-            run_test(format!("`{source_fragment}abc`"), format!("{escaped_fragment}abc"), true);
+            run_test(
+                format!("`{source_fragment}`"),
+                escaped_fragment.to_string(),
+                true,
+            );
+            run_test(
+                format!("`{source_fragment}${{x}}`"),
+                escaped_fragment.to_string(),
+                false,
+            );
+            run_test(
+                format!("`{source_fragment}abc`"),
+                format!("{escaped_fragment}abc"),
+                true,
+            );
             run_test(
                 format!("`{source_fragment}abc${{x}}`"),
                 format!("{escaped_fragment}abc"),
                 false,
             );
-            run_test(format!("`abc{source_fragment}`"), format!("abc{escaped_fragment}"), true);
+            run_test(
+                format!("`abc{source_fragment}`"),
+                format!("abc{escaped_fragment}"),
+                true,
+            );
             run_test(
                 format!("`abc{source_fragment}${{x}}`"),
                 format!("abc{escaped_fragment}"),

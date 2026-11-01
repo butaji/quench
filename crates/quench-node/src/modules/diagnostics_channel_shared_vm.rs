@@ -50,28 +50,56 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
   // subscriber or bound store, derived after each change to either, so a read of
   // `hasSubscribers` runs no lookup.
   const markActivity = (channel) => {
-    const active = api.hasSubscribers(channel.name) || channelStores.get(channel).size > 0;
+    const subscribed = channel._symbolSubscribers !== undefined ?
+      channel._symbolSubscribers.length !== 0 : api.hasSubscribers(channel.name);
+    const active = subscribed || channelStores.get(channel).size > 0;
     objectSetPrototypeOf(channel, active ? ActiveChannel.prototype : Channel.prototype);
   };
   class Channel {
     constructor(name) {
       this.name = name;
+      this._index = 0;
+      this._symbolSubscribers = typeof name === 'symbol' ? [] : undefined;
       channelStores.set(this, new SafeMap());
       channels.set(name, this);
     }
     get hasSubscribers() {
       return false;
     }
+    // A symbol-named channel keeps its subscribers here: the host registry is keyed by
+    // string names.
     subscribe(callback) {
-      api.subscribe(this.name, callback);
+      if (this._symbolSubscribers !== undefined) {
+        if (typeof callback !== 'function') throw new TypeError('The "subscriber" argument must be of type function');
+        this._symbolSubscribers.push(callback);
+      } else {
+        api.subscribe(this.name, callback);
+      }
       markActivity(this);
     }
     unsubscribe(callback) {
-      const removed = api.unsubscribe(this.name, callback);
+      let removed;
+      if (this._symbolSubscribers !== undefined) {
+        const index = this._symbolSubscribers.indexOf(callback);
+        removed = index !== -1;
+        if (removed) this._symbolSubscribers.splice(index, 1);
+      } else {
+        removed = api.unsubscribe(this.name, callback);
+      }
       markActivity(this);
       return removed;
     }
-    publish(message) { return api.publish(this.name, message); }
+    publish(message) {
+      if (this._symbolSubscribers === undefined) return api.publish(this.name, message);
+      for (const callback of this._symbolSubscribers.slice()) {
+        try {
+          callback(message, this.name);
+        } catch (error) {
+          // As Node: a subscriber's throw is reported after every subscriber has run.
+          process.nextTick(() => { throw error; });
+        }
+      }
+    }
     bindStore(store, transform) {
       channelStores.get(this).set(store, transform);
       markActivity(this);
@@ -96,12 +124,24 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
         throw error;
       }
       return {
-        dispose
+        dispose,
+        [Symbol.dispose]: dispose,
       };
     }
     runStores(message, callback, thisArg, ...args) {
-      const previous = enterStores(this, message);
+      const previous = [];
       try {
+        for (const [store, transform] of channelStores.get(this)) {
+          previous.push([store, store.getStore()]);
+          try {
+            store.enterWith(typeof transform === 'function' ? transform(message) : message);
+          } catch (error) {
+            // Preserve the run and its other stores; surface transform errors
+            // through the deferred uncaught-exception path, as Node does.
+            process.nextTick(() => { throw error; });
+          }
+        }
+        this.publish(message);
         return Reflect.apply(callback, thisArg, args);
       } finally {
         restoreStores(previous);
@@ -114,8 +154,10 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
     }
   }
   function channel(name) {
-    if (typeof name !== 'string') {
-      throw new TypeError('The "name" argument must be of type string');
+    if (typeof name !== 'string' && typeof name !== 'symbol') {
+      const error = new TypeError('ERR_INVALID_ARG_TYPE: The "name" argument must be of type string or symbol');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
     }
     return channels.get(name) ?? new Channel(name);
   }
@@ -129,16 +171,18 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
     return channels.get(name)?.hasSubscribers ?? false;
   }
   class TracingChannel {
-    constructor(name) {
+    constructor(nameOrChannels) {
       for (const event of traceNames) {
-        this[event] = channel(`tracing:${name}:${event}`);
+        this[event] = typeof nameOrChannels === 'string' ?
+          channel(`tracing:${nameOrChannels}:${event}`) :
+          nameOrChannels[event];
       }
     }
     get hasSubscribers() {
       return this.start.hasSubscribers || this.end.hasSubscribers || this.asyncStart.hasSubscribers ||
         this.asyncEnd.hasSubscribers || this.error.hasSubscribers;
     }
-    traceSync(callback, context = {}, thisArg, ...args) {
+    traceSync(callback, context = Object.create(null), thisArg, ...args) {
       if (!this.hasSubscribers) return Reflect.apply(callback, thisArg, args);
       const scope = this.start.withStoreScope(context);
       try {
@@ -157,7 +201,7 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
         }
       }
     }
-    traceCallback(callback, position = -1, context = {}, thisArg, ...args) {
+    traceCallback(callback, position = -1, context = Object.create(null), thisArg, ...args) {
       if (!this.hasSubscribers) return Reflect.apply(callback, thisArg, args);
       const index = position < 0 ? args.length + position : position;
       const listener = args[index];
@@ -199,7 +243,7 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
         }
       }
     }
-    tracePromise(callback, context = {}, thisArg, ...args) {
+    tracePromise(callback, context = Object.create(null), thisArg, ...args) {
       if (!this.hasSubscribers) {
         const result = Reflect.apply(callback, thisArg, args);
         if (typeof result?.then !== 'function') emitNonThenableWarning(callback);
@@ -265,12 +309,95 @@ const CHANNEL_API_FACTORY: &str = r#"(function(api, traceNames, isPromise, SafeM
     }
   }
   function tracingChannel(name) {
-    if (typeof name !== 'string') {
-      throw new TypeError('The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object');
+    if (typeof name !== 'string' && (name === null || typeof name !== 'object')) {
+      const error = new TypeError('The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (typeof name === 'object') {
+      for (const event of traceNames) {
+        if (!(name[event] instanceof Channel)) {
+          if (name[event] === undefined || name[event] === null) {
+            throw new TypeError('Cannot convert undefined or null to object');
+          }
+          const error = new TypeError(`The "nameOrChannels.${event}" property must be an instance of Channel`);
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+      }
     }
     return new TracingChannel(name);
   }
-  return { Channel, channel, tracingChannel, subscribe, unsubscribe, hasSubscribers };
+  const boundedEvents = ['start', 'end'];
+  function channelFromMap(nameOrChannels, name) {
+    if (typeof nameOrChannels === 'string') return channel(`tracing:${nameOrChannels}:${name}`);
+    if (nameOrChannels !== null && typeof nameOrChannels === 'object') {
+      const value = nameOrChannels[name];
+      if (!(value instanceof Channel)) {
+        throw new TypeError(`The "nameOrChannels.${name}" argument must be an instance of Channel`);
+      }
+      return value;
+    }
+    throw new TypeError('The "nameOrChannels" argument must be of type string or object');
+  }
+  class BoundedChannel {
+    constructor(nameOrChannels) {
+      for (const event of boundedEvents) {
+        Object.defineProperty(this, event, {
+          value: channelFromMap(nameOrChannels, event),
+          enumerable: true,
+        });
+      }
+    }
+    get hasSubscribers() {
+      return this.start?.hasSubscribers || this.end?.hasSubscribers;
+    }
+    subscribe(handlers = {}) {
+      for (const event of boundedEvents) {
+        if (handlers[event]) this[event]?.subscribe(handlers[event]);
+      }
+    }
+    unsubscribe(handlers = {}) {
+      let removed = true;
+      for (const event of boundedEvents) {
+        if (handlers[event] && !this[event]?.unsubscribe(handlers[event])) removed = false;
+      }
+      return removed;
+    }
+    withScope(context = {}) {
+      if (!this.hasSubscribers) return { [Symbol.dispose]() {} };
+      const scope = this.start.withStoreScope(context);
+      let active = true;
+      return {
+        [Symbol.dispose]: () => {
+          if (!active) return;
+          active = false;
+          try { this.end.publish(context); } finally { scope.dispose(); }
+        },
+      };
+    }
+    run(context, callback, thisArg, ...args) {
+      context ??= {};
+      let scope;
+      try {
+        scope = this.withScope(context);
+      } catch (error) {
+        // Node preserves the bounded run window when a bound-store transform
+        // fails: publish start/end, run the callback, then surface the error
+        // through the usual uncaught-exception path on the next tick.
+        this.start.publish(context);
+        process.nextTick(() => { throw error; });
+        const channel = this;
+        scope = { [Symbol.dispose]() { channel.end.publish(context); } };
+      }
+      try { return Reflect.apply(callback, thisArg, args); }
+      finally { scope[Symbol.dispose](); }
+    }
+  }
+  function boundedChannel(nameOrChannels) {
+    return new BoundedChannel(nameOrChannels);
+  }
+  return { Channel, BoundedChannel, channel, tracingChannel, boundedChannel, subscribe, unsubscribe, hasSubscribers };
 })"#;
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -299,15 +426,26 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .map(|name| context.string_rooted(name))
         .collect::<Vec<_>>();
     let trace_names = context.array_rooted(&trace_names)?;
-    let primordials = crate::host::shared_vm::commonjs::node_primordials(context)?
-        .ok_or_else(|| RootedError::host("diagnostics channels require the configured SDK primordials"))?;
+    let primordials =
+        crate::host::shared_vm::commonjs::node_primordials(context)?.ok_or_else(|| {
+            RootedError::host("diagnostics channels require the configured SDK primordials")
+        })?;
     let safe_map = property(context, primordials, "SafeMap")?;
     let safe_weak_map = property(context, primordials, "SafeWeakMap")?;
     let undefined = context.undefined();
     let channel_api = context.call_rooted(
         factory, undefined, &[api, trace_names, is_promise, safe_map, safe_weak_map],
     )?;
-    for name in ["Channel", "channel", "tracingChannel", "subscribe", "unsubscribe", "hasSubscribers"] {
+    for name in [
+        "Channel",
+        "BoundedChannel",
+        "channel",
+        "tracingChannel",
+        "boundedChannel",
+        "subscribe",
+        "unsubscribe",
+        "hasSubscribers",
+    ] {
         let value = property(context, channel_api, name)?;
         set(context, module, name, value)?;
     }
@@ -381,19 +519,22 @@ pub(crate) fn unsubscribe(
         }
     }
     let removed = removed.and_then(|target| {
-        context
-            .host_mut()
-            .shared_state()
-            .borrow_mut()
-            .diagnostics
-            .channels
-            .get_mut(&name)
-            .and_then(|subscribers| {
-                subscribers
-                    .iter()
-                    .position(|subscriber| *subscriber == target)
-                    .map(|index| subscribers.remove(index))
-            })
+        let shared = context.host_mut().shared_state();
+        let mut state = shared.borrow_mut();
+        let channels = &mut state.diagnostics.channels;
+        let mut empty = false;
+        let removed = channels.get_mut(&name).and_then(|subscribers| {
+            let removed = subscribers
+                .iter()
+                .position(|subscriber| *subscriber == target)
+                .map(|index| subscribers.remove(index));
+            empty = subscribers.is_empty();
+            removed
+        });
+        if empty {
+            channels.remove(&name);
+        }
+        removed
     });
     let did_remove = removed.is_some();
     if let Some(removed) = removed {
@@ -463,8 +604,9 @@ pub(crate) fn publish(
                 report_subscriber_error(context, exception)?;
             }
             Err(error) => {
-                first_error = Some(error);
-                break;
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
             }
         }
     }

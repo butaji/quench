@@ -257,7 +257,8 @@ pub(crate) fn queue(
             .shared_state()
             .borrow_mut()
             .scheduler
-            .queue_shared_next_tick(super::shared_event_loop::SharedCallback { execution: None,
+            .queue_shared_next_tick(super::shared_event_loop::SharedCallback {
+                execution: None,
                 callback,
                 receiver,
                 args: vec![completion.callback, errno],

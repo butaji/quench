@@ -469,6 +469,13 @@ impl<H: Host> Vm<H> {
         context: CallContext,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
+        // Some VM entry paths (notably host callbacks and nested eval) still
+        // execute a user function by recursively entering `run_user_frame`
+        // instead of pushing it onto the active dispatch loop. Count those
+        // activations against the same guest budget so a small Node
+        // `--stack_size` cannot exhaust the native worker stack first.
+        let _call_guard =
+            crate::stack::GuestCallGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let result = self.run_frame_general(p, frame_index);
         self.complete_user_frame(p, result, capture_constructor_this)
@@ -2310,9 +2317,12 @@ impl<H: Host> Vm<H> {
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 Op::Call if allow_inline_calls => {
-                    match self.try_inline_user_call(p, frame, ins, pc) {
+                    match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
-                        None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        None => match self.try_inline_user_call(p, frame, ins, pc) {
+                            Some(result) => result,
+                            None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        },
                     }
                 }
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),

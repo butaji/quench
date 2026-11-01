@@ -1,7 +1,11 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
-    pub(super) fn coalesce(&mut self, value: &oxc_ast::ast::LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
+    pub(super) fn coalesce(
+        &mut self,
+        value: &oxc_ast::ast::LogicalExpression<'_>,
+        debug_name: Option<Atom>,
+    ) -> Register {
         let left = self.expression_with_debug_name(&value.left, debug_name);
         let result = self.literal(Constant::Undefined);
         self.emit(Op::Move, result, left, 0, 0);

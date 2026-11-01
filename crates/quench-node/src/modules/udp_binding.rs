@@ -20,7 +20,7 @@ pub(crate) struct State {
     closed: HashMap<u64, Closed>,
 }
 struct Socket {
-    owner:RootId,
+    owner: RootId,
     io: Endpoint<SendToken>,
     reader: Option<RootId>,
 }
@@ -31,9 +31,15 @@ struct SendToken {
     resource: Rc<Cell<Option<u64>>>,
 }
 #[derive(Clone)]
-struct SendBrand { weak: HostWeakRoot, resource: Rc<Cell<Option<u64>>> }
+struct SendBrand {
+    weak: HostWeakRoot,
+    resource: Rc<Cell<Option<u64>>>,
+}
 enum Closed {
-    WaitingNativeClose {handle: Option<RootId>, pending: VecDeque<Pending<SendToken>>},
+    WaitingNativeClose {
+        handle: Option<RootId>,
+        pending: VecDeque<Pending<SendToken>>,
+    },
     Dispatching,
 }
 impl State {
@@ -93,7 +99,11 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let b = c.object_rooted()?;
         let constructor =
             c.host_constructor_named(crate::host::shared_vm::operation("udpConstruct"), "UDP")?;
-        crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:UDPConstructor", |_|Ok(constructor))?;
+        crate::host::shared_vm::commonjs::cached_native_binding(
+            c,
+            "\0native:UDPConstructor",
+            |_| Ok(constructor),
+        )?;
         let prototype = get(c, constructor, "prototype")?;
         let handle = super::tcp_binding::handle_prototype(c)?;
         c.set_prototype_rooted(prototype, handle)?;
@@ -136,9 +146,9 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         put(c, b, "UDP", constructor)?;
         let send =
             c.host_constructor_named(crate::host::shared_vm::operation("udpSendWrap"), "SendWrap")?;
-        let send_prototype=get(c,send,"prototype")?;
-        let async_prototype=super::native_async_wrap::prototype(c)?;
-        c.set_prototype_rooted(send_prototype,async_prototype)?;
+        let send_prototype = get(c, send, "prototype")?;
+        let async_prototype = super::native_async_wrap::prototype(c)?;
+        c.set_prototype_rooted(send_prototype, async_prototype)?;
         put(c, b, "SendWrap", send)?;
         let constants = c.object_rooted()?;
         for (name, value) in [
@@ -162,7 +172,7 @@ pub(crate) fn construct(
     let shared = c.host_mut().shared_state();
     let id = super::async_hooks_shared_vm::create_context(&shared);
     let weak = c.host_weak_root(receiver)?;
-    let owner=c.retain(receiver)?;
+    let owner = c.retain(receiver)?;
     {
         let mut state = shared.borrow_mut();
         state.udp.identities.push((weak, id));
@@ -190,7 +200,10 @@ pub(crate) fn send_wrap(
         .borrow_mut()
         .udp
         .send_brands
-        .push(SendBrand{weak,resource:Rc::new(Cell::new(None))});
+        .push(SendBrand {
+            weak,
+            resource: Rc::new(Cell::new(None)),
+        });
     Ok(receiver)
 }
 fn bind(
@@ -432,7 +445,7 @@ fn send(
             }
         }
     }
-    let Some(resource)=resource else {
+    let Some(resource) = resource else {
         let error = c.type_error_rooted("Invalid SendWrap request")?;
         return Err(c.throw(error));
     };
@@ -497,8 +510,7 @@ fn send(
             Ok(status(c, Err(error)))
         }
         Ok(Submission::Asynchronous) => {
-            let _scope =
-                super::async_hooks_shared_vm::enter_default_trigger(&shared, id as f64);
+            let _scope = super::async_hooks_shared_vm::enter_default_trigger(&shared, id as f64);
             let async_id = super::async_hooks_shared_vm::create_context(&shared);
             shared
                 .borrow_mut()
@@ -511,7 +523,8 @@ fn send(
                 .back_mut()
                 .expect("queued datagram")
                 .token
-                .resource.set(Some(async_id));
+                .resource
+                .set(Some(async_id));
             super::async_hooks_shared_vm::emit_init(c, request, "UDPSENDWRAP", async_id)?;
             Ok(c.number(0.0))
         }
@@ -607,7 +620,8 @@ fn queued_send(
 ) -> Result<(), String> {
     runtime.release_root(token.handle);
     let id = token
-        .resource.get()
+        .resource
+        .get()
         .expect("admitted async UDP send owns context");
     if !token.callback {
         super::async_hooks_shared_vm::complete_runtime_context(runtime, id);
@@ -753,7 +767,9 @@ pub(crate) fn queue_close(
     shared: &Rc<RefCell<SharedNodeState>>,
     id: u64,
 ) -> Result<bool, String> {
-    let Some(Closed::WaitingNativeClose {handle,pending}) = shared.borrow_mut().udp.closed.remove(&id) else {
+    let Some(Closed::WaitingNativeClose { handle, pending }) =
+        shared.borrow_mut().udp.closed.remove(&id)
+    else {
         return Ok(false);
     };
     for pending in pending {
@@ -769,7 +785,11 @@ pub(crate) fn queue_close(
         super::async_hooks_shared_vm::complete_runtime_context(runtime, id);
         return Ok(true);
     };
-    shared.borrow_mut().udp.closed.insert(id,Closed::Dispatching);
+    shared
+        .borrow_mut()
+        .udp
+        .closed
+        .insert(id, Closed::Dispatching);
     let resource = copy_root(runtime, receiver)?;
     let symbol = shared
         .borrow()
@@ -793,167 +813,367 @@ pub(crate) fn queue_close(
     Ok(true)
 }
 
-fn option(c: &mut Context<'_>, receiver: RootId, args: &[RootId], kind: super::udp_transport::SocketOption) -> Result<RootId, RootedError> {
+fn option(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+    kind: super::udp_transport::SocketOption,
+) -> Result<RootId, RootedError> {
     let id = id(c, receiver)?;
     let missing = c.undefined();
     let value = uint32_value(c, args.first().copied().unwrap_or(missing))? as i32;
     let shared = c.host_mut().shared_state();
-    let result = shared.borrow().udp.endpoints.get(&id)
+    let result = shared
+        .borrow()
+        .udp
+        .endpoints
+        .get(&id)
         .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
         .and_then(|socket| socket.io.set_option(kind, value));
     Ok(status(c, result))
 }
-pub(crate) fn broadcast(c: &mut Context<'_>, r: RootId, a: &[RootId]) -> Result<RootId, RootedError> { option(c,r,a,super::udp_transport::SocketOption::Broadcast) }
-pub(crate) fn ttl(c: &mut Context<'_>, r: RootId, a: &[RootId]) -> Result<RootId, RootedError> { option(c,r,a,super::udp_transport::SocketOption::Ttl) }
-pub(crate) fn multicast_ttl(c: &mut Context<'_>, r: RootId, a: &[RootId]) -> Result<RootId, RootedError> { option(c,r,a,super::udp_transport::SocketOption::MulticastTtl) }
-pub(crate) fn multicast_loop(c: &mut Context<'_>, r: RootId, a: &[RootId]) -> Result<RootId, RootedError> { option(c,r,a,super::udp_transport::SocketOption::MulticastLoop) }
-pub(crate) fn disconnect(c: &mut Context<'_>, r: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let id=id(c,r)?;let shared=c.host_mut().shared_state();
-    let result=shared.borrow().udp.endpoints.get(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF)).and_then(|socket|socket.io.disconnect());
-    Ok(status(c,result))
+pub(crate) fn broadcast(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    option(c, r, a, super::udp_transport::SocketOption::Broadcast)
 }
-pub(crate) fn buffer_size(c: &mut Context<'_>, r: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let id=id(c,r)?;let missing=c.undefined();
-    let size=uint32_value(c,args.first().copied().unwrap_or(missing))?;
-    let recv=c.truthy_rooted(args.get(1).copied().unwrap_or(missing))?;
-    let shared=c.host_mut().shared_state();
-    let result=if size>i32::MAX as u32 {Err(std::io::Error::from_raw_os_error(libc::EINVAL))} else {
-        shared.borrow().udp.endpoints.get(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF)).and_then(|socket|socket.io.buffer_size(size,recv))
+pub(crate) fn ttl(c: &mut Context<'_>, r: RootId, a: &[RootId]) -> Result<RootId, RootedError> {
+    option(c, r, a, super::udp_transport::SocketOption::Ttl)
+}
+pub(crate) fn multicast_ttl(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    option(c, r, a, super::udp_transport::SocketOption::MulticastTtl)
+}
+pub(crate) fn multicast_loop(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    option(c, r, a, super::udp_transport::SocketOption::MulticastLoop)
+}
+pub(crate) fn disconnect(
+    c: &mut Context<'_>,
+    r: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = id(c, r)?;
+    let shared = c.host_mut().shared_state();
+    let result = shared
+        .borrow()
+        .udp
+        .endpoints
+        .get(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+        .and_then(|socket| socket.io.disconnect());
+    Ok(status(c, result))
+}
+pub(crate) fn buffer_size(
+    c: &mut Context<'_>,
+    r: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = id(c, r)?;
+    let missing = c.undefined();
+    let size = uint32_value(c, args.first().copied().unwrap_or(missing))?;
+    let recv = c.truthy_rooted(args.get(1).copied().unwrap_or(missing))?;
+    let shared = c.host_mut().shared_state();
+    let result = if size > i32::MAX as u32 {
+        Err(std::io::Error::from_raw_os_error(libc::EINVAL))
+    } else {
+        shared
+            .borrow()
+            .udp
+            .endpoints
+            .get(&id)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+            .and_then(|socket| socket.io.buffer_size(size, recv))
     };
     match result {
-        Ok(size)=>Ok(c.number(size as f64)),
-        Err(error)=>{
-            let ctx=args.get(2).copied().unwrap_or(missing);
-            let errno=-error.raw_os_error().unwrap_or(libc::EIO);
-            let number=c.number(errno as f64);put(c,ctx,"errno",number)?;
-            let code=c.string_rooted(&super::util_system_error_shared_vm::system_error_name(errno as f64));put(c,ctx,"code",code)?;
-            let message=super::util_system_error_shared_vm::error_message(c,missing,&[number])?;put(c,ctx,"message",message)?;
-            let syscall=c.string_rooted(if recv {"uv_recv_buffer_size"} else {"uv_send_buffer_size"});put(c,ctx,"syscall",syscall)?;
+        Ok(size) => Ok(c.number(size as f64)),
+        Err(error) => {
+            let ctx = args.get(2).copied().unwrap_or(missing);
+            let errno = -error.raw_os_error().unwrap_or(libc::EIO);
+            let number = c.number(errno as f64);
+            put(c, ctx, "errno", number)?;
+            let code = c.string_rooted(&super::util_system_error_shared_vm::system_error_name(
+                errno as f64,
+            ));
+            put(c, ctx, "code", code)?;
+            let message = super::util_system_error_shared_vm::error_message(c, missing, &[number])?;
+            put(c, ctx, "message", message)?;
+            let syscall = c.string_rooted(if recv {
+                "uv_recv_buffer_size"
+            } else {
+                "uv_send_buffer_size"
+            });
+            put(c, ctx, "syscall", syscall)?;
             Ok(c.undefined())
         }
     }
 }
 
-pub(crate) fn open(c:&mut Context<'_>,receiver:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let id=id(c,receiver)?;let missing=c.undefined();let fd=uint32_value(c,args.first().copied().unwrap_or(missing))? as i32;
-    let shared=c.host_mut().shared_state();
-    let mut state=shared.borrow_mut();
-    let mut duplicate=None;let mut active=false;
-    for (owner_id,socket) in &state.udp.endpoints {
-        if *owner_id!=id && socket.io.fd()==fd {
-            if socket.io.receiving || !socket.io.pending.is_empty(){active=true;break;}
-            duplicate=socket.io.descriptor();
+pub(crate) fn open(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = id(c, receiver)?;
+    let missing = c.undefined();
+    let fd = uint32_value(c, args.first().copied().unwrap_or(missing))? as i32;
+    let shared = c.host_mut().shared_state();
+    let mut state = shared.borrow_mut();
+    let mut duplicate = None;
+    let mut active = false;
+    for (owner_id, socket) in &state.udp.endpoints {
+        if *owner_id != id && socket.io.fd() == fd {
+            if socket.io.receiving || !socket.io.pending.is_empty() {
+                active = true;
+                break;
+            }
+            duplicate = socket.io.descriptor();
         }
     }
-    let result=if active {Err(std::io::Error::from_raw_os_error(libc::EEXIST))} else {
-        state.udp.endpoints.get_mut(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF)).and_then(|socket|{
-            if let Some(owner)=duplicate {socket.io.adopt(owner)}else{socket.io.open(fd)}
-        })
+    let result = if active {
+        Err(std::io::Error::from_raw_os_error(libc::EEXIST))
+    } else {
+        state
+            .udp
+            .endpoints
+            .get_mut(&id)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+            .and_then(|socket| {
+                if let Some(owner) = duplicate {
+                    socket.io.adopt(owner)
+                } else {
+                    socket.io.open(fd)
+                }
+            })
     };
-    drop(state);Ok(status(c,result))
+    drop(state);
+    Ok(status(c, result))
 }
 
-fn membership(c:&mut Context<'_>,r:RootId,args:&[RootId],action:super::udp_transport::Membership,source_specific:bool)->Result<RootId,RootedError>{
-    let id=id(c,r)?;let missing=c.undefined();
-    let source=if source_specific{Some(c.to_string(args.first().copied().unwrap_or(missing))?)}else{None};
-    let group_index=usize::from(source_specific);
-    let group=c.to_string(args.get(group_index).copied().unwrap_or(missing))?;
-    let interface=c.string_text(args.get(group_index+1).copied().unwrap_or(missing))?;
-    let shared=c.host_mut().shared_state();
-    let result=shared.borrow_mut().udp.endpoints.get_mut(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF))
-        .and_then(|socket|socket.io.membership(&group,interface.as_deref(),source.as_deref(),action));
-    Ok(status(c,result))
+fn membership(
+    c: &mut Context<'_>,
+    r: RootId,
+    args: &[RootId],
+    action: super::udp_transport::Membership,
+    source_specific: bool,
+) -> Result<RootId, RootedError> {
+    let id = id(c, r)?;
+    let missing = c.undefined();
+    let source = if source_specific {
+        Some(c.to_string(args.first().copied().unwrap_or(missing))?)
+    } else {
+        None
+    };
+    let group_index = usize::from(source_specific);
+    let group = c.to_string(args.get(group_index).copied().unwrap_or(missing))?;
+    let interface = c.string_text(args.get(group_index + 1).copied().unwrap_or(missing))?;
+    let shared = c.host_mut().shared_state();
+    let result = shared
+        .borrow_mut()
+        .udp
+        .endpoints
+        .get_mut(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+        .and_then(|socket| {
+            socket
+                .io
+                .membership(&group, interface.as_deref(), source.as_deref(), action)
+        });
+    Ok(status(c, result))
 }
-pub(crate) fn join_membership(c:&mut Context<'_>,r:RootId,a:&[RootId])->Result<RootId,RootedError>{membership(c,r,a,super::udp_transport::Membership::Join,false)}
-pub(crate) fn leave_membership(c:&mut Context<'_>,r:RootId,a:&[RootId])->Result<RootId,RootedError>{membership(c,r,a,super::udp_transport::Membership::Leave,false)}
-pub(crate) fn join_source_membership(c:&mut Context<'_>,r:RootId,a:&[RootId])->Result<RootId,RootedError>{membership(c,r,a,super::udp_transport::Membership::Join,true)}
-pub(crate) fn leave_source_membership(c:&mut Context<'_>,r:RootId,a:&[RootId])->Result<RootId,RootedError>{membership(c,r,a,super::udp_transport::Membership::Leave,true)}
-pub(crate) fn multicast_interface(c:&mut Context<'_>,r:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let id=id(c,r)?;let missing=c.undefined();let interface=c.string_text(args.first().copied().unwrap_or(missing))?;
-    let shared=c.host_mut().shared_state();
-    let result=shared.borrow().udp.endpoints.get(&id).ok_or_else(||std::io::Error::from_raw_os_error(libc::EBADF))
-        .and_then(|socket|socket.io.multicast_interface(interface.as_deref()));
-    Ok(status(c,result))
+pub(crate) fn join_membership(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    membership(c, r, a, super::udp_transport::Membership::Join, false)
+}
+pub(crate) fn leave_membership(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    membership(c, r, a, super::udp_transport::Membership::Leave, false)
+}
+pub(crate) fn join_source_membership(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    membership(c, r, a, super::udp_transport::Membership::Join, true)
+}
+pub(crate) fn leave_source_membership(
+    c: &mut Context<'_>,
+    r: RootId,
+    a: &[RootId],
+) -> Result<RootId, RootedError> {
+    membership(c, r, a, super::udp_transport::Membership::Leave, true)
+}
+pub(crate) fn multicast_interface(
+    c: &mut Context<'_>,
+    r: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = id(c, r)?;
+    let missing = c.undefined();
+    let interface = c.string_text(args.first().copied().unwrap_or(missing))?;
+    let shared = c.host_mut().shared_state();
+    let result = shared
+        .borrow()
+        .udp
+        .endpoints
+        .get(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+        .and_then(|socket| socket.io.multicast_interface(interface.as_deref()));
+    Ok(status(c, result))
 }
 
 /// Query authoritative wrapper and admitted-operation ownership, never guest fields.
-pub(crate) fn resource_view(c:&mut Context<'_>,receiver:RootId)->Result<super::native_async_wrap::View,RootedError>{
-    use super::native_async_wrap::{View,Resource,Provider};
-    let shared=c.host_mut().shared_state();
-    if let Some(id)=identity(c,receiver)? {
-        let state=shared.borrow();
-        return Ok(if state.udp.endpoints.contains_key(&id)||state.udp.closed.contains_key(&id){View::Active(Resource{id,provider:Provider::Udp})}else{View::Detached});
+pub(crate) fn resource_view(
+    c: &mut Context<'_>,
+    receiver: RootId,
+) -> Result<super::native_async_wrap::View, RootedError> {
+    use super::native_async_wrap::{Provider, Resource, View};
+    let shared = c.host_mut().shared_state();
+    if let Some(id) = identity(c, receiver)? {
+        let state = shared.borrow();
+        return Ok(
+            if state.udp.endpoints.contains_key(&id) || state.udp.closed.contains_key(&id) {
+                View::Active(Resource {
+                    id,
+                    provider: Provider::Udp,
+                })
+            } else {
+                View::Detached
+            },
+        );
     }
-    let brands=shared.borrow().udp.send_brands.clone();
+    let brands = shared.borrow().udp.send_brands.clone();
     for brand in brands {
-        if let Some(object)=c.resolve_host_weak_root(brand.weak){
-            if c.strict_equal_rooted(object,receiver)? {
-                return Ok(match brand.resource.get(){Some(id)=>View::Active(Resource{id,provider:Provider::Send}),None=>View::Detached});
+        if let Some(object) = c.resolve_host_weak_root(brand.weak) {
+            if c.strict_equal_rooted(object, receiver)? {
+                return Ok(match brand.resource.get() {
+                    Some(id) => View::Active(Resource {
+                        id,
+                        provider: Provider::Send,
+                    }),
+                    None => View::Detached,
+                });
             }
         }
     }
     Ok(View::NotNative)
 }
-pub(crate) fn detach_resource(shared:&Rc<RefCell<SharedNodeState>>,id:u64){
-    let mut state=shared.borrow_mut();
+pub(crate) fn detach_resource(shared: &Rc<RefCell<SharedNodeState>>, id: u64) {
+    let mut state = shared.borrow_mut();
     state.udp.closed.remove(&id);
     for brand in &state.udp.send_brands {
-        if brand.resource.get()==Some(id){brand.resource.set(None);}
+        if brand.resource.get() == Some(id) {
+            brand.resource.set(None);
+        }
     }
 }
 
 /// Native handle constructors retain their wrapper until native close, matching
 /// HandleWrap's persistent handle. Teardown abandons work without guest calls.
-pub(crate) fn cleanup(runtime:&mut Runtime<NodeHost>){
-    let shared=runtime.host_mut().shared_state();
-    let state=std::mem::take(&mut shared.borrow_mut().udp);
-    let mut roots=Vec::new();let mut contexts=Vec::new();
-    for (weak,id) in state.identities {runtime.release_host_weak_root(weak);contexts.push(id);}
-    for brand in state.send_brands {runtime.release_host_weak_root(brand.weak);if let Some(id)=brand.resource.take(){contexts.push(id);}}
-    for (_,mut socket) in state.endpoints {
-        roots.push(socket.owner);roots.extend(socket.reader);
-        for pending in socket.io.pending.drain(..){roots.extend([pending.token.request,pending.token.handle]);}
+pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    let state = std::mem::take(&mut shared.borrow_mut().udp);
+    let mut roots = Vec::new();
+    let mut contexts = Vec::new();
+    for (weak, id) in state.identities {
+        runtime.release_host_weak_root(weak);
+        contexts.push(id);
     }
-    for (_,closed) in state.closed {
-        if let Closed::WaitingNativeClose{handle,pending}=closed{
-            roots.extend(handle);
-            for pending in pending {roots.extend([pending.token.request,pending.token.handle]);}
+    for brand in state.send_brands {
+        runtime.release_host_weak_root(brand.weak);
+        if let Some(id) = brand.resource.take() {
+            contexts.push(id);
         }
     }
-    for root in roots {runtime.release_root(root);}
-    for id in contexts {super::async_hooks_shared_vm::clear_context(runtime,&shared,id);}
+    for (_, mut socket) in state.endpoints {
+        roots.push(socket.owner);
+        roots.extend(socket.reader);
+        for pending in socket.io.pending.drain(..) {
+            roots.extend([pending.token.request, pending.token.handle]);
+        }
+    }
+    for (_, closed) in state.closed {
+        if let Closed::WaitingNativeClose { handle, pending } = closed {
+            roots.extend(handle);
+            for pending in pending {
+                roots.extend([pending.token.request, pending.token.handle]);
+            }
+        }
+    }
+    for root in roots {
+        runtime.release_root(root);
+    }
+    for id in contexts {
+        super::async_hooks_shared_vm::clear_context(runtime, &shared, id);
+    }
 }
 
 /// Native IPC uses this branded authority, never a mutable guest `fd` property.
 #[cfg(unix)]
 pub(crate) fn duplicate_descriptor(
-    c: &mut Context<'_>, handle: RootId,
+    c: &mut Context<'_>,
+    handle: RootId,
 ) -> Result<std::os::fd::OwnedFd, RootedError> {
     let id = id(c, handle)?;
     let shared = c.host_mut().shared_state();
-    let result = shared.borrow().udp.endpoints.get(&id)
+    let result = shared
+        .borrow()
+        .udp
+        .endpoints
+        .get(&id)
         .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
         .and_then(|socket| socket.io.duplicate_descriptor());
-    result.map_err(|error| RootedError::host(format!("IPC UDP descriptor duplication failed: {error}")))
+    result.map_err(|error| {
+        RootedError::host(format!("IPC UDP descriptor duplication failed: {error}"))
+    })
 }
 
 /// Construct a genuine native wrapper (including real init/ALS identity),
 /// then transfer the received descriptor into its authoritative endpoint.
 #[cfg(unix)]
 pub(crate) fn from_owned_descriptor(
-    c: &mut Context<'_>, fd: std::os::fd::OwnedFd,
+    c: &mut Context<'_>,
+    fd: std::os::fd::OwnedFd,
 ) -> Result<RootId, RootedError> {
     binding(c)?;
-    let constructor=crate::host::shared_vm::commonjs::cached_native_binding(c,"\0native:UDPConstructor", |_|Err(RootedError::host("native UDP constructor authority missing")))?;
+    let constructor = crate::host::shared_vm::commonjs::cached_native_binding(
+        c,
+        "\0native:UDPConstructor",
+        |_| {
+            Err(RootedError::host(
+                "native UDP constructor authority missing",
+            ))
+        },
+    )?;
     let handle = c.construct_rooted(constructor, constructor, &[])?;
     let id = id(c, handle)?;
     let shared = c.host_mut().shared_state();
-    let result = shared.borrow_mut().udp.endpoints.get_mut(&id)
+    let result = shared
+        .borrow_mut()
+        .udp
+        .endpoints
+        .get_mut(&id)
         .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
         .and_then(|socket| socket.io.adopt_owned_descriptor(fd));
     if let Err(error) = result {
         close(c, handle, &[])?;
-        return Err(RootedError::host(format!("IPC UDP descriptor adoption failed: {error}")));
+        return Err(RootedError::host(format!(
+            "IPC UDP descriptor adoption failed: {error}"
+        )));
     }
     Ok(handle)
 }

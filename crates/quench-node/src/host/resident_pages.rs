@@ -940,7 +940,11 @@ pub fn map_touched_pages_only() {
         if fd < 0 {
             return;
         }
-        let mut api = UffdioApi { api: UFFD_API, features: UFFD_FEATURE_WP_ASYNC, ioctls: 0 };
+        let mut api = UffdioApi {
+            api: UFFD_API,
+            features: UFFD_FEATURE_WP_ASYNC,
+            ioctls: 0,
+        };
         if libc::ioctl(fd, UFFDIO_API, &mut api) != 0 {
             libc::close(fd);
             return;

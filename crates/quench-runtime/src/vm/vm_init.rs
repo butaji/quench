@@ -1,9 +1,14 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(crate) fn new(host: H) -> Self { Self::new_with_execution_interrupt(host,crate::ExecutionInterrupt::default()) }
+    pub(crate) fn new(host: H) -> Self {
+        Self::new_with_execution_interrupt(host, crate::ExecutionInterrupt::default())
+    }
 
-    pub(crate) fn new_with_execution_interrupt(host:H, execution_interrupt:crate::ExecutionInterrupt)->Self {
+    pub(crate) fn new_with_execution_interrupt(
+        host: H,
+        execution_interrupt: crate::ExecutionInterrupt,
+    ) -> Self {
         Self {
             host,
             native_microtask_running: false,
@@ -86,7 +91,7 @@ impl<H: Host> Vm<H> {
             with_stack: vec![],
             with_scope_entered: false,
             test262_agent: Default::default(),
-            shared_async_waiters:Vec::new(),
+            shared_async_waiters: Vec::new(),
             programs: ProgramStore::default(),
             program_cache_layouts: Vec::new(),
             free_cache_layouts: FxHashMap::default(),

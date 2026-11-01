@@ -78,6 +78,47 @@ pub(crate) fn abort_add_event_listener(
     let key = context.string_rooted(&entries.len().to_string());
     context.define_data_property_rooted(records, key, entry, true, true, true)?;
     update_listener_count(context, state, false)?;
+    // As Node's EventTarget: the first add past the signal's limit warns once.
+    let max_key = get(context, data, "maxKey")?;
+    let warned_key = get(context, data, "warnedKey")?;
+    let maximum = context.get_property_rooted(signal, max_key)?;
+    let maximum = context
+        .rooted_value(maximum)
+        .and_then(|value| value.as_number())
+        .unwrap_or(0.0);
+    let count_value = get(context, state, "listenerCount")?;
+    let count = context
+        .rooted_value(count_value)
+        .and_then(|value| value.as_number())
+        .unwrap_or(0.0);
+    let warned = context.get_property_rooted(signal, warned_key)?;
+    if maximum > 0.0 && count > maximum && !context.truthy_rooted(warned)? {
+        let yes = context.boolean(true);
+        context.set_property_rooted(signal, warned_key, yes, signal)?;
+        let event_type = context
+            .string_text(event)?
+            .unwrap_or_else(|| "abort".to_owned());
+        let warning = context.error_rooted(&format!(
+            "Possible EventTarget memory leak detected. {} {} listeners added to [AbortSignal]. MaxListeners is {}. Use events.setMaxListeners() to increase limit",
+            count as usize,
+            event_type,
+            maximum as usize,
+        ))?;
+        let name = context.string_rooted("MaxListenersExceededWarning");
+        let name_key = context.string_rooted("name");
+        context.set_property_rooted(warning, name_key, name, warning)?;
+        let key = context.string_rooted("target");
+        context.set_property_rooted(warning, key, signal, warning)?;
+        let key = context.string_rooted("type");
+        context.set_property_rooted(warning, key, event, warning)?;
+        let count_value = context.number(count);
+        let key = context.string_rooted("count");
+        context.set_property_rooted(warning, key, count_value, warning)?;
+        let global = context.global_root()?;
+        let process = get(context, global, "process")?;
+        let emit = get(context, process, "emitWarning")?;
+        context.call_rooted(emit, process, &[warning])?;
+    }
     context.call_rooted(refresh, undefined, &[signal, state])?;
     Ok(undefined)
 }
@@ -103,13 +144,21 @@ pub(super) fn capture_abort_listener_rejection(
     context: &mut NativeContext<'_, NodeHost>,
     result: RootId,
 ) -> Result<(), RootedError> {
-    if context.rooted_value(result).is_some_and(|value| value.is_null() || value.is_undefined()) {
+    if context
+        .rooted_value(result)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
         return Ok(());
     }
     let then = get(context, result, "then")?;
     if context.is_callable_rooted(then)? {
-        let report = context.host_function(crate::host::shared_vm::operation("eventTargetQueueError"))?;
-        let data = context.host_mut().shared_state().borrow().event_targets_api
+        let report =
+            context.host_function(crate::host::shared_vm::operation("eventTargetQueueError"))?;
+        let data = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .event_targets_api
             .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
         let factory = get(context, data, "abortRejectionFactory")?;
         let undefined = context.undefined();
@@ -129,7 +178,9 @@ pub(crate) fn queue_listener_error(
     let undefined = context.undefined();
     let reason = args.first().copied().unwrap_or(undefined);
     let callback = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("eventTargetRethrow"), "", reason,
+        crate::host::shared_vm::operation("eventTargetRethrow"),
+        "",
+        reason,
     )?;
     super::shared_event_loop::queue_next_tick(context, callback, undefined, &[])?;
     Ok(undefined)
@@ -457,14 +508,21 @@ pub(crate) fn abort_remove_event_listener(
 /// removal. Finalization never has to recover a collected callback identity.
 pub(crate) fn remove_entry(
     context: &mut NativeContext<'_, NodeHost>,
-    data: RootId, signal: RootId, state: RootId, entry: RootId, refresh: RootId,
+    data: RootId,
+    signal: RootId,
+    state: RootId,
+    entry: RootId,
+    refresh: RootId,
 ) -> Result<(), RootedError> {
     let records = get(context, state, "listeners")?;
     let mut retained = Vec::new();
     let mut found = false;
     for candidate in listener_records(context, records)? {
-        if context.strict_equal_rooted(candidate, entry)? { found = true; }
-        else { retained.push(candidate); }
+        if context.strict_equal_rooted(candidate, entry)? {
+            found = true;
+        } else {
+            retained.push(candidate);
+        }
     }
     if found {
         super::events_weak_shared_vm::unregister(context, data, entry)?;

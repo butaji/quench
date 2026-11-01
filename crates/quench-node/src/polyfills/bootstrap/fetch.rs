@@ -32,9 +32,9 @@ const __quenchFetchSend = (http, options, request, signal, cleanup, reject) => {
     cleanup();
     reject(__quenchFetchAbortError(signal.reason));
   };
-  requestHandle = http.request(options, (response) =>
+  requestHandle = http.request(options, (response) => {
     __quenchFetchResponse(response, options.resolve, reject, cleanup)
-  );
+  });
   requestHandle.once("error", (error) => {
     cleanup();
     reject(error);
@@ -46,12 +46,18 @@ const __quenchFetchSend = (http, options, request, signal, cleanup, reject) => {
 Object.defineProperty(globalThis, "fetch", {
   value: (input, init = {}) => {
     const request = new globalThis.Request(input, init);
-    if (request.url.startsWith("blob:") && typeof globalThis.__quenchHostFetch === "function") {
-      return globalThis.__quenchHostFetch(request.url, init);
-    }
     const signal = init.signal || request.signal;
     if (signal?.aborted) {
       return Promise.reject(__quenchFetchAbortError(signal.reason));
+    }
+    if (request.url.startsWith("blob:")) {
+      const buffer = globalThis.require?.("buffer");
+      const blob = buffer?.resolveObjectURL?.(request.url);
+      if (blob === undefined) return Promise.reject(new TypeError("Invalid blob URL"));
+      return Promise.resolve(new globalThis.Response(blob, {
+        status: 200,
+        headers: blob.type ? { "content-type": blob.type } : {},
+      }));
     }
     return new Promise((resolve, reject) => {
       const target = new URL(request.url);
@@ -59,7 +65,7 @@ Object.defineProperty(globalThis, "fetch", {
       const options = {
         protocol: target.protocol,
         hostname: target.hostname,
-        port: target.port || undefined,
+        port: target.port ? Number(target.port) : undefined,
         path: `${target.pathname || "/"}${target.search}`,
         method: request.method,
         headers: Object.fromEntries(request.headers)

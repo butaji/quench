@@ -184,7 +184,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if params.is_empty() {
             self.error(diagnostics::ts_empty_type_parameter_list(span));
         }
-        (Some(TSTypeParameterDeclaration::boxed(span, params, self)), trailing_comma.is_some())
+        (
+            Some(TSTypeParameterDeclaration::boxed(span, params, self)),
+            trailing_comma.is_some(),
+        )
     }
 
     pub(crate) fn parse_ts_implements_clause(&mut self) -> ArenaVec<'a, TSClassImplements<'a>> {
@@ -657,7 +660,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.expect(Kind::In);
         let constraint = self.parse_ts_type();
 
-        let name_type = if self.eat(Kind::As) { Some(self.parse_ts_type()) } else { None };
+        let name_type = if self.eat(Kind::As) {
+            Some(self.parse_ts_type())
+        } else {
+            None
+        };
         self.expect(Kind::RBrack);
 
         let optional = match self.cur_kind() {
@@ -842,7 +849,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             let ident = self.parse_identifier_name();
             TSTypeName::new_identifier_reference(ident.span, ident.name, self)
         };
-        if self.at(Kind::Dot) { self.parse_ts_qualified_type_name(start, left) } else { left }
+        if self.at(Kind::Dot) {
+            self.parse_ts_qualified_type_name(start, left)
+        } else {
+            left
+        }
     }
 
     pub(crate) fn parse_ts_qualified_type_name(
@@ -979,10 +990,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     _ => false,
                 } && let Some(seen_optional_span) = seen_optional_span
                 {
-                    me.error(diagnostics::required_element_cannot_follow_optional_element(
-                        tuple.span(),
-                        seen_optional_span,
-                    ));
+                    me.error(
+                        diagnostics::required_element_cannot_follow_optional_element(
+                            tuple.span(),
+                            seen_optional_span,
+                        ),
+                    );
                 }
 
                 if match &tuple {
@@ -1024,7 +1037,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 self,
             );
             if rest_after_tuple_member_name {
-                self.error(diagnostics::rest_after_tuple_member_name(self.end_span(type_start)));
+                self.error(diagnostics::rest_after_tuple_member_name(
+                    self.end_span(type_start),
+                ));
             }
             if optional_after_tuple_member_name {
                 self.error(diagnostics::optional_after_tuple_member_name(
@@ -1121,13 +1136,26 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             StringLiteral::new(span, "", None, self)
         };
 
-        let options =
-            if self.eat(Kind::Comma) { Some(self.parse_ts_import_type_options()) } else { None };
+        let options = if self.eat(Kind::Comma) {
+            Some(self.parse_ts_import_type_options())
+        } else {
+            None
+        };
         self.expect(Kind::RParen);
-        let qualifier =
-            if self.eat(Kind::Dot) { Some(self.parse_ts_import_type_qualifier()) } else { None };
+        let qualifier = if self.eat(Kind::Dot) {
+            Some(self.parse_ts_import_type_qualifier())
+        } else {
+            None
+        };
         let type_arguments = self.parse_type_arguments_of_type_reference();
-        TSImportType::boxed(self.end_span(start), source, options, qualifier, type_arguments, self)
+        TSImportType::boxed(
+            self.end_span(start),
+            source,
+            options,
+            qualifier,
+            type_arguments,
+            self,
+        )
     }
 
     fn parse_ts_import_type_qualifier(&mut self) -> TSImportTypeQualifier<'a> {
@@ -1229,7 +1257,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             // Check for computed property
             if self.at(Kind::LBrack) {
                 let bracket_span = self.cur_token().span();
-                self.error(diagnostics::ts_import_type_options_invalid_key(bracket_span));
+                self.error(diagnostics::ts_import_type_options_invalid_key(
+                    bracket_span,
+                ));
                 // Parse as computed to recover
                 self.bump_any();
                 self.parse_assignment_expression_or_higher();
@@ -1288,12 +1318,19 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         let start = self.cur_start();
         let return_type = self.parse_return_type(Kind::Colon);
-        Some(TSTypeAnnotation::boxed(self.end_span(start), return_type, self))
+        Some(TSTypeAnnotation::boxed(
+            self.end_span(start),
+            return_type,
+            self,
+        ))
     }
 
     fn parse_return_type(&mut self, separator: Kind) -> TSType<'a> {
         self.expect(separator);
-        self.context_remove(Context::DisallowConditionalTypes, Self::parse_type_or_type_predicate)
+        self.context_remove(
+            Context::DisallowConditionalTypes,
+            Self::parse_type_or_type_predicate,
+        )
     }
 
     fn parse_type_or_type_predicate(&mut self) -> TSType<'a> {
@@ -1387,7 +1424,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.parse_type_member_semicolon();
 
         if let Some(this_param) = &this_param {
-            self.error(diagnostics::accessor_cannot_have_this_parameter(this_param.span));
+            self.error(diagnostics::accessor_cannot_have_this_parameter(
+                this_param.span,
+            ));
         }
 
         match kind {
@@ -1398,9 +1437,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             }
             TSMethodSignatureKind::Set => {
                 if let Some(return_type) = return_type.as_ref() {
-                    self.error(diagnostics::a_set_accessor_cannot_have_a_return_type_annotation(
-                        return_type.span,
-                    ));
+                    self.error(
+                        diagnostics::a_set_accessor_cannot_have_a_return_type_annotation(
+                            return_type.span,
+                        ),
+                    );
                 }
                 if let Some(rest) = &params.rest {
                     self.error(diagnostics::setter_with_rest_parameter(rest.span));
@@ -1539,11 +1580,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 _ => {}
             }
         } else {
-            self.error(diagnostics::index_signature_one_parameter(self.end_span(start)));
+            self.error(diagnostics::index_signature_one_parameter(
+                self.end_span(start),
+            ));
         }
         let Some(type_annotation) = self.parse_ts_type_annotation() else {
-            return self
-                .fatal_error(diagnostics::index_signature_type_annotation(self.end_span(start)));
+            return self.fatal_error(diagnostics::index_signature_type_annotation(
+                self.end_span(start),
+            ));
         };
         self.parse_type_member_semicolon();
         TSIndexSignature::boxed(
@@ -1571,7 +1615,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.check_identifier(self.cur_kind(), self.ctx);
         let name = self.parse_identifier_name().name;
         if self.at(Kind::Question) {
-            self.error(diagnostics::index_signature_question_mark(self.cur_token().span()));
+            self.error(diagnostics::index_signature_question_mark(
+                self.cur_token().span(),
+            ));
             self.bump_any();
         }
         let type_annotation = self.parse_ts_type_annotation();
@@ -1647,7 +1693,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             | Kind::Slash
             | Kind::SlashEq => true,
             Kind::Import => {
-                matches!(self.lexer.peek_token().kind(), Kind::LParen | Kind::LAngle | Kind::Dot)
+                matches!(
+                    self.lexer.peek_token().kind(),
+                    Kind::LParen | Kind::LAngle | Kind::Dot
+                )
             }
             _ => false,
         }

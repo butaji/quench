@@ -31,7 +31,14 @@ pub(crate) fn apply_signature_options<T>(
 ) -> Result<(), openssl::error::ErrorStack> {
     if matches!(id, openssl::pkey::Id::RSA | openssl::pkey::Id::RSA_PSS) {
         if let Some(padding) = options.padding {
-            context.set_rsa_padding(padding)?;
+            // RSA-PSS keys are already constrained to PSS by OpenSSL. Some
+            // providers reject an explicit RSA padding control on that key
+            // type, even when it repeats the only supported mode. WebCrypto
+            // always supplies RSA_PKCS1_PSS_PADDING, so leave the key's native
+            // restriction in place instead of applying the redundant control.
+            if id != openssl::pkey::Id::RSA_PSS || padding != Padding::PKCS1_PSS {
+                context.set_rsa_padding(padding)?;
+            }
         }
         if let Some(length) = options.salt_length {
             context.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::custom(length))?;

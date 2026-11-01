@@ -13,24 +13,49 @@ pub const WORKER_STACK_SIZE: usize = STACK_BUDGET_BYTES + STACK_HEADROOM_BYTES;
 const STACK_TRANSITION_RESERVE_BYTES: usize = 64 * 1024;
 const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_RESERVE_BYTES;
 
-/// Maximum live guest function activations, including suspended callers.
+/// Maximum live guest function activations, including suspended callers. The
+/// host's `--stack_size` lowers the active limit below it (`GuestCallLimitGuard`).
 pub const MAX_GUEST_CALL_DEPTH: usize = 8_192;
 /// Maximum requested locals and registers for live Wasm frames on one thread.
 /// This bounds retained guest frame payload independently of activation count.
 pub const MAX_GUEST_FRAME_STORAGE_BYTES: usize = 32 * 1024 * 1024;
 pub const STACK_EXHAUSTED_MESSAGE: &str = "Maximum call stack size exceeded";
 
+/// Node's `--stack_size` controls the guest stack in V8. Quench executes on a
+/// larger host stack, so scale the guest activation limit separately to avoid
+/// exhausting the Rust worker stack before producing a JavaScript RangeError.
+pub const DEFAULT_GUEST_STACK_SIZE_KB: usize = 984;
+
 thread_local! {
     static ACTIVE_TRANSITIONS: Cell<usize> = const { Cell::new(0) };
     static STACK_ORIGIN: Cell<usize> = const { Cell::new(0) };
     static ACTIVE_GUEST_CALLS: Cell<usize> = const { Cell::new(0) };
     static ACTIVE_GUEST_FRAME_STORAGE_BYTES: Cell<usize> = const { Cell::new(0) };
+    static GUEST_CALL_LIMIT: Cell<usize> = const { Cell::new(MAX_GUEST_CALL_DEPTH) };
 }
 
 /// A transition is released on every return path, including Rust unwinding.
 /// Thread affinity keeps the measurement correct across reentrant runtime owners.
 pub struct StackGuard(PhantomData<Rc<()>>);
 pub struct GuestCallGuard(PhantomData<Rc<()>>, usize);
+
+/// Temporarily set the guest activation limit for a Node-compatible stack
+/// size option. The limit is thread-local and restored when this guard drops.
+pub struct GuestCallLimitGuard(usize);
+
+impl GuestCallLimitGuard {
+    pub fn enter(limit: usize) -> Self {
+        let limit = limit.clamp(1, MAX_GUEST_CALL_DEPTH);
+        let previous = GUEST_CALL_LIMIT.with(|active| active.replace(limit));
+        Self(previous)
+    }
+}
+
+impl Drop for GuestCallLimitGuard {
+    fn drop(&mut self) {
+        GUEST_CALL_LIMIT.with(|active| active.set(self.0));
+    }
+}
 
 impl StackGuard {
     #[inline]
@@ -67,7 +92,9 @@ impl Drop for StackGuard {
 impl GuestCallGuard {
     /// How many more guest calls the thread admits before `enter` fails.
     pub fn remaining() -> usize {
-        MAX_GUEST_CALL_DEPTH - ACTIVE_GUEST_CALLS.with(Cell::get)
+        GUEST_CALL_LIMIT
+            .with(Cell::get)
+            .saturating_sub(ACTIVE_GUEST_CALLS.with(Cell::get))
     }
 
     /// How many more requested Wasm frame bytes the thread admits.
@@ -85,7 +112,7 @@ impl GuestCallGuard {
         ACTIVE_GUEST_CALLS.with(|depth| {
             let current = depth.get();
             let used_storage = ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get);
-            if current == MAX_GUEST_CALL_DEPTH
+            if current >= GUEST_CALL_LIMIT.with(Cell::get)
                 || storage_bytes > MAX_GUEST_FRAME_STORAGE_BYTES
                 || storage_bytes > MAX_GUEST_FRAME_STORAGE_BYTES - used_storage
             {

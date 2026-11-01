@@ -1075,10 +1075,16 @@ fn apply_rule(
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis) {
         if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let at = |pc: usize| positions.partition_point(|p| p.pc as usize <= pc)
-                .checked_sub(1).map(|index| (positions[index].line, positions[index].column));
+            let at = |pc: usize| {
+                positions
+                    .partition_point(|p| p.pc as usize <= pc)
+                    .checked_sub(1)
+                    .map(|index| (positions[index].line, positions[index].column))
+            };
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() { site.sources[0] = at(pc); }
+            if site.sources[0].is_none() {
+                site.sources[0] = at(pc);
+            }
             site.sources[2] = at(pc + 1);
         }
     }
@@ -1179,7 +1185,9 @@ fn relocate_source_positions(
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && fixed_width(old_code[anchor], wide).op().control_flow_layout()
+            && fixed_width(old_code[anchor], wide)
+                .op()
+                .control_flow_layout()
                 != crate::bytecode::ControlFlowLayout::Call
         {
             continue;
@@ -1709,5 +1717,4 @@ mod tests {
             SourcePosition { pc: 1, line: 1, column: 69 },
         ]);
     }
-
 }

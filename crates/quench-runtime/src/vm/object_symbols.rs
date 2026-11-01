@@ -195,9 +195,13 @@ impl<H: Host> Vm<H> {
                         self.heap.root_value(key).unwrap(),
                     )
                 }) {
-                    return Err(
-                        self.type_error(p, "proxy ownKeys trap omitted a required key".into())
-                    );
+                    let key_text = self
+                        .coerce_js_string(p, self.heap.root_value(key).unwrap())?
+                        .to_string();
+                    return Err(self.type_error(
+                        p,
+                        format!("'ownKeys' on proxy: trap result did not include '{key_text}'"),
+                    ));
                 }
             }
             if !extensible && keys.len() != target_keys.len() {

@@ -88,10 +88,7 @@ struct ErrorSourceLocation {
 
 #[derive(Debug)]
 enum ErrorDescription {
-    Text {
-        message: String,
-
-    },
+    Text { message: String },
     ExecutionTerminated,
     DataClone(String),
     WasmTrap(crate::WasmTrap),
@@ -109,10 +106,7 @@ impl From<String> for ErrorMessage {
     fn from(message: String) -> Self {
         Self {
             payload: Box::new(ErrorPayload {
-                description: ErrorDescription::Text {
-                    message,
-
-                },
+                description: ErrorDescription::Text { message },
                 thrown: None,
                 source_location: None,
             }),
@@ -135,8 +129,14 @@ impl fmt::Display for JsError {
 }
 
 impl JsError {
-    pub(crate) fn execution_terminated()->Self {
-        Self(ErrorMessage { payload: Box::new(ErrorPayload { description: ErrorDescription::ExecutionTerminated, thrown: None, source_location: None }) })
+    pub(crate) fn execution_terminated() -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::ExecutionTerminated,
+                thrown: None,
+                source_location: None,
+            }),
+        })
     }
     /// A host termination is uncatchable, not a guest Error object or throw.
     /// A JavaScript exception: thrown by guest code or raised as a JavaScript error, as
@@ -153,10 +153,7 @@ impl JsError {
     pub(crate) fn thrown(value: Value, message: String) -> Self {
         Self(ErrorMessage {
             payload: Box::new(ErrorPayload {
-                description: ErrorDescription::Text {
-                    message,
-
-                },
+                description: ErrorDescription::Text { message },
                 thrown: Some(value),
                 source_location: None,
             }),
@@ -320,10 +317,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let records = match self
-            .object_data(receiver)
-            .and_then(Object::stack_data)
-        {
+        let records = match self.object_data(receiver).and_then(Object::stack_data) {
             Some(StackData::Formatted(value)) => return Ok(*value),
             Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
@@ -332,15 +326,16 @@ impl<H: Host> Vm<H> {
         let receiver_root = self.heap.root(receiver);
         let mut roots = Vec::with_capacity(2);
         let outcome = (|| {
-            let formatter = match self.realm.intrinsics.error_intrinsics[&self.realm.globals].host_formatter {
-                Some(formatter) => Some(formatter),
-                None => match self.host.error_stack_formatter() {
-                    Some(root) => Some(self.heap.root_value(root).ok_or_else(|| {
-                        self.type_error(program, "Host stack formatter root expired".into())
-                    })?),
-                    None => None,
-                },
-            };
+            let formatter =
+                match self.realm.intrinsics.error_intrinsics[&self.realm.globals].host_formatter {
+                    Some(formatter) => Some(formatter),
+                    None => match self.host.error_stack_formatter() {
+                        Some(root) => Some(self.heap.root_value(root).ok_or_else(|| {
+                            self.type_error(program, "Host stack formatter root expired".into())
+                        })?),
+                        None => None,
+                    },
+                };
             if let Some(formatter) = formatter {
                 let formatter_root = self.heap.root(formatter);
                 let global_root = self.heap.root(self.realm.globals);
@@ -421,10 +416,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc_string(stack))
     }
 
-    fn error_call_site_array(
-        &mut self,
-        records: &[CallSiteRecord],
-    ) -> Result<Value, JsError> {
+    fn error_call_site_array(&mut self, records: &[CallSiteRecord]) -> Result<Value, JsError> {
         let mut roots = Vec::with_capacity(records.len());
         let result = (|| {
             let mut sites = Vec::with_capacity(records.len());
@@ -454,16 +446,26 @@ impl<H: Host> Vm<H> {
     }
 
     /// Inspect descriptor identity without invoking accessors or Proxy traps.
-    fn call_site_property_matches(&self, receiver: Value, key: Atom, function: Value) -> Option<bool> {
+    fn call_site_property_matches(
+        &self,
+        receiver: Value,
+        key: Atom,
+        function: Value,
+    ) -> Option<bool> {
         let attributes = self.property_attributes(receiver, PropertyKey::string(key));
         if let Some(attributes) = attributes.filter(|attributes| attributes.accessor) {
-            return Some(attributes.getter == Some(function) || attributes.setter == Some(function));
+            return Some(
+                attributes.getter == Some(function) || attributes.setter == Some(function),
+            );
         }
         self.own_property(receiver, key)
             .map(|value| value == function)
     }
 
-    fn call_site_method_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
+    fn call_site_method_name(
+        &mut self,
+        record: &CallSiteRecord,
+    ) -> Result<Option<JsString>, JsError> {
         let CallSiteName::Callable(function) = record.name else {
             return Ok(None);
         };
@@ -474,9 +476,9 @@ impl<H: Host> Vm<H> {
         if let Some(original) = self.original_function_name(function) {
             let name = self.atom_value(original);
             let units = name.units();
-            let accessor_prefix = ["get ", "set "].into_iter().find(|prefix| {
-                units.iter().take(prefix.len()).eq(prefix.encode_utf16())
-            });
+            let accessor_prefix = ["get ", "set "]
+                .into_iter()
+                .find(|prefix| units.iter().take(prefix.len()).eq(prefix.encode_utf16()));
             let name = if let Some(prefix) = accessor_prefix {
                 JsString::from_unit_run(units.slice(prefix.len()..units.len()))
             } else {
@@ -525,7 +527,10 @@ impl<H: Host> Vm<H> {
         Ok(found.map(|name| self.atom_value(name)))
     }
 
-    fn call_site_type_name(&mut self, record: &CallSiteRecord) -> Result<Option<JsString>, JsError> {
+    fn call_site_type_name(
+        &mut self,
+        record: &CallSiteRecord,
+    ) -> Result<Option<JsString>, JsError> {
         let receiver = record.this_value;
         if record.is_constructor
             || receiver.is_null()
@@ -554,7 +559,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// A source projection of a genuine activation, without evaluating guest hooks.
-    pub(super) fn source_call_site_record(&self, frame: &Frame, hide_identity: bool) -> Option<(CallSiteRecord, bool)> {
+    pub(super) fn source_call_site_record(
+        &self,
+        frame: &Frame,
+        hide_identity: bool,
+    ) -> Option<(CallSiteRecord, bool)> {
         if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
             return None;
         }
@@ -562,30 +571,56 @@ impl<H: Host> Vm<H> {
         let function = residual.function_get(frame.function as usize)?;
         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
         let position = if let Some((site, part)) = frame.source_field {
-            if let Some((line, column)) = residual.field_sites.get(site).and_then(|site| site.source(part)) {
-                residual.adjust_source_position(crate::bytecode::SourcePosition { pc, line, column })?
-            } else { residual.source_position(frame.function, pc)? }
-        } else { residual.source_position(frame.function, pc)? };
+            if let Some((line, column)) = residual
+                .field_sites
+                .get(site)
+                .and_then(|site| site.source(part))
+            {
+                residual.adjust_source_position(crate::bytecode::SourcePosition {
+                    pc,
+                    line,
+                    column,
+                })?
+            } else {
+                residual.source_position(frame.function, pc)?
+            }
+        } else {
+            residual.source_position(frame.function, pc)?
+        };
         let name = frame.context.callable().map_or_else(
-            || function.name.map_or(CallSiteName::Anonymous, |name| CallSiteName::Static(self.atom_value(name))),
+            || {
+                function.name.map_or(CallSiteName::Anonymous, |name| {
+                    CallSiteName::Static(self.atom_value(name))
+                })
+            },
             CallSiteName::Callable,
         );
-        Some((CallSiteRecord {
-            location: CallSiteLocation::Source {
-                file_name: residual.source_name.clone(),
-                line: position.line,
-                column: position.column,
+        Some((
+            CallSiteRecord {
+                location: CallSiteLocation::Source {
+                    file_name: residual.source_name.clone(),
+                    line: position.line,
+                    column: position.column,
+                },
+                name,
+                hide_identity,
+                is_constructor: frame.context.is_constructor(),
+                eval_origin: self.programs.eval_origin(frame.program),
+                this_value: if frame.this == Value::DELETED {
+                    Value::UNDEFINED
+                } else {
+                    frame.this
+                },
             },
-            name,
-            hide_identity,
-            is_constructor: frame.context.is_constructor(),
-            eval_origin: self.programs.eval_origin(frame.program),
-            this_value: if frame.this == Value::DELETED { Value::UNDEFINED } else { frame.this },
-        }, residual.kind == crate::bytecode::ProgramKind::Module))
+            residual.kind == crate::bytecode::ProgramKind::Module,
+        ))
     }
 
     /// Snapshot the actual compiling caller without evaluating guest name hooks.
-    pub(super) fn capture_eval_origin(&mut self, context: &ResidualProgram) -> Result<JsString, JsError> {
+    pub(super) fn capture_eval_origin(
+        &mut self,
+        context: &ResidualProgram,
+    ) -> Result<JsString, JsError> {
         let fallback = || JsString::from_str(super::program_store::ANONYMOUS_EVAL_ORIGIN);
         let (mut record, module, name) = {
             let Some(frame) = self.frames.last() else { return Ok(fallback()); };
@@ -603,10 +638,18 @@ impl<H: Host> Vm<H> {
         text.append(&JsString::from_str("eval at "));
         text.append(&name.unwrap_or_else(|| JsString::from_str("<anonymous>")));
         text.append(&JsString::from_str(" ("));
-        if let Some(origin) = &record.eval_origin { text.append(origin); }
-        else if let CallSiteLocation::Source { file_name, line, column } = &record.location {
+        if let Some(origin) = &record.eval_origin {
+            text.append(origin);
+        } else if let CallSiteLocation::Source {
+            file_name,
+            line,
+            column,
+        } = &record.location
+        {
             text.append(&JsString::from_str(&format!("{file_name}:{line}:{column}")));
-        } else { text.append(&JsString::from_str("unknown source")); }
+        } else {
+            text.append(&JsString::from_str("unknown source"));
+        }
         text.append(&JsString::from_str(")"));
         self.string_build_result(context, text.finish())
     }
@@ -636,7 +679,23 @@ impl<H: Host> Vm<H> {
         let mut source = None;
         let mut source_captured = false;
         let mut native_frames = self.native_stack_frames.iter().rev().peekable();
-        let mut constructor_found = !trim_constructor;
+        // V8's Error.captureStackTrace only trims through constructorOpt when
+        // that function is present in the current stack. Async continuations
+        // commonly resume after the requested function has left the active
+        // stack (for example assert.rejects); in that case retain the full
+        // stack instead of dropping every frame.
+        let constructor_frame = trim_constructor
+            .then(|| {
+                self.frames
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(index, frame)| {
+                        (frame.context.callable() == Some(constructor_opt)).then_some(index)
+                    })
+            })
+            .flatten();
+        let mut constructor_found = !trim_constructor || constructor_frame.is_none();
         let mut hide_identity = false;
         for (depth, frame) in self.frames.iter().enumerate().rev() {
             while records.len() < limit
@@ -673,7 +732,7 @@ impl<H: Host> Vm<H> {
             };
             hide_identity |= function.strict;
             if !constructor_found {
-                constructor_found = frame.context.callable() == Some(constructor_opt);
+                constructor_found = constructor_frame == Some(depth);
                 continue;
             }
             if let Some((mut record, module)) = self.source_call_site_record(frame, hide_identity) {
@@ -793,30 +852,65 @@ impl<H: Host> Vm<H> {
             CallSiteName::Static(name) => Some(name.clone()),
             CallSiteName::Anonymous => None,
         };
-        name.filter(|name| !name.units().is_empty()).or_else(|| record.eval_origin.as_ref()
-            .map(|_| JsString::from_str("eval")))
+        name.filter(|name| !name.units().is_empty()).or_else(|| {
+            record
+                .eval_origin
+                .as_ref()
+                .map(|_| JsString::from_str("eval"))
+        })
     }
 
-    fn format_call_site(&mut self, program: &ResidualProgram, record: &CallSiteRecord) -> Result<JsString, JsError> {
+    fn format_call_site(
+        &mut self,
+        program: &ResidualProgram,
+        record: &CallSiteRecord,
+    ) -> Result<JsString, JsError> {
         let location = match &record.location {
-            CallSiteLocation::Source { file_name, line, column } => {
+            CallSiteLocation::Source {
+                file_name,
+                line,
+                column,
+            } => {
                 let mut text = super::wtf16::JsStringBuilder::default();
                 if let Some(origin) = &record.eval_origin {
                     text.append(origin);
                     text.append(&JsString::from_str(", <anonymous>"));
-                } else { text.append(&JsString::from_str(file_name)); }
+                } else {
+                    text.append(&JsString::from_str(file_name));
+                }
                 text.append(&JsString::from_str(&format!(":{line}:{column}")));
                 text.finish()
             }
             CallSiteLocation::Native => Ok(JsString::from_str("native")),
         };
         let location = self.string_build_result(program, location)?;
-        let name = self.call_site_name(record).or_else(|| {
-            record.is_constructor.then(|| JsString::from_str("<anonymous>"))
-        });
-        let Some(name) = name else { return Ok(location); };
+        let name = if let Some(name) = self.call_site_name(record) {
+            Some(name)
+        } else if record.is_constructor {
+            Some(JsString::from_str("<anonymous>"))
+        } else if let Some(type_name) = self.call_site_type_name(record)? {
+            // V8 displays an unnamed function called with an object receiver
+            // as `Type.<anonymous>` (not just its source location). CommonJS
+            // module wrappers use this shape, which Node exposes in warning
+            // stacks as `Object.<anonymous>`.
+            let method_name = self
+                .call_site_method_name(record)?
+                .unwrap_or_else(|| JsString::from_str("<anonymous>"));
+            let mut text = super::wtf16::JsStringBuilder::default();
+            text.append(&type_name);
+            text.append(&JsString::from_str("."));
+            text.append(&method_name);
+            Some(self.string_build_result(program, text.finish())?)
+        } else {
+            None
+        };
+        let Some(name) = name else {
+            return Ok(location);
+        };
         let mut text = super::wtf16::JsStringBuilder::default();
-        if record.is_constructor { text.append(&JsString::from_str("new ")); }
+        if record.is_constructor {
+            text.append(&JsString::from_str("new "));
+        }
         text.append(&name);
         text.append(&JsString::from_str(" ("));
         text.append(&location);
@@ -839,12 +933,18 @@ impl<H: Host> Vm<H> {
         let record = match self.object_data(receiver).and_then(Object::stack_data) {
             Some(StackData::CallSite(record)) => record.clone(),
             _ => {
-                let method = CALL_SITE_METHODS.iter().find(|(_, candidate)| *candidate == native)
-                    .map(|(name, _)| *name).expect("CallSite method");
+                let method = CALL_SITE_METHODS
+                    .iter()
+                    .find(|(_, candidate)| *candidate == native)
+                    .map(|(name, _)| *name)
+                    .expect("CallSite method");
                 let message = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
                     format!("Method {method} called on incompatible receiver #<Object>")
                 } else if !self.is_object_like(receiver) {
-                    format!("Method {method} called on incompatible receiver {}", self.detail_string(receiver))
+                    format!(
+                        "Method {method} called on incompatible receiver {}",
+                        self.detail_string(receiver)
+                    )
                 } else {
                     format!("CallSite method {method} expects CallSite as receiver")
                 };
@@ -859,7 +959,11 @@ impl<H: Host> Vm<H> {
                 }
                 CallSiteLocation::Native => Value::NULL,
             }),
-            Native::CallSiteGetThis => Ok(if record.hide_identity { Value::UNDEFINED } else { record.this_value }),
+            Native::CallSiteGetThis => Ok(if record.hide_identity {
+                Value::UNDEFINED
+            } else {
+                record.this_value
+            }),
             Native::CallSiteGetFunction => Ok(match record.name {
                 CallSiteName::Callable(function) if !record.hide_identity => function,
                 _ => Value::UNDEFINED,
@@ -878,8 +982,16 @@ impl<H: Host> Vm<H> {
                 CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
                 CallSiteLocation::Native => Value::NULL,
             }),
-            Native::CallSiteIsEval => Ok(if record.eval_origin.is_some() { Value::TRUE } else { Value::FALSE }),
-            Native::CallSiteIsConstructor => Ok(if record.is_constructor { Value::TRUE } else { Value::FALSE }),
+            Native::CallSiteIsEval => Ok(if record.eval_origin.is_some() {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            }),
+            Native::CallSiteIsConstructor => Ok(if record.is_constructor {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            }),
             Native::CallSiteIsNative => {
                 Ok(if matches!(record.location, CallSiteLocation::Native) {
                     Value::TRUE
@@ -1063,6 +1175,21 @@ impl<H: Host> Vm<H> {
             .alloc_string(crate::stack::STACK_EXHAUSTED_MESSAGE.into());
         self.set_builtin_value_named(object, "message", message)
             .expect("fresh error object accepts message");
+        // A stack-limit error is created without invoking guest constructors,
+        // but it should still preserve the active guest call sites for APIs
+        // such as Worker error events that serialize the thrown Error. The
+        // capture runs on the exhausted stack: an exhaustion it raises itself
+        // keeps no call sites, so the outer capture fails instead of recursing.
+        thread_local! {
+            static CAPTURING_EXHAUSTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        if !CAPTURING_EXHAUSTION.with(std::cell::Cell::get)
+            && let Some(program) = self.frames.last().and_then(|frame| self.programs.get(frame.program))
+        {
+            CAPTURING_EXHAUSTION.with(|capturing| capturing.set(true));
+            let _ = self.error_capture_stack_trace(&program, &[object]);
+            CAPTURING_EXHAUSTION.with(|capturing| capturing.set(false));
+        }
         JsError::thrown(object, crate::stack::STACK_EXHAUSTED_MESSAGE.into())
     }
 
@@ -1174,7 +1301,9 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
-        self.object_data_mut(object).expect("primitive wrapper").set_boxed_primitive(value);
+        self.object_data_mut(object)
+            .expect("primitive wrapper")
+            .set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1184,10 +1313,18 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         let realm = self.active_native_env().unwrap_or(self.realm.globals);
-        let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
-            .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
+        let prototype = self
+            .realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(realm, Native::BigInt))
+            .copied()
+            .or_else(|| self.primitive_prototype(value))
+            .unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.object_data_mut(object).expect("bigint wrapper").set_boxed_primitive(value);
+        self.object_data_mut(object)
+            .expect("bigint wrapper")
+            .set_boxed_primitive(value);
         Ok(object)
     }
 
@@ -1475,7 +1612,10 @@ impl<H: Host> Vm<H> {
             program_id
         };
         let origin = self.capture_eval_origin(program)?;
-        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::FunctionConstructor { caller: origin });
+        self.programs.set_origin(
+            program_id,
+            super::program_store::CompilationOrigin::FunctionConstructor { caller: origin },
+        );
         let residual = self
             .programs
             .get(program_id)
@@ -1495,7 +1635,10 @@ impl<H: Host> Vm<H> {
         })();
         self.set_active_program(active_program);
         let function = result?;
-        self.set_function_name_text(function, crate::compile::DYNAMIC_FUNCTION_PUBLIC_NAME.to_owned());
+        self.set_function_name_text(
+            function,
+            crate::compile::DYNAMIC_FUNCTION_PUBLIC_NAME.to_owned(),
+        );
         let function_source = kind.source(&parameters, &source);
         self.set_function_source(function, &function_source)?;
         Ok(function)
@@ -2377,14 +2520,22 @@ impl<H: Host> Vm<H> {
         };
         self.set_builtin_function_name(stack_getter, "")?;
         self.set_builtin_function_name(stack_setter, "")?;
-        let call_site_constructor = if global == self.realm.globals && constructor == self.native_value(Native::Error) {
-            self.native_value(Native::CallSiteConstructor)
-        } else {
-            self.native_with_realm(Native::CallSiteConstructor, Value::NULL, global)
-        };
+        let call_site_constructor =
+            if global == self.realm.globals && constructor == self.native_value(Native::Error) {
+                self.native_value(Native::CallSiteConstructor)
+            } else {
+                self.native_with_realm(Native::CallSiteConstructor, Value::NULL, global)
+            };
         self.set_builtin_function_name(call_site_constructor, "CallSite")?;
-        let call_site_prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.realm_object_prototype(global))));
-        self.set_named_constant(program, call_site_constructor, "prototype", call_site_prototype)?;
+        let call_site_prototype = self.heap.alloc(Cell::Object(Self::empty_object(
+            self.realm_object_prototype(global),
+        )));
+        self.set_named_constant(
+            program,
+            call_site_constructor,
+            "prototype",
+            call_site_prototype,
+        )?;
         self.set_builtin_value_named(call_site_prototype, "constructor", call_site_constructor)?;
         for &(name, native) in CALL_SITE_METHODS {
             let function = if constructor == self.native_value(Native::Error) {
@@ -2394,10 +2545,19 @@ impl<H: Host> Vm<H> {
             };
             self.set_builtin_function_name(function, name)?;
             let key = self.intern_atom(name);
-            self.set_property_with_attributes(call_site_prototype, key, function, PropertyAttributes {
-                writable: false, enumerable: false, configurable: false,
-                accessor: false, getter: None, setter: None,
-            })?;
+            self.set_property_with_attributes(
+                call_site_prototype,
+                key,
+                function,
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            )?;
         }
         self.realm.intrinsics.error_intrinsics.insert(
             global,
@@ -2606,7 +2766,8 @@ impl<H: Host> Vm<H> {
             }
             let value = self.heap.root_value(root).unwrap();
             let target = self.heap.root_value(new_target).unwrap();
-            let stack_target = self.error_constructor_stack_target(Native::AggregateError, target)
+            let stack_target = self
+                .error_constructor_stack_target(Native::AggregateError, target)
                 .unwrap_or(Value::UNDEFINED);
             self.error_capture_stack_trace(program, &[value, stack_target])?;
             let input = self.heap.root_value(input).unwrap();

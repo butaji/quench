@@ -103,7 +103,9 @@ impl<T> Pipe<T> {
         if !matches!(self.phase, Phase::Open(_)) {
             return Err(io::Error::from_raw_os_error(libc::EPIPE));
         }
-        if !self.writes.is_empty() || bytes.is_empty() { return Ok(0); }
+        if !self.writes.is_empty() || bytes.is_empty() {
+            return Ok(0);
+        }
         let socket = self.socket().expect("open Pipe owns socket");
         let mut plain = PendingHandle::from_optional(None);
         loop {

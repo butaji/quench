@@ -1601,6 +1601,14 @@ fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
             self.0 = true;
         }
 
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            // `for await` suspends just like an explicit top-level await.
+            // Include it in the async-module decision so the root compiler
+            // context lowers its loop body with await support enabled.
+            self.0 |= statement.r#await;
+            oxc_ast_visit::walk::walk_for_of_statement(self, statement);
+        }
+
         fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
             self.0 |= declaration.kind == VariableDeclarationKind::AwaitUsing;
             oxc_ast_visit::walk::walk_variable_declaration(self, declaration);

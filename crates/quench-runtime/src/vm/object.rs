@@ -144,7 +144,9 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
             | ShapeTransition::Constructed { .. }
             | ShapeTransition::Root
             | ShapeTransition::Vacant
@@ -272,7 +274,9 @@ impl<H: Host> Vm<H> {
                     ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+                ShapeTransition::FunctionName { .. }
+                | ShapeTransition::FunctionNameReconfigured
+                | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -578,7 +582,8 @@ impl<H: Host> Vm<H> {
         if self.lacks_own_index(holder, index) {
             return None;
         }
-        let named = atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
+        let named =
+            atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
         if self.own_element_present(holder, index) {
             let attributes = named.unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let frozen = self.object_data(holder).is_some_and(Object::is_frozen);
@@ -1244,9 +1249,9 @@ impl<H: Host> Vm<H> {
     /// The shape an empty object reaches by adding `atoms` as data properties in order: the
     /// transitions an object literal with those keys walks.
     pub(super) fn literal_shape(&mut self, atoms: &[Atom]) -> u32 {
-        atoms
-            .iter()
-            .fold(EMPTY_SHAPE, |shape, atom| self.transition_shape(shape, *atom))
+        atoms.iter().fold(EMPTY_SHAPE, |shape, atom| {
+            self.transition_shape(shape, *atom)
+        })
     }
     /// A user function's own data `length`, as its closure's shape holds it: `None` for a
     /// native or bound function, whose `length` other paths answer, a shape with getter slots
@@ -3019,7 +3024,9 @@ impl<H: Host> Vm<H> {
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
-            if self.set_private_field_value(p, target, atom, value) { return Ok(true); }
+            if self.set_private_field_value(p, target, atom, value) {
+                return Ok(true);
+            }
         }
         let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(self.atom_name(atom)) {
@@ -3110,7 +3117,9 @@ impl<H: Host> Vm<H> {
                 self.own_index_attributes(current, index as usize, Some(atom))
             } else {
                 self.property_attributes(current, PropertyKey::string(atom))
-                    .filter(|attributes| self.own_property(current, atom).is_some() || attributes.accessor)
+                    .filter(|attributes| {
+                        self.own_property(current, atom).is_some() || attributes.accessor
+                    })
             };
             if let Some(attributes) = held {
                 found = Some((current, attributes));
@@ -3637,7 +3646,9 @@ impl<H: Host> Vm<H> {
             let key = self.atom_name(atom).to_owned();
             return Err(self.nullish_assignment_error(p, object, &key));
         }
-        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
+        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) {
+            return Ok(());
+        }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() && self.host.nonextensible_applies_to_private() {
@@ -3651,8 +3662,15 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            let written =
-                self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?;
+            let written = self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?;
             return if written || !strict {
                 Ok(())
             } else {
@@ -4178,7 +4196,15 @@ impl<H: Host> Vm<H> {
             };
         }
         let written = if let Some((target, handler)) = self.proxy_parts(object) {
-            self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?
+            self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?
         } else {
             self.set_property_with_receiver(p, object, atom, value, object)?
         };
@@ -4336,7 +4362,11 @@ impl<H: Host> Vm<H> {
         };
         self.append_cached_shape_transition(shape, transition)
     }
-    pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
+    pub(super) fn append_cached_shape_transition(
+        &mut self,
+        shape: u32,
+        transition: ShapeTransition,
+    ) -> u32 {
         let key = transition.cache_key();
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();
