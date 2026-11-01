@@ -375,6 +375,7 @@ pub(crate) fn brand(
     Ok(context.boolean(true))
 }
 
+/// A coded error's `toString()`: `${name} [${code}]: ${message}`.
 pub(crate) fn to_string(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,

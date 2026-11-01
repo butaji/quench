@@ -5,16 +5,14 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 const DEFAULT_FOREGROUND: u16 = 39;
 const BOLD: u16 = 1;
 const DIM: u16 = 2;
-pub(crate) fn install(
+/// `util.styleText`, reading colors from `inspect.colors`.
+pub(crate) fn function(
     context: &mut NativeContext<'_, NodeHost>,
-    module: RootId,
     inspect: RootId,
-) -> Result<(), RootedError> {
+) -> Result<RootId, RootedError> {
     let null = context.null();
     let data = context.array_rooted(&[inspect, null])?;
-    let style =
-        context.host_function_with_data(crate::host::shared_vm::operation("styleText"), data)?;
-    set(context, module, "styleText", style)
+    context.host_function_named_with_data(crate::host::shared_vm::operation("styleText"), "styleText", data)
 }
 
 #[derive(Clone)]
@@ -314,7 +312,8 @@ fn valid_stream(
     node_stream(context, stream)
 }
 
-fn should_colorize(
+/// `shouldColorize(stream)` (internal/util/colors.js).
+pub(crate) fn should_colorize(
     context: &mut NativeContext<'_, NodeHost>,
     stream: RootId,
 ) -> Result<bool, RootedError> {
