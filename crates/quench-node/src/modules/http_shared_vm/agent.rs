@@ -553,17 +553,18 @@ fn remove_socket(c: &mut Context<'_>, this: RootId, socket: RootId, options: Roo
     if c.truthy_rooted(waiting)? && number(c, waiting, "length")? > 0.0 {
         next = Some((get(c, waiting, "0")?, options));
     } else {
-        for key in c.enumerable_own_keys_rooted(requests, false, true)? {
+        // Only the first origin with waiting requests is considered, as in Node.
+        let origins = c.enumerable_own_keys_rooted(requests, false, true)?;
+        if let Some(&key) = origins.first() {
             let origin = c.to_string(key)?;
             let in_use = get(c, sockets, &origin)?;
-            if c.truthy_rooted(in_use)? && number(c, in_use, "length")? > 0.0 {
-                break;
+            let busy = c.truthy_rooted(in_use)? && number(c, in_use, "length")? > 0.0;
+            if !busy {
+                let list = c.get_property_rooted(requests, key)?;
+                let request = get(c, list, "0")?;
+                let options = get_slot(c, request, Slot::RequestOptions)?;
+                next = Some((request, options));
             }
-            let list = c.get_property_rooted(requests, key)?;
-            let request = get(c, list, "0")?;
-            let options = get_slot(c, request, Slot::RequestOptions)?;
-            next = Some((request, options));
-            break;
         }
     }
     if let Some((request, options)) = next {

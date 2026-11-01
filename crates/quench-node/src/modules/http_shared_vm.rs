@@ -141,6 +141,9 @@ impl Class {
     const COUNT: usize = 19;
 }
 
+/// `Number.MAX_SAFE_INTEGER`, the bound of Node's integer option validation.
+pub(crate) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
 #[derive(Clone, Copy)]
 pub(crate) struct Intrinsics {
     slots: [RootId; Slot::ALL.len()],

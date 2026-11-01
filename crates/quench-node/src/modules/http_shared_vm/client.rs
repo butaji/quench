@@ -298,7 +298,7 @@ fn validate_host(c: &mut Context<'_>, host: RootId, name: &str) -> Outcome {
             c,
             host,
             &format!("options.{name}"),
-            "of type string or one of type undefined or null",
+            "of type string or one of undefined or null",
         ) {
             Ok(error) | Err(error) => error,
         });
@@ -382,7 +382,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
                 c,
                 agent,
                 "options.agent",
-                "of type Agent-like Object, undefined, or false",
+                "one of Agent-like Object, undefined, or false",
             ) {
                 Ok(error) | Err(error) => error,
             });
@@ -480,7 +480,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
     put(c, this, "method", method_value)?;
     let max_header_size = get(c, options, "maxHeaderSize")?;
     if !is_undefined(c, max_header_size) {
-        let maximum = c.number(f64::from(u32::MAX));
+        let maximum = c.number(super::MAX_SAFE_INTEGER);
         crate::modules::util_shared_vm::validate_integer(c, max_header_size, "maxHeaderSize", 0.0, maximum)?;
     }
     put(c, this, "maxHeaderSize", max_header_size)?;

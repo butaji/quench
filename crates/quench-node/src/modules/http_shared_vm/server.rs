@@ -50,6 +50,8 @@ crate::modules::host_members::members!(Member, "httpServer", [
     TrackConnections,
     /// `checkConnections`, on the tracking interval.
     CheckConnections,
+    /// The default `shouldUpgradeCallback`: whether the server listens for `upgrade`.
+    ShouldUpgrade,
 ]);
 
 /// The connection's bookkeeping fields (`connectionListenerInternal`'s `state`).
@@ -285,6 +287,10 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             check_connections(c, server)?;
             Ok(c.undefined())
         }
+        Member::ShouldUpgrade => {
+            let listening = listener_count(c, this, "upgrade")? > 0.0;
+            Ok(c.boolean(listening))
+        }
     }
 }
 
@@ -477,12 +483,11 @@ fn validate_milliseconds(c: &mut Context<'_>, options: RootId, name: &str, defau
     if is_undefined(c, value) {
         return Ok(c.number(default));
     }
-    let maximum = c.number(MAX_SAFE_INTEGER);
+    let maximum = c.number(super::MAX_SAFE_INTEGER);
     crate::modules::util_shared_vm::validate_integer(c, value, name, 0.0, maximum)?;
     Ok(value)
 }
 
-const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 fn validate_boolean(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
     if is_undefined(c, value) || c.rooted_value(value).is_some_and(|value| value.as_bool().is_some()) {
@@ -503,7 +508,7 @@ pub(crate) fn store_options(c: &mut Context<'_>, server: RootId, options: RootId
     put_slot(c, server, Slot::ServerResponseClass, response)?;
     let max_header_size = get(c, options, "maxHeaderSize")?;
     if !is_undefined(c, max_header_size) {
-        let maximum = c.number(MAX_SAFE_INTEGER);
+        let maximum = c.number(super::MAX_SAFE_INTEGER);
         crate::modules::util_shared_vm::validate_integer(c, max_header_size, "maxHeaderSize", 0.0, maximum)?;
     }
     put(c, server, "maxHeaderSize", max_header_size)?;
@@ -543,7 +548,18 @@ pub(crate) fn store_options(c: &mut Context<'_>, server: RootId, options: RootId
     let reject = get(c, options, "rejectNonStandardBodyWrites")?;
     validate_boolean(c, reject, "options.rejectNonStandardBodyWrites")?;
     let reject = if is_undefined(c, reject) { c.boolean(false) } else { reject };
-    put(c, server, "rejectNonStandardBodyWrites", reject)
+    put(c, server, "rejectNonStandardBodyWrites", reject)?;
+    let should_upgrade = get(c, options, "shouldUpgradeCallback")?;
+    let should_upgrade = if is_undefined(c, should_upgrade) {
+        function(c, Member::ShouldUpgrade, "shouldUpgradeCallback", &[])?
+    } else if c.is_callable_rooted(should_upgrade)? {
+        should_upgrade
+    } else {
+        return Err(match crate::modules::util_shared_vm::argument_type_error(c, should_upgrade, "options.shouldUpgradeCallback", "function") {
+            Ok(error) | Err(error) => error,
+        });
+    };
+    put(c, server, "shouldUpgradeCallback", should_upgrade)
 }
 
 /// The HTTP fields a server takes after its socket server is made.
@@ -883,7 +899,10 @@ pub(crate) fn on_incoming(c: &mut Context<'_>, socket: RootId, request: RootId, 
     reset_socket_timeout(c, server, socket, state)?;
     if truthy_member(c, request, "upgrade")? {
         let method = get(c, request, "method")?;
-        let upgrade = c.string_text(method)?.as_deref() == Some("CONNECT") || listener_count(c, server, "upgrade")? > 0.0;
+        let upgrade = c.string_text(method)?.as_deref() == Some("CONNECT") || {
+            let decided = call_method(c, server, "shouldUpgradeCallback", &[request])?;
+            c.truthy_rooted(decided)?
+        };
         put_bool(c, request, "upgrade", upgrade)?;
         if upgrade {
             return Ok(HeadOutcome::Upgrade);
