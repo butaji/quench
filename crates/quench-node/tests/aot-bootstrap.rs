@@ -1730,7 +1730,7 @@ fn compile_command_preserves_dynamic_source_scope_coercion_and_jobs() {
         let report = directory.join(format!("{extension}.json"));
         let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
             .arg("compile").arg(&entry).arg("-o").arg(&binary)
-            .args(["--profile", "iteration", "--dynamic-source"])
+            .args(["--profile", "iteration"])
             .arg("--sdk-report").arg(&sdk).arg("--report").arg(&report).output().unwrap();
         assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
         fs::remove_dir_all(&sources).unwrap();
@@ -1742,6 +1742,7 @@ fn compile_command_preserves_dynamic_source_scope_coercion_and_jobs() {
         }
         let report: serde_json::Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
         assert_eq!(report["execution_mode"], "native_with_dynamic_source");
+        assert!(!report["dynamic_eval_sites"].as_array().unwrap().is_empty());
         for capability in ["source_compilation", "js_source_frontend", "bytecode_interpreter", "jit"] {
             assert_eq!(report[capability], true, "{capability}");
         }

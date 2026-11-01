@@ -132,6 +132,15 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut manifest = SourceManifest::default();
     let graph = manifest.add_module_graph(&entry)?;
+    // An unshadowed eval reference can escape or receive runtime input. Until
+    // source-capability closure is complete, select the shared dynamic tier
+    // conservatively for these sites; other dynamic-source forms still require
+    // explicit support and must not be reported as automatically resolved.
+    let support = if options.support.allows_dynamic_source() || !graph.dynamic_eval_sites.is_empty() {
+        NativeImageSupport::DynamicSource
+    } else {
+        NativeImageSupport::Static
+    };
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -160,12 +169,14 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if options.support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile,
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile,
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
-        "source_compilation": options.support.allows_dynamic_source(),
-        "js_source_frontend": options.support.allows_dynamic_source(),
-        "bytecode_interpreter": options.support.allows_dynamic_source(),
-        "jit": options.support.allows_dynamic_source(),
+        "source_compilation": support.allows_dynamic_source(),
+        "js_source_frontend": support.allows_dynamic_source(),
+        "bytecode_interpreter": support.allows_dynamic_source(),
+        "jit": support.allows_dynamic_source(),
+        "dynamic_eval_sites": graph.dynamic_eval_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
+        "automatic_dynamic_source_coverage": "unshadowed eval references only; other forms require explicit support",
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });
@@ -211,7 +222,7 @@ fn compile(options: Options) -> Result<(), String> {
                 "quench-node",
                 "--no-default-features",
                 "--features",
-                if options.support.allows_dynamic_source() { "native-execution,jit" } else { "native-execution" },
+                if support.allows_dynamic_source() { "native-execution,jit" } else { "native-execution" },
                 "--lib",
                 "--message-format=json",
             ]);
@@ -222,7 +233,7 @@ fn compile(options: Options) -> Result<(), String> {
             .map_err(|error| error.to_string())?
         }
     };
-    let support = NativeSupport::from_cargo_report_with_support(&support_report, options.support)?;
+    let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
     report["support_artifacts"] = support.report();
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;

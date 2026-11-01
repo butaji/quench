@@ -427,4 +427,20 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    #[test]
+    fn graph_tracks_global_eval_references_without_trusting_types_or_shadowed_names() {
+        let directory = std::env::temp_dir().join(format!("quench-eval-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        let dependency = directory.join("dependency.cjs");
+        fs::write(&entry, "require('./dependency.cjs'); function local(eval: (x: string) => string) { return eval('x'); } type T = typeof eval;").unwrap();
+        fs::write(&dependency, "const indirect = eval; globalThis.eval; globalThis['eval'];").unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        assert_eq!(graph.dynamic_eval_sites.len(), 3);
+        let dependency = dependency.canonicalize().unwrap();
+        assert!(graph.dynamic_eval_sites.iter().all(|(path, _)| path == &dependency), "{:?}", graph.dynamic_eval_sites);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
 }
