@@ -2496,6 +2496,7 @@ pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Url)
 }
 
+#[cfg(feature = "aot")]
 pub(crate) fn internal_url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::InternalUrl)
 }
@@ -2890,15 +2891,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             node_library_module(context, &relative, &relative)
         }
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
-        BuiltinModule::InternalUrl => {
-            // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`
-            // and `URL.revokeObjectURL`; the module loads on first use here, so it does then.
-            let module = node_library_module(context, "url.js", "internal/url.js")?;
-            let install = get(context, module, "installObjectURLMethods")?;
-            let undefined = context.undefined();
-            context.call_rooted(install, undefined, &[])?;
-            Ok(module)
-        }
+        BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
         // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
         BuiltinModule::UtilTypes => {
             let util = crate::modules::util_shared_vm::module(context)?;
@@ -2939,7 +2932,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             crate::modules::worker_shared_vm::module(context, &markers)
         }
-        BuiltinModule::Url => node_library_module(context, "url.js", "url.js"),
+        BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
         BuiltinModule::Readline => node_library_module(context, "readline.js", "readline.js"),
         BuiltinModule::StreamConsumers => {
