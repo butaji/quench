@@ -12,11 +12,14 @@ const COMPILE_REPORT_VERSION: u64 = 1;
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile production|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile production|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
 ];
+
+#[derive(Clone, Copy)]
+enum SourceSupport { Automatic, Dynamic, Static }
 
 struct Options {
     entry: PathBuf,
@@ -25,7 +28,7 @@ struct Options {
     sdk_report: Option<PathBuf>,
     profile: String,
     strict: bool,
-    support: NativeImageSupport,
+    support: SourceSupport,
 }
 
 impl Options {
@@ -37,7 +40,7 @@ impl Options {
         let mut sdk_report = None;
         let mut profile = None;
         let mut strict = false;
-        let mut support = NativeImageSupport::Static;
+        let mut support = None;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
                 "-o" | "--output" | "--report" | "--profile" | "--sdk-report" => {
@@ -69,7 +72,10 @@ impl Options {
                     }
                 }
                 "--strict-aot" => strict = true,
-                "--dynamic-source" => support = NativeImageSupport::DynamicSource,
+                "--dynamic-source" | "--static-source" => {
+                    let selected = if argument == "--dynamic-source" { SourceSupport::Dynamic } else { SourceSupport::Static };
+                    if support.replace(selected).is_some() { return Err("source support specified more than once".into()); }
+                },
                 option if option.starts_with('-') => {
                     return Err(format!("unknown compile option {option}\n{USAGE}"))
                 }
@@ -91,7 +97,7 @@ impl Options {
             sdk_report,
             profile,
             strict,
-            support,
+            support: support.unwrap_or(SourceSupport::Automatic),
         })
     }
 }
@@ -132,6 +138,15 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut manifest = SourceManifest::default();
     let graph = manifest.add_module_graph(&entry)?;
+    // Both eval references and known constructor flows may receive runtime
+    // source. Other dynamic-source forms still require explicit support until
+    // source-capability closure is complete.
+    let support = match options.support {
+        SourceSupport::Dynamic => NativeImageSupport::DynamicSource,
+        SourceSupport::Static => NativeImageSupport::Static,
+        SourceSupport::Automatic if !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty() => NativeImageSupport::DynamicSource,
+        SourceSupport::Automatic => NativeImageSupport::Static,
+    };
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -160,12 +175,16 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if options.support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile,
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile,
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
-        "source_compilation": options.support.allows_dynamic_source(),
-        "js_source_frontend": options.support.allows_dynamic_source(),
-        "bytecode_interpreter": options.support.allows_dynamic_source(),
-        "jit": options.support.allows_dynamic_source(),
+        "source_compilation": support.allows_dynamic_source(),
+        "js_source_frontend": support.allows_dynamic_source(),
+        "bytecode_interpreter": support.allows_dynamic_source(),
+        "jit": support.allows_dynamic_source(),
+        "dynamic_eval_sites": graph.dynamic_eval_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
+        "dynamic_function_sites": graph.dynamic_function_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
+        "source_support_selection": match options.support { SourceSupport::Automatic => "automatic", SourceSupport::Dynamic => "dynamic", SourceSupport::Static => "static" },
+        "automatic_dynamic_source_coverage": "unshadowed eval references and discovered Function-constructor calls with nonliteral source; other forms require explicit support",
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });
@@ -211,7 +230,7 @@ fn compile(options: Options) -> Result<(), String> {
                 "quench-node",
                 "--no-default-features",
                 "--features",
-                if options.support.allows_dynamic_source() { "native-execution,jit" } else { "native-execution" },
+                if support.allows_dynamic_source() { "native-execution,jit" } else { "native-execution" },
                 "--lib",
                 "--message-format=json",
             ]);
@@ -222,7 +241,7 @@ fn compile(options: Options) -> Result<(), String> {
             .map_err(|error| error.to_string())?
         }
     };
-    let support = NativeSupport::from_cargo_report_with_support(&support_report, options.support)?;
+    let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
     report["support_artifacts"] = support.report();
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
@@ -356,6 +375,7 @@ mod tests {
             vec!["entry.js", "-o", "a", "-o", "b"],
             vec!["entry.js", "other.js", "-o", "a"],
             vec!["entry.js", "-o", "a", "--profile", "unknown"],
+            vec!["entry.js", "-o", "a", "--static-source", "--dynamic-source"],
         ] {
             assert!(Options::parse(args.into_iter().map(str::to_owned).collect()).is_err());
         }
@@ -377,7 +397,7 @@ mod tests {
             sdk_report: None,
             profile: "iteration".into(),
             strict: false,
-            support: NativeImageSupport::Static,
+            support: SourceSupport::Static,
         });
         assert!(result.is_err());
         assert!(!effect.exists());
@@ -406,7 +426,7 @@ mod tests {
                 sdk_report: None,
                 profile: "iteration".into(),
                 strict: false,
-                support: NativeImageSupport::Static,
+                support: SourceSupport::Static,
             })
             .is_err());
         }
