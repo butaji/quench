@@ -2919,9 +2919,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
         BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
-        BuiltinModule::StringDecoder => {
-            node_library_module(context, "string_decoder.js", "string_decoder.js")
-        }
+        BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
             crate::modules::timers_shared_vm::timers_module(context, promises)
