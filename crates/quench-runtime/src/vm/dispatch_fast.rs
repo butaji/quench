@@ -11152,7 +11152,7 @@ script_handler! {
             return exit(ip);
         }
         if !lane_activation_room(vm, &target) {
-            return lane_script_call_frame::<H>(ip);
+            return lane_script_call_frame::<H>(ip, usize::from(target.room));
         }
         let Some(this) = lane_call_this(vm, &target, r.get(i.c)) else {
             return exit(ip);
@@ -13720,7 +13720,7 @@ fn lane_activate<H: Host>(
         );
     }
     if !lane_activation_room(vm, target) {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room)));
     }
     // SAFETY: the call's window of `r` holds its `argc` values.
     let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
@@ -14116,7 +14116,7 @@ fn lane_activate_environment<H: Host>(
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < usize::from(target.room) + extra
     {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room) + extra));
     }
     // The rest array, made before the window is: the values past the other parameters,
     // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
@@ -14540,7 +14540,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
             < fill_room::<ACTIVATION_FILL_BLOCK>(window_size)
     {
-        return Err(lane_script_call_frame::<H>(ip));
+        return Err(lane_script_call_frame::<H>(ip, fill_room::<ACTIVATION_FILL_BLOCK>(window_size)));
     }
     let stack = &mut vm.lane_stack;
     let window = stack.values.len();
@@ -14655,28 +14655,25 @@ unsafe fn lane_keep_arguments(
 /// registers.
 #[cold]
 #[inline(never)]
-fn lane_script_call_frame<H: Host>(ip: Ip) -> Ip {
+fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
     let cx = lane_context::<H>();
     let vm = unsafe { vm(cx) };
     let stack = &vm.lane_stack;
-    let values_full = stack.values.capacity() - stack.values.len() < LANE_SCRIPT_WINDOW;
+    let values_full = stack.values.capacity() - stack.values.len() < room;
+    let required_values = stack.values.len() + room;
     let activations_full = stack.activations.len() == stack.activations.capacity();
+    let required_activations = stack.activations.len() + 1;
     vm.materialize_lane_activations(cx);
+    // Materialization clears both vectors. Reserve against the demand of the paused
+    // activation stack, so the next call can fit even when its window is large.
     if values_full {
-        let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack
-            .values
-            .reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
+        vm.lane_stack.values.reserve(required_values);
     }
     if activations_full {
-        let capacity = vm.lane_stack.activations.capacity();
-        vm.lane_stack.activations.reserve((2 * capacity).max(1));
+        vm.lane_stack.activations.reserve(required_activations);
     }
     exit(ip)
 }
-
-/// Lane-stack room a frameless call's growth reserves at least: a common window.
-const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
 lane_handler! {
     /// A Wasm call to a function of the same program, pushed as the general
