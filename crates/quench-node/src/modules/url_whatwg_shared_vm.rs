@@ -527,8 +527,8 @@ fn store_pairs(c: &mut Context<'_>, params: RootId, pairs: &Pairs) -> Result<(),
 fn load_pairs(c: &mut Context<'_>, list: RootId) -> Result<Pairs, RootedError> {
     let values = c.array_like_values_rooted(list)?;
     let mut pairs = Vec::with_capacity(values.len() / 2);
-    for pair in values.chunks_exact(2) {
-        pairs.push((c.to_string(pair[0])?, c.to_string(pair[1])?));
+    for [name, value] in values.as_chunks::<2>().0 {
+        pairs.push((c.to_string(*name)?, c.to_string(*value)?));
     }
     Ok(pairs)
 }

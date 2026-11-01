@@ -404,11 +404,7 @@ impl Options {
                 }
             }
             "numericSeparator" => self.numeric_separator = truthy,
-            "stylize" => {
-                if c.is_callable_rooted(value)? {
-                    self.stylize = Stylize::User(value);
-                }
-            }
+            "stylize" if c.is_callable_rooted(value)? => self.stylize = Stylize::User(value),
             _ => {}
         }
         Ok(())
@@ -1055,9 +1051,9 @@ impl Inspector {
         let shown = self.shown(pairs);
         self.indentation += ENTRY_INDENTATION;
         let mut output = Vec::with_capacity(shown + 1);
-        for pair in entries.chunks_exact(2).take(shown) {
-            let key = self.format_value(c, pair[0], recurse_times, false)?;
-            let entry = self.format_value(c, pair[1], recurse_times, false)?;
+        for [key, entry] in entries.as_chunks::<2>().0.iter().take(shown) {
+            let key = self.format_value(c, *key, recurse_times, false)?;
+            let entry = self.format_value(c, *entry, recurse_times, false)?;
             output.push(if weak {
                 format!("{key} => {entry}")
             } else {
@@ -1507,9 +1503,7 @@ fn prefix(constructor: Option<&str>, tag: &str, fallback: &str, size: &str) -> S
 /// `getIteratorBraces`.
 fn iterator_braces(kind: &str, tag: &str) -> (String, String) {
     let iterator = format!("{kind} Iterator");
-    let tag = if tag == iterator {
-        iterator
-    } else if tag.is_empty() {
+    let tag = if tag == iterator || tag.is_empty() {
         iterator
     } else {
         format!("{tag}] [{iterator}")

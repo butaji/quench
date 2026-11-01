@@ -444,8 +444,7 @@ fn network_interfaces(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     let records = checked(context, super::os_binding_shared_vm::interfaces, &[])?;
     let fields = context.array_like_values_rooted(records)?;
     let result = context.object_rooted()?;
-    for record in fields.chunks_exact(INTERFACE_FIELDS) {
-        let [name, address, netmask, family, mac, internal, scope] = record else { continue };
+    for [name, address, netmask, family, mac, internal, scope] in fields.as_chunks::<INTERFACE_FIELDS>().0 {
         let entry = context.object_rooted()?;
         for (key, value) in [("address", *address), ("netmask", *netmask), ("family", *family), ("mac", *mac), ("internal", *internal)] {
             set(context, entry, key, value)?;

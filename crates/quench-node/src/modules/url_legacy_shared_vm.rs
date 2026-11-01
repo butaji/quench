@@ -732,13 +732,7 @@ fn resolve_object(c: &mut Context<'_>, source: &Legacy, relative: &Legacy) -> Re
     }
     let absolute = source_path.first().is_some_and(|first| first.is_empty() || first.starts_with('/'));
     if no_leading_slashes {
-        let host = if absolute {
-            String::new()
-        } else if source_path.is_empty() {
-            String::new()
-        } else {
-            source_path.remove(0)
-        };
+        let host = if absolute || source_path.is_empty() { String::new() } else { source_path.remove(0) };
         result.hostname = Some(host.clone());
         result.host = Some(host);
         split_auth_in_host(&mut result);
