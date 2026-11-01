@@ -59,13 +59,24 @@ pub(crate) struct Unit {
     pub(crate) end: u32,
 }
 
+impl Unit {
+    /// The closure whose depth-zero binding this instruction reads.
+    pub(crate) fn capture_key(&self, pc: usize) -> (Option<usize>, u16) {
+        let frame = match self.origins[pc] {
+            Origin::Caller(_) => None,
+            Origin::Inlined { frame, .. } => Some(frame),
+        };
+        (frame, self.instructions[pc].capture_slot())
+    }
+}
+
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at
 /// every call site, and short bodies (accessors, field updates) are where a call costs most
 /// relative to its work.
 const MAX_INLINED_INSTRUCTIONS: usize = 48;
 
 /// Whether the lane-body lowering runs `instruction` of an inlined callee: no call (one level),
-/// no capture (its environment is the callee's), no fusion but a returning one, which splits
+/// depth-zero captures (admitted from the callee's environment), no fusion but a returning one, which splits
 /// into the computation and the return (`osr_loop::inlined_returning`).
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0;
@@ -76,6 +87,7 @@ fn inlinable(instruction: WideInstruction) -> bool {
         | Op::JumpBinaryFalse => plain,
         Op::GetField => value && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { .. })),
         Op::SetThisField | Op::SetThisFieldStrict => plain,
+        Op::LoadCapture => plain && instruction.capture_depth() == 0,
         op => value && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
 }

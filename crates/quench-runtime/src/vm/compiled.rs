@@ -2032,6 +2032,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, rec
 /// lane's handlers run (`Vm::cached_field_hit`, `Vm::primary_own_field_store_hit`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct LaneHelpers {
+    function_capture: usize,
     field_get: usize,
     field_set: usize,
 }
@@ -6817,6 +6818,21 @@ unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
         .map_or(Value::DELETED.to_bits(), Value::to_bits)
 }
 
+/// Admit a depth-zero closure capture without walking, allocating or invoking
+/// guest code. Root projections and uninitialized bindings decline exactly as
+/// the interpreter's direct-capture projection does.
+unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, slot: u64) -> u64 {
+    // SAFETY: the lane owns this VM while generated code runs; no collection or
+    // reentry occurs while it holds the closure's environment slots.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    let read = || {
+        let env = vm.heap.function(Value::from_bits(callee))?.env;
+        let (slots, root) = vm.environment_capture_slots(env, false, 0)?;
+        vm.owned_capture(slots, root, u16::try_from(slot).ok()?)
+    };
+    read().unwrap_or(Value::DELETED).to_bits()
+}
+
 impl<H: Host> Vm<H> {
     /// The receiver field sites of `function` whose cache entries prove a holderless exact
     /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
@@ -6844,11 +6860,16 @@ impl<H: Host> Vm<H> {
     pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &[Option<CallTarget>]) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers {
+            function_capture: lane_function_capture_read::<H> as unsafe extern "C" fn(u64, u64, u64) -> u64 as usize,
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
-        let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize))?;
+        // A captured-store call already runs through the shared frameless kernel.
+        // Generic unit entry/capture admission costs more than that kernel; keep
+        // its call until the unit can transplant the same compact store proof.
+        let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize)
+            .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
         // Until calls stay native (TOD-1219), a body that calls leaves at every call it does
         // not inline and pays its entry again in each callee's return; it runs cheaper in
         // the lane.

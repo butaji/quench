@@ -21178,18 +21178,22 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
     // body. A string total makes `add` leave inside it, a double makes its int path
     // leave, and swapping `add` makes the call's guard leave at the call itself. The callee
-    // reads no capture: its environment is not its caller's.
+    // captures its scale in an environment distinct from the caller's mutable bias.
     let source = r#"(function () {
       function Counter(n) { this.n = n; this.total = 0; this.calls = 0; }
-      Counter.prototype.add = function (k) {
+      let bias = 7, coercions = 0;
+      function makeAdder(scale) {
+        globalThis.changeScale = function (value) { scale = value; };
+        return function (k) {
         this.calls = this.calls + 1;
-        this.total = this.total + k;
+        this.total = this.total + k * scale;
         if (this.total > 1000) { this.total = this.total - 1000; }
         return this.total;
-      };
+      }; }
+      Counter.prototype.add = makeAdder(1);
       Counter.prototype.step = function (k) {
         const t = this.add(k);
-        return t + this.n;
+        return t + this.n + bias;
       };
       const COUNTERS = 6, ROUNDS = 4000, REPLACE_AT = 3000;
       const counters = [];
@@ -21199,15 +21203,20 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         for (const c of counters) sum = (sum + c.step(round & 31)) % 1000003;
         if (round === 1500) counters[2].total = "x";
         if (round === 1501) counters[2].total = 0;
+        if (round === 1700) changeScale({ valueOf() { coercions++; return 1; } });
+        if (round === 1701) changeScale(1);
         if (round === 2200) counters[3].total = 0.25;
         if (round === 2201) counters[3].total = 0;
-        if (round === REPLACE_AT) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
+        if (round === REPLACE_AT) { Counter.prototype.add = makeAdder(2); bias = 11; }
       }
       let calls = 0;
       for (const c of counters) calls += c.calls;
-      if (calls !== COUNTERS * (REPLACE_AT + 1)) throw Error('repeated or lost inlined store');
+      if (calls !== COUNTERS * ROUNDS) throw Error('repeated or lost inlined store');
+      if (coercions !== COUNTERS) throw Error('repeated or lost capture coercion');
       globalThis.answer = sum + calls;
       globalThis.totals = counters.map(c => c.total).join(',');
+      globalThis.inlineCounter = counters[0];
+      globalThis.inlineStep = Counter.prototype.step;
     })();"#;
     let program = Engine::specialize(source, "lane-inline.js").unwrap();
     let mut answers = Vec::new();
@@ -21224,6 +21233,39 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let totals = vm.own_property(global, atom).and_then(|value| vm.heap.string(value))
             .map(ToString::to_string);
         answers.push((answer, totals));
+        let caller = vm.intern_atom("inlineStep");
+        let caller = vm.own_property(global, caller).unwrap();
+        let callee = vm.intern_atom("inlineCounter");
+        let receiver = vm.own_property(global, callee).unwrap();
+        let callee = vm.intern_atom("add");
+        let callee = vm.get_property(&program, receiver, callee).unwrap();
+        let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("script caller") };
+        let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("script callee") };
+        let body = program.function(caller_id as usize);
+        let mut targets = vec![None; body.code.len()];
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
+        targets[call] = Some(super::compiled::CallTarget { callee, function: callee_id });
+        let method = vm.compile_lane_method(&program, caller_id, &targets).expect("closure capture unit compiles");
+        assert_eq!(method.inlined.len(), 1, "callee captures must not retain a guest call");
+        let total = vm.intern_atom("total");
+        let calls = vm.intern_atom("calls");
+        let before_total = vm.own_property(receiver, total).unwrap().as_number().unwrap();
+        let before_calls = vm.own_property(receiver, calls).unwrap().as_number().unwrap();
+        let expected_total = before_total + 3.0 * 2.0;
+        let expected_total = if expected_total > 1000.0 { expected_total - 1000.0 } else { expected_total };
+        let env = vm.heap.function(caller).unwrap().env;
+        let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
+        let slots = std::ptr::from_ref(slots);
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = Value::number(3.0);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, slots).caller_pc().expect("inlined closure reaches caller return");
+        let terminal = body.instructions().nth(pc).unwrap();
+        assert_eq!(terminal.op(), crate::bytecode::Op::Return);
+        assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
+        assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
+        assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
         if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
             let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "the storing callee runs inlined in its caller's lane body");

@@ -81,8 +81,8 @@ struct Entry {
     receiver_shapes: BTreeMap<u32, Variable>,
     /// Per stored atom, whether the run admits direct stores of it.
     store_atoms: BTreeMap<Atom, Variable>,
-    /// Per capture slot read, its value or `DELETED`.
-    captures: BTreeMap<u16, Variable>,
+    /// Per caller (`None`) or inlined closure's capture slot, its value or `DELETED`.
+    captures: BTreeMap<(Option<usize>, u16), Variable>,
     this: Variable,
 }
 
@@ -635,25 +635,51 @@ impl Lowering<'_, '_> {
             }
         }
         let mut captures = BTreeMap::new();
-        for instruction in instructions {
+        let mut capture_miss = None;
+        for (pc, instruction) in instructions.iter().enumerate() {
             if instruction.op() == Op::LoadCapture && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 {
-                let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
-                if captures.contains_key(&slot) {
+                let key = self.unit.capture_key(pc);
+                let (frame, slot) = key;
+                if captures.contains_key(&key) {
                     continue;
                 }
-                let slots = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, captures));
                 let slot_value = self.builder.ins().iconst(types::I64, i64::from(slot));
                 let mut signature = Signature::new(self.builder.func.signature.call_conv);
-                signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64)]);
+                let (helper, arguments) = if let Some(frame) = frame {
+                    let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
+                    let callee = self.builder.ins().iconst(types::I64, self.unit.frames[frame].target.callee.to_bits() as i64);
+                    (self.helpers.function_capture, vec![vm, callee, slot_value])
+                } else {
+                    let slots = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, captures));
+                    (lane_capture_read as unsafe extern "C" fn(u64, u64) -> u64 as usize, vec![slots, slot_value])
+                };
+                signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
                 signature.returns.push(AbiParam::new(types::I64));
                 let signature = self.builder.import_signature(signature);
-                let helper = self.builder.ins().iconst(types::I64, lane_capture_read as unsafe extern "C" fn(u64, u64) -> u64 as usize as i64);
-                let call = self.builder.ins().call_indirect(signature, helper, &[slots, slot_value]);
+                let helper = self.builder.ins().iconst(types::I64, helper as i64);
+                let call = self.builder.ins().call_indirect(signature, helper, &arguments);
                 let value = self.builder.inst_results(call)[0];
+                let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
+                let admitted = self.builder.create_block();
+                let read = self.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                self.builder.ins().brif(read, admitted, &[], miss, &[]);
+                self.builder.switch_to_block(admitted);
                 let variable = self.builder.declare_var(types::I64);
                 self.builder.def_var(variable, value);
-                captures.insert(slot, variable);
+                captures.insert(key, variable);
             }
+        }
+        if let Some(miss) = capture_miss {
+            let admitted = self.builder.current_block().expect("capture admission continuation");
+            self.builder.switch_to_block(miss);
+            self.builder.set_cold_block(miss);
+            // No guest operation has run and canonical registers are untouched.
+            // Decline the whole unit once, even for a speculative unused capture.
+            let pc = self.builder.ins().iconst(types::I64, 0);
+            self.builder.ins().store(MemFlagsData::trusted(), pc, self.result, 0);
+            let stopped = self.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
+            self.builder.ins().return_(&[stopped]);
+            self.builder.switch_to_block(admitted);
         }
         Entry { receiver, receiver_shapes, store_atoms, captures, this }
     }
@@ -726,13 +752,10 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
-                let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
-                let variable = self.entry.as_ref().and_then(|entry| entry.captures.get(&slot)).copied();
+                let key = self.unit.capture_key(pc);
+                let variable = self.entry.as_ref().and_then(|entry| entry.captures.get(&key)).copied();
                 variable.map(|variable| {
-                    let exit = self.guard_exit(state, pc32);
                     let value = self.builder.use_var(variable);
-                    let read = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-                    emit_js_guard(&mut self.builder, read, exit);
                     self.set_tagged(state, instruction.result_register(), value);
                     true
                 })
@@ -1267,7 +1290,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+            &unit, LaneHelpers { function_capture: 0, field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1290,7 +1313,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0 }, &[], &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { function_capture: 0, field_get: 0, field_set: 0 }, &[], &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
