@@ -629,6 +629,11 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// Object mark blocks used by no-safepoint native write-barrier guards.
+    pub(crate) fn native_object_mark_blocks(&self) -> (*const u8, usize) {
+        self.object_records.native_mark_blocks()
+    }
+
     /// The current base and length of out-of-line ordinary-object property values.
     ///
     /// Native readers may use these only during synchronous no-safepoint execution and must

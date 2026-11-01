@@ -1488,7 +1488,7 @@ fn emit_js_cached_field_slot(
     site: u16,
     allow_holder: bool,
     fallback: ir::Block,
-) -> ir::Value {
+) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
     use crate::value::ValueLayout;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
@@ -1641,7 +1641,7 @@ fn emit_js_cached_field_slot(
         position,
         i64::try_from(OBJECT.property_value_size).expect("property value size fits i64"),
     );
-    builder.ins().iadd(values, value_offset)
+    (builder.ins().iadd(values, value_offset), record_id)
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -1691,7 +1691,7 @@ fn emit_js_own_field_get(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
@@ -1711,7 +1711,7 @@ fn emit_js_own_field_return(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     let returns = builder.create_block();
     let interrupted = builder.interrupt_requested();
@@ -1731,9 +1731,9 @@ fn emit_js_own_field_return(
 /// Lower an own data-field store as the lane's store hit makes it
 /// (`Vm::primary_own_field_store_hit`, `Vm::cached_field_store_hit`): in specialized
 /// execution, of a name no method cache names (whose store would invalidate it), to the slot
-/// `emit_js_cached_field_slot` finds. Only a value outside the heap is stored here, which the
-/// write barrier never logs; a heap value, like every failed proof, resumes `Vm::step` at
-/// the original store PC with nothing written.
+/// `emit_js_cached_field_slot` finds. A heap reference is stored only when the owner's mark
+/// proves the write barrier would not log it. Every failed proof resumes `Vm::step` at the
+/// original store PC with nothing written.
 #[allow(clippy::too_many_arguments)]
 fn emit_js_own_field_set(
     builder: &mut FunctionBuilder<'_>,
@@ -1755,7 +1755,6 @@ fn emit_js_own_field_set(
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
     let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
     let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-    emit_js_guard(builder, immediate, fallback);
     // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
     let word_index = atom / u64::BITS;
     let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
@@ -1777,7 +1776,56 @@ fn emit_js_own_field_set(
     builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
-    let address = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback);
+    let (address, record_id) =
+        emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback);
+    // A marked owner would be logged by RecordSpace::store_logs; otherwise the
+    // barrier is a no-op. Marks and block bases are refreshed after each callout.
+    let heap_value = builder.create_block();
+    let write = builder.create_block();
+    builder.ins().brif(immediate, write, &[], heap_value, &[]);
+    builder.switch_to_block(heap_value);
+    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    let blocks = emit_js_payload_word(
+        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
+    );
+    let count = emit_js_payload_word(
+        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+    );
+    let block = builder.ins().ushr_imm_u(
+        record_id, i64::from(OBJECT.mark_records_per_block.trailing_zeros()),
+    );
+    let block_live = builder.ins().icmp(IntCC::UnsignedLessThan, block, count);
+    emit_js_guard(builder, block_live, fallback);
+    let block_offset = builder.ins().imul_imm_u(
+        block, i64::try_from(OBJECT.mark_block_size).expect("mark block size fits i64"),
+    );
+    let block_address = builder.ins().iadd(blocks, block_offset);
+    let within = builder.ins().band_imm_u(
+        record_id, i64::try_from(OBJECT.mark_records_per_block - 1).expect("block mask fits i64"),
+    );
+    let word_index = builder.ins().ushr_imm_u(
+        within, i64::from(OBJECT.mark_word_bits.trailing_zeros()),
+    );
+    let word_offset = builder.ins().imul_imm_u(
+        word_index, i64::try_from(std::mem::size_of::<u64>()).expect("word size fits i64"),
+    );
+    let word_address = builder.ins().iadd(block_address, word_offset);
+    let marks = builder.ins().load(
+        types::I64, MemFlagsData::trusted(), word_address,
+        i32::try_from(OBJECT.mark_offset).expect("mark offset fits i32"),
+    );
+    let bit_index = builder.ins().band_imm_u(
+        within, i64::try_from(OBJECT.mark_word_bits - 1).expect("word mask fits i64"),
+    );
+    let one = builder.ins().iconst(types::I64, 1);
+    let mask = builder.ins().ishl(one, bit_index);
+    let marked = builder.ins().band(marks, mask);
+    let unmarked = builder.ins().icmp_imm_u(IntCC::Equal, marked, 0);
+    emit_js_guard(builder, unmarked, fallback);
+    builder.ins().jump(write, &[]);
+    builder.seal_block(heap_value);
+    builder.seal_block(write);
+    builder.switch_to_block(write);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -6196,6 +6244,8 @@ struct JsStepDispatch {
     /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
     /// of them, so each is read again after one (`refresh_heap_bases`).
     object_record_base: usize,
+    object_mark_blocks: usize,
+    object_mark_block_count: usize,
     property_values: usize,
     property_len: usize,
     field_entries: usize,
@@ -6274,7 +6324,8 @@ impl JsStepDispatch {
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
+            array_record_base: 0, object_record_base: 0, object_mark_blocks: 0,
+            object_mark_block_count: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             #[cfg(test)]
@@ -6303,6 +6354,8 @@ impl JsStepDispatch {
             .unwrap_or((std::ptr::null(), 0));
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        let (blocks, count) = vm.heap.native_object_mark_blocks();
+        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (values, len) = vm.heap.native_property_values();
         (self.property_values, self.property_len) = (values as usize, len);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);

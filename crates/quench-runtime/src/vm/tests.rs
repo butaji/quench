@@ -16151,13 +16151,15 @@ fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
     let source = r#"
       function write(value) { this.x = value; }
       function writeStrict(value) { 'use strict'; this.x = value; }
+      function setYoung(owner, n) { owner.write({ n }); }
       const target = { a: 1, b: 2, c: 3, x: 0, write, writeStrict };
       for (let i = 0; i < 64; i++) { target.write(i); target.writeStrict(i + 1); }
       if (target.x !== 64) throw Error('cached writes');
-      const reference = { n: 7 };
-      target.write(reference);
       $262.gc();
-      if (target.x !== reference || target.x.n !== 7) throw Error('heap write barrier');
+      setYoung(target, 7);
+      setYoung(target, 8);
+      $262.gc();
+      if (target.x.n !== 8) throw Error('heap write barrier');
       let seen = 0;
       Object.defineProperty(target, 'x', { set(value) { seen = value; }, configurable: true });
       target.write(71);
