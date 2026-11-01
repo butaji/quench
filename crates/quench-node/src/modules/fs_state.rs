@@ -246,6 +246,7 @@ impl FsState {
         &self,
         fd: i32,
         size: usize,
+        position: Option<u64>,
     ) -> std::io::Result<Option<Vec<u8>>> {
         let mut state = self.0.borrow_mut();
         let descriptor = state
@@ -253,16 +254,23 @@ impl FsState {
             .get_mut(&fd)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
         // The chunk becomes a Buffer's backing store, so read straight into
-        // uninitialized capacity rather than zeroing bytes the read overwrites.
+        // uninitialized capacity rather than zeroing bytes the read overwrites. A positioned
+        // read (`pread`) leaves the descriptor's own offset where it was, as Node's does.
         let mut bytes = Vec::<u8>::with_capacity(size);
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&descriptor.file);
         let read = loop {
             // SAFETY: the kernel writes at most `size` bytes into the reserved capacity.
             let read = unsafe {
-                libc::read(
-                    std::os::fd::AsRawFd::as_raw_fd(&descriptor.file),
-                    bytes.as_mut_ptr().cast(),
-                    size,
-                )
+                match position {
+                    Some(position) => libc::pread(
+                        fd,
+                        bytes.as_mut_ptr().cast(),
+                        size,
+                        libc::off_t::try_from(position)
+                            .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?,
+                    ),
+                    None => libc::read(fd, bytes.as_mut_ptr().cast(), size),
+                }
             };
             if read >= 0 {
                 break read as usize;

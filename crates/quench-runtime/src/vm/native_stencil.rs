@@ -717,7 +717,7 @@ mod tests {
             interpreted.execute(&program).unwrap();
             let expected = answer(&mut interpreted);
             assert!(expected.is_some());
-    
+
             let (stencils, stats) = compile_program::<TestHost>(program.clone()).unwrap();
             assert_eq!(stats.instructions, (0..program.function_count()).map(|id| program.function(id).code.len()).sum::<usize>());
             if cfg!(target_arch = "x86_64") {

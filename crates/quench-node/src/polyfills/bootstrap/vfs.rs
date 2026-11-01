@@ -159,7 +159,7 @@ class __QuenchVirtualFileSystem {
     this.provider.accessSync = (path, mode) =>
       this.accessSync(providerPath(path), mode);
     this.promises = Object.fromEntries(
-      "readFile writeFile appendFile stat lstat readdir mkdir rmdir unlink rename copyFile rm realpath readlink symlink link truncate chmod chown lchown utimes lutimes statfs"
+      "readFile writeFile appendFile stat lstat readdir mkdir rmdir unlink rename copyFile rm realpath readlink symlink link truncate chmod lchmod chown lchown utimes lutimes statfs"
         .split(" ")
         .map((name) => [name, async (...args) => this[`${name}Sync`](...args)])
     );
@@ -2117,6 +2117,27 @@ for (const __quenchVfsFsMethod of "existsSync accessSync truncateSync chmodSync 
 )) {
   __quenchVfsWrapFs(__quenchVfsFsMethod);
 }
+// lchmod is a compatibility API supplied by the fs module rather than the
+// host fs object on platforms without native lchmod. Keep its VFS path
+// semantics distinct from chmod: lchmod must update the symlink entry itself
+// instead of resolving it and changing its target.
+if (globalThis.__nodeFs) {
+  const __quenchVfsOriginalLchmodSync = globalThis.__nodeFs.lchmodSync;
+  const __quenchVfsChmodSync = globalThis.__nodeFs.chmodSync?.bind(globalThis.__nodeFs);
+  globalThis.__nodeFs.lchmodSync = function lchmodSync(path, mode) {
+    const vfs = [...__quenchVfsMounts]
+      .reverse()
+      .find((item) => item.shouldHandle(path));
+    if (vfs) return vfs.lchmodSync(__quenchVfsRelative(vfs, path), mode);
+    if (typeof __quenchVfsOriginalLchmodSync === "function") {
+      return __quenchVfsOriginalLchmodSync.call(this, path, mode);
+    }
+    if (typeof __quenchVfsChmodSync === "function") {
+      return __quenchVfsChmodSync(path, mode);
+    }
+    throw Object.assign(new Error("lchmod is unavailable"), { code: "ENOSYS" });
+  };
+}
 if (typeof globalThis.__nodeFs?.openAsBlob !== "function") {
   globalThis.__nodeFs.openAsBlob = async (path, options = {}) =>
     new Blob([globalThis.__nodeFs.readFileSync(path)], { type: options.type || "" });
@@ -2128,17 +2149,94 @@ if (typeof __quenchVfsOriginalOpenAsBlob === "function") {
       .reverse()
       .find((item) => item.shouldHandle(path));
     if (!vfs) return __quenchVfsOriginalOpenAsBlob(path, options);
-    return Promise.resolve(
-      new Blob([vfs.readFileSync(__quenchVfsRelative(vfs, path))], {
+    const stat = globalThis.__nodeFs.statSync(path);
+    return Promise.resolve(new Blob([vfs.readFileSync(__quenchVfsRelative(vfs, path))], {
         type: options?.type || ""
-      })
-    );
+      })).then((blob) => {
+        Object.defineProperty(blob, "\0quench:file-backed:clone-unsupported", { value: true });
+        Object.defineProperties(blob, {
+          "\0quench:file-backed:path": { value: path },
+          "\0quench:file-backed:size": { value: Number(stat.size) },
+          "\0quench:file-backed:mtime": { value: Math.trunc(Number(stat.mtimeMs)) },
+        });
+        // VFS-backed files bypass fs_shared_vm's openAsBlob wrapper, so put
+        // the same consistency check directly on this Blob's stream method.
+        const nativeStream = blob.stream;
+        if (typeof nativeStream === "function") {
+          Object.defineProperty(blob, "stream", {
+            configurable: true,
+            value(...streamArgs) {
+              const source = Reflect.apply(nativeStream, this, streamArgs);
+              const ensureReadable = () => {
+                const current = globalThis.__nodeFs.statSync(path);
+                if (Number(current.size) !== Number(stat.size) ||
+                    Math.trunc(Number(current.mtimeMs)) !== Math.trunc(Number(stat.mtimeMs))) {
+                  throw new DOMException("The file has been modified", "NotReadableError");
+                }
+              };
+              const iteratorKey = Symbol.asyncIterator;
+              const iteratorFactory = source?.[iteratorKey];
+              if (typeof iteratorFactory === "function") {
+                try {
+                  Object.defineProperty(source, iteratorKey, {
+                    configurable: true,
+                    value() {
+                      const iterator = Reflect.apply(iteratorFactory, this, []);
+                      return {
+                        next(...nextArgs) {
+                          try { ensureReadable(); } catch (error) { return Promise.reject(error); }
+                          return Reflect.apply(iterator.next, iterator, nextArgs);
+                        },
+                        return(...returnArgs) {
+                          return typeof iterator.return === "function"
+                            ? Reflect.apply(iterator.return, iterator, returnArgs)
+                            : Promise.resolve({ done: true, value: undefined });
+                        },
+                        [iteratorKey]() { return this; },
+                      };
+                    },
+                  });
+                } catch {}
+              }
+              const Stream = globalThis.ReadableStream || source?.constructor;
+              if (typeof source?.getReader !== "function" || typeof Stream !== "function") return source;
+              const reader = source.getReader();
+              return new Stream({
+                async pull(controller) {
+                  try {
+                    ensureReadable();
+                    const item = await reader.read();
+                    if (item.done) controller.close();
+                    else controller.enqueue(item.value);
+                  } catch (error) { controller.error(error); }
+                },
+                cancel(reason) { return reader.cancel(reason); },
+              }, { highWaterMark: 0 });
+            },
+          });
+        }
+        return blob;
+      });
   };
 }
 const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
   const original = globalThis.__nodeFs?.[name];
   if (typeof original !== "function") return;
   globalThis.__nodeFs[name] = function (path, ...args) {
+    if (name === "copyFile" || name === "appendFile") {
+      const validatePathWithoutNul = (value) => {
+        if (__quenchVfsBuffer.isBuffer(value)) value = value.toString();
+        else if (value instanceof URL) value = decodeURIComponent(value.pathname);
+        if (typeof value !== "string" || !value.includes("\0")) return;
+        const received = value.replace(/\0/g, "\\x00");
+        throw Object.assign(
+          new TypeError(`The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '${received}'`),
+          { code: "ERR_INVALID_ARG_VALUE" },
+        );
+      };
+      validatePathWithoutNul(path);
+      if (name === "copyFile") validatePathWithoutNul(args[0]);
+    }
     const vfs =
       typeof path === "number"
         ? [...__quenchVfsMounts]
@@ -2410,6 +2508,18 @@ if (globalThis.__nodeFs?.promises) {
         }
         return result;
       });
+    };
+  }
+  const __quenchVfsOriginalPromiseWatch = globalThis.__nodeFs.promises.watch;
+  if (typeof __quenchVfsOriginalPromiseWatch === "function") {
+    globalThis.__nodeFs.promises.watch = function watch(path, options = {}) {
+      const vfs = [...__quenchVfsMounts]
+        .reverse()
+        .find((item) => item.shouldHandle(path));
+      if (!vfs) {
+        return __quenchVfsOriginalPromiseWatch.call(this, path, options);
+      }
+      return vfs.promises.watch(__quenchVfsRelative(vfs, path), options);
     };
   }
 }

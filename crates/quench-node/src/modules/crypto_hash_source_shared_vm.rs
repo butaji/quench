@@ -1,6 +1,6 @@
 //! Project the configured public crypto factory declarations and export
 //! expressions from their original AST. Their implementation is never copied.
-use crate::host::{NodeHost, shared_vm::commonjs};
+use crate::host::{shared_vm::commonjs, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 fn get(
     c: &mut NativeContext<'_, NodeHost>,
@@ -52,7 +52,14 @@ pub(crate) fn install(
             c.define_data_property_rooted(public, key, value, true, true, true)?;
         }
         let random = commonjs::node_library_module(c, "crypto.js", "internal/crypto/random.js")?;
-        for name in ["randomBytes", "randomFill", "randomFillSync", "randomInt", "randomUUID", "randomUUIDv7"] {
+        for name in [
+            "randomBytes",
+            "randomFill",
+            "randomFillSync",
+            "randomInt",
+            "randomUUID",
+            "randomUUIDv7",
+        ] {
             let value = get(c, random, name)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(public, key, value, true, true, true)?;
@@ -60,12 +67,17 @@ pub(crate) fn install(
         let factory = project(c.host_mut(), crate::node_sources::SourceView::CryptoRandomAliasFactory)?;
         let factory = c.evaluate_script_rooted(&factory, &filename.to_string_lossy())?;
         let random_bytes = get(c, random, "randomBytes")?;
-        let options = commonjs::node_library_export(c, "crypto.js", "internal/options.js", "getOptionValue")?;
+        let options =
+            commonjs::node_library_export(c, "crypto.js", "internal/options.js", "getOptionValue")?;
         let global = c.global_root()?;
         let object = get(c, global, "Object")?;
         let define = get(c, object, "defineProperty")?;
         let define_properties = get(c, object, "defineProperties")?;
-        let aliases = c.call_rooted(factory, undefined, &[random_bytes, deprecate, options, define])?;
+        let aliases = c.call_rooted(
+            factory,
+            undefined,
+            &[random_bytes, deprecate, options, define],
+        )?;
         c.call_rooted(define_properties, object, &[public, aliases])?;
         let hashes =
             commonjs::node_library_export(c, "crypto.js", "internal/crypto/util.js", "getHashes")?;

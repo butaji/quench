@@ -9,6 +9,7 @@ pub(crate) struct FsErrorDetails {
     pub errno: i32,
     pub syscall: String,
     pub path: Option<String>,
+    pub dest: Option<String>,
     pub message: String,
 }
 
@@ -28,6 +29,7 @@ pub(crate) fn error_details(
         errno,
         syscall: syscall.to_owned(),
         path: path.map(str::to_owned),
+        dest: None,
         message,
     }
 }
@@ -45,6 +47,7 @@ pub(crate) fn operation_error_details(error: &OperationError) -> FsErrorDetails 
             errno: libc::EISDIR,
             syscall: "rm".to_owned(),
             path: Some(path.clone()),
+            dest: None,
             message: format!("Path is a directory: rm returned EISDIR (is a directory) {path}"),
         },
     }

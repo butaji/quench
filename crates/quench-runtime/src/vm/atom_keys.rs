@@ -165,11 +165,11 @@ fn atom_hash_wide(len: usize, units: impl Iterator<Item = u16>) -> u64 {
 fn atom_hash_ascii(bytes: &[u8]) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     hasher.write_usize(bytes.len());
-    let mut words = bytes.chunks_exact(HASH_UNITS_PER_WORD);
-    for word in &mut words {
-        hasher.write_u64(widen_ascii_word(u32::from_le_bytes(word.try_into().unwrap())));
+    let (words, remainder) = bytes.as_chunks::<HASH_UNITS_PER_WORD>();
+    for word in words {
+        hasher.write_u64(widen_ascii_word(u32::from_le_bytes(*word)));
     }
-    for &byte in words.remainder() {
+    for &byte in remainder {
         hasher.write_u16(u16::from(byte));
     }
     hasher.finish()

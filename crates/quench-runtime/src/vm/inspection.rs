@@ -17,11 +17,10 @@ impl<H: Host> Vm<H> {
                 "Object"
             }));
         }
-        if let Some(name) = self.constructed_name(value) {
-            if constructor_name_is_specific(&name) {
+        if let Some(name) = self.constructed_name(value)
+            && constructor_name_is_specific(&name) {
                 return Some(name);
             }
-        }
         let tag = self.well_known_symbols.get(WellKnownSymbol::ToStringTag);
         let constructor = self.lookup_atom("constructor");
         let mut current = value;
@@ -29,33 +28,21 @@ impl<H: Host> Vm<H> {
             if self.proxy_parts(current).is_some() {
                 break;
             }
-            if let Some(tag) = tag {
-                if let DiagnosticProperty::Data(tag) =
+            if let Some(tag) = tag
+                && let DiagnosticProperty::Data(tag) =
                     self.diagnostic_own_property(current, PropertyKey::symbol(tag))
-                {
-                    if let Some(name) = self.heap.string(tag) {
+                    && let Some(name) = self.heap.string(tag) {
                         return Some(name.clone());
                     }
-                }
-            }
-            if current != value {
-                if let Some(key) = constructor {
-                    if let DiagnosticProperty::Data(constructor) =
+            if current != value
+                && let Some(key) = constructor
+                    && let DiagnosticProperty::Data(constructor) =
                         self.diagnostic_own_property(current, PropertyKey::string(key))
-                    {
-                        if matches!(self.heap.function(constructor), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
-                        {
-                            if let Some(name) = self
-                                .original_debug_name(constructor)
-                            {
-                                if constructor_name_is_specific(&name) {
+                        && matches!(self.heap.function(constructor), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
+                            && let Some(name) = self.original_debug_name(constructor)
+                                && constructor_name_is_specific(&name) {
                                     return Some(name);
                                 }
-                            }
-                        }
-                    }
-                }
-            }
             current = data.proto();
         }
         Some(JsString::from_str(self.intrinsic_class_name(value, object)))

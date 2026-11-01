@@ -3,6 +3,38 @@ use super::*;
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
+#[cfg(all(test, feature = "aot"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_cursors_leave_interpreter_decoding_cold() {
+        let program = crate::Engine::specialize(
+            "var n = 3; while (n > 0) n--; throw n;", "native-cursor.js",
+        ).unwrap();
+        let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+        for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
+            vm.set_execution_mode(mode);
+            let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
+            assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
+            assert!(cursor.lane.is_null() && cursor.back_edges.is_none(),
+                "linked code must not prepare an interpreter lane");
+        }
+
+        let mut interpreter = Vm::new(crate::test_host::TestHost::default());
+        interpreter.initialize_for_snapshot(&program).unwrap();
+        program.prime_loop_decoding();
+        let cursor = interpreter.general_cursor(ProgramId::MAIN, &program, 0, false);
+        assert!(!cursor.decoded.is_null(), "an interpreted loop still expands its dispatch cache");
+        let error = interpreter.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct GeneralCodeCursor {
     program: ProgramId,
@@ -112,23 +144,6 @@ pub(super) struct SavedProgram {
 pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
-    fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
-        let function_code = &program.function(function as usize);
-        let decoded = function_code
-            .decoded
-            .on_entry(&function_code.code, &function_code.wide)
-            .map_or(std::ptr::null(), <[WideInstruction]>::as_ptr);
-        Self {
-            program: program_id,
-            function,
-            code: function_code.code.as_ptr(),
-            wide: function_code.wide.as_ptr(),
-            decoded,
-            lane: std::ptr::null(),
-            back_edges: None,
-        }
-    }
-
     #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
@@ -160,14 +175,29 @@ impl<H: Host> Vm<H> {
         function: u32,
         lane: bool,
     ) -> GeneralCodeCursor {
-        let admitted = lane && self.lane_admits(program);
+        let function_code = program.function(function as usize);
+        let interprets = self.execution_mode.allows_dynamic_execution();
+        #[cfg(feature = "native-execution")]
+        let interprets = interprets && self.programs.native_js_code(program_id).is_none();
+        let admitted = interprets && lane && self.lane_admits(program);
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
+        // Native transitions read only boundary metadata from packed code;
+        // they must not warm or allocate an interpreter dispatch expansion.
+        let decoded = if interprets {
+            function_code.decoded.on_entry(&function_code.code, &function_code.wide)
+        } else {
+            None
+        };
         GeneralCodeCursor {
+            program: program_id,
+            function,
+            code: function_code.code.as_ptr(),
+            wide: function_code.wide.as_ptr(),
+            decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
             lane: view,
             // A JavaScript activation deferred its view; a loop that turns hot derives it.
             back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
-                .then(|| HotLoop::of(program.function(function as usize))),
-            ..GeneralCodeCursor::new(program_id, program, function)
+                .then(|| HotLoop::of(function_code)),
         }
     }
 
@@ -339,7 +369,7 @@ impl<H: Host> Vm<H> {
             + usize::from(function.registers))
         .saturating_mul(std::mem::size_of::<Value>());
         let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
-            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
+            .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -441,7 +471,7 @@ impl<H: Host> Vm<H> {
         self.activate_user_frame(p, id, parent, this, args, context)?;
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget rather than a native transition.
-        crate::stack::GuestCallGuard::enter().or_else(|()| Err(self.unwind_exhausted_push(p)))
+        crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.unwind_exhausted_push(p))
     }
 
     /// Pops an in-loop activation the guest-call budget refused and yields the error.
@@ -469,6 +499,13 @@ impl<H: Host> Vm<H> {
         context: CallContext,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
+        // Some VM entry paths (notably host callbacks and nested eval) still
+        // execute a user function by recursively entering `run_user_frame`
+        // instead of pushing it onto the active dispatch loop. Count those
+        // activations against the same guest budget so a small Node
+        // `--stack_size` cannot exhaust the native worker stack first.
+        let _call_guard =
+            crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let result = self.run_frame_general(p, frame_index);
         self.complete_user_frame(p, result, capture_constructor_this)
@@ -1218,7 +1255,25 @@ impl<H: Host> Vm<H> {
         if !self.frames[frame].captured {
             return Ok(());
         }
-        let source = self.frames[frame].env;
+        let (source, program, function) = (self.frames[frame].env, self.frames[frame].program, self.frames[frame].function);
+        self.frames[frame].env = self.iteration_environment(source, program, function, fresh, reset)?;
+        Ok(())
+    }
+
+    /// The copy of `source`, the captured environment of an activation of `function` of
+    /// `program`, that a `CloneEnv` of a loop iteration makes: its `fresh` slots own their
+    /// current values, its `reset` slots own `undefined`, and every other slot stays shared
+    /// with the binding's owner, so closures of earlier iterations and the activation keep
+    /// seeing one binding (`EnvironmentSlots::iteration_copy`). A frame's and an environment
+    /// activation's window's clones (`lane_clone_window_env`) are this one copy.
+    pub(super) fn iteration_environment(
+        &mut self,
+        source: Value,
+        program: ProgramId,
+        function: u32,
+        fresh: &[u16],
+        reset: &[u16],
+    ) -> Result<Value, JsError> {
         let slots = self
             .heap
             .clone_environment_slots(source, fresh, reset)
@@ -1227,14 +1282,13 @@ impl<H: Host> Vm<H> {
         // `new.target` and any a direct eval declares. A function whose names all resolve
         // statically has no direct eval, so an activation holding none now never will, and
         // its copies keep an unboxed scope of their own.
-        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
         let never_binds_dynamically = self
             .heap
             .environment_bindings(source)
             .is_some_and(Vec::is_empty)
             && self.programs.residual(program).is_some_and(|p| {
                 p.function_get(function as usize).is_some_and(|function| {
-                    function.names_resolve_statically(&p)
+                    function.names_resolve_statically(p)
                 })
             });
         let owner = if never_binds_dynamically {
@@ -1270,9 +1324,7 @@ impl<H: Host> Vm<H> {
                 with_objects: scope.with_objects().into(),
             }),
         };
-        let env = self.heap.alloc(environment);
-        self.frames[frame].env = env;
-        Ok(())
+        Ok(self.heap.alloc(environment))
     }
 
     pub(super) fn activate_frame(&mut self, frame: &mut Frame) {
@@ -1554,14 +1606,14 @@ impl<H: Host> Vm<H> {
             .saturating_mul(std::mem::size_of::<Value>());
             Some(
                 crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
-                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
+                    .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
             )
         } else {
             None
         };
         let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
             crate::stack::StackGuard::enter()
-                .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
+                .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
         } else {
             self.enter_stack()?
         };
@@ -2310,9 +2362,12 @@ impl<H: Host> Vm<H> {
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 Op::Call if allow_inline_calls => {
-                    match self.try_inline_user_call(p, frame, ins, pc) {
+                    match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
-                        None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        None => match self.try_inline_user_call(p, frame, ins, pc) {
+                            Some(result) => result,
+                            None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        },
                     }
                 }
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
@@ -2502,10 +2557,9 @@ impl<H: Host> Vm<H> {
                     // here: its frame becomes the continuation its promise's reaction resumes,
                     // and its caller continues with the promise, as `call_user_maybe_async`
                     // makes both for a call it runs apart.
-                    if pending_calls.last().is_some_and(|pending| {
+                    if let Some(mut pending) = pending_calls.pop_if(|pending| {
                         pending.settles.is_some() && pending.generator.is_none() && !pending.returns && pending.caller + 1 == frame
                     }) {
-                        let mut pending = pending_calls.pop().expect("the awaiting frame's pending call");
                         self.frames[frame].pc = pc;
                         self.frames[frame].pc_is_resume = true;
                         let mut suspended = self.frames.pop().expect("the awaiting frame is the innermost");

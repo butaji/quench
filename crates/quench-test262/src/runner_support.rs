@@ -88,6 +88,17 @@ pub fn outcome(result: Result<(), String>) -> TestOutcome {
     result.map_or_else(|reason| TestOutcome::Fail { reason }, |_| TestOutcome::Pass)
 }
 
+/// The exact strict-variant transformation, shared by source and linked execution.
+pub fn script_source(source: &str, strict: bool) -> std::borrow::Cow<'_, str> {
+    if strict {
+        let prefix = if source.starts_with("#!") {
+            source.char_indices().find(|(_, ch)| oxc_syntax::line_terminator::is_line_terminator(*ch))
+                .map_or(source.len(), |(index, ch)| index + ch.len_utf8())
+        } else { 0 };
+        std::borrow::Cow::Owned(format!("{}\n\"use strict\";\n{}", &source[..prefix], &source[prefix..]))
+    } else { std::borrow::Cow::Borrowed(source) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,15 +120,4 @@ mod tests {
         runtime.negative_phase = Some("parse".into());
         assert!(!expected_failure("quench resolution SyntaxError: invalid dependency", &runtime, "SyntaxError"));
     }
-}
-
-/// The exact strict-variant transformation, shared by source and linked execution.
-pub fn script_source(source: &str, strict: bool) -> std::borrow::Cow<'_, str> {
-    if strict {
-        let prefix = if source.starts_with("#!") {
-            source.char_indices().find(|(_, ch)| oxc_syntax::line_terminator::is_line_terminator(*ch))
-                .map_or(source.len(), |(index, ch)| index + ch.len_utf8())
-        } else { 0 };
-        std::borrow::Cow::Owned(format!("{}\n\"use strict\";\n{}", &source[..prefix], &source[prefix..]))
-    } else { std::borrow::Cow::Borrowed(source) }
 }

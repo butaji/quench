@@ -746,11 +746,12 @@ fn decompose(offset: &Poly, stride: &Poly) -> Option<(i64, i64)> {
 
 /// Lowers a recognized nest to a shared-entry function.
 pub(super) fn lower(
-    region: &LoopRegion,
+    verified: &super::osr_loop::VerifiedRegion<'_>,
     nest: &Nest,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     poll: Option<i64>,
 ) -> Option<ir::Function> {
+    let region = verified.region();
     let poll = poll?;
     let pointer = isa.pointer_type();
     let signature = super::native_entry_signature(pointer, isa.default_call_conv());

@@ -228,6 +228,7 @@ impl<H: Host> Vm<H> {
         [atoms.enumerable, atoms.configurable, atoms.value, atoms.writable, atoms.get, atoms.set]
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_property_descriptor(
         &mut self,
         p: &ResidualProgram,
@@ -397,6 +398,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation (FromPropertyDescriptor), which allocates on the VM heap")]
     pub(super) fn from_property_descriptor(
         &mut self,
         record: PropertyDescriptorRecord,
@@ -546,7 +548,9 @@ impl<H: Host> Vm<H> {
             let target = self.heap.root_value(source).unwrap();
             let key = self.heap.root_value(key).unwrap();
             if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
-                if self.is_host_private_symbol(key) { return Ok(Value::UNDEFINED); }
+                if self.is_host_private_symbol(key) {
+                    return Ok(Value::UNDEFINED);
+                }
                 return self.proxy_own_property_descriptor(p, target, key);
             }
             match self.ordinary_get_own_property(p, target, key)? {

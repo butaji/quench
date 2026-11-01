@@ -7,7 +7,11 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         std::env::temp_dir().join(format!("quench-module-root-test-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let filename = directory.join("main.cjs");
-    std::fs::write(&filename, "require('node:module'); module.exports = { answer: 42 };").unwrap();
+    std::fs::write(
+        &filename,
+        "require('node:module'); module.exports = { answer: 42 };",
+    )
+    .unwrap();
     let filename = std::fs::canonicalize(filename).unwrap();
     let module_key = filename.to_string_lossy().into_owned();
     let host = NodeHost::new(vec!["quench-node".into()]).with_commonjs_entry(filename);

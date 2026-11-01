@@ -201,6 +201,9 @@ fn channel(
     if let Some(specification) = inherited_stream_descriptor(context, value)? {
         return Ok(specification);
     }
+    if let Some(fd) = super::net_shared_vm::child_stdio_socket_descriptor(context, value)? {
+        return Ok(Specification::Descriptor(fd));
+    }
     let bytes =
         context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::ArrayBufferView)?;
     Err(invalid(context, value, bytes)?)
@@ -347,6 +350,8 @@ pub(crate) struct Configured {
     pub(crate) ipc: Option<IpcChannel>,
     #[cfg(unix)]
     pub(crate) pipes: [Option<std::os::fd::OwnedFd>; STANDARD_CHANNELS],
+    #[cfg(unix)]
+    pub(crate) extra_pipes: Vec<(usize, std::os::fd::OwnedFd, std::os::fd::OwnedFd)>,
 }
 
 pub(crate) fn configure(
@@ -363,25 +368,53 @@ pub(crate) fn configure(
     };
     #[cfg(unix)]
     let mut pipes = std::array::from_fn(|_| None);
-    for (index, specification) in specifications
-        .iter()
-        .copied()
-        .take(STANDARD_CHANNELS)
-        .enumerate()
-    {
+    #[cfg(unix)]
+    let mut extra_pipes = Vec::new();
+    #[cfg(unix)]
+    let mut inherited_pipe_sources = Vec::new();
+    for (index, specification) in specifications.iter().copied().enumerate() {
         if matches!(specification, Specification::Ipc) {
             continue;
         }
         #[cfg(unix)]
         let descriptor = if matches!(specification, Specification::Pipe) {
             let (parent, child) = spawn_socket_pair()?;
-            pipes[index] = Some(parent.into());
-            Stdio::from(std::os::fd::OwnedFd::from(child))
+            if index < STANDARD_CHANNELS {
+                pipes[index] = Some(parent.into());
+                Stdio::from(std::os::fd::OwnedFd::from(child))
+            } else {
+                use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+                parent.set_nonblocking(true)?;
+                let output = parent.as_fd().try_clone_to_owned()?;
+                let source_floor = i32::try_from(specifications.len())
+                    .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+                let source_fd =
+                    unsafe { libc::fcntl(child.as_raw_fd(), libc::F_DUPFD_CLOEXEC, source_floor) };
+                if source_fd < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let source = unsafe { OwnedFd::from_raw_fd(source_fd) };
+                drop(child);
+                inherited_pipe_sources.push((source, index));
+                extra_pipes.push((index, parent.into(), output));
+                // The extra descriptor is installed in pre_exec below.
+                continue;
+            }
         } else {
+            if index >= STANDARD_CHANNELS {
+                // Extra entries that are not pipes require no parent-side
+                // stream; their descriptor policies are handled elsewhere.
+                continue;
+            }
             specification.os()?
         };
         #[cfg(not(unix))]
-        let descriptor = specification.os()?;
+        let descriptor = {
+            if index >= STANDARD_CHANNELS {
+                continue;
+            }
+            specification.os()?
+        };
         match index {
             0 => {
                 command.stdin(descriptor);
@@ -395,18 +428,49 @@ pub(crate) fn configure(
             _ => unreachable!(),
         }
     }
+    #[cfg(unix)]
+    if !inherited_pipe_sources.is_empty() {
+        use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        // All source descriptors are duplicated above the child fd layout,
+        // so none can be overwritten by another target during dup2.
+        unsafe {
+            command.pre_exec(move || {
+                for (source, target) in &inherited_pipe_sources {
+                    let target = i32::try_from(*target)
+                        .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+                    if libc::dup2(source.as_raw_fd(), target) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
     // NODE_CHANNEL_FD is a child bootstrap contract, never inherited into a
-    // grandchild that was spawned without its own channel.
+    // grandchild that was spawned without its own channel. Node's JS spawn
+    // adapter puts the selected IPC serialization mode into envPairs; preserve
+    // it here so advanced IPC (used by cluster) reaches both processes.
     command.env_remove("NODE_CHANNEL_FD");
     command.env_remove(SERIALIZATION_MODE_VARIABLE);
     if let Some(index) = ipc_index {
         command.env("NODE_CHANNEL_FD", index.to_string());
         command.env(SERIALIZATION_MODE_VARIABLE, serialization.mode());
+        // The test harness selects Quench through this environment variable
+        // while embedding it in run-parallel. A fork with an explicit
+        // `execPath` (including a copied Quench binary) must report the
+        // executable it actually launched inside the child, rather than
+        // inheriting the parent's selected path.
+        if std::env::var_os("QUENCH_NODE_TEST_EXECUTABLE").is_some() {
+            let executable = command.get_program().to_os_string();
+            command.env("QUENCH_NODE_TEST_EXECUTABLE", executable);
+        }
     }
     Ok(Configured {
         ipc: channel,
         #[cfg(unix)]
         pipes,
+        #[cfg(unix)]
+        extra_pipes,
     })
 }
 

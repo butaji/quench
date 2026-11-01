@@ -262,11 +262,10 @@ impl<H: Host> Vm<H> {
             });
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if function.arguments_alias_parameters() {
-                if let Some(object) = self.object_data_mut(arguments) {
+            if function.arguments_alias_parameters()
+                && let Some(object) = self.object_data_mut(arguments) {
                     object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
-            }
         }
         self.initialize_frame_invocation(p, &mut frame, function, context, args);
         frame.function = id;
@@ -338,7 +337,7 @@ impl<H: Host> Vm<H> {
             self.capture_constructed_name(&mut object, function, true);
         }
         let generator = self.heap.alloc_iterator(IteratorRecord {
-            object: object,
+            object,
             source: Value::NULL,
             kind: if function.is_async {
                 IteratorKind::AsyncGenerator
@@ -434,9 +433,7 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .map(|continuation| self.close_suspended_iterators(p, continuation))
             .unwrap_or(Ok(()));
-        if let Err(error) = cleanup {
-            return Err(error);
-        }
+        cleanup?;
         let result = self.iterator_result(value, true)?;
         Ok(result)
     }

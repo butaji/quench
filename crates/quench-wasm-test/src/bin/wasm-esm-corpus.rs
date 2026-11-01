@@ -13,7 +13,7 @@
 //! `OUT_DIR/node_modules/spectest` provides. Actions are the invocations of the latest unnamed
 //! module with numeric arguments; each records whether the script expects it to return.
 
-use std::{env, fs, path::PathBuf, process::ExitCode};
+use std::{env, fs, path::{Path, PathBuf}, process::ExitCode};
 
 use serde_json::{json, Value};
 
@@ -65,7 +65,7 @@ fn action(command: &Value) -> Option<Value> {
     Some(json!([action["field"], args, returns]))
 }
 
-fn run(out: &PathBuf, files: &[PathBuf]) -> Result<(), String> {
+fn run(out: &Path, files: &[PathBuf]) -> Result<(), String> {
     let write = |path: PathBuf, contents: &[u8]| {
         fs::create_dir_all(path.parent().expect("output has a parent"))
             .and_then(|()| fs::write(&path, contents))

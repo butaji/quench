@@ -46,7 +46,7 @@ pub(crate) enum DhOwned {
 pub(crate) enum OutputEncoding {
     Bytes(Format, Encoding),
     Jwk,
-    RawPublic,
+    RawPublic { compressed: bool },
     RawPrivate,
     RawSeed,
 }

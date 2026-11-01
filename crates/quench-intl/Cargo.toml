@@ -19,3 +19,6 @@ icu_locale_core = "2.3"
 icu_provider = "2.3"
 quench-temporal = { path = "../quench-temporal" }
 unicode-normalization = "0.1"
+
+[lints]
+workspace = true

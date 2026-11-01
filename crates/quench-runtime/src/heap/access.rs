@@ -5,8 +5,44 @@ use super::{
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
+use std::collections::HashSet;
 
 impl Heap {
+    /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
+    /// The caller is responsible for collecting first when it needs only currently reachable
+    /// objects. Prototypes are read from heap object records directly, so Proxy traps are not
+    /// invoked during this heap query.
+    pub(crate) fn objects_with_prototype(&self, prototype: Value) -> Vec<Value> {
+        let mut objects = Vec::new();
+        self.for_each_live_value(|candidate| {
+            if self.prototype_chain_contains(candidate, prototype) {
+                objects.push(candidate);
+            }
+        });
+        objects
+    }
+
+    /// Whether `prototype` appears on `object`'s internal prototype chain, read from heap
+    /// records without invoking Proxy traps; a cyclic or non-object chain ends the walk.
+    fn prototype_chain_contains(&self, object: Value, prototype: Value) -> bool {
+        let Some(mut current) = self.object(object).map(Object::proto) else {
+            return false;
+        };
+        let mut seen = HashSet::new();
+        loop {
+            if current == prototype {
+                return true;
+            }
+            if current.is_null() || current.is_undefined() || !seen.insert(current) {
+                return false;
+            }
+            let Some(object) = self.object(current) else {
+                return false;
+            };
+            current = object.proto();
+        }
+    }
+
     /// Moves the positions of `collection`'s running iterators by `move_slot`, keeping only
     /// the registrations that still name one.
     pub(crate) fn move_collection_iterators(
@@ -629,10 +665,16 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// Object mark blocks used by no-safepoint native write-barrier guards.
+    pub(crate) fn native_object_mark_blocks(&self) -> (*const u8, usize) {
+        self.object_records.native_mark_blocks()
+    }
+
     /// The current base and length of out-of-line ordinary-object property values.
     ///
     /// Native readers may use these only during synchronous no-safepoint execution and must
-    /// bounds-check every slot. Property arena growth and compaction invalidate the base.
+    /// bounds-check every slot. Compaction relocates property ranges; the ordinary
+    /// allocation fallback may also move the base when the arena grows.
     pub(crate) fn native_property_values(&self) -> (*const Value, usize) {
         self.properties.native_values()
     }

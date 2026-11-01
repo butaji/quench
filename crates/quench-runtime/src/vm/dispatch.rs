@@ -4,10 +4,7 @@ use crate::heap::PrivateBrand;
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
     ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
-        let previous = std::mem::replace(
-            &mut $vm.frames[$frame].binding_site_pc,
-            Some($resume_pc as u32),
-        );
+        let previous = $vm.frames[$frame].binding_site_pc.replace($resume_pc as u32);
         let result = $action;
         $vm.frames[$frame].binding_site_pc = previous;
         result
@@ -43,8 +40,8 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Starts a plain call of a same-realm, same-program user function as an activation of
-    /// the running dispatch loop, or returns `None` to leave the instruction to `step`. Such a
+    /// Starts a plain or array-spread call of an eligible same-realm user function as an
+    /// activation of the running dispatch loop, or returns `None` to leave it to `step`. Such a
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
     /// is set before it, so the frame push leaves both untouched.
     #[inline(always)]
@@ -359,7 +356,9 @@ impl<H: Host> Vm<H> {
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (i.returns_from_frame() && p.function(self.frames[f].function as usize).strict)
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.function(self.frames[f].function as usize).strict)
         {
             return None;
         }
@@ -438,6 +437,28 @@ impl<H: Host> Vm<H> {
         self.push_in_loop_call(p, f, pc, resolved, target, this, arguments, i.result_register())
     }
 
+    /// `Reflect.apply(f, this, list)` of the intrinsic native, tried before the plain user
+    /// call: `try_inline_call_apply` pushes `f` in place when `list` is a dense array.
+    #[inline(never)]
+    pub(super) fn try_inline_reflect_apply(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        let callee = self.read(f, i.register_b());
+        if i.op() != Op::Call
+            || !matches!(
+                self.heap.function(callee),
+                Some(FunctionRecord { kind: FunctionKind::Native(Native::ReflectApply), .. })
+            )
+        {
+            return None;
+        }
+        self.try_inline_call_apply(p, f, i, pc)
+    }
+
     /// `CallForwardingArguments` whose argument is the caller's unmaterialized `arguments`:
     /// the intrinsic `apply` of an in-loop user function is pushed with the kept values;
     /// any other call first materializes the object, then proceeds as `Call` (`None`).
@@ -474,9 +495,7 @@ impl<H: Host> Vm<H> {
         if list.is_null() || list.is_undefined() {
             return Some(Vec::new());
         }
-        let Some(object) = self.heap.array(list) else {
-            return None;
-        };
+        let object = self.heap.array(list)?;
         if object.has_indexed_descriptors() || self.heap.sparse_length(list).is_some() {
             return None;
         }
@@ -559,8 +578,8 @@ impl<H: Host> Vm<H> {
                     i.boolean_field(crate::bytecode::InstructionField::C)
                         .unwrap_or(false),
                 )?;
-                if self.frames[f].function == 0 {
-                    if function
+                if self.frames[f].function == 0
+                    && function
                         .local_atoms
                         .get(slot)
                         .is_some_and(|atom| function.declares_global_immutable(*atom))
@@ -568,7 +587,6 @@ impl<H: Host> Vm<H> {
                     {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
                     }
-                }
                 *self
                     .frame_binding_mut(p, f, slot)
                     .ok_or_else(|| JsError("invalid local slot".into()))? = value;
@@ -715,6 +733,11 @@ impl<H: Host> Vm<H> {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.result_register(), this);
             }
+            Op::LoadCallee => {
+                // The function the frame runs, as its activation filled its self binding.
+                let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
+                self.write(f, i.result_register(), callee);
+            }
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
                 let import_meta = if let Some(value) = self.programs.import_meta(program) {
@@ -729,6 +752,19 @@ impl<H: Host> Vm<H> {
                         let url = self.heap.alloc_string(url.into());
                         let url_atom = self.intern_atom("url");
                         self.set_property(value, url_atom, url)?;
+                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
+                            let filename_value = self.heap.alloc_string(filename.as_str().into());
+                            let filename_atom = self.intern_atom("filename");
+                            self.set_property(value, filename_atom, filename_value)?;
+                            let dirname = std::path::Path::new(&filename)
+                                .parent()
+                                .and_then(|path| path.to_str());
+                            if let Some(dirname) = dirname {
+                                let dirname_value = self.heap.alloc_string(dirname.into());
+                                let dirname_atom = self.intern_atom("dirname");
+                                self.set_property(value, dirname_atom, dirname_value)?;
+                            }
+                        }
                     }
                     self.programs.set_import_meta(program, value);
                     value
@@ -982,7 +1018,7 @@ impl<H: Host> Vm<H> {
             }
             Op::ValidateClassHeritage => {
                 let heritage = self.read(f, i.register_a());
-                if !heritage.is_null() && !self.is_constructable(p, heritage) {
+                if !heritage.is_null() && !self.is_constructable(heritage) {
                     return Err(self
                         .type_error(p, "Class extends value is not a constructor or null".into()));
                 }
@@ -1201,7 +1237,13 @@ impl<H: Host> Vm<H> {
                 self.define_property_or_throw(p, target, key, descriptor)?;
             }
             Op::DefinePrivateField => {
-                self.initialize_private_field(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index(), self.read(f, i.register_a()))?;
+                self.initialize_private_field(
+                    p,
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                    i.atom_index(),
+                    self.read(f, i.register_a()),
+                )?;
             }
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
@@ -1413,10 +1455,7 @@ impl<H: Host> Vm<H> {
                         }) if *realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
-                    Some(std::mem::replace(
-                        &mut self.frames[f].binding_site_pc,
-                        Some(*pc as u32),
-                    ))
+                    Some(self.frames[f].binding_site_pc.replace(*pc as u32))
                 } else {
                     None
                 };
@@ -1727,9 +1766,7 @@ impl<H: Host> Vm<H> {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
                         if !self.heap.array(array).is_some() {
-                            return Err(JsError(
-                                "constructor arguments are not an array".into(),
-                            ));
+                            return Err(JsError("constructor arguments are not an array".into()));
                         }
                         self.call_argument_list(p, array, false)?
                     }
@@ -1796,8 +1833,13 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn with_field_source<T>(&mut self, frame: usize, site: usize, part: crate::bytecode::FieldPart,
-        run: impl FnOnce(&mut Self) -> Result<T, JsError>) -> Result<T, JsError> {
+    fn with_field_source<T>(
+        &mut self,
+        frame: usize,
+        site: usize,
+        part: crate::bytecode::FieldPart,
+        run: impl FnOnce(&mut Self) -> Result<T, JsError>,
+    ) -> Result<T, JsError> {
         let previous = self.frames[frame].source_field.replace((site, part));
         let result = run(self);
         self.frames[frame].source_field = previous;
@@ -1813,11 +1855,16 @@ impl<H: Host> Vm<H> {
         let site_id = site;
         let site = p.field_sites[site_id];
         let base = self.resolve_field_base(p, frame, site.base)?;
-        let value = self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First,
-            |vm| vm.get_field_cached(p, base, site.first.0, site.first.1))?;
+        let value =
+            self.with_field_source(frame, site_id, crate::bytecode::FieldPart::First, |vm| {
+                vm.get_field_cached(p, base, site.first.0, site.first.1)
+            })?;
         match site.second {
-            Some((atom, cache)) => self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second,
-                |vm| vm.get_field_cached(p, value, atom, cache)),
+            Some((atom, cache)) => {
+                self.with_field_source(frame, site_id, crate::bytecode::FieldPart::Second, |vm| {
+                    vm.get_field_cached(p, value, atom, cache)
+                })
+            }
             None => Ok(value),
         }
     }

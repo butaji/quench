@@ -1014,7 +1014,7 @@ impl<H: Host> Vm<H> {
         if constructor.is_undefined() || constructor_is_intrinsic_array {
             return self.array_create(p, length);
         }
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(p, "array species is not a constructor".into()));
         }
         self.construct_value(p, constructor, &[Value::number(length as f64)])

@@ -198,11 +198,10 @@ pub(super) fn parse_time_string<H: Host>(
         .rsplit_once(['T', 't'])
         .map_or(time, |(_, suffix)| suffix);
     let time = time.rsplit_once(' ').map_or(time, |(_, suffix)| suffix);
-    if time.contains(['-', '+']) && !time.starts_with(['T', 't']) {
-        if time.matches('-').count() >= 2 && !time.contains(['T', 't', ' ']) {
+    if time.contains(['-', '+']) && !time.starts_with(['T', 't'])
+        && time.matches('-').count() >= 2 && !time.contains(['T', 't', ' ']) {
             return Err(vm.range_error(p, "Invalid time string".into()));
         }
-    }
     let time = time.strip_prefix(['T', 't']).unwrap_or(time);
     if is_ambiguous_time(time) {
         return Err(vm.range_error(p, "Ambiguous PlainTime string".into()));
@@ -243,8 +242,8 @@ pub(super) fn parse_time_string<H: Host>(
 fn is_ambiguous_time(text: &str) -> bool {
     let text = text.split('[').next().unwrap_or(text);
     let ascii_digits = |value: &str| value.bytes().all(|byte| byte.is_ascii_digit());
-    if let Some((year, month)) = text.split_once('-') {
-        if year.len() == ISO_YEAR_DIGITS
+    if let Some((year, month)) = text.split_once('-')
+        && year.len() == ISO_YEAR_DIGITS
             && month.len() == ISO_MONTH_DIGITS
             && ascii_digits(year)
             && ascii_digits(month)
@@ -252,7 +251,6 @@ fn is_ambiguous_time(text: &str) -> bool {
         {
             return true;
         }
-    }
     if let Some((month, day)) = text.split_once('-') {
         return month.len() == 2
             && day.len() == 2

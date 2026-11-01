@@ -152,7 +152,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = if self.is_constructable(p, constructor) {
+        let target = if self.is_constructable(constructor) {
             self.construct_value(p, constructor, &[Value::number(args.len() as f64)])?
         } else {
             self.array_create(p, args.len())?
@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(p, "typed array of receiver is not a constructor".into()));
         }
         let target = self.array_from_target(
@@ -223,7 +223,7 @@ impl<H: Host> Vm<H> {
         length: Option<usize>,
         target: ArrayFromTarget,
     ) -> Result<Value, JsError> {
-        if self.is_constructable(p, constructor) {
+        if self.is_constructable(constructor) {
             let args = length
                 .map(|length| vec![Value::number(length as f64)])
                 .unwrap_or_default();
@@ -251,7 +251,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target_kind: ArrayFromTarget,
     ) -> Result<Value, JsError> {
-        if target_kind == ArrayFromTarget::TypedArray && !self.is_constructable(p, constructor) {
+        if target_kind == ArrayFromTarget::TypedArray && !self.is_constructable(constructor) {
             return Err(self.type_error(p, "typed array from receiver is not a constructor".into()));
         }
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -282,7 +282,7 @@ impl<H: Host> Vm<H> {
             // Constructing the intrinsic Array (or no constructor) runs no guest code, so the
             // source still iterates as `iterator_method` found it; filling an empty dense array
             // with intact iteration values is then the protocol without its objects.
-            let intrinsic_target = !self.is_constructable(p, constructor)
+            let intrinsic_target = !self.is_constructable(constructor)
                 || self.is_current_realm_native(constructor, Native::Array);
             let target = self.array_from_target(p, constructor, None, target_kind)?;
             if mapfn.is_none()
@@ -457,7 +457,7 @@ impl<H: Host> Vm<H> {
             Err(error) => return Err(error),
         };
         let this_arg = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        let constructor = if self.is_constructable(p, constructor) {
+        let constructor = if self.is_constructable(constructor) {
             constructor
         } else {
             self.native_value(Native::Array)

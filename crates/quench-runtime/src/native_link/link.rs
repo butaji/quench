@@ -105,7 +105,7 @@ impl NativeSupport {
                                     .is_some_and(|extension| extension == "rlib")
                             })
                             .ok_or_else(|| format!("Cargo did not emit {name}'s rlib"))?;
-                        let file = exact_dependency(Path::new(file), name)?;
+                        let file = exact_dependency(Path::new(file), name, files)?;
                         if name == host_crate {
                             host_semantic_exports = features.iter().any(|feature|feature == NATIVE_SDK_FEATURE);
                             if host.replace(file).is_some() {
@@ -314,11 +314,27 @@ fn requires_rust_lto(library: &Path) -> Result<bool, String> {
     ))
 }
 
-fn exact_dependency(file: &Path, name: &str) -> Result<PathBuf, String> {
+fn exact_dependency(file: &Path, name: &str, reported_files: &[Value]) -> Result<PathBuf, String> {
     let parent = file.parent().ok_or("Cargo rlib has no parent")?;
     if parent.file_name().is_some_and(|name| name == "deps") {
         fs::metadata(file).map_err(|error| error.to_string())?;
         return Ok(file.to_owned());
+    }
+    // Cargo reports the hashed metadata sibling of a top-level library. Use
+    // that identity, which survives another feature build replacing the alias.
+    let prefix = format!("lib{name}-");
+    let mut reported = reported_files.iter().filter_map(Value::as_str).map(Path::new).filter(|path| {
+        path.parent().is_some_and(|parent| parent.file_name().is_some_and(|part| part == "deps"))
+            && path.file_name().is_some_and(|file| file.to_string_lossy().starts_with(&prefix))
+            && path.extension().is_some_and(|extension| extension == "rmeta")
+    });
+    if let Some(metadata) = reported.next() {
+        if reported.next().is_some() {
+            return Err(format!("ambiguous {name} dependency metadata"));
+        }
+        let library = metadata.with_extension("rlib");
+        fs::metadata(&library).map_err(|error| format!("{}: {error}", library.display()))?;
+        return Ok(library);
     }
     // Cargo's top-level copy can be replaced by the producer build. Resolve it
     // immediately to the exact dependency artifact, comparing bytes, not hashes.
@@ -328,7 +344,7 @@ fn exact_dependency(file: &Path, name: &str) -> Result<PathBuf, String> {
         let path = entry.map_err(|error| error.to_string())?.path();
         if path
             .file_name()
-            .is_some_and(|file| file.to_string_lossy().starts_with(&format!("lib{name}-")))
+            .is_some_and(|file| file.to_string_lossy().starts_with(&prefix))
             && path
                 .extension()
                 .is_some_and(|extension| extension == "rlib")
@@ -512,5 +528,22 @@ mod tests {
     fn unsuccessful_and_incomplete_support_build_reports_are_rejected() {
         assert!(NativeSupport::from_cargo_report("{\"reason\":\"build-finished\",\"success\":false}", "quench_node", NativeImageSupport::Static).err().unwrap().contains("successfully"));
         assert!(NativeSupport::from_cargo_report("", "quench_node", NativeImageSupport::Static).err().unwrap().contains("incomplete"));
+    }
+
+    #[test]
+    fn support_report_keeps_the_reported_library_after_alias_replacement() {
+        let root = std::env::temp_dir().join(format!("quench-sdk-artifact-{}", std::process::id()));
+        let deps = root.join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        let alias = root.join("libexample.rlib");
+        let library = deps.join("libexample-selected.rlib");
+        let metadata = deps.join("libexample-selected.rmeta");
+        fs::write(&alias, b"different feature build").unwrap();
+        fs::write(&library, b"selected feature build").unwrap();
+        let files = vec![serde_json::json!(alias), serde_json::json!(metadata)];
+        assert_eq!(exact_dependency(&alias, "example", &files).unwrap(), library);
+        fs::remove_file(&library).unwrap();
+        assert!(exact_dependency(&alias, "example", &files).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

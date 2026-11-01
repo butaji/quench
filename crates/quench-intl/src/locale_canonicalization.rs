@@ -1,5 +1,9 @@
+/// A language tag that is not a structurally valid BCP-47 identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidLanguageTag;
+
 /// Canonicalize a single BCP-47 language tag.
-pub fn canonicalize_locale_identifier(tag: &str) -> Result<String, ()> {
+pub fn canonicalize_locale_identifier(tag: &str) -> Result<String, InvalidLanguageTag> {
     match tag.to_ascii_lowercase().as_str() {
         "art-lojban" => return Ok("jbo".to_string()),
         "cel-gaulish" => return Ok("xtg".to_string()),
@@ -7,7 +11,7 @@ pub fn canonicalize_locale_identifier(tag: &str) -> Result<String, ()> {
         "zh-hakka" => return Ok("hak".to_string()),
         "zh-xiang" => return Ok("hsn".to_string()),
         "en-gb-oed" | "zh-min" | "i-default" => {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         _ => {}
     }
@@ -15,15 +19,15 @@ pub fn canonicalize_locale_identifier(tag: &str) -> Result<String, ()> {
         || tag.eq_ignore_ascii_case("nan")
         || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     {
-        return Err(());
+        return Err(InvalidLanguageTag);
     }
     let mut parts = tag.split('-');
-    let language = parts.next().ok_or_else(|| ())?;
+    let language = parts.next().ok_or(InvalidLanguageTag)?;
     if !matches!(language.len(), 2 | 3 | 5..=8)
         || language.is_empty()
         || !language.chars().all(|c| c.is_ascii_alphabetic())
     {
-        return Err(());
+        return Err(InvalidLanguageTag);
     }
     let parts: Vec<&str> = parts.collect();
     let mut out = Vec::new();
@@ -73,7 +77,7 @@ fn apply_armenian_variant_alias<'a>(
     }
 }
 
-fn validate_transformed_extensions(parts: &[&str]) -> Result<(), ()> {
+fn validate_transformed_extensions(parts: &[&str]) -> Result<(), InvalidLanguageTag> {
     for (index, part) in parts.iter().enumerate() {
         if part.eq_ignore_ascii_case("x") {
             break;
@@ -84,7 +88,7 @@ fn validate_transformed_extensions(parts: &[&str]) -> Result<(), ()> {
                 .position(|part| part.len() == 1)
                 .map_or(parts.len(), |offset| index + 1 + offset);
             if end < parts.len() && end + 1 == parts.len() {
-                return Err(());
+                return Err(InvalidLanguageTag);
             }
             validate_transformed_fields(&parts[index + 1..end])?;
         }
@@ -92,9 +96,9 @@ fn validate_transformed_extensions(parts: &[&str]) -> Result<(), ()> {
     Ok(())
 }
 
-fn validate_transformed_fields(parts: &[&str]) -> Result<(), ()> {
+fn validate_transformed_fields(parts: &[&str]) -> Result<(), InvalidLanguageTag> {
     if parts.is_empty() {
-        return Err(());
+        return Err(InvalidLanguageTag);
     }
     let mut index = if is_transformed_language(parts[0]) {
         transformed_language_length(parts)?
@@ -105,7 +109,7 @@ fn validate_transformed_fields(parts: &[&str]) -> Result<(), ()> {
     while index < parts.len() {
         let key = parts[index];
         if key.len() != 2 || !key.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         index += 1;
         let start = index;
@@ -113,24 +117,24 @@ fn validate_transformed_fields(parts: &[&str]) -> Result<(), ()> {
             if !(3..=8).contains(&parts[index].len())
                 || !parts[index].chars().all(|c| c.is_ascii_alphanumeric())
             {
-                return Err(());
+                return Err(InvalidLanguageTag);
             }
             index += 1;
         }
         if start == index {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
     }
     Ok(())
 }
 
-fn validate_transformed_variants(parts: &[&str]) -> Result<(), ()> {
+fn validate_transformed_variants(parts: &[&str]) -> Result<(), InvalidLanguageTag> {
     let mut seen = std::collections::HashSet::new();
     for part in parts {
         let variant = (5..=8).contains(&part.len())
             || (part.len() == 4 && part.as_bytes()[0].is_ascii_digit());
         if variant && !seen.insert(part.to_ascii_lowercase()) {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
     }
     Ok(())
@@ -141,7 +145,7 @@ fn is_transformed_language(part: &str) -> bool {
         || (5..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-fn transformed_language_length(parts: &[&str]) -> Result<usize, ()> {
+fn transformed_language_length(parts: &[&str]) -> Result<usize, InvalidLanguageTag> {
     let mut index = 1;
     if parts
         .get(index)
@@ -238,7 +242,7 @@ fn canonicalize_subtags(
     parts: Vec<&str>,
     mut out: Vec<String>,
     mut script_done: bool,
-) -> Result<Vec<String>, ()> {
+) -> Result<Vec<String>, InvalidLanguageTag> {
     validate_unicode_extension_keys(&parts)?;
     let aliased = canonicalize_unicode_aliases(&parts);
     let variant_aliased = canonicalize_variant_aliases(&aliased);
@@ -250,7 +254,7 @@ fn canonicalize_subtags(
     let mut variants = std::collections::HashSet::new();
     for (index, part) in parts.into_iter().enumerate() {
         if part.is_empty() {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         if index == 0
             && four_letter_language
@@ -259,7 +263,7 @@ fn canonicalize_subtags(
                 .chars()
                 .all(|character| character.is_ascii_alphabetic())
         {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         if extension {
             out.push(part.to_ascii_lowercase());
@@ -271,10 +275,10 @@ fn canonicalize_subtags(
             continue;
         }
         if region_done && is_region_shape(part) {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         if is_variant_shape(part) && !variants.insert(part.to_ascii_lowercase()) {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         match classify_subtag(part, script_done, region_done) {
             Subtag::Script => {
@@ -289,7 +293,7 @@ fn canonicalize_subtags(
                 out.push(part.to_ascii_lowercase());
             }
             Subtag::Extension if extension => out.push(part.to_ascii_lowercase()),
-            Subtag::Extension => return Err(()),
+            Subtag::Extension => return Err(InvalidLanguageTag),
         }
     }
     let canonical = canonicalize_grandfathered(deprecated_to_preferred(out));
@@ -489,7 +493,7 @@ fn is_variant_shape(part: &str) -> bool {
     valid_length && alphanumeric && (alpha_variant || numeric_variant)
 }
 
-fn validate_extension_boundaries(parts: &[&str]) -> Result<(), ()> {
+fn validate_extension_boundaries(parts: &[&str]) -> Result<(), InvalidLanguageTag> {
     let mut index = 0;
     let mut seen: Vec<&str> = Vec::new();
     while index < parts.len() {
@@ -499,7 +503,7 @@ fn validate_extension_boundaries(parts: &[&str]) -> Result<(), ()> {
         }
         if parts[index].eq_ignore_ascii_case("x") {
             if index + 1 == parts.len() {
-                return Err(());
+                return Err(InvalidLanguageTag);
             }
             return Ok(());
         }
@@ -507,12 +511,12 @@ fn validate_extension_boundaries(parts: &[&str]) -> Result<(), ()> {
             .iter()
             .any(|key| key.eq_ignore_ascii_case(parts[index]))
         {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         seen.push(parts[index]);
         index += 1;
         if index == parts.len() || parts[index].len() == 1 {
-            return Err(());
+            return Err(InvalidLanguageTag);
         }
         while index < parts.len() && parts[index].len() != 1 {
             index += 1;
@@ -545,7 +549,7 @@ pub fn canonical_region(part: &str, emitted: &[String]) -> String {
     }
 }
 
-fn validate_unicode_extension_keys(parts: &[&str]) -> Result<(), ()> {
+fn validate_unicode_extension_keys(parts: &[&str]) -> Result<(), InvalidLanguageTag> {
     for (index, part) in parts.iter().enumerate() {
         if !part.eq_ignore_ascii_case("u") {
             continue;
@@ -560,7 +564,7 @@ fn validate_unicode_extension_keys(parts: &[&str]) -> Result<(), ()> {
                     .nth(1)
                     .is_some_and(|character| character.is_ascii_alphabetic())
             {
-                return Err(());
+                return Err(InvalidLanguageTag);
             }
         }
     }

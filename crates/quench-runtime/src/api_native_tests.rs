@@ -2278,7 +2278,7 @@ fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effect
     ] {
         let mut runtime = Runtime::new(TestHost::default());
         runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-        let error = runtime.execute_native_module_graph(&[harness.clone()], &modules, &entry).unwrap_err();
+        let error = runtime.execute_native_module_graph(std::slice::from_ref(&harness), &modules, &entry).unwrap_err();
         assert!(error.to_string().contains(message), "{error}");
         let global = runtime.global_root().unwrap();
         for name in ["harnessRan", "entryRan", "depRan"] {

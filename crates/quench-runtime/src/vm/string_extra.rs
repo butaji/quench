@@ -53,9 +53,9 @@ fn append_escape_hex(output: &mut String, value: u16, digit_count: usize) {
 pub(super) fn escape(value: &super::wtf16::JsString) -> String {
     let mut output = String::with_capacity(value.units().len());
     for unit in value.units().iter() {
-        if unit <= ESCAPE_ASCII_MAX && (unit as u8).is_ascii_alphanumeric() {
-            output.push(unit as u8 as char);
-        } else if unit <= ESCAPE_ASCII_MAX && ESCAPE_UNESCAPED.contains(&(unit as u8)) {
+        if unit <= ESCAPE_ASCII_MAX
+            && ((unit as u8).is_ascii_alphanumeric() || ESCAPE_UNESCAPED.contains(&(unit as u8)))
+        {
             output.push(unit as u8 as char);
         } else {
             output.push('%');
@@ -77,14 +77,13 @@ pub(super) fn unescape(value: &super::wtf16::JsString) -> super::wtf16::JsString
     let mut output = Vec::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {
-        if units[index] == b'%' as u16 {
-            if let Some(escaped) = unescape_escape(units, index) {
+        if units[index] == b'%' as u16
+            && let Some(escaped) = unescape_escape(units, index) {
                 let (unit, width) = escaped;
                 output.push(unit);
                 index += width;
                 continue;
             }
-        }
         output.push(units[index]);
         index += 1;
     }
@@ -184,7 +183,7 @@ pub(super) fn decode_uri(
             0xf0..=0xf4 => (4, u32::from(first & 0x07), 0x10000),
             _ => return Err(MALFORMED_URI_MESSAGE),
         };
-        if width == 1 && !component && URI_RESERVED.contains(&(first as u8)) {
+        if width == 1 && !component && URI_RESERVED.contains(&{ first }) {
             units.slice(index..index + 3).extend_into(&mut output);
             index += 3;
             continue;

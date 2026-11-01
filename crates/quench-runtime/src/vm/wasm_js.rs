@@ -660,7 +660,6 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let name = self.to_string(p, arg(1))?;
-                let name = String::from(name);
                 let sections = module
                     .custom_sections_named(&name)
                     .map(<[u8]>::to_vec)

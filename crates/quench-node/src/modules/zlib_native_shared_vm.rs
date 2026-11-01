@@ -305,8 +305,10 @@ fn parameter_values(c: &mut Context<'_>, args: &[RootId]) -> Result<Vec<u32>, Ro
         .and_then(|v| c.view_bytes_rooted(v))
         .ok_or_else(|| fail(c, "Invalid compression parameters"))?;
     Ok(params
-        .chunks_exact(std::mem::size_of::<u32>())
-        .map(|bytes| u32::from_ne_bytes(bytes.try_into().expect("u32 chunk")))
+        .as_chunks::<{ std::mem::size_of::<u32>() }>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_ne_bytes(*bytes))
         .collect())
 }
 /// The optional `rejectGarbageAfterEnd` boolean at `index`.

@@ -105,9 +105,15 @@ impl<H: Host> Runtime<H> {
     }
 
     /// Construct the Vm on this thread with an owned cancellation authority.
-    pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
+    pub fn new_with_execution_interrupt(host: H, interrupt: crate::ExecutionInterrupt) -> Self {
+        Self {
+            vm: Vm::new_with_execution_interrupt(host, interrupt),
+        }
+    }
 
-    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
+    pub fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
+        self.vm.execution_interrupt_handle()
+    }
 
     /// Native-only requests rejected during this runtime's lifetime, including
     /// guest-caught source-compilation errors. A conformance host must not
@@ -1649,7 +1655,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(new Bytes([1,2,3]).join(','));
             print(new List('a','b').join(','));
             "#,
-            &["0,false,false,true","0,false,false,true","0,false,false,true","0,false,false,true","1,2,3","true","1,2,3","a,b"],
+            &[
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "1,2,3",
+                "true",
+                "1,2,3",
+                "a,b",
+            ],
         );
     }
 
@@ -1680,8 +1695,14 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(JSON.stringify(Object.getOwnPropertyDescriptor(ArityDerived, 'length')));
             "#,
             &[
-                "true", "true", "42", "true", "true", "42",
-                "[0,2,0,0,0]", "[1,2]",
+                "true",
+                "true",
+                "42",
+                "true",
+                "true",
+                "42",
+                "[0,2,0,0,0]",
+                "[1,2]",
                 r#"{"value":0,"writable":false,"enumerable":false,"configurable":true}"#,
             ],
         );
@@ -4985,15 +5006,39 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("entry.mjs", SOURCE),
-            ("a.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs")),
-            ("b.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs")),
-            ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
-            ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
-            ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
-            ("missing-export.mjs", "import { missing } from './effect.mjs';"),
+            (
+                "a.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs"),
+            ),
+            (
+                "b.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs"),
+            ),
+            (
+                "alias.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs"),
+            ),
+            (
+                "barrel.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs"),
+            ),
+            (
+                "config.json",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json"),
+            ),
+            (
+                "missing-export.mjs",
+                "import { missing } from './effect.mjs';",
+            ),
             ("syntax-failure.mjs", "export const = 1;"),
-            ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
-            ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
+            (
+                "evaluation-failure.mjs",
+                "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');",
+            ),
+            (
+                "effect.mjs",
+                "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;",
+            ),
         ];
         let modules = |host: TestHost| {
             host.without_globals()
@@ -5028,13 +5073,34 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("setup.mjs", "globalThis.log = [];"),
-            ("deferred.mjs", "import './async.mjs'; log.push('deferred'); export const value = 1;"),
-            ("async.mjs", "log.push('async start'); await 0; log.push('async end');"),
-            ("deferred-self.mjs", "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;"),
-            ("source-1.mjs", "import source source from '<source>'; export { source };"),
-            ("source-2.mjs", "import source source from '<source>'; export { source };"),
-            ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
-            ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
+            (
+                "deferred.mjs",
+                "import './async.mjs'; log.push('deferred'); export const value = 1;",
+            ),
+            (
+                "async.mjs",
+                "log.push('async start'); await 0; log.push('async end');",
+            ),
+            (
+                "deferred-self.mjs",
+                "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;",
+            ),
+            (
+                "source-1.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-2.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-reexport.mjs",
+                "export * from './source-1.mjs'; export * from './source-2.mjs';",
+            ),
+            (
+                "harness-reader.mjs",
+                "export const harness = typeof harnessGlobal;",
+            ),
         ];
         let modules = |host: TestHost| {
             host

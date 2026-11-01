@@ -513,7 +513,7 @@ impl State {
     pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
         use crate::host::startup_snapshot::{require_quiescent, HostSnap};
         let Self { next_id, pending, channels, completions } = self;
-        require_quiescent(pending.is_empty() && channels.is_empty() && completions.lock().map_or(false, |completions| completions.is_empty()), "a DNS channel")?;
+        require_quiescent(pending.is_empty() && channels.is_empty() && completions.lock().is_ok_and(|completions| completions.is_empty()), "a DNS channel")?;
         next_id.write(writer)
     }
     pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {

@@ -4,8 +4,18 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     r#"
 ((maxKey, warnedKey, maxDefault, addNative, dispatchNative, getHandlerNative, setHandlerNative, removeNative, anyConvertNative, linkNative, refreshNative, settleNative, timeoutNative) => {
   const signalStates = new WeakMap();
+  let trustEventKey;
   const controllerSignals = new WeakMap();
   const dependantSignals = Symbol("kDependantSignals");
+  const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size").get;
+  class DependentSignalSet extends Set {
+    get size() {
+      for (const reference of this) {
+        if (reference.deref() === undefined) this.delete(reference);
+      }
+      return setSize.call(this);
+    }
+  }
   const constructorToken = Symbol("AbortSignal constructor");
   const constructSignal = () => new AbortSignal(constructorToken);
 
@@ -44,7 +54,8 @@ pub const ABORT: &str = quench_js_check::checked_js!(
   };
 
   const abortEvent = (signal) => {
-    const event = new Event("abort");
+    const options = trustEventKey === undefined ? undefined : { [trustEventKey]: true };
+    const event = new Event("abort", options);
     event._quenchIsTrusted = true;
     event.__stopped = false;
     return event;
@@ -98,14 +109,15 @@ pub const ABORT: &str = quench_js_check::checked_js!(
         listeners: [],
         listenerCount: 0,
         dependents: new Set(),
-        children: new Set(),
+        children: new DependentSignalSet(),
         parents: [],
         composite: false,
+        eventListeners: new Map(),
       });
       Object.defineProperty(this, dependantSignals, {
         configurable: false,
         enumerable: false,
-        value: signalStates.get(this).dependents,
+        value: signalStates.get(this).children,
       });
       Object.defineProperty(this, "aborted", {
         configurable: true,
@@ -117,17 +129,52 @@ pub const ABORT: &str = quench_js_check::checked_js!(
 
     addEventListener(type, listener, options = undefined) {
       const state = signalState(this, "addEventListener");
+      if (type !== "abort") {
+        const eventType = String(type);
+        if (listener == null || (typeof listener !== "function" && typeof listener !== "object")) return;
+        const records = state.eventListeners.get(eventType) || [];
+        if (records.some((record) => record.listener === listener)) return;
+        const record = { listener, once: Boolean(options && typeof options === "object" && options.once) };
+        records.push(record);
+        state.eventListeners.set(eventType, records);
+        const maximum = this[maxKey];
+        if (maximum > 0 && records.length > maximum && !this[warnedKey]) {
+          this[warnedKey] = true;
+          const warning = new Error(`Possible EventTarget memory leak detected. ${records.length} ${eventType} listeners added to [AbortSignal]. MaxListeners is ${maximum}. Use events.setMaxListeners() to increase limit`);
+          warning.name = "MaxListenersExceededWarning";
+          warning.target = this;
+          warning.type = eventType;
+          warning.count = records.length;
+          globalThis.process?.emitWarning?.(warning);
+        }
+        return;
+      }
       return addNative(this, state, type, listener, options, refreshDependents);
     }
 
     removeEventListener(type, listener) {
       const state = signalState(this, "removeEventListener");
-      if (type === "abort") removeAbortListener(this, state, listener);
+      if (type === "abort") {
+        removeAbortListener(this, state, listener);
+      } else {
+        const eventType = String(type);
+        const records = state.eventListeners.get(eventType);
+        if (records) state.eventListeners.set(eventType, records.filter((record) => record.listener !== listener));
+      }
     }
 
     dispatchEvent(event) {
       const state = signalState(this, "dispatchEvent");
-      if (!event || event.type !== "abort") return true;
+      if (!event || event.type !== "abort") {
+        const records = state.eventListeners.get(String(event?.type)) || [];
+        for (const record of records.slice()) {
+          if (!records.includes(record)) continue;
+          if (record.once) this.removeEventListener(event.type, record.listener);
+          if (typeof record.listener === "function") record.listener.call(this, event);
+          else if (typeof record.listener.handleEvent === "function") record.listener.handleEvent.call(record.listener, event);
+        }
+        return !event?.defaultPrevented;
+      }
       const dispatched = abortEvent(this);
       dispatchListeners(this, state, dispatched);
       return !dispatched.defaultPrevented;
@@ -224,7 +271,8 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     writable: true,
     configurable: true,
   });
-  return [(signal) => signalStates.get(signal), signalStates, abortSignal];
+  return [(signal) => signalStates.get(signal), signalStates, abortSignal,
+    (key) => { trustEventKey = key; }];
 })
 "#
 );
@@ -271,20 +319,68 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
     this[warnedKey] = false;
   }
   addEventListener(type, listener, options = undefined) {
-    if (listener == null || typeof listener !== "function") return;
+    if (arguments.length < 2) {
+      const error = new TypeError('The "type" and "listener" arguments must be specified');
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
+    }
+    if (typeof type === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    if (listener == null) return;
+    if (typeof listener !== "function" && typeof listener !== "object") {
+      const received = typeof listener === "string"
+        ? `type string ('${listener}')`
+        : `type ${typeof listener} (${typeof listener === "bigint" ? `${listener}n` : String(listener)})`;
+      const error = new TypeError(`The "listener" argument must be an instance of EventListener. Received ${received}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const records = this[recordsKey][type] ||= [];
-    if (records.some((record) => record.listener === listener)) return;
+    for (let i = records.length - 1; i >= 0; i--) {
+      const current = records[i].weak ? records[i].listener.deref() : records[i].listener;
+      if (current === undefined) records.splice(i, 1);
+      else if (current === listener) return;
+    }
     const once = Boolean(options && typeof options === "object" && options.once);
-    records.push({ listener, once });
+    const weakSymbol = options && typeof options === "object" &&
+      Object.getOwnPropertySymbols(options).find((symbol) => symbol.description === "kWeak");
+    const weak = Boolean(weakSymbol && options[weakSymbol]);
+    records.push({ listener: weak ? new WeakRef(listener) : listener, weak, once });
+    const maximum = this[maxKey];
+    if (maximum > 0 && records.length > maximum && !this[warnedKey]) {
+      this[warnedKey] = true;
+      const target = this.constructor?.name === "MessagePort" ? "[MessagePort]" : "EventTarget";
+      const warning = new Error(`Possible EventTarget memory leak detected. ${records.length} ${type} listeners added to ${target}. MaxListeners is ${maximum}. Use events.setMaxListeners() to increase limit`);
+      warning.name = "MaxListenersExceededWarning";
+      warning.target = this;
+      warning.type = type;
+      warning.count = records.length;
+      globalThis.process?.emitWarning?.(warning);
+    }
   }
   removeEventListener(type, listener) {
+    if (arguments.length < 2) {
+      const error = new TypeError('The "type" and "listener" arguments must be specified');
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
+    }
+    if (typeof type === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
     const records = this[recordsKey][type];
-    if (records) this[recordsKey][type] = records.filter((record) => record.listener !== listener);
+    if (records) this[recordsKey][type] = records.filter((record) =>
+      record.listener !== listener &&
+      (record.weak ? record.listener.deref() : record.listener) !== listener);
   }
   },
   writable: true,
   configurable: true,
 });
+
+if (typeof globalThis.EventTarget === "function" &&
+    !Object.prototype.hasOwnProperty.call(EventTarget.prototype, Symbol.toStringTag)) {
+  Object.defineProperty(EventTarget.prototype, Symbol.toStringTag, {
+    configurable: true,
+    value: "EventTarget",
+  });
+}
 
 Object.defineProperty(globalThis, "MessageEvent", {
   value: (() => {
@@ -294,11 +390,39 @@ Object.defineProperty(globalThis, "MessageEvent", {
       constructor(type, init = {}) {
         super(type, init);
         brand.add(this);
-        this._data = init.data;
+        const formatArgument = (value) => {
+          if (value !== null && typeof value === "object") {
+            try {
+              return JSON.stringify(value) ?? String(value);
+            } catch {}
+          }
+          return String(value);
+        };
+        this._data = init.data === undefined ? null : init.data;
         this._origin = init.origin === undefined ? "" : String(init.origin);
         this._lastEventId = init.lastEventId === undefined ? "" : String(init.lastEventId);
-        this._source = init.source ?? null;
-        this._ports = init.ports === undefined ? [] : [...init.ports];
+        const source = init.source;
+        if (source !== undefined && source !== null &&
+            !(source instanceof MessagePort || typeof source.postMessage === "function" ||
+              typeof source.start === "function")) {
+          throw new TypeError(`MessageEvent constructor: Expected eventInitDict.source ("${formatArgument(source)}") to be an instance of MessagePort.`);
+        }
+        this._source = source === undefined ? null : source;
+        if (init.ports === undefined) {
+          this._ports = [];
+        } else {
+          const ports = init.ports;
+          if (ports === null || typeof ports[Symbol.iterator] !== "function") {
+            throw new TypeError(`MessageEvent constructor: eventInitDict.ports (${formatArgument(ports)}) is not iterable.`);
+          }
+          this._ports = [...ports];
+          const invalidPort = this._ports.findIndex((port) =>
+            !(port instanceof MessagePort || typeof port?.postMessage === "function"));
+          if (invalidPort !== -1) {
+            const port = this._ports[invalidPort];
+            throw new TypeError(`MessageEvent constructor: Expected eventInitDict.ports[${invalidPort}] ("${formatArgument(port)}") to be an instance of MessagePort.`);
+          }
+        }
       }
       get data() { assertBrand(this); return this._data; }
       get origin() { assertBrand(this); return this._origin; }

@@ -16,7 +16,7 @@ pub(crate) use client::{
     create as request_create, destroy as request_destroy,
     destroy_response as client_response_destroy, end as request_end,
     normalize_url as request_normalize_url, remove_header as request_remove_header,
-    write as request_write,
+    set_header as request_set_header, write as request_write,
 };
 pub(crate) use operations::{
     agent_create, agent_destroy, agent_get_name, create_server, response_destroy, response_finish,
@@ -29,15 +29,15 @@ pub(crate) use operations::{
 };
 pub(crate) use state::State;
 
+/// The `http` builtin. It is built once (`build_module`): its construction registers the
+/// host's response tracking and request dispatch, which a second instance would replace.
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    operations::module(context)
+    crate::host::shared_vm::commonjs::http_module(context)
 }
 
-pub(crate) fn https_module(
-    context: &mut NativeContext<'_, NodeHost>,
-    http: RootId,
-) -> Result<RootId, RootedError> {
-    operations::https_module(context, http)
+/// Builds the `http` builtin the module cache keeps (`module`).
+pub(crate) fn build_module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    operations::module(context)
 }
 
 pub(crate) fn poll(
@@ -54,8 +54,12 @@ pub(crate) fn has_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>)
         .servers
         .values()
         .any(|server| server.listening_pending || (server.closing && server.connections.is_empty()))
-        || !host.http.clients.is_empty()
-        // A queued request is live work even before its socket exists.
+        // An outgoing request is bookkeeping, not an event-loop handle. In
+        // particular, Node permits a custom `lookup` callback to leave a
+        // socket pending without retaining the process; the TCP transport,
+        // DNS backend, and timers below already account for referenced work.
+        // A request queued behind `maxSockets` is still live work: it runs
+        // as soon as one of its origin's sockets frees, before any handle exists.
         || !host.http.pending.is_empty()
         || crate::modules::net_shared_vm::has_work(&host.tcp)
 }

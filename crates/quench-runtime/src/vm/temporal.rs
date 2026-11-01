@@ -920,11 +920,10 @@ impl<H: Host> Vm<H> {
                 self.temporal_timezone_id(p, timezone)
             })
             .transpose()?;
-        if let Some(offset) = &offset {
-            if !quench_temporal::valid_string_offset(&offset) {
+        if let Some(offset) = &offset
+            && !quench_temporal::valid_string_offset(offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
-        }
         let zoned = if let Some(time_zone) = timezone {
             let date = super::temporal_date::IsoDate { year, month, day };
             let epoch_nanoseconds = if let Some(offset) = &offset {
@@ -988,14 +987,13 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|field| field.strip_suffix('s').unwrap_or(field) == unit)
             .ok_or_else(|| self.range_error(p, "Invalid unit".into()))?;
-        if index == super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
-            if let Some(relative) = relative_date
+        if index == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+            && let Some(relative) = relative_date
                 .as_ref()
                 .and_then(|relative| relative.zoned.as_ref())
             {
-                self.validate_zoned_relative_next_day(p, &relative)?;
+                self.validate_zoned_relative_next_day(p, relative)?;
             }
-        }
         if relative_date
             .as_ref()
             .is_some_and(|relative| self.relative_duration_is_out_of_range(relative, &fields))
@@ -1231,14 +1229,13 @@ impl<H: Host> Vm<H> {
                 "Cannot round to an increment while balancing calendar units".into(),
             ));
         }
-        if largest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
-            if let Some(relative) = relative_date
+        if largest == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
+            && let Some(relative) = relative_date
                 .as_ref()
                 .and_then(|relative| relative.zoned.as_ref())
             {
-                self.validate_zoned_relative_next_day(p, &relative)?;
+                self.validate_zoned_relative_next_day(p, relative)?;
             }
-        }
         if relative_date
             .as_ref()
             .is_some_and(|relative| self.relative_duration_is_out_of_range(relative, &fields))
@@ -1279,7 +1276,7 @@ impl<H: Host> Vm<H> {
             );
         }
         let nanos = self.duration_time_nanos(&fields);
-        let quantum = DURATION_TIME_NANOSECOND_SCALES[smallest - 3] * increment as i128;
+        let quantum = DURATION_TIME_NANOSECOND_SCALES[smallest - 3] * increment;
         let rounded_units = round_duration_integer(nanos, quantum, &mode);
         let mut remainder = (rounded_units * quantum).unsigned_abs();
         let mut result = [0.0; 10];
@@ -1362,15 +1359,11 @@ impl<H: Host> Vm<H> {
             return self.make_temporal_duration(p, result);
         }
         if largest <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD
-            && relative_date.zoned.is_some()
+            && let Some(zoned) = relative_date.zoned.as_ref()
             && fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
                 .iter()
                 .any(|value| *value != 0.0)
         {
-            let zoned = relative_date
-                .zoned
-                .as_ref()
-                .expect("zoned relative date checked");
             let date_fields: [Value; 10] = std::array::from_fn(|index| {
                 Value::number(
                     if index <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
@@ -1937,7 +1930,7 @@ fn round_duration_integer(value: i128, quantum: i128, mode: &str) -> i128 {
         "floor" => sign < 0 && remainder != 0,
         "expand" => remainder != 0,
         "trunc" => false,
-        "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && units % 2 != 0,
+        "halfEven" => remainder * 2 > quantum || remainder * 2 == quantum && !units.is_multiple_of(2),
         "halfCeil" => remainder * 2 >= quantum && sign > 0 || remainder * 2 > quantum && sign < 0,
         "halfFloor" => remainder * 2 > quantum && sign > 0 || remainder * 2 >= quantum && sign < 0,
         "halfTrunc" => remainder * 2 > quantum,

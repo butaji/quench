@@ -415,22 +415,53 @@ pub(crate) fn listener_count(
     get(context, listeners, "length")
 }
 
+/// How many constructors of an emitter's class chain `validate_event_target` inspects for
+/// the EventTarget brand: a bound on guest prototype chains, deeper than any real subclass.
+const BRAND_CONSTRUCTOR_DEPTH: usize = 32;
+
 fn validate_event_target(
     context: &mut NativeContext<'_, NodeHost>,
     data: RootId,
     emitter: RootId,
 ) -> Result<(), RootedError> {
-    let constructor = get(context, emitter, "constructor")?;
-    let constructor_value = context
-        .rooted_value(constructor)
-        .ok_or_else(|| RootedError::host("constructor root missing"))?;
-    let branded = if constructor_value.is_null() || constructor_value.is_undefined() {
-        false
-    } else {
-        let key = get(context, data, "brandKey")?;
-        let brand = context.get_property_rooted(constructor, key)?;
-        context.truthy_rooted(brand)?
-    };
+    // EventTarget subclasses (notably MessagePort) inherit the marker from the
+    // base constructor in Node's API. Walk the constructor chain so those
+    // instances are accepted by setMaxListeners/listenerCount as well.
+    let brand_key = get(context, data, "brandKey")?;
+    let mut constructor = get(context, emitter, "constructor")?;
+    let mut branded = false;
+    for _ in 0..BRAND_CONSTRUCTOR_DEPTH {
+        if context
+            .rooted_value(constructor)
+            .is_none_or(|value| value.is_null() || value.is_undefined())
+        {
+            break;
+        }
+        let brand = context.get_property_rooted(constructor, brand_key)?;
+        if context.truthy_rooted(brand)? {
+            branded = true;
+            break;
+        }
+        let prototype = get(context, constructor, "prototype")?;
+        if context
+            .rooted_value(prototype)
+            .is_none_or(|value| value.is_null() || value.is_undefined())
+        {
+            break;
+        }
+        let parent = context.prototype_rooted(prototype)?;
+        if context
+            .rooted_value(parent)
+            .is_none_or(|value| value.is_null() || value.is_undefined())
+        {
+            break;
+        }
+        let next = get(context, parent, "constructor")?;
+        if context.strict_equal_rooted(next, constructor)? {
+            break;
+        }
+        constructor = next;
+    }
     if !branded {
         return Err(super::util_shared_vm::argument_type_error(
             context,
@@ -505,22 +536,47 @@ pub(super) fn listener_records(
 
 /// The configured Web IDL converter uses the original provider's actual private
 /// WeakMap brand, independent of guest prototypes or public WeakMap methods.
-pub(crate) fn adopt_abort_converter(context: &mut NativeContext<'_, NodeHost>, webidl: RootId) -> Result<(),RootedError> {
+pub(crate) fn adopt_abort_converter(
+    context: &mut NativeContext<'_, NodeHost>,
+    webidl: RootId,
+) -> Result<(), RootedError> {
     context.with_startup_intrinsics(|context| {
-        let global=context.global_root()?;get(context,global,"AbortSignal")?;
-        let data=context.host_mut().shared_state().borrow().event_targets_api
-            .ok_or_else(||RootedError::host("EventTarget API missing"))?;
-        let map=get(context,data,"abortStateMap")?;
-        let predicate=context.host_function_with_data(crate::host::shared_vm::operation("abortSignalBrand"),map)?;
-        let factory=get(context,webidl,"createInterfaceConverter")?;
-        let name=context.string_rooted("AbortSignal");let undefined=context.undefined();
-        let converter=context.call_rooted(factory,undefined,&[name,predicate])?;
-        let converters=get(context,webidl,"converters")?;set(context,converters,"AbortSignal",converter)
+        let global = context.global_root()?;
+        get(context, global, "AbortSignal")?;
+        let data = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .event_targets_api
+            .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
+        // The brand reads the private state map natively, so adopting the converter while
+        // `internal/webidl` loads builds no DOM event family (whose `url` load would re-enter
+        // a library module still evaluating).
+        let map = get(context, data, "abortStateMap")?;
+        let predicate =
+            context.host_function_with_data(crate::host::shared_vm::operation("abortSignalBrand"), map)?;
+        let factory = get(context, webidl, "createInterfaceConverter")?;
+        let name = context.string_rooted("AbortSignal");
+        let undefined = context.undefined();
+        let converter = context.call_rooted(factory, undefined, &[name, predicate])?;
+        let converters = get(context, webidl, "converters")?;
+        set(context, converters, "AbortSignal", converter)
     })
 }
-pub(crate) fn abort_signal_brand(context: &mut NativeContext<'_,NodeHost>,_:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    let value=args.first().copied().unwrap_or_else(||context.undefined());
-    if !context.is_object_rooted(value)? { return Ok(context.boolean(false)); }
-    let map=context.host_function_data()?;let state=context.weak_map_get_rooted(map,value)?;
-    let branded=!context.rooted_value(state).is_some_and(|v|v.is_undefined());Ok(context.boolean(branded))
+
+/// Whether `value` is a genuine AbortSignal: one the private state map (the host function's
+/// data) holds.
+pub(crate) fn abort_signal_brand(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    if !context.is_object_rooted(value)? {
+        return Ok(context.boolean(false));
+    }
+    let map = context.host_function_data()?;
+    let state = context.weak_map_get_rooted(map, value)?;
+    let branded = !context.rooted_value(state).is_some_and(|value| value.is_undefined());
+    Ok(context.boolean(branded))
 }

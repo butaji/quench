@@ -81,20 +81,14 @@ impl FunctionCompiler<'_, '_> {
         self.scoped_finalizer_statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
-        let return_target = self.code.len() as u32;
-        self.scoped_finalizer_statements(&finalizer.body);
-        let return_value = self.load_atom(return_atom);
-        self.emit_return(return_value);
-        self.iterator_close_ranges
-            .push((return_target, self.code.len() as u32));
-        self.patch_edges(&context.return_edges, return_target);
+        let return_target = self.finally_return_path(&context, finalizer, return_atom);
         self.emit_abrupt_paths(&context, finalizer.span, |this| {
             this.scoped_finalizer_statements(&finalizer.body)
         });
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
         let error_slot = self.local_slot(error_atom);
-        let return_slot = self.local_slot(return_atom);
+        let (return_target, return_slot) = self.resumed_return(return_target, return_atom);
         let with_depth = self.with_depth;
         self.push_handlers_excluding(start, end, &close_exclusions, |start, end| {
             crate::bytecode::Handler {
@@ -102,7 +96,7 @@ impl FunctionCompiler<'_, '_> {
                 end,
                 target: exceptional_target,
                 slot: error_slot.map(crate::bytecode::ThrownValueSlot::Local),
-                return_target: Some(return_target),
+                return_target,
                 return_slot,
                 with_depth,
             }
@@ -173,20 +167,14 @@ impl FunctionCompiler<'_, '_> {
         self.scoped_finalizer_statements(&finalizer.body);
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
-        let return_target = self.code.len() as u32;
-        self.scoped_finalizer_statements(&finalizer.body);
-        let return_value = self.load_atom(return_atom);
-        self.emit_return(return_value);
-        self.iterator_close_ranges
-            .push((return_target, self.code.len() as u32));
-        let return_slot = self.local_slot(return_atom);
+        let return_target = self.finally_return_path(&context, finalizer, return_atom);
+        let (return_target, return_slot) = self.resumed_return(return_target, return_atom);
         for body_handler in &mut self.handlers[body_handler..body_handlers_end] {
-            body_handler.return_target = Some(return_target);
+            body_handler.return_target = return_target;
             body_handler.return_slot = return_slot;
         }
         self.patch_to(body_exit, finalizer_target);
         self.patch_to(catch_exit, finalizer_target);
-        self.patch_edges(&context.return_edges, return_target);
         self.emit_abrupt_paths(&context, finalizer.span, |this| {
             this.scoped_finalizer_statements(&finalizer.body)
         });
@@ -203,7 +191,7 @@ impl FunctionCompiler<'_, '_> {
                 end,
                 target: exceptional_target,
                 slot: error_slot.map(crate::bytecode::ThrownValueSlot::Local),
-                return_target: Some(return_target),
+                return_target,
                 return_slot,
                 with_depth,
             },
@@ -217,6 +205,42 @@ impl FunctionCompiler<'_, '_> {
             let (target, _) = self.append_iterator_close_finalizer(finalizer, error_atom);
             self.push_iterator_close_finally_handlers(&close_ranges, target, error_atom);
         }
+    }
+
+    /// The path a `return` takes out of a `try` (or its `catch`) through `finalizer`: the
+    /// finalizer, then a return of the value the `return` left in `return_atom`'s local.
+    /// The protected blocks' own returns (`FinallyContext::return_edges`) reach it, and so
+    /// does a generator's `return()` resumed inside them (`Handler::return_target`); any
+    /// other body never takes it, so it is not emitted, and its unreachable read of the
+    /// hidden local does not keep the body's locals in a frame (`CallPlan::addresses_locals`).
+    /// Only a generator's handlers name the path and its slot (`resumed_return`).
+    fn finally_return_path(
+        &mut self,
+        context: &FinallyContext,
+        finalizer: &BlockStatement<'_>,
+        return_atom: Atom,
+    ) -> Option<u32> {
+        if context.return_edges.is_empty() && !self.generator {
+            return None;
+        }
+        let return_target = self.code.len() as u32;
+        self.scoped_finalizer_statements(&finalizer.body);
+        let return_value = self.load_atom(return_atom);
+        self.emit_return(return_value);
+        self.iterator_close_ranges
+            .push((return_target, self.code.len() as u32));
+        self.patch_edges(&context.return_edges, return_target);
+        Some(return_target)
+    }
+
+    /// The return path and completion slot a handler names: a generator resumed with
+    /// `return()` inside the protected blocks enters the path with its value in the slot
+    /// (`Handler::return_target`). Any other body reaches the path only through its own
+    /// returns' jumps, so its handlers name neither, and the slot stays a plain local that
+    /// may move into a register (`frame_registers::promote`, which keeps named slots).
+    fn resumed_return(&self, return_target: Option<u32>, return_atom: Atom) -> (Option<u32>, Option<u16>) {
+        let return_target = return_target.filter(|_| self.generator);
+        (return_target, return_target.and_then(|_| self.local_slot(return_atom)))
     }
 
     fn append_iterator_close_finalizer(

@@ -782,8 +782,8 @@ fn digital_duration_parts(options: &DurationFormatOptions, fields: [f64; 10]) ->
             },
         );
     }
-    if negative {
-        if let Some(first) = parts.iter().position(|part| part.kind == "integer") {
+    if negative
+        && let Some(first) = parts.iter().position(|part| part.kind == "integer") {
             let unit = parts[first].unit;
             parts.insert(
                 first,
@@ -794,7 +794,6 @@ fn digital_duration_parts(options: &DurationFormatOptions, fields: [f64; 10]) ->
                 },
             );
         }
-    }
     parts
 }
 

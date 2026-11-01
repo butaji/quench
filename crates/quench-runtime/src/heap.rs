@@ -89,6 +89,14 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
 
+/// Whether an existing-slot store may replace its owner's property storage.
+/// Native views require Preserve until their execution ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PropertyStoreLayout {
+    Preserve,
+    MayWiden,
+}
+
 /// The native reader's view of an ordinary object record and its out-of-line property words.
 ///
 /// Generated code may resolve only a current direct-object Value to a live record, must
@@ -111,6 +119,13 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
+    pub(crate) proto_mask: u32,
+    pub(crate) proto_record_base: u32,
+    pub(crate) proto_record_end: u32,
+    pub(crate) mark_records_per_block: usize,
+    pub(crate) mark_word_bits: usize,
+    pub(crate) mark_block_size: usize,
+    pub(crate) mark_offset: usize,
     pub(crate) property_value_size: usize,
     pub(crate) property_value_align: usize,
 }
@@ -131,6 +146,13 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
+    proto_mask: cell::NATIVE_OBJECT_PROTO_MASK,
+    proto_record_base: cell::NATIVE_OBJECT_PROTO_RECORD_BASE,
+    proto_record_end: cell::NATIVE_OBJECT_PROTO_RECORD_END,
+    mark_records_per_block: records::NATIVE_RECORDS_PER_BLOCK,
+    mark_word_bits: records::NATIVE_RECORD_MARK_WORD_BITS,
+    mark_block_size: records::NATIVE_RECORD_BLOCK_SIZE,
+    mark_offset: records::NATIVE_RECORD_MARK_OFFSET,
     property_value_size: std::mem::size_of::<Value>(),
     property_value_align: std::mem::align_of::<Value>(),
 };
@@ -301,13 +323,12 @@ impl<'slots> ParallelSweepSlab<'slots> {
             if Heap::marked(marks, index) {
                 result.live += 1;
                 result.live_payload_bytes += cell.payload_bytes();
-                if let Some(object) = cell.object() {
-                    if compacts && object.properties().has_compact_range() {
+                if let Some(object) = cell.object()
+                    && compacts && object.properties().has_compact_range() {
                         result
                             .property_owners
                             .push(pack_offset_owner(object.properties().start_offset(), index));
                     }
-                }
                 continue;
             }
 
@@ -2663,14 +2684,13 @@ impl Heap {
                         if Self::marked(&self.marks, index) {
                             live += 1;
                             live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
-                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
-                                if compacts && properties.has_compact_range(object.properties()) {
+                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                                && compacts && properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
                                         object.properties().start_offset(),
                                         index,
                                     ));
                                 }
-                            }
                         } else if let Some(cell) = slot.cell.take() {
                             reclaim(properties, index, cell);
                         }
@@ -3426,7 +3446,7 @@ impl Heap {
         object: Value,
         slot: usize,
     ) -> Option<*mut Value> {
-        let vector = self.object_mut(object)?.properties();
+        let vector = self.object(object)?.properties();
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
@@ -3526,6 +3546,7 @@ impl Heap {
         record_id: u32,
         slot: usize,
         value: Value,
+        layout: PropertyStoreLayout,
     ) -> bool {
         // Without `LOGS`, a store the barrier would log is left to the caller, so this one
         // makes no call; the barrier does nothing for any other.
@@ -3540,7 +3561,7 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        store_exact_slot::<LOGS>(data, &mut self.properties, slot, value)
+        store_exact_slot(data, &mut self.properties, slot, value, layout)
     }
 
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
@@ -3550,7 +3571,7 @@ impl Heap {
     /// # Safety
     /// `shape` is a shape outside dictionary storage holding a property at `slot`.
     #[inline(always)]
-    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value) -> bool {
+    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
         let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
             return false;
         };
@@ -3562,7 +3583,9 @@ impl Heap {
         if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
             return false;
         }
-        store_exact_slot::<true>(data, properties, slot, value);
+        if !store_exact_slot(data, properties, slot, value, layout) {
+            return false;
+        }
         if value.heap_index().is_some() {
             self.remember(index);
         }
@@ -4195,7 +4218,7 @@ impl Heap {
                 Cell::Environment { slots, scope, .. } => {
                     let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
-                        + with_objects.len() * size_of::<Value>()
+                        + std::mem::size_of_val(with_objects)
                 }
                 Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
                 Cell::Error(value) => value.capacity(),
@@ -4265,34 +4288,6 @@ fn sort_by_unique_offset(keys: &mut Vec<u64>) {
     }
 }
 
-#[cfg(test)]
-mod offset_order_tests {
-    #[test]
-    fn radix_offset_order_matches_comparison_sort() {
-        let mut state = 0x2545_f491_u64;
-        let mut offsets: Vec<usize> = (0..5000)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                (state >> 33) as usize
-            })
-            .collect();
-        offsets.sort_unstable();
-        offsets.dedup();
-        let mut keys: Vec<u64> = offsets
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
-            .collect();
-        let mut expected = keys.clone();
-        expected.sort_unstable();
-        super::sort_by_unique_offset(&mut keys);
-        assert_eq!(keys, expected);
-    }
-}
-
 /// Moves `data`'s inline values into an arena range of `shape`, `length` values long, with
 /// `value` at `slot`: the store its payload word cannot hold (`Object::store_inline_narrow`).
 fn widen_inline_storage(
@@ -4342,10 +4337,10 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
 /// arena values without extras need no other decoding (as `property_get_flat`), and inline
-/// values that cannot take `value` move to the arena, which without `LOGS` is left to the
-/// caller's logged store (`false`, with nothing changed).
+/// values that cannot take `value` move to the arena only under MayWiden.
+/// Preserve declines before changing storage or values.
 #[inline(always)]
-fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value) -> bool {
+fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
@@ -4354,7 +4349,7 @@ fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueA
     }
     if data.properties().has_inline_property_storage() {
         if !data.store_inline_narrow(slot, value) {
-            if !LOGS {
+            if layout == PropertyStoreLayout::Preserve {
                 return false;
             }
             let length = properties.len(data.properties());
@@ -4367,4 +4362,32 @@ fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueA
     // SAFETY: the caller proves that the property slot exists outside dictionary storage.
     unsafe { properties.set_flat_unchecked(vector, slot, value) };
     true
+}
+
+#[cfg(test)]
+mod offset_order_tests {
+    #[test]
+    fn radix_offset_order_matches_comparison_sort() {
+        let mut state = 0x2545_f491_u64;
+        let mut offsets: Vec<usize> = (0..5000)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (state >> 33) as usize
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut keys: Vec<u64> = offsets
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
+            .collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        super::sort_by_unique_offset(&mut keys);
+        assert_eq!(keys, expected);
+    }
 }
