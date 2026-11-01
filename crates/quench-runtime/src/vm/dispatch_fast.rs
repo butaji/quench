@@ -2642,7 +2642,8 @@ script_handler! {
     /// environment, else the frame's environment replaced by its copy (a `for (let ...)`
     /// iteration's, which a closure in the body captures), after which the run's capture
     /// caches name the old environment and are dropped. An activation's environment is its
-    /// window's, so its clone takes the general path.
+    /// window's, which an environment view's records copy (`lane_clone_window_env`); any
+    /// other activation's clone takes the general path.
     fn lane_clone_env<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !vm.lane_stack.activations.is_empty() {
@@ -2669,6 +2670,58 @@ script_handler! {
                 (*cx).outer = NO_OUTER_WALK;
                 (*cx).frame_storage = NO_FRAME_STORAGE;
             }
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `CloneEnv` of a function an environment activation may run: in a frame's run, as
+    /// `lane_clone_env`; in an environment activation, nothing to copy while its window has
+    /// made no environment (no closure captured its bindings yet: they all live among the
+    /// window's locals), else the window's environment replaced by its iteration copy, as a
+    /// frame's (`Vm::iteration_environment`). Closures made earlier keep the old environment,
+    /// whose function-level slots the copy shares.
+    fn lane_clone_window_env<>(cx, r, ip, i, view) {
+        if unsafe { (*cx).env }.is_deleted() {
+            sibling!(lane_clone_env::<H>, r, ip, Carried::script(cx))
+        }
+        let (_, registers) = environment_window_fields(i);
+        // SAFETY: the running environment activation's window starts at `registers`.
+        let entries = unsafe { r.0.add(usize::from(registers)) };
+        let source = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
+        if source.is_deleted() {
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        let vm = unsafe { vm(cx) };
+        let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
+            return exit(ip);
+        };
+        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+        // running function's view.
+        let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+        let body = code.function(function as usize);
+        let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
+        else {
+            return exit(ip);
+        };
+        // It checks the environment before it allocates the copy, so an error leaves the
+        // activation for the general path to raise it from.
+        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, &plan.reset)
+        else {
+            return exit(ip);
+        };
+        note_allocation(vm);
+        let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(environment) else {
+            unreachable!("an iteration copy is an environment");
+        };
+        let storage = std::ptr::from_ref(slots);
+        // SAFETY: as above; the copy's slot storage never moves while it lives.
+        unsafe {
+            entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
+            entries
+                .add(usize::from(WINDOW_SLOTS))
+                .write(std::mem::transmute::<u64, Value>(storage as u64));
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -18357,7 +18410,8 @@ fn specialize_environment_window<H: Host>(
     let registers = function.registers;
     // The handlers derivation gives these records alone: a record any other pass gave a
     // handler, such as one carrying an accumulator to the next, keeps the function's.
-    let plain: [Handler; 11] = [
+    let plain: [Handler; 12] = [
+        lane_clone_env::<H>,
         lane_load_local::<H>,
         lane_load_local_plain::<H>,
         lane_load_frame_local::<H, true>,
@@ -18375,6 +18429,7 @@ fn specialize_environment_window<H: Host>(
         let op = instruction.op();
         let own = match op {
             Op::MakeClosure => instruction.imm(),
+            Op::CloneEnv => 0,
             Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
             | Op::StoreEnvLocal | Op::InitializeTdz => instruction.local_slot() as u32,
             _ => continue,
@@ -18384,9 +18439,10 @@ fn specialize_environment_window<H: Host>(
         {
             return None;
         }
-        let environment = op != Op::MakeClosure && function.local_slot_uses_environment(own as usize);
+        let environment = !matches!(op, Op::MakeClosure | Op::CloneEnv) && function.local_slot_uses_environment(own as usize);
         let handler: Handler = match (op, environment) {
             (Op::MakeClosure, _) => lane_make_window_closure::<H>,
+            (Op::CloneEnv, _) => lane_clone_window_env::<H>,
             (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
             (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
             (Op::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,

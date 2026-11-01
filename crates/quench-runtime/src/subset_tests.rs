@@ -515,6 +515,70 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn iteration_copies_run_in_environment_activations() {
+    // A loop whose block bindings a closure captures copies its environment each iteration
+    // (`CloneEnv`); an arrow making such closures still runs as an environment activation
+    // (`lane_clone_window_env`), each closure keeping its iteration's bindings while all
+    // share the function-level ones, as a frame's copies do.
+    let source = r#"
+const out = [];
+// Each iteration's closure keeps its own block bindings; all share the function-level one.
+const collect = (items) => {
+  let shared = 0;
+  const fs = [];
+  for (const item of items) {
+    const doubled = item * 2;
+    fs.push(() => doubled + shared);
+    shared += 1;
+  }
+  shared += 100;
+  return fs.map((f) => f()).join();
+};
+for (let round = 0; round < 3; round++) out.push(collect([1, 2, 3]));
+// An iteration that makes no closure copies nothing; a later one still sees the shared write.
+const sparse = (items) => {
+  let last = -1;
+  let made = null;
+  for (const item of items) {
+    const seen = item;
+    if (item === 2) made = () => seen + ":" + last;
+    last = item;
+  }
+  return made ? made() : "none";
+};
+for (let round = 0; round < 3; round++) out.push(sparse([1, 2, 3, 4]));
+// A closure assigning the shared binding from an earlier iteration.
+const writer = (n) => {
+  let total = 0;
+  const adders = [];
+  for (let i = 0; i < n; i++) { const k = i; adders.push(() => { total += k; }); }
+  for (const add of adders) add();
+  return total;
+};
+for (let round = 0; round < 3; round++) out.push(writer(5));
+// Nested loops and a throw out of an iterated closure.
+const nested = (rows) => {
+  const fs = [];
+  for (const row of rows) for (const cell of row) fs.push(() => row.length * 10 + cell);
+  try { for (const f of fs) { if (f() > 30) throw new Error("big " + f()); } } catch (e) { return e.message; }
+  return fs.map((f) => f()).join();
+};
+for (let round = 0; round < 3; round++) out.push(nested([[1, 2], [3]]), nested([[1, 2, 3, 4]]));
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "iteration-copies.js").unwrap();
+    program.compile_released();
+    let collect = &program.functions[1];
+    assert!(collect.instructions().any(|instruction| instruction.op() == crate::bytecode::Op::CloneEnv));
+    assert!(collect.call_plan(&program).environment_activation);
+    program.validate().unwrap();
+    assert_eq!(
+        output(source),
+        ["105,107,109|105,107,109|105,107,109|2:4|2:4|2:4|10|10|10|21,22,13|big 41|21,22,13|big 41|21,22,13|big 41"]
+    );
+}
+
+#[test]
 fn closure_making_arrows_run_as_environment_activations_with_their_lexical_this() {
     // An arrow that makes closures runs as an environment activation
     // (`CallPlan::environment_activation`) whose `this` is its environment's; its
