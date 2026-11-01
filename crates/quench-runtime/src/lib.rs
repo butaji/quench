@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![feature(rust_preserve_none_cc)]
 
 mod execution_interrupt;
 pub use execution_interrupt::ExecutionInterrupt;
