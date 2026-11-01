@@ -3491,17 +3491,24 @@ script_handler! {
     /// operator records compute it (`lane_number_operator`); after a first step on doubles
     /// the second reads its result as the double it stores. Other operands run the record
     /// whose step declines them, which stays in place.
-    fn lane_operator_pair<FIRST: u32, SECOND: u32>(cx, r, ip, i, view) {
+    ///
+    /// With `FIRST_DEAD` the first result's register is dead after the pair (liveness, or the
+    /// second overwrites it), so it is stored only when the second record runs on its own.
+    fn lane_operator_pair<FIRST: u32, SECOND: u32, FIRST_DEAD: bool>(cx, r, ip, i, view) {
         use super::operations::{integer_operator, number_operator};
         let (left, right) = (r.get(i.b), r.get(i.c));
+        // SAFETY: the pair is two records, the second never the view's last.
+        let second = unsafe { &*following(ip) };
         if let Some(value) = integer_operator::<FIRST>(left, right) {
-            r.set(i.a, value);
-            // SAFETY: the pair is two records, the second never the view's last.
-            let second = unsafe { &*following(ip) };
-            let Some(value) = lane_number_operator::<SECOND>(r.get(second.b), r.get(second.c)) else {
+            let operand = |register: u16| if register == i.a { value } else { r.get(register) };
+            let Some(result) = lane_number_operator::<SECOND>(operand(second.b), operand(second.c)) else {
+                r.set(i.a, value);
                 next!(cx, r, following(ip), Carried::script(cx))
             };
-            r.set(second.a, value);
+            if !FIRST_DEAD {
+                r.set(i.a, value);
+            }
+            r.set(second.a, result);
             next!(cx, r, following(following(ip)), Carried::script(cx))
         }
         let Some(first) = Value::number_pair(left, right)
@@ -3509,16 +3516,17 @@ script_handler! {
         else {
             sibling!(lane_operator_numbers::<H, FIRST>, r, ip, Carried::script(cx))
         };
-        r.set(i.a, Value::number(first));
-        // SAFETY: the pair is two records, the second never the view's last.
-        let second = unsafe { &*following(ip) };
         let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_number() };
         let Some(value) = operand(second.b)
             .zip(operand(second.c))
             .and_then(|(left, right)| number_operator::<SECOND>(left, right))
         else {
+            r.set(i.a, Value::number(first));
             next!(cx, r, following(ip), Carried::script(cx))
         };
+        if !FIRST_DEAD {
+            r.set(i.a, Value::number(first));
+        }
         r.set(second.a, Value::number(value));
         next!(cx, r, following(following(ip)), Carried::script(cx))
     }
@@ -17544,7 +17552,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_load_branch_pairs::<H>(&mut records);
         specialize_update_jumps::<H>(&mut records);
         specialize_store_moves::<H>(&mut records);
-        specialize_operator_pairs::<H>(&mut records);
+        specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
     }
@@ -18112,7 +18120,10 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
 /// operand the fused pair (`lane_operator_pair`). Records a fused record before them already
 /// runs are skipped, so a pair starts where control arrives; both records stay as they are,
 /// for jumps and for a step the pair leaves to them.
-fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction]) {
+///
+/// Liveness (`live`) selects the variant that leaves a first result dead after the pair
+/// unstored on the fast path (`lane_operator_pair`'s `FIRST_DEAD`).
+fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
     use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     let mut pc = 0;
     while pc + 1 < records.len() {
@@ -18132,10 +18143,15 @@ fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction]) {
             pc += 1;
             continue;
         }
+        let first_dead = second.a == first.a
+            || live
+                .and_then(|masks| masks.get(pc + 2))
+                .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
         macro_rules! seconds {
             ($first:ident; $($second:ident),*) => {
-                match right {
-                    $($second => lane_operator_pair::<H, $first, $second> as Handler,)*
+                match (right, first_dead) {
+                    $(($second, false) => lane_operator_pair::<H, $first, $second, false> as Handler,
+                      ($second, true) => lane_operator_pair::<H, $first, $second, true> as Handler,)*
                     _ => unreachable!("an arithmetic operator the lane fuses"),
                 }
             };
