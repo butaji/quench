@@ -2883,6 +2883,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         // Node's `_http_client` builds on its `http_parser` binding, which the native `http`
         // module does not use; until it is projected from it, it stays empty.
         BuiltinModule::Internal("_http_client") => context.object_rooted(),
+        BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
         // Every other such builtin is Node's own library module of that name.
         BuiltinModule::Internal(name) => {
             let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
