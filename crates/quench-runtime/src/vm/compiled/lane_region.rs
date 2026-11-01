@@ -259,7 +259,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             OperandKind::Register => Some(self.tagged(state, operand.register_index()?)),
             OperandKind::Constant => {
                 let constant = self.program.constants.get(usize::from(operand.payload()))?;
-                let value = constant_value(constant)?;
+                let value = super::facts::immediate(constant)?;
                 Some(self.ins().iconst(types::I64, value.to_bits() as i64))
             }
             OperandKind::Field | OperandKind::Local => None,
@@ -272,8 +272,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             OperandKind::Register => Some(self.int(state, operand.register_index()?, otherwise)),
             OperandKind::Constant => {
                 let constant = self.program.constants.get(usize::from(operand.payload()))?;
-                let value = constant_value(constant)?;
-                if is_int32_value(value) {
+                let value = super::facts::immediate(constant)?;
+                if super::facts::is_int32(value) {
                     Some(self.ins().iconst(types::I32, i64::from(value.wasm_bits32() as i32)))
                 } else {
                     self.ins().jump(otherwise, &[]);
@@ -293,29 +293,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 .program
                 .constants
                 .get(usize::from(operand.payload()))
-                .and_then(constant_value)
+                .and_then(super::facts::immediate)
                 .is_some(),
             _ => false,
         }
-    }
-}
-
-/// A constant's value where it is an immediate (no heap allocation): numbers, booleans,
-/// `null` and `undefined`.
-/// Whether an immediate value is an int32 Number in its tagged encoding.
-fn is_int32_value(value: Value) -> bool {
-    let shift = crate::value::ValueLayout::TAG_SHIFT;
-    value.to_bits() >> shift == crate::value::ValueLayout::INT_TAG >> shift
-}
-
-fn constant_value(constant: &crate::bytecode::Constant) -> Option<Value> {
-    use crate::bytecode::Constant;
-    match constant {
-        Constant::Number(number) => Some(Value::number(*number)),
-        Constant::Boolean(value) => Some(Value::boolean(*value)),
-        Constant::Null => Some(Value::NULL),
-        Constant::Undefined => Some(Value::UNDEFINED),
-        _ => None,
     }
 }
 
@@ -543,9 +524,9 @@ impl Lowering<'_, '_> {
         let ran = match instruction.op() {
             Op::Nop if plain => Some(true),
             Op::LoadConst if plain => {
-                let value = self.program.constants.get(instruction.constant_index()).and_then(constant_value);
+                let value = self.program.constants.get(instruction.constant_index()).and_then(super::facts::immediate);
                 match value {
-                    Some(value) if is_int32_value(value) => {
+                    Some(value) if super::facts::is_int32(value) => {
                         let int = self.ins().iconst(types::I32, i64::from(value.wasm_bits32() as i32));
                         self.set_int(state, instruction.result_register(), int);
                         Some(true)

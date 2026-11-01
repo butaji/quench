@@ -45,18 +45,24 @@ Each instruction input has one binding time. The `opcodes!` table is the only au
 | --- | --- | --- | --- |
 | Static | Fixed by the residual program | Immediates, constant indices, jump targets, flags, operators, function indices, counts | Every specializer, AOT included |
 | Location | Fixed storage holding a dynamic value | Register numbers, register windows, local slots | Every specializer folds the address; the contents stay dynamic |
-| Site | A static index naming mutable feedback | Inline-cache, method, template and RegExp sites | The online (JIT) specializer only, behind a guard with exact-PC exit |
-| Dynamic | Known only to the running activation | Register contents and heap state | Nobody without a guard |
+| Stable | Heap state that rarely changes | A shape's layout, a prototype chain's, a constant field, a callee's identity | The online specializer, as a constant under a dependency: the change invalidates the code, which pays nothing per use |
+| Site | A static index naming mutable feedback | Inline-cache, method, template and RegExp sites | The online (JIT) specializer only, behind a guard proved once per region, with exact-PC exit |
+| Dynamic | Known only to the running activation | Register contents and heap state | Nobody without a guard, proved once per lifetime of its value |
 
 Rules:
 
 1. **AOT folds build-time facts only.** An AOT image never bakes site contents, so it needs no
    training run.
-2. **The JIT folds site contents behind a guard.** A failed guard resumes the interpreter at the
-   exact failing PC with its frame intact.
+2. **The JIT folds site contents behind a guard, and stable facts under a dependency.** A
+   failed guard resumes the interpreter at the exact failing PC with its frame intact. A
+   changed stable fact invalidates the code before anything runs it again: the change
+   triggers, the use does not check (AGENTS.md, Execution laws).
 3. **A fact folded without a guard must be static.** Representation facts about dynamic values,
    such as "this register holds an int32", are guards, never folds.
-4. **Static facts are never recomputed at run time.** A residual that re-derives a static fact
+4. **Every fact is checked once.** A representation or type proved for a value is carried by
+   the typed IR to every later use (`vm/compiled/facts.rs`); a second check of it is a
+   binding-time violation like the next rule's.
+5. **Static facts are never recomputed at run time.** A residual that re-derives a static fact
    is a binding-time violation. Re-deriving the program, the function, the decoded instruction
    or the opcode on every call is one example. Such violations are performance bugs and are
    removed in plan order.
@@ -307,7 +313,12 @@ and against at least two external sources. It found:
 - **P5 Values stay unboxed; boxing is a boundary operation.**
 - **P6 Allocation is sinkable.** Partial escape analysis, with snapshots as exit roots.
 - **P7 The frame format is the exit format.** Lane windows are the deoptimized frame.
-- **P8 Code dependencies are weak and GC-aware.** They replace the global epoch.
+- **P8 Code dependencies are weak and GC-aware, and reactive.** The change of a stable fact
+  triggers invalidation of the code that relied on it; no entry compares an epoch. They
+  replace the global epoch (TOD-1248).
+- **P8a Every operation is O(1).** No hot path scans, walks or searches per use: the
+  int32 scan at loop entry, chain walks after a collection and per-entry epoch compares
+  move to the event that changes the fact (element kinds, dependencies).
 - **P9 One JS-level CFG/SSA IR, with Cranelift as the backend.**
 - **P10 For Wasm, the types are the division.**
 - **P11 Memory follows feedback.** Lazy per-site feedback, and no IR retained.

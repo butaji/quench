@@ -11,6 +11,7 @@
 //! analysis gets wrong therefore costs a guard, never a wrong value.
 
 use crate::bytecode::{Constant, ControlFlowLayout, Op, Operand, OperandKind, Register, WideInstruction};
+use crate::value::{Value, ValueLayout};
 
 /// What a register is known to hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,13 +57,33 @@ fn register(operand: Operand) -> Option<Register> {
     (operand.kind()? == OperandKind::Register).then(|| operand.register_index()).flatten()
 }
 
-fn int32_constant(constants: &[Constant], index: usize) -> bool {
-    match constants.get(index) {
-        Some(Constant::Number(number)) => {
-            let int = *number as i32;
-            f64::from(int) == *number && !(int == 0 && number.is_sign_negative())
-        }
-        _ => false,
+/// The value a constant denotes where it is an immediate (no heap allocation): numbers,
+/// booleans, `null` and `undefined`.
+pub(super) fn immediate(constant: &Constant) -> Option<Value> {
+    match constant {
+        Constant::Number(number) => Some(Value::number(*number)),
+        Constant::Boolean(value) => Some(Value::boolean(*value)),
+        Constant::Null => Some(Value::NULL),
+        Constant::Undefined => Some(Value::UNDEFINED),
+        _ => None,
+    }
+}
+
+/// Whether an immediate is an int32 Number in its tagged encoding.
+pub(super) fn is_int32(value: Value) -> bool {
+    value.to_bits() >> ValueLayout::TAG_SHIFT == ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT
+}
+
+/// Proves each register operand int32: the instruction leaves where one is not.
+fn prove_int32(types: &mut [Ty], operands: [Operand; 2]) {
+    for register in operands.into_iter().filter_map(register) {
+        set(types, register, Ty::Int32);
+    }
+}
+
+fn set(types: &mut [Ty], register: Register, ty: Ty) {
+    if let Some(slot) = types.get_mut(usize::from(register)) {
+        *slot = ty;
     }
 }
 
@@ -73,15 +94,11 @@ fn transfer(
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
 ) -> Flow {
-    let set = |types: &mut [Ty], register: Register, ty: Ty| {
-        if let Some(slot) = types.get_mut(usize::from(register)) {
-            *slot = ty;
-        }
-    };
     let op = instruction.op();
     match op {
         Op::LoadConst => {
-            let ty = if int32_constant(constants, instruction.constant_index()) { Ty::Int32 } else { Ty::Tagged };
+            let int32 = constants.get(instruction.constant_index()).and_then(immediate).is_some_and(is_int32);
+            let ty = if int32 { Ty::Int32 } else { Ty::Tagged };
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
@@ -100,12 +117,7 @@ fn transfer(
             let operator = instruction.binary_operator();
             match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
                 Some(bitwise) => {
-                    // Bitwise operands are proved int32 or the instruction leaves.
-                    for operand in [instruction.operand_b(), instruction.operand_c()] {
-                        if let Some(register) = register(operand) {
-                            set(types, register, Ty::Int32);
-                        }
-                    }
+                    prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
                     let result = if bitwise == super::super::operations::NumberBitwise::ShiftRightUnsigned {
                         Ty::Tagged
                     } else {
@@ -124,12 +136,7 @@ fn transfer(
             if instruction.returns_from_frame() { Flow::Leaves } else { Flow::Next }
         }
         Op::JumpBinaryFalse => {
-            // A relation's operands are proved int32 on both edges, or it leaves.
-            for operand in [instruction.operand_b(), instruction.operand_c()] {
-                if let Some(register) = register(operand) {
-                    set(types, register, Ty::Int32);
-                }
-            }
+            prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
             Flow::To(vec![instruction.jump_target() as usize])
         }
         _ => {
@@ -138,8 +145,9 @@ fn transfer(
             }
             match op.control_flow_layout() {
                 ControlFlowLayout::Fallthrough => Flow::Next,
-                ControlFlowLayout::Jump => Flow::To(vec![instruction.jump_target() as usize]),
-                ControlFlowLayout::ConditionalJump => Flow::To(vec![instruction.jump_target() as usize]),
+                ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
+                    Flow::To(vec![instruction.jump_target() as usize])
+                }
                 ControlFlowLayout::Call | ControlFlowLayout::BranchTable | ControlFlowLayout::Terminal => Flow::Leaves,
             }
         }
@@ -208,11 +216,6 @@ pub(super) fn analyze(
                     }
                 }
             }
-        }
-    }
-    for (pc, facts) in entry.iter_mut().enumerate() {
-        if !leaders.get(pc).copied().unwrap_or(false) {
-            *facts = None;
         }
     }
     Facts { entry }
