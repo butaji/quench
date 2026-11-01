@@ -2361,6 +2361,9 @@ pub(crate) struct Observation<'a> {
     pub(crate) register: &'a dyn Fn(Register) -> Value,
     /// Whether the array in a register looks to hold `i32` elements.
     pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
+    /// Whether the array in a register has the `Int32` element kind, which entry can prove
+    /// with one load (`Lowering::prove_int32_kinds`).
+    pub(crate) int32_kind: &'a dyn Fn(Register) -> bool,
     pub(crate) captures: &'a [Value],
     /// The fields' values at the entry the compilation follows, in the region's order.
     pub(crate) fields: &'a [Value],
@@ -4191,7 +4194,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Proves at entry, from its element kind (`crate::heap::ElementKind`), that each array
-    /// the region reads as `i32`s holds only int32s, when every store of the region stores
+    /// the region reads as `i32`s, and that had the `Int32` kind when the region compiled,
+    /// holds only int32s; an array of another kind keeps its guarded reads. This holds when
+    /// every store of the region stores
     /// an `i32` (so each stays one, whichever array it writes): the reads then take the
     /// payload with no tag guard. One load per array; another kind widens the array's
     /// reads for the next compilation. A region that stores other values demotes the kind
@@ -4218,21 +4223,21 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     && element_representation(instruction, self.observation) == Representation::Int32
             })
             .filter_map(|instruction| instruction.operand_b().register_index())
-            .filter(|register| !self.resident.arrays.contains_key(register))
+            .filter(|register| !self.resident.arrays.contains_key(register) && (self.observation.int32_kind)(*register))
             .collect();
         for register in read_int32 {
             let Some(view) = self.arrays.get(&register).copied() else { continue };
             let elements = self.array_elements(view);
-            let kind = self.body.builder.ins().load(types::I32, flags(), elements, crate::heap::KIND_FROM_VALUES);
-            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, kind, crate::heap::ElementKind::Int32 as i64);
+            let others = self.body.builder.ins().load(types::I32, flags(), elements, crate::heap::OTHERS_FROM_VALUES);
+            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, others, 0);
             let widen = self.not_entered(Some(Widening::Elements(register)));
             self.pass_unless(other, widen);
             self.int32_arrays.insert(register);
         }
     }
 
-    /// Marks each array the region writes as holding any value, since a store may write a
-    /// non-int32 there; a written entry array is its activation's own backing, never the
+    /// Marks each array the region writes as holding uncounted other values
+    /// (`crate::heap::OTHERS_UNKNOWN`), since a store may write a non-int32 there; a written entry array is its activation's own backing, never the
     /// shared empty one.
     fn demote_written_kinds(&mut self) {
         let written: Vec<ArrayView> = self
@@ -4244,8 +4249,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .collect();
         for view in written {
             let elements = self.array_elements(view);
-            let tagged = self.body.builder.ins().iconst(types::I32, crate::heap::ElementKind::Tagged as i64);
-            self.body.builder.ins().store(flags(), tagged, elements, crate::heap::KIND_FROM_VALUES);
+            let unknown = self.body.builder.ins().iconst(types::I32, i64::from(crate::heap::OTHERS_UNKNOWN));
+            self.body.builder.ins().store(flags(), unknown, elements, crate::heap::OTHERS_FROM_VALUES);
         }
     }
 
@@ -6396,7 +6401,7 @@ mod tests {
         assert_eq!(values.find(values.leaves[&(3, 1)]), values.defined(&region, 2));
         let widened = std::collections::BTreeSet::from([Widening::Register(1)]);
         let observation = Observation {
-            register: &|_| Value::number(1.0), int32_elements: &|_| true,
+            register: &|_| Value::number(1.0), int32_elements: &|_| true, int32_kind: &|_| true,
             captures: &[], fields: &[], native_field_loads: &[], widened: &widened,
         };
         let (representations, _) = representations(&region, &values, &observation);

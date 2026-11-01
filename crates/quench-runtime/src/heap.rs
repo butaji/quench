@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, ElementKind, KIND_FROM_VALUES, LENGTH_FROM_VALUES, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, ElementKind, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod cell;
 mod cell_access;
 mod buffer_bytes;
