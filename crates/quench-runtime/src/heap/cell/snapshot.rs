@@ -178,6 +178,8 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         indexed_descriptors,
         length_descriptor,
         side_descriptors,
+        // A restored heap's prototypes watch nothing (`Heap::forget_prototypes`).
+        watch: _,
     } = extras;
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
@@ -258,6 +260,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         indexed_descriptors,
         length_descriptor,
         side_descriptors,
+        watch: Default::default(),
     })
 }
 

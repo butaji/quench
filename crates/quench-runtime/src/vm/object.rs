@@ -638,22 +638,11 @@ impl<H: Host> Vm<H> {
         found
     }
 
-    /// Whether no object on the prototype chain from `first` holds any array index or could
-    /// answer one outside its storage: the chain's ordinary objects and arrays hold no
-    /// index-keyed property, indexed descriptor, element or sparse element, and none is exotic.
-    /// [[Get]] of an index the chain's base lacks is then `undefined`, and its OrdinarySet
-    /// defines data on the base. Proved under the prototype layout epoch, which every change
-    /// to a prototype's shape, link or indexed descriptors advances; elements are not part of
-    /// a prototype's layout, so the proof reads its one array holder's (the intrinsic
-    /// `Array.prototype`, typically) on each use (`IndexFreeChainProof`).
+    /// Whether no prototype on the chain from `first` holds an array index: answered by the
+    /// held proof (`IndexFreeChainProof`), which a change to any prototype it read retires.
     pub(super) fn chain_holds_no_index(&self, first: Value) -> bool {
-        let epoch = crate::heap::prototype_layout_epoch();
-        match self.index_free_chain_proof.get() {
-            Some(proof) if proof.first == first && proof.epoch == epoch => {
-                proof.array.is_none_or(|array| self.array_holds_no_element(array))
-            }
-            _ => self.prove_index_free_chain(first, epoch),
-        }
+        self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.first == first)
+            || self.prove_index_free_chain(first)
     }
 
     /// Whether array `array` has no element, dense or sparse.
@@ -662,11 +651,14 @@ impl<H: Host> Vm<H> {
             && self.heap.sparse_length(array).is_none()
     }
 
-    /// `chain_holds_no_index` past its proof: the walk, recording the proof when it holds.
+    /// `chain_holds_no_index` past its proof: the walk, recording the proof on each
+    /// prototype it read when it holds and every one is watched (`Heap::mark_prototype`),
+    /// so a change to any of them retires it.
     #[cold]
     #[inline(never)]
-    fn prove_index_free_chain(&self, first: Value, epoch: u64) -> bool {
-        let mut array = None;
+    fn prove_index_free_chain(&self, first: Value) -> bool {
+        let mut subjects = Vec::new();
+        let mut array_holder = false;
         let mut current = first;
         while !current.is_null() {
             let Some(data) = self.object_data(current) else {
@@ -684,15 +676,20 @@ impl<H: Host> Vm<H> {
                 return false;
             }
             if is_array {
-                // One array holder is read on each use; a chain of more is not proved.
-                if array.is_some() || !self.array_holds_no_element(current) {
+                // One array holder is proved empty; a chain of more is not proved.
+                if array_holder || !self.array_holds_no_element(current) {
                     return false;
                 }
-                array = Some(current);
+                array_holder = true;
             }
+            subjects.push(data.watched_subject());
             current = data.proto();
         }
-        self.index_free_chain_proof.set(Some(IndexFreeChainProof { first, epoch, array }));
+        if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
+            self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
+                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first });
+            });
+        }
         true
     }
 
@@ -971,7 +968,7 @@ impl<H: Host> Vm<H> {
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.promise_species_proof.set(None);
-        self.index_free_chain_proof.set(None);
+        self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
@@ -4517,14 +4514,6 @@ fn keyed_add_index(shape: u32, atom: Atom) -> usize {
     (hasher.finish() >> (u64::BITS - super::KEYED_ADD_INDEX_BITS)) as usize
 }
 
-/// `Vm::chain_holds_no_index` proved for the chain from `first` under prototype layout `epoch`,
-/// with the chain's one array holder, whose elements each use reads.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct IndexFreeChainProof {
-    first: Value,
-    epoch: u64,
-    array: Option<Value>,
-}
 
 /// Whether the prototype `holder` has the exact shape `shape` a field cache recorded for a
 /// holder. Caches never record a module namespace (`immediate_prototype_data_field`), whose

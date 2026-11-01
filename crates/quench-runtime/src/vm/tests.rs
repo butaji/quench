@@ -14203,6 +14203,43 @@ print(total + " " + w.arr.slice(35, 50).join(","));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn index_free_chain_proof_retires_when_a_prototype_gains_an_index() {
+    // The proof that no prototype holds an array index (`Heap::dependencies`) is held across
+    // warm native stores; an index setter, and then an element, on `Array.prototype` each
+    // retire it, so the stores after each change take the prototype's index into account.
+    let source = r#"
+(function () {
+var log = 0;
+function fill(a, n) { for (var i = 0; i < n; i++) a[i] = i; return a; }
+for (var q = 0; q < 2000; q++) fill([], 40);
+Object.defineProperty(Array.prototype, 5, { set: function (v) { log++; }, configurable: true });
+var a = fill([], 40);
+var hole = 5 in a;
+delete Array.prototype[5];
+for (var q = 0; q < 2000; q++) fill([], 40);
+Array.prototype[7] = "p";
+var b = []; b.length = 9;
+var inherited = b[7];
+delete Array.prototype[7];
+print(log + " " + hole + " " + a.length + " " + inherited + " " + fill([], 40)[7]);
+})();
+"#;
+    let program = Engine::specialize(source, "index-free-chain-proof.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["1 true 40 p 7"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_bounded_entries_prove_products_and_widen_beyond_their_bound() {
     // `xh` is an `i32` the loop never writes, a factor of products with 14-bit values: a
     // bound checked at entry proves them exact. A later call's `xh` beyond that bound must
