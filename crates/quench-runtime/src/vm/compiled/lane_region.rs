@@ -709,6 +709,9 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
+            Op::Return if plain && instruction.register_a() < self.unit.registers => {
+                Some(self.complete(state, pc, instruction.register_a()))
+            }
             Op::Call if (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval() => Some(self.call(state, pc, instruction)),
@@ -989,6 +992,26 @@ impl Lowering<'_, '_> {
         let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
         self.set_tagged(state, destination, bits);
         true
+    }
+
+    /// The activation completes with `register`, which the record at `pc` names: the body
+    /// leaves it in the file and stops (`LaneExit::Returned`). Only a caller record can: an
+    /// inlined callee's `Return` is the unit's move and jump.
+    fn complete(&mut self, state: &mut State, pc: usize, register: Register) -> bool {
+        let Some(super::lane_unit::Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
+            self.exit(state, pc as u32);
+            return false;
+        };
+        let bits = self.tagged(state, register);
+        let base = self.registers_base;
+        self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+        let word = self.ins().iconst(types::I64, LaneExit::Returned(record as usize).word() as i64);
+        let result = self.result;
+        self.ins().store(MemFlagsData::trusted(), word, result, 0);
+        let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
+        self.ins().return_(&[stopped]);
+        self.native += 1;
+        false
     }
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {

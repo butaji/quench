@@ -14113,16 +14113,6 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let captures = capture_reads(unsafe { (*cx).capture });
     match vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast()) {
         super::compiled::LaneExit::At(pc) => {
-            // A plain `Return` the body left at completes the call here.
-            let returned = code
-                .function_get(target.function as usize)
-                .and_then(|body| body.code.get(pc).map(|packed| decoded_instruction(body, *packed)))
-                .filter(|instruction| instruction.op() == Op::Return && instruction.result_flags() == 0);
-            if let Some(instruction) = returned
-                && lane_return_to_body(cx, registers.get(instruction.register_a())).is_some()
-            {
-                return LANE_CALL_COMPLETED;
-            }
             let acc = own
                 .accumulator_registers
                 .get(pc)

@@ -6787,7 +6787,7 @@ pub(super) const LANE_CALL_LEFT: u64 = 2;
 impl LaneExit {
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } | Self::Callee | Self::Returned(_) => None }
+        match self { Self::At(pc) | Self::Returned(pc) => Some(pc), Self::Inlined { .. } | Self::Callee => None }
     }
     pub(super) fn word(self) -> u64 {
         match self {
