@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 
-pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder", "TextEncoder"];
+pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder"];
 
 /// Installs `TextDecoder` and `TextEncoder` as lazy data properties, built on first use.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
@@ -17,6 +17,9 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
         false,
         initializer,
     )?;
+    context.release_root(initializer);
+    let initializer = context.host_function(crate::host::shared_vm::operation("textEncoderInitialize"))?;
+    context.define_lazy_data_properties_rooted(global, &["TextEncoder"], false, initializer)?;
     context.release_root(initializer);
     Ok(())
 }

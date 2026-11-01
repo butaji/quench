@@ -2,7 +2,7 @@
 
 use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 const NODE_ERROR_BRAND: &str = "\0node/errors/privateBrand";
 pub(crate) const DEFAULT_STACK_FORMATTER: &str = "\0node/errors/defaultStackFormatter";
@@ -131,23 +131,6 @@ enum ErrorPresentation {
     Direct,
     HiddenStackFrames,
 }
-fn presentation_factory(context: &mut NativeContext<'_, NodeHost>, presentation: ErrorPresentation) -> Result<RootId, RootedError> {
-    let _ = context;
-    crate::host::removed_javascript(match presentation {
-        ErrorPresentation::Direct => "node:internal/errors/argument-prototype.js",
-        ErrorPresentation::HiddenStackFrames => "node:internal/errors/validator-prototype.js",
-    })
-}
-
-#[cfg(feature = "aot")]
-pub(crate) fn stage_coded_error_support(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    prepare_coded_error_support(context)?;
-    for presentation in ERROR_PRESENTATIONS {
-        presentation_factory(context, presentation)?;
-    }
-    Ok(())
-}
-
 fn coded_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
     code: &'static str,
@@ -167,10 +150,6 @@ fn coded_error_prototype(
         return Ok(prototype);
     }
     if state.borrow().node_error_api.is_none() {
-        // Node's private brand, from its library when present.
-        if crate::host::shared_vm::commonjs::node_library_present(context) {
-            materialize_prepare_stack_trace(context)?;
-        }
         let brand = state.borrow().builtin_cache.get(NODE_ERROR_BRAND).copied();
         let brand = brand.unwrap_or_else(|| context.symbol_rooted(Some("kIsNodeError")));
         let brand = context.retain(brand)?;
@@ -192,20 +171,26 @@ fn coded_error_prototype(
     };
     let base_prototype = context.prototype_rooted(base_error)?;
     let base = get(context, base_prototype, "constructor")?;
-    let constructor = context.host_function_with_data(
+    let constructor = context.host_function_named_with_data(
         crate::host::shared_vm::operation("nodeErrorConstructor"),
+        "get constructor",
         base,
     )?;
-    let brand = context.host_function(crate::host::shared_vm::operation("nodeErrorBrand"))?;
+    let brand = context.host_function_named(crate::host::shared_vm::operation("nodeErrorBrand"), "get [kIsNodeError]")?;
     let code_root = context.string_rooted(code);
-    let string = context.host_function_with_data(
+    let string = context.host_function_named_with_data(
         crate::host::shared_vm::operation("nodeErrorToString"),
+        "toString",
         code_root,
     )?;
-    let factory = presentation_factory(context, ErrorPresentation::Direct)?;
-    let undefined = context.undefined();
-    let prototype =
-        context.call_rooted(factory, undefined, &[base, constructor, brand, string, key])?;
+    let prototype = context.object_rooted()?;
+    context.set_prototype_rooted(prototype, base_prototype)?;
+    for (key, getter) in [(context.string_rooted("constructor"), constructor), (key, brand)] {
+        context.define_property_fields_rooted(prototype, key, DescriptorFields {
+            get: Some(getter), enumerable: Some(false), configurable: Some(true), ..Default::default()
+        })?;
+    }
+    context.define_named_data_property_rooted(prototype, "toString", string, true, false, true)?;
     let prototype = context.retain(prototype)?;
     state
         .borrow_mut()
@@ -253,13 +238,16 @@ fn hide_error(
         prototype
     } else {
         let constructor = get(context, base, "constructor")?;
-        let constructor = context.host_function_with_data(
+        let constructor = context.host_function_named_with_data(
             crate::host::shared_vm::operation("nodeErrorConstructor"),
+            "get constructor",
             constructor,
         )?;
-        let factory = presentation_factory(context, ErrorPresentation::HiddenStackFrames)?;
-        let undefined = context.undefined();
-        let prototype = context.call_rooted(factory, undefined, &[constructor])?;
+        let prototype = context.object_rooted()?;
+        let constructor_key = context.string_rooted("constructor");
+        context.define_property_fields_rooted(prototype, constructor_key, DescriptorFields {
+            get: Some(constructor), enumerable: Some(false), configurable: Some(true), ..Default::default()
+        })?;
         context.set_prototype_rooted(prototype, base)?;
         let prototype = context.retain(prototype)?;
         state
@@ -344,15 +332,6 @@ fn decorate_coded_error(
     )
 }
 
-/// Every coded native error uses this shared utility policy, including errors
-/// reached only by invalid inputs. Native staging must close the same source
-/// obligation without exercising an application operation to provoke an error.
-pub(crate) fn prepare_coded_error_support(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<(), RootedError> {
-    super::util_shared_vm::module(context).map(drop)
-}
-
 fn decorate_ordered_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
@@ -361,22 +340,13 @@ fn decorate_ordered_error(
     fields: &[(&str, RootId)],
     order: MessageOrder,
 ) -> Result<(), RootedError> {
-    prepare_coded_error_support(context)?;
     let prototype = coded_error_prototype(context, code, class)?;
     context.set_prototype_rooted(error, prototype)?;
     // Node's variadic error constructor installs its code field before message.
     let message_key = context.string_rooted("message");
     let message = context.get_property_rooted(error, message_key)?;
     if order == MessageOrder::AfterConstructorFields {
-        let data = context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .event_targets_api
-            .ok_or_else(|| RootedError::host("argument error assignment API missing"))?;
-        let delete = get(context, data, "delete")?;
-        let undefined = context.undefined();
-        context.call_rooted(delete, undefined, &[error, message_key])?;
+        context.delete_property_rooted(error, message_key)?;
     }
     let code = context.string_rooted(code);
     let key = context.string_rooted("code");
@@ -407,11 +377,9 @@ pub(crate) fn brand(
 
 pub(crate) fn to_string(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    error: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let error = args.first().copied().unwrap_or(undefined);
     let code = context.host_function_data()?;
     let name = get(context, error, "name")?;
     let name = context.to_string(name)?;

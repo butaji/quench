@@ -434,14 +434,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     context.scoped(install_performance_global)?;
     context.scoped(crate::modules::crypto_shared_vm::install_global)?;
-    if node_primordials_source(context).is_some() {
-        // Node 24 exposes these well-known disposal symbols before its
-        // primordial snapshot is built. The runtime may not provide them yet,
-        // so seed stable symbols for Node's internal modules first.
-        let seed_disposal_symbols = crate::host::removed_javascript("node:bootstrap/disposal-symbols.js")?;
-        let undefined = context.undefined();
-        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // Builtins built after this point see the intrinsics as they are now, whatever a
@@ -3750,11 +3742,6 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
     } else {
         Ok(namespace)
     }
-}
-
-/// Whether the pinned Node library is available (its primordials module stands for it).
-pub(crate) fn node_library_present(context: &mut Context<'_>) -> bool {
-    node_primordials_source(context).is_some()
 }
 
 /// The pinned Node library's primordials module, when the library is present.

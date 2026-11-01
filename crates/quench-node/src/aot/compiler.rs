@@ -175,7 +175,6 @@ pub(crate) fn stage_host_sources(
     // The default warning listener is installed after the staging boundary and
     // can run for host-generated warnings without an application import.
     crate::modules::process_warning_shared_vm::prepare(context)?;
-    crate::modules::node_errors_shared_vm::stage_coded_error_support(context)?;
     // Global timer operations construct these handles only when scheduled.
     // Build their definitions without creating timers or enqueueing callbacks.
     crate::modules::timers_shared_vm::timer_handle_api(context)?;
