@@ -756,9 +756,17 @@ pub(crate) struct Inlining {
     /// By offset from the header.
     origins: Vec<Origin>,
     pub(crate) frames: Vec<InlineFrame>,
+    /// The captures inlined callees read, by the frame and its depth-0 slot: a callee's
+    /// `LoadCapture` reads `CALLEE_CAPTURE` with its index here, which the entry resolves
+    /// in the callee's own environment (`lane_loop_entry`).
+    pub(crate) callee_captures: Vec<(usize, u16)>,
     /// The caller's register count: every register from it on is an inlined callee's.
     pub(crate) caller_registers: u16,
 }
+
+/// The capture slot bit an inlined callee's capture read carries (`Inlining::callee_captures`):
+/// no function's own depth-0 slot reaches it, which `inline_region` checks.
+pub(crate) const CALLEE_CAPTURE: u16 = 1 << 15;
 
 /// The exit PC native code reports for an inlined callee's instruction: its region PC with
 /// this bit, which no function PC has (`MAX_REGION_INSTRUCTIONS`).
@@ -775,10 +783,21 @@ pub(crate) struct InlineCallee<'a> {
 
 /// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
 /// none that names its function's own state (captures, frame, calls).
+/// Whether an inlined callee's instruction computes its result and returns it in one
+/// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
+/// the computation and the `Return` it makes.
+fn inlined_returning(instruction: WideInstruction) -> bool {
+    instruction.result_flags() == crate::bytecode::RETURN_REGISTER
+        && instruction.op() != Op::Return
+        && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
+        && instruction.defined_register().is_some()
+}
+
 fn inlinable(op: Op) -> bool {
     matches!(
         op,
-        Op::LoadConst
+        Op::LoadCapture
+            | Op::LoadConst
             | Op::Move
             | Op::Binary
             | Op::NumericAdd
@@ -1033,7 +1052,7 @@ pub(super) fn inline_region<'a>(
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = reachable(&callee.instructions);
         let body = || callee.instructions.iter().copied().zip(reached.iter()).filter(|(_, reached)| **reached).map(|(instruction, _)| instruction);
-        body().all(|instruction| inlinable(instruction.op()) && instruction.result_flags() == 0).then_some(())?;
+        body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction))).then_some(())?;
         // A captured call may bind undefined to the global receiver. Keep this slice
         // receiver-independent; recovery still performs the ordinary binding below.
         if capture.is_some() {
@@ -1105,12 +1124,13 @@ pub(super) fn inline_region<'a>(
         for (index, instruction) in site.callee.instructions.iter().enumerate() {
             flat.push(header + length);
             if site.reached[index] {
-                length += if instruction.op() == Op::Return { 2 } else { 1 };
+                length += if instruction.op() == Op::Return { 2 } else if inlined_returning(*instruction) { 3 } else { 1 };
             }
         }
         callee_flat.insert(pc, flat);
     }
     (length as usize <= MAX_REGION_INSTRUCTIONS).then_some(())?;
+    let mut callee_captures: Vec<(usize, u16)> = Vec::new();
     let mut origins: Vec<Origin> = Vec::with_capacity(length as usize);
     let mut masks: Vec<RegisterSet> = Vec::with_capacity(length as usize);
     let mut leaves: Vec<u32> = Vec::new();
@@ -1188,6 +1208,31 @@ pub(super) fn inline_region<'a>(
                 continue;
             }
             let target = |target: u32| flat.get(target as usize).copied().filter(|_| site.reached[target as usize]);
+            // A returning instruction (`result = op; return result`) computes into its own
+            // register, then completes the call as the callee's `Return` does.
+            if inlined_returning(instruction) {
+                let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
+                instructions.push(renamed(plain, &register, frame.receiver, &target)?);
+                instructions.push(WideInstruction::new(Op::Move, site.result, register(instruction.result_register()), 0, 0));
+                instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
+                origins.extend([origin, origin, origin]);
+                masks.extend([set, set, set]);
+                continue;
+            }
+            // A callee's own capture reads its environment, which its identity guard fixes and
+            // no instruction of the region stores: the entry snapshots it.
+            let instruction = if instruction.op() == Op::LoadCapture {
+                (instruction.capture_depth() == 0 && instruction.capture_slot() < CALLEE_CAPTURE).then_some(())?;
+                let capture = (usize::from(index), instruction.capture_slot());
+                let position = callee_captures.iter().position(|existing| *existing == capture).unwrap_or_else(|| {
+                    callee_captures.push(capture);
+                    callee_captures.len() - 1
+                });
+                let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
+                WideInstruction::new(Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot))
+            } else {
+                instruction
+            };
             instructions.push(renamed(instruction, &register, frame.receiver, &target)?);
             origins.push(origin);
             masks.push(set);
@@ -1245,7 +1290,7 @@ pub(super) fn inline_region<'a>(
         frames.push(frame);
     }
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
-    region.inlining = Some(Box::new(Inlining { origins, frames, caller_registers }));
+    region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers }));
     Some(region)
 }
 

@@ -7149,6 +7149,18 @@ fn lane_loop_entry<H: Host>(
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         for slot in &region.captures {
+            // An inlined callee's capture reads its own environment (`Inlining::callee_captures`).
+            if slot & super::compiled::CALLEE_CAPTURE != 0 {
+                let inlining = region.inlining.as_deref()?;
+                let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE))?;
+                let callee = inlining.frames.get(frame)?.callee;
+                let vm = unsafe { vm(cx) };
+                // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
+                let env = unsafe { &*vm.script_call_entry(callee)? }.env;
+                let value = vm.environment_capture(env, callee_slot)?;
+                entry.push_capture(value);
+                continue;
+            }
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
             let value = (!slots.is_null())
