@@ -3615,8 +3615,6 @@ struct Lowering<'a, 'b> {
     region: &'a LoopRegion,
     observation: &'a Observation<'a>,
     pointer: ir::Type,
-    /// Cache-only field probe through the shared native entry context.
-    callout: ir::Value,
     callout_signature: ir::SigRef,
     webs: Webs,
     /// Each web's representation, at its root definition.
@@ -3645,15 +3643,15 @@ struct Lowering<'a, 'b> {
     copy: Option<usize>,
     /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
     exits: super::RegionExitBlocks,
-    /// The pointers only leaving uses (`Handoff`), stored at entry so that cold leave
-    /// blocks reload them and no loop holds a register for them.
+    /// The pointers only entry, leaving and callouts use (`Handoff`), stored at entry so
+    /// that each use after entry reloads them and no loop holds a register for them.
     handoff: ir::StackSlot,
     registers: ir::Value,
     /// An inlining region's scratch registers (`LoopEntry::scratch`).
     scratch: Option<ir::Value>,
-    entry: ir::Value,
-    /// The result word the outcome is written to.
-    result: ir::Value,
+    /// The entry words' address while `enter` runs; every later read reloads it
+    /// (`Handoff::Entry`).
+    entry: Option<ir::Value>,
     /// Count the region's taken backedges only for the opt-in shared-tier admission path.
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
@@ -3848,10 +3846,12 @@ enum Handoff {
     Registers,
     Scratch,
     Result,
+    Context,
+    Entry,
 }
 
 impl Handoff {
-    const COUNT: u32 = 3;
+    const COUNT: u32 = 5;
 
     fn offset(self) -> i32 {
         self as i32 * WORD_BYTES
@@ -3892,7 +3892,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let &[context, registers, _, entry, result] = builder.block_params(start) else {
             unreachable!("the entry signature has five parameters")
         };
-        let callout = builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
         let handoff = builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
             Handoff::COUNT * WORD_BYTES as u32,
@@ -3900,6 +3899,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         ));
         builder.ins().stack_store(pointer, registers, handoff, Handoff::Registers.offset());
         builder.ins().stack_store(pointer, result, handoff, Handoff::Result.offset());
+        builder.ins().stack_store(pointer, context, handoff, Handoff::Context.offset());
+        builder.ins().stack_store(pointer, entry, handoff, Handoff::Entry.offset());
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -3924,7 +3925,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             region,
             observation,
             pointer,
-            callout,
             callout_signature,
             webs,
             representations,
@@ -3950,8 +3950,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             straight,
             registers,
             scratch: None,
-            entry,
-            result,
+            entry: Some(entry),
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
             elements: std::collections::BTreeMap::new(),
@@ -4361,8 +4360,23 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let array = *self.region.arrays.iter().find(|array| array.register == register).expect("a region array");
         match array.field {
             Some(index) => self.word(ENTRY_CAPTURES + self.region.captures.len() + index),
-            None => self.body.builder.ins().load(types::I64, flags(), self.registers, i32::from(array.register) * WORD_BYTES),
+            None => {
+                let file = match self.entry {
+                    Some(_) => self.registers,
+                    None => self.handed_off(Handoff::Registers),
+                };
+                self.body.builder.ins().load(types::I64, flags(), file, i32::from(array.register) * WORD_BYTES)
+            }
         }
+    }
+
+    /// An entry array's identity, reloaded where a cold path needs it rather than held
+    /// from entry: the region writes no register file word before it leaves.
+    fn entry_array_identity(&mut self, array: ArrayView) -> ir::Value {
+        let arrays_start = ENTRY_CAPTURES + self.region.captures.len() + self.region.fields.len();
+        let base = array.entry_index.expect("an appended array is an entry array");
+        let register = self.region.arrays[(base - arrays_start) / ARRAY_WORDS].register;
+        self.array_identity(register)
     }
 
     fn array(&mut self, register: Register) -> ArrayView {
@@ -4375,9 +4389,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
+        let entry = self.entry_words();
         self.body.builder
             .ins()
-            .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
+            .load(types::I64, flags(), entry, index as i32 * WORD_BYTES)
+    }
+
+    /// The entry words' address: the parameter while `enter` runs, else reloaded.
+    fn entry_words(&mut self) -> ir::Value {
+        match self.entry {
+            Some(entry) => entry,
+            None => self.handed_off(Handoff::Entry),
+        }
+    }
+
+    /// The callout, its context and the result word it writes, reloaded at the call so
+    /// that no loop around it holds a register for them.
+    fn callout_operands(&mut self) -> (ir::Value, ir::Value, ir::Value) {
+        let context = self.handed_off(Handoff::Context);
+        let callout = self.body.builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
+        let result = self.handed_off(Handoff::Result);
+        (callout, context, result)
     }
 
     fn field_store_pointer(&mut self, index: usize) -> ir::Value {
@@ -4535,6 +4567,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         let header = self.target_block(None, self.region.header)?;
         self.body.builder.ins().jump(header, &[]);
+        self.entry = None;
         Some(())
     }
 
@@ -4953,10 +4986,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             return Some(self.native_dynamic_field(pc, index, receiver.value, load));
         }
         let site = self.body.builder.ins().iconst(types::I64, i64::from(field.cache_site));
-        let context = self.body.core.context;
-        let callout = self.callout;
+        let (callout, context, result) = self.callout_operands();
         let signature = self.callout_signature;
-        let result = self.result;
         let call = self.body.builder.ins().call_indirect(
             signature,
             callout,
@@ -5267,16 +5298,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             if self.track_backedges && pc == self.region.backedge && target == self.region.header {
                 let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
                     .expect("OSR entry counter offset fits i32");
-                let count = self
-                    .body
-                    .builder
-                    .ins()
-                    .load(types::I64, flags(), self.entry, offset);
+                let entry = self.entry_words();
+                let count = self.body.builder.ins().load(types::I64, flags(), entry, offset);
                 let count = self.body.builder.ins().iadd_imm_s(count, 1);
-                self.body
-                    .builder
-                    .ins()
-                    .store(flags(), count, self.entry, offset);
+                self.body.builder.ins().store(flags(), count, entry, offset);
             }
         }
         self.unpark(pc, target);
@@ -5505,10 +5530,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.switch_to_block(grow);
         self.body.builder.seal_block(grow);
         let operation = self.body.builder.ins().iconst(types::I64, super::OSR_RESERVE_ARRAY_APPEND as i64);
-        let context = self.body.core.context;
+        let identity = self.entry_array_identity(array);
+        let (callout, context, result) = self.callout_operands();
         let call = self.body.builder.ins().call_indirect(
-            self.callout_signature, self.callout,
-            &[context, operation, array.identity, self.result],
+            self.callout_signature, callout,
+            &[context, operation, identity, result],
         );
         let status = self.body.builder.inst_results(call)[0];
         let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
@@ -5990,10 +6016,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     .ins()
                     .iconst(types::I64, super::OSR_INITIALIZED_LOCAL_READ as i64);
                 let slot = self.body.builder.ins().iconst(types::I64, slot);
-                let context = self.body.core.context;
-                let callout = self.callout;
+                let (callout, context, result) = self.callout_operands();
                 let signature = self.callout_signature;
-                let result = self.result;
                 let call = self.body.builder.ins().call_indirect(
                     signature,
                     callout,
@@ -6029,11 +6053,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let receiver = self.register(base);
                     if receiver.representation != Representation::Tagged { return None; }
                     let key = self.boxed(key);
-                    let result = self.result;
+                    let (callout, context, result) = self.callout_operands();
                     self.body.builder.ins().store(flags(), key, result, 0);
                     let selector = self.body.builder.ins().iconst(types::I64, super::OSR_DENSE_ARRAY_READ as i64);
-                    let context = self.body.core.context;
-                    let call = self.body.builder.ins().call_indirect(self.callout_signature, self.callout,
+                    let call = self.body.builder.ins().call_indirect(self.callout_signature, callout,
                         &[context, selector, receiver.value, result]);
                     let status = self.body.builder.inst_results(call)[0];
                     let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);

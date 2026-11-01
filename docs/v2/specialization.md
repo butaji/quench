@@ -314,6 +314,42 @@ and against at least two external sources. It found:
 - **P12 TypeScript annotations prove nothing.** Only the JavaScript that TS and JSX emit,
   such as class-field order and object-literal shapes, is a usable fact.
 
+### The ten engine decisions, mapped onto Quench
+
+V8 and JavaScriptCore converge on ten decisions. An audit of `v2-jit-futamura` (code read,
+file:line cited on TOD-1232) places Quench as follows.
+
+| # | Decision | Quench today | Status | Milestone |
+| --- | --- | --- | --- | --- |
+| 1 | Shapes and transitions | Shape table with transitions; the shape fixes a slot index, not its storage or representation, so a folded read still branches inline or arena and decodes the narrow form | partial | R1 |
+| 2 | ICs as type feedback | Own, inherited and add field caches, megamorphic tier, requickening; `u16` site IDs shared when exhausted, one global call cache, no arithmetic or element feedback | partial | R0 |
+| 3 | Multi-tier execution | Interpreter, threaded lane, lane bodies, OSR loop regions; no optimizing tier, lane bodies refuse calls | partial | R2, R3, R4 |
+| 4 | Speculation and deoptimization | Exact-PC exits to the lane, widening recompiles; one frame only, no frame states, no per-guard exit counters | partial | R0, R2, R3 |
+| 5 | Value representation | NaN-boxing with an int32 tag and 32-bit record IDs; every float store canonicalizes | adopted | R1, R6 |
+| 6 | Array element kinds | Always tagged values; the loop tier proves int32 by an O(n) scan at each entry and checks tags and holes per element | missing | R5, TOD-1249 |
+| 7 | Dependencies instead of guards | One process-wide prototype epoch, advanced on any prototype change and on every collection | missing | R2, TOD-1248 |
+| 8 | Inlining and escape analysis | OSR region inlining only, guarded at entry; compiled code never allocates | minimal | R3, R6 |
+| 9 | Generational GC with bump allocation | Generational, non-moving, sticky marks, parallel mark; allocation scans occupancy words, barrier is a call | partial | R6, R10 |
+| 10 | Lazy and cached startup | Lazy bodies, heap and program-store snapshots | adopted | none |
+
+Honorable mentions: string ropes are adopted; RegExp has no native tier (R9); JS compiles on
+the main thread only; there is no in-object slack tracking (R1); builtins share semantic ops
+with the JIT but not an IR.
+
+**The typed-IR contract.** No lowering today carries proven types across blocks or calls.
+Lane bodies reset their facts at each block leader and repeat a shape compare at every field
+read; loop regions carry representations, not semantic types. R2's IR must make each SSA value
+and block parameter carry an abstract type (Int32 with a range, Float64, Boolean,
+Object of a shape set, Array of a kind, Function of an identity, Constant), computed by
+abstract interpretation over the whole unit. A guard narrows the type on its success edge,
+and no later instruction re-checks a fact its operand's type already proves. Every lowering
+(lane bodies, loop regions, the AOT residual) becomes a client of that one IR, so each fact
+has one authority.
+
+**Critical path.** Typed IR (R2) and weak dependencies (R2, a separate issue) gate inlining
+(R3), the JIT part of element kinds (R5) and escape analysis (R6). The object model (R1), the
+allocator half of R6 and the RegExp tier (R9) can proceed in parallel.
+
 ### Milestones (revised)
 
 Every milestone needs parity in all modes, the TOD-191 recovery matrix, a paired V8-v7
@@ -329,10 +365,10 @@ therefore:
 | --- | --- | --- | --- | --- |
 | R0 | Exit counters and attribution; per-site polymorphic shape and target lists (up to four, lazy); wider site IDs; `Division::Online` and `BindingTime` live in the JIT; remove the measured-losing general-dispatch lane bodies | P2, P11 | none directly; no-JIT neutral | TOD-1237, TOD-1245 |
 | R1 | Object model: storage kind and narrow-ability fixed by the shape, a stable reserved arena base, per-class or per-site in-object capacity | P1 | all modes; RayTrace and DeltaBlue no-JIT +5 to 15% | TOD-1243 |
-| R2 | The T1 IR and IC transpiler with global abstract interpretation, liveness-pruned exits, and weak code dependencies replacing the epoch; lane-activation and OSR entry | P2, P3, P8 | Richards 1.5x to 2x | TOD-1241, TOD-1242 |
+| R2 | The T1 IR and IC transpiler with global abstract interpretation, liveness-pruned exits, and weak code dependencies replacing the epoch; lane-activation and OSR entry | P2, P3, P8 | Richards 1.5x to 2x | TOD-1241, TOD-1248 |
 | R3 | Inlining from per-site feedback: monomorphic, polymorphic up to four, nested, and closures by code identity; a multi-frame materializer | P4, P7 | Richards 5x to 10x, DeltaBlue 5x to 15x | TOD-1219, TOD-1220 |
 | R4 | Native calls for callees that are not inlined: window arguments, lazy Activation, lane trampoline, unwinding | P4, P7 | EarleyBoyer, Richards about 1.5x more | TOD-186, TOD-97 |
-| R5 | Transitioning stores, inline write barrier, element kinds, bounds-check elimination | P1, P3 | Crypto 2x to 3x, NavierStokes +5 to 10% | TOD-919, TOD-1218 |
+| R5 | Transitioning stores, inline write barrier, element kinds, bounds-check elimination | P1, P3 | Crypto 2x to 3x, NavierStokes +5 to 10% | TOD-919, TOD-1218, TOD-1249 |
 | R6 | Inline allocation and partial escape analysis with materialization at exit | P6 | RayTrace 2x to 3x, Splay 1.3x | TOD-1244 |
 | R7 | Closures: native captures, inline closure creation | P2, P4 | EarleyBoyer 1.5x | TOD-1222 |
 | R8 | Wasm: lazy per-function compilation, loop OSR, partial admission with exact-PC islands | P10 | JetStream Wasm (HashSet, TSF) | TOD-1246 |
