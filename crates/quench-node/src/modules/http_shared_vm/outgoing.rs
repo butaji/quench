@@ -19,7 +19,7 @@ const CRLF: &str = "\r\n";
 /// The radix of a chunk-size line.
 const CHUNK_SIZE_RADIX: u32 = 16;
 
-super::members!(Member, "httpOutgoing", [
+crate::modules::host_members::members!(Member, "httpOutgoing", [
     Construct,
     Errored,
     Closed,

@@ -23,18 +23,8 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     if let Some(api) = shared.borrow().tls_contexts.api {
         return Ok(api);
     }
-    let register =
-        context.host_function(crate::host::shared_vm::operation("tlsContextRegister"))?;
-    let initialize =
-        context.host_function(crate::host::shared_vm::operation("tlsContextOuterInit"))?;
-    let create = context.host_function(crate::host::shared_vm::operation("tlsContextCreate"))?;
-    let factory = crate::host::removed_javascript("node:tls/context-facades.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &[register, initialize, create])?;
+    let api = super::surface::context_facades(context)?;
     let native = get(context, api, "NativeSecureContext")?;
-    let name = context.string_rooted("name");
-    let text = context.string_rooted("SecureContext");
-    context.define_data_property_rooted(native, name, text, false, false, true)?;
     let binding = context.object_rooted()?;
     #[cfg(quench_openssl_provider)]
     super::super::crypto_provider_shared_vm::install(context, binding)?;

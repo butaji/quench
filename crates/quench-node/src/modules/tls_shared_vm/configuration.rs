@@ -56,11 +56,224 @@ pub(crate) fn configure(
     outer: RootId,
     options: RootId,
 ) -> Result<(), RootedError> {
-    let api = super::facade::install(context)?;
-    let policy = get(context, api, "standardConfigure")?;
     let inner = get(context, outer, "context")?;
-    let undefined = context.undefined();
-    context.call_rooted(policy, undefined, &[inner, options])?;
+    configure_secure_context(context, inner, options)
+}
+
+/// The length of a session ticket key set (`ticketKeys`).
+const TICKET_KEYS_LENGTH: usize = 48;
+/// The TLS 1.3 cipher suites' common name prefix (`processCiphers`).
+const TLS13_SUITE_PREFIX: &str = "TLS_";
+
+fn method_call(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
+    let function = get(context, receiver, name)?;
+    context.call_rooted(function, receiver, args)
+}
+
+/// `validateKeyOrCertOption(name, value)`.
+fn validate_material(context: &mut NativeContext<'_, NodeHost>, name: &str, value: RootId) -> Result<(), RootedError> {
+    if context.string_text(value)?.is_some() || context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::ArrayBufferView)? {
+        return Ok(());
+    }
+    Err(super::super::util_shared_vm::argument_type_error_with_expected(
+        context,
+        value,
+        name,
+        "of type string or an instance of Buffer, TypedArray, or DataView",
+    )?)
+}
+
+fn validate_string(context: &mut NativeContext<'_, NodeHost>, value: RootId, name: &str) -> Result<(), RootedError> {
+    if context.string_text(value)?.is_some() {
+        return Ok(());
+    }
+    Err(super::super::util_shared_vm::argument_type_error(context, value, name, "string")?)
+}
+
+fn list(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Vec<RootId>, RootedError> {
+    if context.is_array_rooted(value)? {
+        context.array_like_values_rooted(value)
+    } else {
+        Ok(vec![value])
+    }
+}
+
+/// Node's `configSecureContext(context, options)` (lib/internal/tls/secure-context.js):
+/// the trust, identity, cipher and session options applied to a native context.
+fn configure_secure_context(
+    context: &mut NativeContext<'_, NodeHost>,
+    inner: RootId,
+    options: RootId,
+) -> Result<(), RootedError> {
+    let name = "options";
+    let option = |context: &mut NativeContext<'_, NodeHost>, key: &str| get(context, options, key);
+    let passphrase = option(context, "passphrase")?;
+    let ca = option(context, "ca")?;
+    if context.truthy_rooted(ca)? {
+        for certificate in list(context, ca)? {
+            validate_material(context, name, certificate)?;
+            method_call(context, inner, "addCACert", &[certificate])?;
+        }
+    } else {
+        method_call(context, inner, "addRootCerts", &[])?;
+    }
+    let cert = option(context, "cert")?;
+    if context.truthy_rooted(cert)? {
+        for certificate in list(context, cert)? {
+            validate_material(context, name, certificate)?;
+            method_call(context, inner, "setCert", &[certificate])?;
+        }
+    }
+    let key = option(context, "key")?;
+    if context.truthy_rooted(key)? {
+        let keys = if context.is_array_rooted(key)? { context.array_like_values_rooted(key)? } else { vec![key] };
+        let array = context.is_array_rooted(key)?;
+        for value in keys {
+            let (pem, pass) = if array && context.is_object_rooted(value)? {
+                let pem = get(context, value, "pem")?;
+                let pem = if context.rooted_value(pem).is_some_and(|value| value.is_undefined()) { value } else { pem };
+                let pass = get(context, value, "passphrase")?;
+                let pass = if context.rooted_value(pass).is_some_and(|value| value.is_undefined()) { passphrase } else { pass };
+                (pem, pass)
+            } else {
+                (value, passphrase)
+            };
+            validate_material(context, "options.key", pem)?;
+            if !absent(context, pass) {
+                validate_string(context, pass, "options.passphrase")?;
+            }
+            method_call(context, inner, "setKey", &[pem, pass])?;
+        }
+    }
+    let sigalgs = option(context, "sigalgs")?;
+    if !absent(context, sigalgs) {
+        validate_string(context, sigalgs, "options.sigalgs")?;
+        if context.string_text(sigalgs)?.as_deref() == Some("") {
+            return Err(super::super::util_shared_vm::argument_value_error(context, sigalgs, "options.sigalgs", "is invalid")?);
+        }
+        method_call(context, inner, "setSigalgs", &[sigalgs])?;
+    }
+    let ciphers = option(context, "ciphers")?;
+    if !absent(context, ciphers) {
+        validate_string(context, ciphers, "options.ciphers")?;
+    }
+    let ciphers_text = match context.string_text(ciphers)?.filter(|text| !text.is_empty()) {
+        Some(text) => text,
+        None => {
+            let api = super::facade::install(context)?;
+            let module = get(context, api, "module")?;
+            let default = get(context, module, "DEFAULT_CIPHERS")?;
+            context.to_string(default)?
+        }
+    };
+    let (suites, cipher_list): (Vec<&str>, Vec<&str>) = ciphers_text
+        .split(':')
+        .filter(|cipher| !cipher.is_empty())
+        .partition(|cipher| cipher.starts_with(TLS13_SUITE_PREFIX));
+    let (suites, cipher_list) = (suites.join(":"), cipher_list.join(":"));
+    if suites.is_empty() && cipher_list.is_empty() {
+        let parts = ciphers_text.split(':').map(|part| context.string_rooted(part)).collect::<Vec<_>>();
+        let parts = context.array_rooted(&parts)?;
+        return Err(super::super::util_shared_vm::argument_value_error(context, parts, "options.ciphers", "is invalid")?);
+    }
+    if !suites.is_empty() {
+        let suites = context.string_rooted(&suites);
+        method_call(context, inner, "setCipherSuites", &[suites])?;
+    }
+    let list_root = context.string_rooted(&cipher_list);
+    method_call(context, inner, "setCiphers", &[list_root])?;
+    if cipher_list.is_empty() {
+        let minimum = method_call(context, inner, "getMinProto", &[])?;
+        let maximum = method_call(context, inner, "getMaxProto", &[])?;
+        let minimum = context.to_number(minimum)?;
+        let maximum = context.to_number(maximum)?;
+        if minimum < f64::from(openssl_sys::TLS1_3_VERSION) && maximum > f64::from(openssl_sys::TLS1_2_VERSION) {
+            let version = context.number(f64::from(openssl_sys::TLS1_3_VERSION));
+            method_call(context, inner, "setMinProto", &[version])?;
+        }
+    }
+    let curve = option(context, "ecdhCurve")?;
+    let curve = if context.rooted_value(curve).is_some_and(|value| value.is_undefined()) {
+        context.string_rooted("auto")
+    } else {
+        curve
+    };
+    validate_string(context, curve, "options.ecdhCurve")?;
+    method_call(context, inner, "setECDHCurve", &[curve])?;
+    let dhparam = option(context, "dhparam")?;
+    if !absent(context, dhparam) {
+        validate_material(context, "options.dhparam", dhparam)?;
+        let value = if context.string_text(dhparam)?.as_deref() == Some("auto") { context.boolean(true) } else { dhparam };
+        let warning = method_call(context, inner, "setDHParam", &[value])?;
+        if context.truthy_rooted(warning)? {
+            let process = context.global_root()?;
+            let process = get(context, process, "process")?;
+            let kind = context.string_rooted("SecurityWarning");
+            method_call(context, process, "emitWarning", &[warning, kind])?;
+        }
+    }
+    let crl = option(context, "crl")?;
+    if !absent(context, crl) {
+        for value in list(context, crl)? {
+            validate_material(context, "options.crl", value)?;
+            method_call(context, inner, "addCRL", &[value])?;
+        }
+    }
+    let session_id_context = option(context, "sessionIdContext")?;
+    if !absent(context, session_id_context) {
+        validate_string(context, session_id_context, "options.sessionIdContext")?;
+        method_call(context, inner, "setSessionIdContext", &[session_id_context])?;
+    }
+    let pfx = option(context, "pfx")?;
+    if !absent(context, pfx) {
+        let array = context.is_array_rooted(pfx)?;
+        for value in list(context, pfx)? {
+            let (raw, pass) = if array {
+                let buffer = get(context, value, "buf")?;
+                let raw = if context.truthy_rooted(buffer)? { buffer } else { value };
+                let pass = get(context, value, "passphrase")?;
+                let pass = if context.truthy_rooted(pass)? { pass } else { passphrase };
+                (raw, pass)
+            } else {
+                (value, passphrase)
+            };
+            if absent(context, pass) || (!array && !context.truthy_rooted(pass)?) {
+                method_call(context, inner, "loadPKCS12", &[raw])?;
+            } else {
+                method_call(context, inner, "loadPKCS12", &[raw, pass])?;
+            }
+        }
+    }
+    let engine = option(context, "clientCertEngine")?;
+    if context.string_text(engine)?.is_some() && super::super::crypto_engine_shared_vm::SUPPORTED {
+        method_call(context, inner, "setClientCertEngine", &[engine])?;
+    }
+    let ticket_keys = option(context, "ticketKeys")?;
+    if !absent(context, ticket_keys) {
+        let Some(bytes) = context.view_bytes_rooted(ticket_keys) else {
+            return Err(super::super::util_shared_vm::argument_type_error_with_expected(
+                context,
+                ticket_keys,
+                "options.ticketKeys",
+                "an instance of Buffer, TypedArray, or DataView",
+            )?);
+        };
+        if bytes.len() != TICKET_KEYS_LENGTH {
+            return Err(super::super::util_shared_vm::argument_value_error(
+                context,
+                ticket_keys,
+                "options.ticketKeys",
+                "must be exactly 48 bytes",
+            )?);
+        }
+        method_call(context, inner, "setTicketKeys", &[ticket_keys])?;
+    }
+    let timeout = option(context, "sessionTimeout")?;
+    if !absent(context, timeout) {
+        let maximum = context.number(f64::from(i32::MAX));
+        super::super::util_shared_vm::validate_integer(context, timeout, "options.sessionTimeout", 0.0, maximum)?;
+        method_call(context, inner, "setSessionTimeout", &[timeout])?;
+    }
     Ok(())
 }
 

@@ -103,16 +103,6 @@ pub(crate) fn construct(
     let connection =
         context.host_function(crate::host::shared_vm::operation("tlsServerConnection"))?;
     context.call_rooted(base, receiver, &[options, connection])?;
-    // Node exposes TLS ticket rotation on the Server as a thin projection of
-    // its shared SecureContext. The SecureContext operation is already backed
-    // by OpenSSL; installing the forwarding method here makes that session
-    // control reachable through tls.Server/https.Server as expected.
-    let ticket_keys_factory = crate::host::removed_javascript("node:tls/server-ticket-keys.js")?;
-    let ticket_keys = context.call_rooted(ticket_keys_factory, undefined, &[receiver])?;
-    set(context, receiver, "setTicketKeys", ticket_keys)?;
-    let get_ticket_keys_factory = crate::host::removed_javascript("node:tls/server-get-ticket-keys.js")?;
-    let get_ticket_keys = context.call_rooted(get_ticket_keys_factory, undefined, &[receiver])?;
-    set(context, receiver, "getTicketKeys", get_ticket_keys)?;
     if context.truthy_rooted(listener)? {
         let secure = context.string_rooted("secureConnection");
         method(context, receiver, "on", &[secure, listener])?;
@@ -177,12 +167,4 @@ pub(crate) fn socket_error(
         method(context, server, "emit", &[event, error, socket])?;
     }
     Ok(context.undefined())
-}
-
-pub(crate) fn set_context_operation(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    set_context(context, args[0], &args[1..])
 }

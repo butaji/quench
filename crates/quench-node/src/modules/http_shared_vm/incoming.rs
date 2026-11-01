@@ -10,7 +10,7 @@ use crate::modules::stream_shared_vm::{
 };
 use quench_runtime::{RootId, RootedError};
 
-super::members!(Member, "httpIncoming", [
+crate::modules::host_members::members!(Member, "httpIncoming", [
     Construct,
     Connection,
     SetConnection,

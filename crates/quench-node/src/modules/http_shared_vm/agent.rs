@@ -9,7 +9,7 @@ use crate::modules::stream_shared_vm::{
 };
 use quench_runtime::{RootId, RootedError};
 
-super::members!(Member, "httpAgent", [
+crate::modules::host_members::members!(Member, "httpAgent", [
     Construct,
     GetName,
     AddRequest,
