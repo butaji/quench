@@ -272,7 +272,7 @@ impl<'a> Histogram<'a> {
     /// `hdr_value_at_percentile`, for `percentile` in (0, 100].
     pub(crate) fn percentile(&self, percentile: f64) -> i64 {
         let requested = percentile.min(FULL_PERCENTILE);
-        let target = ((requested / FULL_PERCENTILE * self.get(Header::TotalCount) as f64) + 0.5) as i64;
+        let target = (requested / FULL_PERCENTILE * self.get(Header::TotalCount) as f64).round() as i64;
         let target = target.max(1);
         let mut seen = 0;
         for index in 0..self.layout.counts_len {

@@ -105,8 +105,7 @@ impl Buffer {
 
 /// `PerformanceObserver.supportedEntryTypes`.
 const SUPPORTED_ENTRY_TYPES: [&str; 9] = ["dns", "function", "gc", "http", "http2", "mark", "measure", "net", "resource"];
-/// The milestones `nodeTiming` exposes, which marks may not be named after and measures read.
-const READ_ONLY_MARKS: [&str; 6] = ["nodeStart", "v8Start", "environment", "loopStart", "loopExit", "bootstrapComplete"];
+use super::perf_hooks::NODE_TIMING_MILESTONES as READ_ONLY_MARKS;
 
 /// An entry's fields, in a record; a resource entry adds its timing.
 const ENTRY_FIELDS: [&str; 5] = ["name", "entryType", "startTime", "duration", "detail"];
@@ -142,8 +141,6 @@ const RESOURCE_TIMING: [(&str, &[&str]); 15] = [
     ("encodedBodySize", &["encodedBodySize"]),
     ("decodedBodySize", &["decodedBodySize"]),
 ];
-/// The getters before `workerStart` in the prototype's key order.
-const RESOURCE_TIMING_BEFORE_WORKER: usize = 0;
 /// `PerformanceResourceTiming.prototype.toJSON`'s fields.
 const RESOURCE_JSON: [&str; 23] = [
     "name", "entryType", "startTime", "duration", "initiatorType", "nextHopProtocol", "workerStart", "redirectStart",
@@ -264,8 +261,7 @@ fn resource_class(c: &mut Context<'_>, entry: RootId) -> Outcome {
     }
     let initiator = c.string_rooted("initiatorType");
     define_getter(c, prototype, "initiatorType", "perfResourceField", initiator, true)?;
-    let (_, timings) = RESOURCE_TIMING.split_at(RESOURCE_TIMING_BEFORE_WORKER);
-    for (name, path) in timings {
+    for (name, path) in RESOURCE_TIMING {
         let path = path.iter().map(|step| c.string_rooted(step)).collect::<Vec<_>>();
         let path = c.array_rooted(&path)?;
         define_getter(c, prototype, name, "perfResourceTiming", path, true)?;
@@ -861,11 +857,8 @@ pub(crate) fn observer_supported_types(c: &mut Context<'_>, _: RootId, _: &[Root
 }
 
 fn connected_types(c: &mut Context<'_>, object: RootId) -> Option<Vec<String>> {
-    let found = timeline(c, |timeline| timeline.observers.iter().map(|observer| (observer.object, observer.types.clone())).collect::<Vec<_>>());
-    found.into_iter().find_map(|(root, types)| {
-        let scoped = c.scope_root(root)?;
-        c.strict_equal_rooted(scoped, object).ok()?.then_some(types)
-    })
+    let index = connected_index(c, object)?;
+    Some(timeline(c, |timeline| timeline.observers[index].types.clone()))
 }
 
 /// The index of `object` among the connected observers.
@@ -1041,7 +1034,7 @@ pub(crate) fn observer_inspect(c: &mut Context<'_>, receiver: RootId, args: &[Ro
         let (types, buffer, pending) = match index {
             Some(index) => timeline(c, |timeline| {
                 let observer = &timeline.observers[index];
-                (observer.types.clone(), observer.buffer.clone(), timeline.pending.iter().any(|&root| root == observer.object))
+                (observer.types.clone(), observer.buffer.clone(), timeline.pending.contains(&observer.object))
             }),
             None => (Vec::new(), Vec::new(), false),
         };

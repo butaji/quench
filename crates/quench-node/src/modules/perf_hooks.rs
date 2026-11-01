@@ -70,15 +70,12 @@ const PERFORMANCE_EXTENSIONS: [Method; 3] = [
     ("timerify", "perfTimerify", 1.0),
 ];
 
-/// `performance.nodeTiming`'s milestone getters: (name, milestone).
-const NODE_TIMING_MILESTONES: [(&str, &str); 6] = [
-    ("nodeStart", "nodeStart"),
-    ("v8Start", "v8Start"),
-    ("environment", "environment"),
-    ("loopStart", "loopStart"),
-    ("loopExit", "loopExit"),
-    ("bootstrapComplete", "bootstrapComplete"),
-];
+/// The extensions before `nodeTiming` in `Performance.prototype`'s key order.
+const EXTENSIONS_BEFORE_NODE_TIMING: usize = 1;
+
+/// `performance.nodeTiming`'s milestone getters, each named after its milestone; marks may
+/// not take these names, and measures read them as the milestones.
+pub(super) const NODE_TIMING_MILESTONES: [&str; 6] = ["nodeStart", "v8Start", "environment", "loopStart", "loopExit", "bootstrapComplete"];
 /// `nodeTiming.toJSON()`'s fields after its entry fields, in Node's order.
 const NODE_TIMING_JSON: [&str; 7] = ["nodeStart", "v8Start", "bootstrapComplete", "environment", "loopStart", "loopExit", "idleTime"];
 const NODE_TIMING_NAME: &str = "node";
@@ -407,7 +404,7 @@ fn performance_class(c: &mut Context<'_>, global: RootId) -> Outcome {
     define_getter(c, prototype, "timeOrigin", "perfTimeOrigin", undefined, true)?;
     define_methods(c, prototype, after, true)?;
     define_tag(c, prototype, "Performance")?;
-    let (utilization, resource_and_timerify) = PERFORMANCE_EXTENSIONS.split_at(1);
+    let (utilization, resource_and_timerify) = PERFORMANCE_EXTENSIONS.split_at(EXTENSIONS_BEFORE_NODE_TIMING);
     define_methods(c, prototype, utilization, false)?;
     let node_timing = node_timing(c)?;
     c.define_named_data_property_rooted(prototype, "nodeTiming", node_timing, true, false, true)?;
@@ -643,9 +640,9 @@ fn node_timing(c: &mut Context<'_>) -> Outcome {
     }
     let undefined = c.undefined();
     define_getter(c, timing, "duration", "perfNodeTimingNow", undefined, true)?;
-    for (field, milestone) in NODE_TIMING_MILESTONES {
-        let milestone = c.string_rooted(milestone);
-        define_getter(c, timing, field, "perfNodeTimingMilestone", milestone, true)?;
+    for milestone in NODE_TIMING_MILESTONES {
+        let label = c.string_rooted(milestone);
+        define_getter(c, timing, milestone, "perfNodeTimingMilestone", label, true)?;
     }
     define_getter(c, timing, "idleTime", "perfNodeTimingIdleTime", undefined, true)?;
     define_getter(c, timing, "uvMetricsInfo", "perfNodeTimingUvMetrics", undefined, true)?;

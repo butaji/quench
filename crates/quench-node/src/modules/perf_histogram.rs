@@ -38,7 +38,9 @@ const DEFAULT_RESOLUTION: f64 = 10.0;
 /// A percentile's bounds: above zero, at most 100.
 const MAX_PERCENTILE: f64 = 100.0;
 const PERCENTILE_RANGE: &str = "> 0 && <= 100";
-/// `BigInt.asIntN(64, value)`'s modulus, for a bigint's decimal digits.
+/// A `Map` preview's entry: the key, then the value.
+const MAP_ENTRY_WIDTH: usize = 2;
+/// The base of a bigint's decimal digits, which `BigInt.asIntN(64, value)` reads.
 const DECIMAL_BASE: u64 = 10;
 
 /// The histogram classes and the module's factories.
@@ -205,8 +207,8 @@ pub(crate) fn to_json(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Ou
     let percentiles = get(c, receiver, "percentiles")?;
     let entries = c.collection_preview_rooted(percentiles)?.map(|preview| preview.entries).unwrap_or_default();
     let object = c.object_rooted()?;
-    for pair in entries.chunks_exact(2) {
-        c.set_property_rooted(object, pair[0], pair[1], object)?;
+    for &[key, value] in entries.as_chunks::<MAP_ENTRY_WIDTH>().0 {
+        c.set_property_rooted(object, key, value, object)?;
     }
     fields.push(("percentiles", object));
     plain_object(c, &fields)
