@@ -118,8 +118,7 @@ pub(crate) fn initialize(
             context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
         let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
         let undefined = context.undefined();
-        let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
-        constructors
+        context.call_rooted(factory, undefined, &[canonical, decode])?
     };
     let undefined = context.undefined();
     let decoder_key = context.string_rooted("TextDecoder");

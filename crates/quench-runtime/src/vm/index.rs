@@ -50,7 +50,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
         let text = self.heap.string(string)?;
         let unit = text.units().get(index)?;
-        Some(self.heap.alloc_string(JsString::from_units(&[unit])))
+        // An ASCII unit's string is shared (`ascii_unit_string`), as `charAt`'s is.
+        Some(match self.ascii_unit_string(unit) {
+            Some(shared) => shared,
+            None => self.heap.alloc_string(JsString::from_units(&[unit])),
+        })
     }
 
     /// `get_index` of a string at an integer key inside its length: the one-unit string

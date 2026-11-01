@@ -4,24 +4,48 @@ Quench implements JavaScript semantics and Node-compatible APIs.
 
 - Use Rust for implementation and Rust macros for code generation. JavaScript is guest/fixture input; existing measurement tools remain usable.
 - Keep Node host/API behavior in `quench-node` and JavaScript semantics in `quench-runtime`. OXC owns JavaScript syntax.
-- Share semantics across interpreter, specialized, and native execution. Optimizations require proven assumptions or runtime guards with exact fallback.
+- Share semantics across interpreter, specialized, and native execution. Optimizations require proven assumptions, dependencies whose change invalidates the code that relied on them, or a guard proved once with exact fallback (see Execution laws).
 - Verify changed Node behavior against the local Node oracle and relevant upstream source: values, descriptors, identity, ordering, errors, exit status and host effects.
 - Production behavior must never depend on benchmark identity, fixture source, scores, checksums, suite markers or the comparison engine.
 - Qualify performance on the available execution host; record its exact platform and resource limits, and preserve existing platform behavior.
 - Resolve static structure before execution. Justify allocations, metadata, caches and generated code by semantic necessity or measured benefit.
 
+## Execution laws
+
+Futamura's projections and Ershov's mixed computation are the design: every native tier
+is the interpreter specialized to what is known, and each fact has a binding time
+(`docs/v2/specialization.md`).
+
+1. Check once. A dynamic fact is proved at most once per lifetime of the value or region
+   that carries it; every later use reads the proof (a type, a representation, a folded
+   constant). Re-checking a fact the model already holds is a bug, not a safety margin.
+2. Reactive, not guarded. A fact that rarely changes (a shape's layout, a prototype chain,
+   a constant field, a callee's identity) is a dependency: the change triggers
+   invalidation of what relied on it, and the users pay nothing per use. Guards remain
+   only for facts that vary per execution, and are hoisted to where they are proved once.
+3. O(1) per operation. Hot paths do constant work: no scans, walks or searches per use;
+   anything proportional moves to the event that changes it.
+4. C-level residuals. Generated code is judged against the C a programmer would write for
+   the same specialized program: values in registers, numbers unboxed, layouts as
+   constants, no boxing, spills or checks C would not need.
+
 ## Lisp mindset manifesto
 
-1. Model data and invariants before behavior.
+Every line carries domain meaning. Code is a liability; data is leverage.
+
+1. Model data and invariants before behavior: the domain, its rules and its config are
+   plain data before any function. When code feels awkward, the model is wrong.
 2. Prefer pattern dispatch over duplicated decision trees.
-3. Unify concepts with shared semantics.
+3. Unify concepts with shared semantics: seek the one representation in which separate
+   cases become the same case.
 4. One fact, one authoritative representation.
 5. Derive metadata, wrappers and execution views from that authority.
 6. Derive state from explicit transitions; memoize only where useful.
 7. Model lifecycle behavior as named state machines.
-8. Keep effects explicit and at the boundaries.
+8. Keep effects explicit and at the boundaries: a function either computes or acts.
 9. Deduplicate knowledge, not merely similar syntax.
-10. Prefer shallow, named composition over frameworks.
+10. Prefer shallow, named composition over frameworks: small operators in the domain's
+    vocabulary with uniform inputs, outputs and failures, keeping the laws callers rely on.
 11. Zero magic numbers: every representation bit, spec boundary, protocol
     value, sentinel, threshold, and non-obvious numeric rule has a named owner
     or is derived from a named layout. Keep literal zero/one where they are
@@ -37,7 +61,10 @@ Apply this discipline repository-wide to production code, tools, and task
 automation. Before finishing a change, do a reduction pass: identify the single
 authoritative representation for each fact, route equivalent behavior through
 the shared domain operation, derive projections instead of storing copies, and
-remove redundant branches or one-use wrappers that add no domain meaning.
+remove redundant branches or one-use wrappers that add no domain meaning. Also remove
+defensive checks for states the model excludes, wrappers that only rename, comments
+that restate code, unused parameters and flags, and configurability nobody asked for.
+Stop when removing anything more would lose meaning.
 Keep similar-looking rules separate when their semantics differ. Treat these as
 review requirements, not optional style preferences.
 

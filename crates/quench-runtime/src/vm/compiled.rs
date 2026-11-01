@@ -50,6 +50,10 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 use crate::specialize as typed_ir;
+#[path = "compiled/facts.rs"]
+mod facts;
+#[path = "compiled/lane_region.rs"]
+mod lane_region;
 #[cfg(feature = "aot")]
 mod scalar_region;
 #[cfg(feature = "aot")]
@@ -75,10 +79,8 @@ pub(super) enum RegionExit {
     Resume(u32),
     Fallback(u32),
     Recompile(u32),
-    /// As `Fallback`, at an append that found its array's backing full. The general path
-    /// grows the backing geometrically (`UniqueElements::reserve`), so an array leaves this
-    /// way a logarithmic number of times in its length, and these exits do not mark the
-    /// region as one whose values leave the subset.
+    /// As `Fallback`, at an append whose reserve needs the VM (growth or collection
+    /// debt). These lifecycle exits do not mark the region's values as leaving its subset.
     Grow(u32),
 }
 
@@ -1708,6 +1710,7 @@ impl JsExactFallback {
 
 /// Lower a cached data-field read (`emit_js_cached_field_slot`); the destination stays untouched
 /// on a failed proof, which resumes `Vm::step` at this GetField PC and may fill the cache.
+#[allow(clippy::too_many_arguments)]
 fn emit_js_own_field_get(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
@@ -1762,6 +1765,28 @@ fn emit_js_guarded_return(
             + i64::try_from(pc).expect("bounded general-dispatch PC"),
     );
     builder.ins().return_(&[status]);
+}
+
+/// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
+fn emit_lane_helper_call(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    helper: usize,
+    arguments: &[ir::Value],
+) -> ir::Value {
+    let mut signature = Signature::new(builder.func.signature.call_conv);
+    for _ in 0..arguments.len() + 2 {
+        signature.params.push(AbiParam::new(types::I64));
+    }
+    signature.returns.push(AbiParam::new(types::I64));
+    let signature = builder.import_signature(signature);
+    let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let residual = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
+    let mut values = vec![vm, residual];
+    values.extend_from_slice(arguments);
+    let target = builder.ins().iconst(types::I64, helper as i64);
+    let call = builder.ins().call_indirect(signature, target, &values);
+    builder.inst_results(call)[0]
 }
 
 /// Lower an own data-field store as the lane's store hit makes it
@@ -1875,6 +1900,172 @@ fn emit_js_own_field_set(
 /// interruption as the interpreter before consuming the branch.
 fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
+}
+
+/// A receiver field site whose cache entry a lane body folds (Ershov's online division):
+/// the holderless exact shape and slot it proved when the body compiled, under the
+/// shape-layout epoch the body records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ReceiverField {
+    shape: u32,
+    slot: u16,
+}
+
+/// What a lane body knows of its receiver from entry on: nothing in a body's run allocates
+/// or changes a shape (calls and stores that add properties leave it), so the record, exact
+/// shape and storage mode found at entry hold for the whole run.
+struct LaneReceiver {
+    object: Variable,
+    shape: Variable,
+    inline: Variable,
+    properties: Variable,
+    properties_len: Variable,
+}
+
+/// Read own data slot `slot` of the object record at `object`, whose meta's inline-storage
+/// bits are `inline`, as `Object::inline_property` and arena storage hold it; `miss` where
+/// the payload carries extras or the slot is outside the arena.
+#[allow(clippy::too_many_arguments)]
+fn emit_object_slot_read(
+    builder: &mut FunctionBuilder<'_>,
+    object: ir::Value,
+    inline: ir::Value,
+    properties: ir::Value,
+    properties_len: ir::Value,
+    slot: u16,
+    miss: ir::Block,
+) -> ir::Value {
+    use crate::value::ValueLayout;
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
+    let extras = builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
+    let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
+    emit_js_guard(builder, plain, miss);
+    let inline_block = builder.create_block();
+    let arena_block = builder.create_block();
+    let join = builder.create_block();
+    let bits = builder.append_block_param(join, types::I64);
+    builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
+
+    builder.switch_to_block(inline_block);
+    if usize::from(slot) >= layout.inline_property_count {
+        builder.ins().jump(miss, &[]);
+    } else {
+        let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
+        let narrow = builder.ins().ireduce(types::I32, half);
+        let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
+        let integer_block = builder.create_block();
+        let reference_block = builder.create_block();
+        builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
+        builder.switch_to_block(integer_block);
+        let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+        let value = builder.ins().uextend(types::I64, value);
+        let encoded = builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
+        builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+        builder.switch_to_block(reference_block);
+        let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+        let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
+        let code = builder.ins().uextend(types::I64, code);
+        let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
+        let table = builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
+        let address = builder.ins().iadd(table, offset);
+        let upper = builder.ins().load(types::I64, invariant(), address, 0);
+        let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
+        let lower = builder.ins().uextend(types::I64, lower);
+        let encoded = builder.ins().bor(upper, lower);
+        builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    }
+
+    builder.switch_to_block(arena_block);
+    let address = emit_arena_slot_address(builder, payload, properties, properties_len, slot, miss);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+
+    builder.switch_to_block(join);
+    bits
+}
+
+/// The address of arena slot `slot` of an object whose payload word `payload` holds plain
+/// storage (`Object::plain_storage_start`); `miss` where it lies outside the arena.
+fn emit_arena_slot_address(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    properties: ir::Value,
+    properties_len: ir::Value,
+    slot: u16,
+    miss: ir::Block,
+) -> ir::Value {
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let start = builder.ins().ireduce(types::I32, payload);
+    let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
+    let position = builder.ins().iadd_imm_u(start, i64::from(slot));
+    let position = builder.ins().uextend(types::I64, position);
+    let inside = builder.ins().icmp(IntCC::UnsignedLessThan, position, properties_len);
+    emit_js_guard(builder, inside, miss);
+    let offset = builder.ins().imul_imm_u(position, layout.property_value_size as i64);
+    builder.ins().iadd(properties, offset)
+}
+
+/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
+/// where the receiver is no direct object or the heap bases are absent, which no folded
+/// field matches.
+fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, receiver_offset: i32) -> LaneReceiver {
+    use crate::value::ValueLayout;
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let receiver = LaneReceiver {
+        object: builder.declare_var(types::I64),
+        shape: builder.declare_var(types::I32),
+        inline: builder.declare_var(types::I32),
+        properties: builder.declare_var(types::I64),
+        properties_len: builder.declare_var(types::I64),
+    };
+    let this = builder.ins().load(types::I64, MemFlagsData::trusted(), payload, receiver_offset);
+    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let properties = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
+    let properties_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+    builder.def_var(receiver.properties, properties);
+    builder.def_var(receiver.properties_len, properties_len);
+    let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
+    let zero = builder.ins().iconst(types::I32, 0);
+    let null = builder.ins().iconst(types::I64, 0);
+    builder.def_var(receiver.shape, none);
+    builder.def_var(receiver.inline, zero);
+    builder.def_var(receiver.object, null);
+    let found = builder.create_block();
+    let done = builder.create_block();
+    let family = builder.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let record_id = builder.ins().ireduce(types::I32, this);
+    let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
+    let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+    let has_properties = builder.ins().icmp_imm_u(IntCC::NotEqual, properties, 0);
+    let ok = builder.ins().band(object, in_range);
+    let ok = builder.ins().band(ok, has_records);
+    let ok = builder.ins().band(ok, has_properties);
+    builder.ins().brif(ok, found, &[], done, &[]);
+    builder.switch_to_block(found);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let offset = builder.ins().imul_imm_u(record_id, layout.record_size as i64);
+    let address = builder.ins().iadd(records, offset);
+    // The exact shape carries the dictionary bit, so a dictionary never matches.
+    let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
+    let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
+    let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+    builder.def_var(receiver.object, address);
+    builder.def_var(receiver.shape, shape);
+    builder.def_var(receiver.inline, inline);
+    builder.ins().jump(done, &[]);
+    builder.switch_to_block(done);
+    receiver
+}
+
+/// The host-specific semantic helpers a lane body calls where its native path does not
+/// apply: the VM's own field-cache read and its logged own-field store, each the rule the
+/// lane's handlers run (`Vm::cached_field_hit`, `Vm::primary_own_field_store_hit`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LaneHelpers {
+    field_get: usize,
+    field_set: usize,
 }
 
 enum JsGeneralBranch {
@@ -2826,8 +3017,53 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
 
-        // The operator is read only once the op is a numeric binary.
+        // `++`/`--` of a Number is that Number plus or minus one (ECMA-262 13.4); any other
+        // operand takes the exact-PC fallback before ToNumeric.
+        if instruction.op() == Op::IncDec
+            && instruction.numeric_local_target().is_none()
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && let Some(next) = next
+            && let Some(decrement) = instruction.boolean_flag()
+            && let Some(source) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let arithmetic = if decrement {
+                super::operations::NumberArithmetic::Subtract
+            } else {
+                super::operations::NumberArithmetic::Add
+            };
+            let fallback = builder.create_block();
+            let float = builder.create_block();
+            let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+            let one = builder.ins().iconst(types::I64, Value::integer(1).to_bits() as i64);
+            emit_js_int32_arithmetic(&mut builder, arithmetic, bits, one, arguments, destination, next, float);
+            builder.switch_to_block(float);
+            let number = emit_js_tagged_number(&mut builder, bits, fallback);
+            let unit = builder.ins().f64const(Ieee64::with_bits(1.0_f64.to_bits()));
+            let number = emit_number_arithmetic_operation(&mut builder, arithmetic, number, unit);
+            let encoded = emit_js_box_number(&mut builder, number);
+            builder.ins().store(MemFlagsData::trusted(), encoded, arguments, destination);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+
+        // Where an arithmetic result goes and where control continues. A lane body completes
+        // an instruction that returns its result at the function's terminal `Return`: the
+        // activation ends, so that record's register is free, and the lane resumes there.
         let numeric_binary = instruction.op().js_denotation() == JsDenotation::NumericBinary;
+        let (result_target, result_next) = if !numeric_binary {
+            (None, None)
+        } else if !instruction.returns_from_frame() {
+            (Some(instruction.result_register()), next)
+        } else {
+            (None, None)
+        };
+        // The operator is read only once the op is a numeric binary.
         let arithmetic = numeric_binary
             .then(|| {
                 super::operations::NumberArithmetic::from_js_instruction(
@@ -2845,22 +3081,25 @@ pub(super) fn lower_js_general_dispatch(
                 )
             })
             .flatten();
+        // A returning result's flags are the return bit alone (`result_target`).
+        let result_flags_plain = instruction.result_flags() == 0
+            || (instruction.returns_from_frame() && result_target.is_some());
         let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
+            && result_flags_plain
             && !instruction.writes_current_this()
-            && register_offset(instruction.result_register()).is_some()
+            && result_target.and_then(register_offset).is_some()
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
         if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
-            (numeric_result, next, arithmetic, operands)
+            (numeric_result, result_next, arithmetic, operands)
         {
             let fallback = builder.create_block();
-            let destination = register_offset(instruction.result_register())
+            let destination = result_target
+                .and_then(register_offset)
                 .expect("prevalidated JS numeric destination");
             let left_bits = read_js_tagged_operand(
                 &mut builder,
@@ -2930,20 +3169,20 @@ pub(super) fn lower_js_general_dispatch(
         let bitwise_result = numeric_binary
             && bitwise.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
+            && result_flags_plain
             && !instruction.writes_current_this()
-            && register_offset(instruction.result_register()).is_some()
+            && result_target.and_then(register_offset).is_some()
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
         if let (true, Some(next), Some(operation), Some((left_operand, right_operand))) =
-            (bitwise_result, next, bitwise, operands)
+            (bitwise_result, result_next, bitwise, operands)
         {
             let fallback = builder.create_block();
             let native = builder.create_block();
-            let destination = register_offset(instruction.result_register())
+            let destination = result_target
+                .and_then(register_offset)
                 .expect("prevalidated JS bitwise destination");
             let left_bits = read_js_tagged_operand(
                 &mut builder,
@@ -5850,15 +6089,29 @@ impl CodeMemory {
     }
 
     pub(super) fn new(bytes: &[u8]) -> Option<Self> {
-        let length = bytes.len().max(1);
+        Self::assemble(bytes.len(), |_, code| {
+            code.copy_from_slice(bytes);
+            Ok(())
+        })
+        .ok()
+    }
+
+    /// Map `length` writable bytes, let `fill` write the code knowing its final
+    /// address, then make the mapping read-only and executable. Copy-and-patch
+    /// publication needs the address to resolve PC-relative continuations.
+    pub(super) fn assemble(
+        length: usize,
+        fill: impl FnOnce(*mut u8, &mut [u8]) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let requested = length;
+        let length = length.max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        let page_size = usize::try_from(page_size).ok()?;
+        let page_size = usize::try_from(page_size).map_err(|_| "page size is unavailable")?;
         let length = length
-            .checked_add(page_size.checked_sub(1)?)?
-            .checked_div(page_size)?
-            .checked_mul(page_size)?;
+            .checked_next_multiple_of(page_size)
+            .ok_or("code mapping size overflow")?;
         // SAFETY: an anonymous private mapping; the result is checked.
         let pointer = unsafe {
             libc::mmap(
@@ -5871,19 +6124,17 @@ impl CodeMemory {
             )
         };
         if pointer == libc::MAP_FAILED {
-            return None;
+            return Err("code mapping failed".into());
         }
-        let pointer = pointer.cast::<u8>();
-        // SAFETY: the mapping is `length` writable bytes.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer, bytes.len()) };
+        let memory = Self { pointer: pointer.cast::<u8>(), length };
+        // SAFETY: the mapping is `length >= requested` writable bytes owned by `memory`.
+        let code = unsafe { std::slice::from_raw_parts_mut(memory.pointer, requested) };
+        fill(memory.pointer, code)?;
         // SAFETY: the same mapping, now read-only and executable.
-        if unsafe { libc::mprotect(pointer.cast(), length, libc::PROT_READ | libc::PROT_EXEC) } != 0
-        {
-            // SAFETY: unmapping the mapping created above.
-            unsafe { libc::munmap(pointer.cast(), length) };
-            return None;
+        if unsafe { libc::mprotect(memory.pointer.cast(), length, libc::PROT_READ | libc::PROT_EXEC) } != 0 {
+            return Err("code mapping could not be made executable".into());
         }
-        Some(Self { pointer, length })
+        Ok(memory)
     }
 }
 
@@ -6171,58 +6422,82 @@ fn compile_and_publish_entry(
 pub(super) fn compile_eager_native<H: Host>(
     program: ResidualProgram, options: super::native_graph::NativeJsCodegenOptions,
 ) -> Result<crate::NativeJsProgram<H>, String> {
-    program.validate_unless_proven()?;
+    #[cfg(feature = "jit")]
+    if options.backend == super::native_graph::NativeJsBackend::Stencil && super::native_stencil::available() {
+        return super::native_stencil::compile_program(program).map(|(native, _)| native);
+    }
+    use super::specialize::Specializer;
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
         .ok_or("native target unavailable")?;
-    let mut owners = Vec::with_capacity(program.function_count());
-    let mut entries = Vec::with_capacity(program.function_count());
-    for id in 0..program.function_count() {
-        let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
-        let function = program.function(id);
-        let operands: Box<[_]> = function.code.iter().copied().map(|packed| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
-        }).collect();
-        let mut code = Vec::new();
-        if let Some(regions) = options.regions(function) {
-            for region in regions.iter().cloned() {
-                code.push(compile_eager_body::<H>(function, function_id, &*isa, &operands, Some(region))?);
-            }
-            let mut signature = None;
-            let wrapper = super::native_graph::lower_region_dispatch(function_id, function.code.len(),
-                options.region_instruction_budget.get(), regions.len(), &*isa,
-                |builder, index, context, pc, result| {
-                    let signature = *signature.get_or_insert_with(|| builder.import_signature(
-                        native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
-                    let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
-                    let arguments = super::native_graph::region_call_arguments(builder, &*isa, context, pc, result);
-                    let call = builder.ins().call_indirect(signature, target, &arguments);
-                    builder.inst_results(call)[0]
-                })?;
-            code.push(publish_eager_graph(wrapper, &*isa)?);
-        } else { code.push(compile_eager_body::<H>(function, function_id, &*isa, &operands, None)?); }
-        // SAFETY: the final body or wrapper implements the public native entry
-        // ABI; owner retains every private region and immutable operand array.
-        entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(code.last().expect("native entry compiled").pointer()) });
-        owners.push((code, operands));
-    }
+    let extension = EagerCraneliftExtension::<H> { isa, options, entries: Vec::new(), owners: Vec::new(), host: std::marker::PhantomData };
+    let (entries, owners) = super::specialize::CallThreaded(extension).specialize(&program)?;
     // SAFETY: every entry was lowered from its exact function for host H.
     unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(owners)) }
 }
 
+/// The call-threaded generating extension for live Cranelift code: semantic
+/// entries and operand records are bound by address, so nothing is linked.
+#[cfg(feature = "aot")]
+struct EagerCraneliftExtension<H> {
+    isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
+    options: super::native_graph::NativeJsCodegenOptions,
+    entries: Vec<crate::NativeJsFunctionEntry>,
+    /// Each function's code, private regions first, and the sites whose
+    /// operand records that code addresses.
+    owners: Vec<(Vec<CodeMemory>, Box<[super::specialize::InstructionSite]>)>,
+    host: std::marker::PhantomData<fn(&mut H)>,
+}
+
+#[cfg(feature = "aot")]
+impl<H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExtension<H> {
+    type Residual = (Vec<crate::NativeJsFunctionEntry>, Vec<(Vec<CodeMemory>, Box<[super::specialize::InstructionSite]>)>);
+
+    fn function(&mut self, function_id: u32, sites: Vec<super::specialize::InstructionSite>) -> Result<(), String> {
+        let isa = &*self.isa;
+        let sites = sites.into_boxed_slice();
+        let mut code = Vec::new();
+        if let Some(regions) = self.options.regions(sites.len()) {
+            for region in regions.iter().cloned() {
+                code.push(compile_eager_body::<H>(&sites, function_id, isa, Some(region))?);
+            }
+            let mut signature = None;
+            let wrapper = super::native_graph::lower_region_dispatch(function_id, sites.len(),
+                self.options.region_instruction_budget.get(), regions.len(), isa,
+                |builder, index, context, pc, result| {
+                    let signature = *signature.get_or_insert_with(|| builder.import_signature(
+                        native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
+                    let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
+                    let arguments = super::native_graph::region_call_arguments(builder, isa, context, pc, result);
+                    let call = builder.ins().call_indirect(signature, target, &arguments);
+                    builder.inst_results(call)[0]
+                })?;
+            code.push(publish_eager_graph(wrapper, isa)?);
+        } else { code.push(compile_eager_body::<H>(&sites, function_id, isa, None)?); }
+        // SAFETY: the final body or wrapper implements the public native entry
+        // ABI; owner retains every private region and immutable operand array.
+        self.entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(code.last().expect("native entry compiled").pointer()) });
+        self.owners.push((code, sites));
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Self::Residual, String> {
+        Ok((self.entries, self.owners))
+    }
+}
+
 #[cfg(feature = "aot")]
 fn compile_eager_body<H: Host>(
-    function: &Function, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    operands: &[super::NativeJsOperands], region: Option<std::ops::Range<usize>>,
+    sites: &[super::specialize::InstructionSite], function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
+    region: Option<std::ops::Range<usize>>,
 ) -> Result<CodeMemory, String> {
     let mut signature = None;
-    let native = super::native_graph::lower_body(function, function_id, isa, region,
-        |builder, op, pc, context, result| {
+    let native = super::native_graph::lower_body(sites, function_id, isa, region,
+        |builder, site, context, result| {
             let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
-            let target = builder.ins().iconst(isa.pointer_type(), op.native_semantic_entry::<H>() as usize as i64);
-            let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
-            let pc = builder.ins().iconst(types::I64, pc as i64);
+            let target = builder.ins().iconst(isa.pointer_type(), site.op.native_semantic_entry::<H>() as usize as i64);
+            let arguments = builder.ins().iconst(isa.pointer_type(), site.operands.as_ptr() as i64);
+            let pc = builder.ins().iconst(types::I64, site.pc as i64);
             let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
             builder.inst_results(call)[0]
         })?;
@@ -6407,11 +6682,250 @@ struct JsStepDispatch {
     method_cache_atoms: usize,
     method_cache_atom_words: usize,
     stores_specialized: usize,
+    /// A lane body's receiver (`GeneralDispatchMode::Lane`); `DELETED` elsewhere.
+    receiver: u64,
+    /// A lane body's dense capture slots (`LaneContext::capture`, its tag cleared), or null.
+    captures: usize,
+    /// A lane body's VM and running residual, which its semantic helpers take.
+    vm: usize,
+    residual: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
     global_name_cache_hits: u64,
     outcome: Option<JsNativeStep>,
+}
+
+/// A general-dispatch body specialized for frameless lane activations
+/// (`GeneralDispatchMode::Lane`): it runs on the activation's own registers, so they stay
+/// the interpreter's exact state, and leaves at the PC of any instruction it does not run.
+pub(super) struct LaneMethod {
+    _code: CodeMemory,
+    entry: Entry,
+    /// Whether its code names shape ids as constants, which a shape compaction renumbers:
+    /// the compaction unlinks it (`LaneView::invalidate_shape_bindings`), so no entry checks them.
+    pub(super) names_shapes: bool,
+}
+
+/// Lane bodies compiled by this process, for tests that a lane activation ran natively.
+#[cfg(test)]
+pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A lane body's callout. Every unsupported instruction and failed guard leaves native
+/// code here, with nothing of that instruction done; the lane executes it next.
+unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unused: u64) -> i64 {
+    // SAFETY: the body passes the entry's result word, which `run_lane_method` owns.
+    unsafe { (result as *mut u64).write(pc) };
+    i64::from(NATIVE_JS_STOPPED)
+}
+
+/// A lane body's field read where its own-slot path does not apply: the VM's cache probe
+/// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
+/// leaves native code for the lane's full read.
+unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, site: u64) -> u64 {
+    // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
+    // body runs; the probe reads caches and never allocates.
+    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    match vm.cached_field_hit(residual, Value::from_bits(receiver), site as u16) {
+        super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
+        _ => Value::DELETED.to_bits(),
+    }
+}
+
+/// A lane body's own-field store: the lane's logged store hit, write barrier included
+/// (`Vm::primary_own_field_store_hit`). Zero leaves native code for the full store.
+unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
+    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    u64::from(vm.primary_own_field_store_hit::<true>(
+        residual,
+        Value::from_bits(receiver),
+        atom as Atom,
+        Value::from_bits(value),
+        site as u16,
+    ))
+}
+
+/// A lane body's read of the running function's capture `slot`, by the lane's own rule
+/// (`EnvironmentSlots::dense_plain`); `DELETED` where that rule finds no plain value, which
+/// leaves native code for the lane's full read.
+unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
+    let slots = slots as *const crate::heap::EnvironmentSlots;
+    if slots.is_null() {
+        return Value::DELETED.to_bits();
+    }
+    // SAFETY: the payload holds the running activation's dense capture slots, which
+    // outlive the body's run, and nothing collects while it runs.
+    unsafe { &*slots }
+        .dense_plain(usize::try_from(slot).unwrap_or(usize::MAX))
+        .map_or(Value::DELETED.to_bits(), Value::to_bits)
+}
+
+impl<H: Host> Vm<H> {
+    /// The receiver field sites of `function` whose cache entries prove a holderless exact
+    /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
+    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Vec<ReceiverField>> {
+        let Some(body) = program.function_get(function as usize) else { return Vec::new() };
+        body.code
+            .iter()
+            .map(|packed| {
+                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+                let site = match instruction.op() {
+                    Op::GetField => match instruction.field_lookup() {
+                        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
+                        _ => return Vec::new(),
+                    },
+                    Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
+                    _ => return Vec::new(),
+                };
+                self.native_field_load_descriptors(site)
+                    .into_iter()
+                    .map(|(shape, slot)| ReceiverField { shape, slot })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Specialize `function` for lane activations, admitting a body only where its first
+    /// instruction runs natively: an entry that leaves at once is pure cost.
+    pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32) -> Option<LaneMethod> {
+        self.host.before_native_compilation();
+        let helpers = LaneHelpers {
+            field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
+        };
+        let receiver_fields = self.lane_receiver_fields(program, function);
+        let region = lane_region::compile(program, function, helpers, &receiver_fields);
+        self.host.after_native_compilation();
+        let region = region?;
+        // Until calls stay native (TOD-1219), a body that calls leaves at every call and pays
+        // its entry again in each callee's return; such a body runs cheaper in the lane.
+        let calls = program.function_get(function as usize).is_some_and(|body| {
+            body.code.iter().any(|packed| {
+                super::dispatch_fast::decoded_instruction(body, *packed).op().control_flow_layout() == ControlFlowLayout::Call
+            })
+        });
+        if region.native == 0 || calls {
+            return None;
+        }
+        let code = CodeMemory::new(&region.code)?;
+        if let Some(directory) = native_dump_directory() {
+            dump_native_code(directory, function, &code, "lane body: no CLIF retained");
+        }
+        // SAFETY: the general dispatcher emits the shared native-entry ABI.
+        let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
+        #[cfg(test)]
+        LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
+        Some(LaneMethod { _code: code, entry, names_shapes })
+    }
+
+    /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
+    /// native `Return` leaves at its own record, whose register already holds the result.
+    pub(super) fn run_lane_method(
+        &mut self,
+        method: &LaneMethod,
+        program: ProgramId,
+        residual: &ResidualProgram,
+        registers: *mut Value,
+        receiver: Value,
+        captures: *const crate::heap::EnvironmentSlots,
+    ) -> usize {
+        let (status, word) = LANE_FRAME.with(|frame| {
+            // SAFETY: a lane body never re-enters the VM, so no other borrow of this
+            // thread's frame is live; the frame is never moved once made.
+            let frame = unsafe { &mut *frame.get() };
+            let frame = frame.get_or_insert_with(LaneFrame::new);
+            let dispatch = &mut frame.dispatch;
+            dispatch.program_id = program;
+            dispatch.native_registers = registers;
+            dispatch.receiver = receiver.to_bits();
+            dispatch.captures = captures as usize;
+            dispatch.vm = (self as *mut Self).addr();
+            dispatch.residual = residual as *const ResidualProgram as usize;
+            dispatch.refresh_heap_bases(self);
+            let context = &mut frame.context;
+            context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
+            context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            let constants = self.programs.constants(program);
+            context.js_constants = constants.as_ptr();
+            context.js_constant_count = constants.len();
+            let mut word = 0_u64;
+            // SAFETY: the body was compiled for this function, never allocates or
+            // collects, and reads only the registers, constants and heap bases set above.
+            let status = unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) };
+            (status, word)
+        });
+        Self::lane_method_exit_pc(status, word)
+    }
+}
+
+/// The context and payload every lane body on this thread runs with
+/// (`Vm::run_lane_method`). Thread facts are set once; each entry writes its own.
+struct LaneFrame {
+    context: CallContext,
+    dispatch: JsStepDispatch,
+}
+
+impl LaneFrame {
+    fn new() -> Self {
+        let mut context = CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None);
+        context.callout = lane_method_exit as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;
+        Self {
+            context,
+            dispatch: JsStepDispatch {
+                program_id: ProgramId::MAIN,
+                frame: usize::MAX,
+                allow_inline_calls: false,
+                start_pc: 0,
+                #[cfg(feature = "native-execution")]
+                stop_pc: JS_NO_STOP_PC,
+                native_registers: std::ptr::null_mut(),
+                register_count: 0,
+                native_locals: std::ptr::null_mut(),
+                local_count: 0,
+                native_pcs: std::ptr::null(),
+                native_pc_count: 0,
+                fixed_this_slot: std::ptr::null(),
+                capture_values: std::ptr::null(),
+                capture_len: 0,
+                array_record_base: 0,
+                object_record_base: 0,
+                object_mark_blocks: 0,
+                object_mark_block_count: 0,
+                property_values: 0,
+                property_len: 0,
+                field_entries: 0,
+                method_cache_atoms: 0,
+                method_cache_atom_words: 0,
+                stores_specialized: 0,
+                receiver: Value::DELETED.to_bits(),
+                captures: 0,
+                vm: 0,
+                residual: 0,
+                #[cfg(test)]
+                island_steps: 0,
+                #[cfg(test)]
+                global_name_cache_hits: 0,
+                outcome: None,
+            },
+        }
+    }
+}
+
+thread_local! {
+    static LANE_FRAME: std::cell::UnsafeCell<Option<LaneFrame>> = const { std::cell::UnsafeCell::new(None) };
+}
+
+impl<H: Host> Vm<H> {
+    fn lane_method_exit_pc(status: u32, word: u64) -> usize {
+        match status {
+            NATIVE_JS_STOPPED => usize::try_from(word).unwrap_or(0),
+            status if status >= JS_GENERAL_RETURN_STATUS_BASE => (status - JS_GENERAL_RETURN_STATUS_BASE) as usize,
+            // Dispatch reaches an invalid PC only before any instruction ran.
+            _ => 0,
+        }
+    }
 }
 
 /// The frame/register/root and exception boundary shared by JIT and linked entries.
@@ -6494,6 +7008,10 @@ impl JsStepDispatch {
             object_mark_block_count: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
+            receiver: Value::DELETED.to_bits(),
+            captures: 0,
+            vm: 0,
+            residual: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
@@ -15804,7 +16322,7 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
-    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>) {
+    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         live_native_function(&program, 0, None)
     }
@@ -15812,7 +16330,7 @@ mod tests {
     #[cfg(feature = "aot")]
     fn partitioned_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, Entry) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap() };
+        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap(), backend: crate::NativeJsBackend::Cranelift };
         let native = crate::NativeJsProgram::compile_eager_with_options((*program).clone(), options).unwrap();
         let prepared = vm.prepare_native_script(native).unwrap();
         let entry = prepared.native.as_ref().unwrap().entries()[0];
@@ -15824,28 +16342,24 @@ mod tests {
 
     #[cfg(feature = "aot")]
     fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
-        -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>)
+        -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>)
     {
-        let function = program.function(function_id as usize);
-        let operands: Vec<_> = function.code.iter().copied().map(|packed| {
-            let instruction = super::super::dispatch_fast::decoded_instruction(function, packed);
-            super::super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
-        }).collect();
+        let sites = super::super::specialize::instruction_sites(super::super::specialize::Division::Offline, program.function(function_id as usize));
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut signature = None;
-        let native = super::super::native_graph::lower_body(function, function_id, &*isa, None,
-            |builder, op, pc, context, result| {
-                if pc == 0 && let Some(entries) = entries {
+        let native = super::super::native_graph::lower_body(&sites, function_id, &*isa, None,
+            |builder, site, context, result| {
+                if site.pc == 0 && let Some(entries) = entries {
                     let pointer = builder.ins().iconst(isa.pointer_type(), entries as i64);
                     let previous = builder.ins().load(types::I64, MemFlagsData::trusted(), pointer, 0);
                     let count = builder.ins().iadd_imm_s(previous, 1);
                     builder.ins().store(MemFlagsData::trusted(), count, pointer, 0);
                 }
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
-                let target = op.native_semantic_entry::<crate::test_host::TestHost>() as usize;
+                let target = site.op.native_semantic_entry::<crate::test_host::TestHost>() as usize;
                 let target = builder.ins().iconst(isa.pointer_type(), target as i64);
-                let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
-                let pc = builder.ins().iconst(types::I64, pc as i64);
+                let arguments = builder.ins().iconst(isa.pointer_type(), site.operands.as_ptr() as i64);
+                let pc = builder.ins().iconst(types::I64, site.pc as i64);
                 let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
                 builder.inst_results(call)[0]
             }).unwrap();
@@ -15853,7 +16367,7 @@ mod tests {
         // production object backend handles relocations instead of live addresses.
         let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX)
             .expect("native semantic graph compiles");
-        (memory, entry, operands)
+        (memory, entry, sites)
     }
 
     #[cfg(feature = "aot")]

@@ -611,7 +611,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     productive_full: Ratio::new(1, 8),
     maximum_cap_backoff: 2,
     survival_limit: THROUGHPUT_SURVIVAL_LIMIT,
-    full_only_headroom: Ratio::new(1, 1),
+    full_only_headroom: THROUGHPUT_FULL_ONLY_HEADROOM,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
@@ -684,6 +684,14 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 /// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
 
+/// Allocation between full collections, as a share of the live set, once most of each young
+/// generation survives (`Regime::FullOnly`) under throughput: one and a half live sets. A heap
+/// whose survivors fill each young generation, as V8-v7 Splay's tree does, collects only
+/// fully, and each full collection marks the whole live set: at one live set Splay ran 26 full
+/// collections a run (gc-tuning binary, static, pinned, 2026-11-01: Score 5140-5204 at
+/// 31.8 MB; 3/2: 5960-6124 at 39.3 MB; 2/1: 5782-5847 at 47.9 MB).
+const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(3, 2);
+
 /// Memory-first lets half a live set of allocation pass between full collections once most of
 /// each young generation survives, not a whole one, which let the heap reach twice its live
 /// set. V8-v7 MemoryFirst, static x86_64 production build, 3 interleaved runs, worst max RSS /
@@ -730,7 +738,13 @@ const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 /// interleaved runs, x86_64 4 vCPU, 2026-10-25; Score / max RSS): stanford-crypto-aes +10% /
 /// 34.8 -> 30.4 MB, bigint-noble-ed25519 +4% / 31.4 -> 28.7, UniPoker flat / 22.1 -> 19.9,
 /// hash-map flat / 27.3 -> 25.9, pbkdf2 and sha256 within noise, acorn-wtb +4% / +2.6 MB.
-const THROUGHPUT_MINIMUM_YOUNG: usize = 3 << 14;
+/// Lowered to 2^12 (TOD-1229): at three quarters of 2^16 a small V8-v7 heap such as Richards
+/// never collected, so its whole run's garbage stayed resident. With collection-time releases
+/// paced (`resident_pages::release_at_collection`) the extra young collections cost no Score:
+/// no-JIT max RSS Richards 5304 -> 3584-3732 KiB, RayTrace 6564 -> 4436-4648, Score Richards
+/// 1746-1979 -> 1974-2084, RayTrace 5203-5498 (incremental production build, pinned, x86_64
+/// 4 vCPU, 2026-11-01). Releasing at every collection had cost RayTrace 3600 against 4700.
+const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 12;
 /// The most allocations between young collections under throughput: 2^19, for Score, which
 /// this table serves (memory-first keeps RSS first). V8-v7 fixed work, gc-tuning build,
 /// callgrind main thread, 2^19 young with the full interval at 2^21 against 3 << 14 and 2^18

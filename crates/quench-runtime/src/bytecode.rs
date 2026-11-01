@@ -302,6 +302,9 @@ pub(crate) enum FieldLayout {
     SignedConstant,
 }
 
+#[cfg(feature = "aot")]
+pub(crate) use crate::specialize::BindingTime;
+
 impl FieldLayout {
     pub(crate) const fn is_register_field(self) -> bool {
         matches!(
@@ -328,6 +331,118 @@ impl FieldLayout {
     pub(crate) const fn is_operand_field(self) -> bool {
         matches!(self, Self::Operand | Self::NumericIndexOperand)
     }
+
+    #[cfg(feature = "aot")]
+    /// An operand field is a location whose encoding may instead carry a
+    /// constant; the constant is static, which the instruction decides.
+    pub(crate) const fn binding_time(self) -> BindingTime {
+        match self {
+            Self::ResultRegister
+            | Self::Register
+            | Self::WriteRegister
+            | Self::ReadWriteRegister
+            | Self::OptionalRegister
+            | Self::OptionalReadRegister
+            | Self::NumericLocalTarget
+            | Self::RegisterWindowBase
+            | Self::ConstructArguments
+            | Self::FieldBase
+            | Self::Operand
+            | Self::NumericIndexOperand => BindingTime::Location,
+            Self::CacheSiteIndex | Self::FieldLookupCacheSiteIndex => BindingTime::Site,
+            Self::Unused
+            | Self::NumericLocalStoreMarker
+            | Self::FunctionIndex
+            | Self::ElementCount
+            | Self::RegisterCount
+            | Self::WideIndexChunk
+            | Self::BooleanFlag
+            | Self::BinaryOperator
+            | Self::SignedConstant => BindingTime::Static,
+        }
+    }
+}
+
+#[cfg(feature = "aot")]
+impl ImmediateRole {
+    /// A layout-encoded immediate packs register windows or capture slots
+    /// unless it is a plain scalar.
+    pub(crate) const fn binding_time(self, layout: ImmediateLayout) -> BindingTime {
+        match self {
+            Self::LayoutEncoded => match layout {
+                ImmediateLayout::Scalar => BindingTime::Static,
+                ImmediateLayout::CaptureDepthAndSlot
+                | ImmediateLayout::CallWindow
+                | ImmediateLayout::CallWindowWithEvalFlags
+                | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                | ImmediateLayout::ConstructCountAndFlags
+                | ImmediateLayout::RegisterPair => BindingTime::Location,
+            },
+            Self::LocalSlot | Self::WasmInstanceSlot => BindingTime::Location,
+            Self::TemplateSiteIndex
+            | Self::RegExpLiteralSiteIndex
+            | Self::MethodSiteIndex
+            | Self::ObjectSiteIndex
+            | Self::FieldLookup => BindingTime::Site,
+            Self::Unused
+            | Self::ConstantIndex
+            | Self::EnvironmentCloneIndex
+            | Self::ClosureFunctionIndex
+            | Self::ArrayLength
+            | Self::AtomIndex
+            | Self::FunctionNamePrefix
+            | Self::PropertyDefinitionMode
+            | Self::BooleanFlag
+            | Self::ArrayIndex
+            | Self::BinaryOperator
+            | Self::AdditionOperator
+            | Self::MultiplicationOperator
+            | Self::UnaryOperator
+            | Self::WasmSignatureIndex
+            | Self::WasmFunctionIndex
+            | Self::WasmSimdOperator
+            | Self::WasmMemoryLoadOperator
+            | Self::WasmMemoryStoreOperator
+            | Self::WasmMemoryOffset
+            | Self::WasmAtomicOperator
+            | Self::WasmI32Immediate
+            | Self::WasmI32UnaryOperator
+            | Self::WasmI31Operator
+            | Self::WasmExternalConversion
+            | Self::WasmReferenceTarget
+            | Self::WasmNonNullCheck
+            | Self::WasmGcTypeIndex
+            | Self::WasmStructFieldIndex
+            | Self::WasmExceptionFieldIndex
+            | Self::WasmI64BinaryOperator
+            | Self::WasmI64UnaryOperator
+            | Self::WasmScalarConversionOperator
+            | Self::WasmF32BinaryOperator
+            | Self::WasmF32UnaryOperator
+            | Self::WasmF64BinaryOperator
+            | Self::WasmF64UnaryOperator
+            | Self::LiteralTemplateIndex
+            | Self::JumpTarget
+            | Self::BranchTableCases
+            | Self::SuperinstructionIndex
+            | Self::WideInstructionIndex => BindingTime::Static,
+        }
+    }
+}
+
+#[cfg(feature = "aot")]
+impl Op {
+    /// The binding time of each input, in field order `a`, `b`, `c`, then the
+    /// immediate: Ershov's division of this instruction.
+    pub(crate) const fn input_binding_times(self) -> [BindingTime; 4] {
+        [
+            self.field_layout(InstructionField::A).binding_time(),
+            self.field_layout(InstructionField::B).binding_time(),
+            self.field_layout(InstructionField::C).binding_time(),
+            self.immediate_role().binding_time(self.immediate_layout()),
+        ]
+    }
+
 }
 
 impl Op {
@@ -778,6 +893,7 @@ opcodes!(
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCallee => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1658,8 +1774,8 @@ pub(crate) struct CallPlan {
     pub(crate) registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
-    /// it makes, with no `arguments`, self binding, handler, binding site, environment clone,
-    /// dynamic scope access or superinstruction, whose every local access is a plain or
+    /// it makes and the iteration copies of its environment, with no `arguments`, self
+    /// binding, binding site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
@@ -2222,6 +2338,15 @@ impl Function {
     /// reads. A non-suspending async body reaching none runs as an ordinary one would
     /// (`CallPlan::settles_in_loop`), its promise held by its call.
     fn body_binding_reads(&self, tables: &impl FactTables) -> bool {
+        self.body_binding_reads_beside_clones(tables)
+            || self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
+    }
+
+    /// `body_binding_reads` but for the iteration copies of its environment (`CloneEnv`),
+    /// which share the implicit bindings the environment holds rather than read them: an
+    /// environment activation's window keeps those its closures may observe in the
+    /// environment it makes (`window_environment`), which a copy shares as a frame's does.
+    fn body_binding_reads_beside_clones(&self, tables: &impl FactTables) -> bool {
         self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
@@ -2246,7 +2371,6 @@ impl Function {
                             | Op::StoreName
                             | Op::StoreResolvedName
                             | Op::StoreVarBinding
-                            | Op::CloneEnv
                             | Op::InitializeThis
                             | Op::SuperCallCheck
                     )
@@ -2458,11 +2582,13 @@ impl Function {
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
                 && !self.has_dynamic_scope_access()
-                && !self.activation_binding_reads(tables)
+                // `in_loop` leaves out the other kinds `activation_binding_reads` names.
+                && !self.body_binding_reads_beside_clones(tables)
                 && self.instructions().all(|instruction| {
                     let op = instruction.op();
+                    // An iteration's `CloneEnv` copies the window's environment, once a closure
+                    // made one (`lane_clone_window_env`).
                     op.immediate_role() != ImmediateRole::SuperinstructionIndex
-                        && op != Op::CloneEnv
                         && (instruction.addressed_local_slots().next().is_none()
                             || matches!(
                                 op,

@@ -515,6 +515,223 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn own_name_reads_load_the_callee() {
+    // A function expression reads its own name as `LoadCallee`; with no closure, eval or
+    // `with` able to reach the name's slot, the slot goes (`drop_unread_self_binding`) and
+    // the body runs as a registers-only activation. A captured, eval-visible, assigned or
+    // generator name keeps its slot and reads it as before.
+    let source = r#"
+const out = [];
+const api = {
+  from: function from(value, depth) { if (depth > 0) return from(value + 1, depth - 1); return { value, same: from === api.from }; },
+  parse: function _parse(x) { return [typeof _parse, _parse.name, x].join(":"); },
+};
+for (let i = 0; i < 3; i++) out.push(JSON.stringify(api.from(i, 2)), api.parse(i));
+const captured = function counter(n) { const again = () => counter.name + n; return again(); };
+out.push(captured(1), captured(2));
+const viaEval = function named(x) { return eval("typeof named + x"); };
+out.push(viaEval(5));
+const sloppy = function rebind() { rebind = 1; return typeof rebind; };
+out.push(sloppy());
+const strict = function locked() { "use strict"; try { locked = 1; } catch (e) { return e.constructor.name; } return "no"; };
+out.push(strict());
+const gen = function* g(n) { yield typeof g; yield n; };
+out.push([...gen(4)].join());
+const bound = api.from.bind(null);
+out.push(JSON.stringify(bound(7, 1)));
+out.push([1, 2].map(function m(x) { return m.length + x; }).join());
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "own-name.js").unwrap();
+    program.compile_released();
+    let from = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| &program.atoms[atom as usize][..] == "from"))
+        .unwrap();
+    assert!(from.self_binding_slot.is_none());
+    assert!(from.call_plan(&program).registers_only);
+    program.validate().unwrap();
+    assert_eq!(output(source), ["{\"value\":2,\"same\":true}|function:_parse:0|{\"value\":3,\"same\":true}|function:_parse:1|{\"value\":4,\"same\":true}|function:_parse:2|counter1|counter2|function5|function|TypeError|function,4|{\"value\":8,\"same\":true}|2,3".to_string()]);
+}
+
+#[test]
+fn string_index_sites_read_units_before_array_probes() {
+    // A `GetIndex` site that reads a string tries its unit first (`lane_get_index_string`),
+    // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is
+    // no index, the read still finds `String.prototype`'s index property.
+    let source = r#"
+const out = [];
+String.prototype[6] = "proto";
+const read = (s, i) => s[i];
+const inputs = ["abc", "hé€\ud83d", new String("xy"), ""];
+for (let round = 0; round < 3; round++) {
+  const row = [];
+  for (const s of inputs) for (let i = 0; i < 7; i++) { const v = read(s, i); row.push(typeof v === "string" && v.length === 1 ? v.charCodeAt(0) : String(v)); }
+  row.push(read("abc", "1"), String(read("abc", -1)), String(read("abc", 1.5)));
+  out.push(row.join(" "));
+}
+let codes = 0;
+const text = "pino {\"msg\":\"request completed\"} ÿ";
+for (let i = 0; i < text.length; i++) codes += text[i].charCodeAt(0) + (text[i] === text.charAt(i) ? 1 : 0);
+out.push(codes, read("aa", 0) === read("ba", 1));
+delete String.prototype[6];
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|3326|true".to_string()]);
+}
+
+#[test]
+fn typed_array_index_sites_read_elements_before_array_probes() {
+    // A `GetIndex` site that reads a typed array tries its element first
+    // (`lane_get_index_typed`): an element, or `undefined` past the end or at a
+    // non-integer canonical key, never the prototype's index property; a site that also
+    // reads ordinary arrays still finds their prototype's elements.
+    let source = r#"
+const out = [];
+class Bytes extends Uint8Array {}
+Object.defineProperty(Uint8Array.prototype, "7", { get() { return "proto"; }, configurable: true });
+Array.prototype[9] = "array-proto";
+const read = (view, index) => view[index];
+const views = [new Bytes([1, 2, 3]), new Float64Array([0.5, -1.25]), [10, 20], new Int16Array([-3, 4])];
+for (let round = 0; round < 3; round++) {
+  const row = [];
+  for (const view of views) for (let index = 0; index < 10; index++) row.push(String(read(view, index)));
+  row.push(String(read(views[0], "1")), String(read(views[0], "-0")), String(read(views[0], 1.5)));
+  out.push(row.join(" "));
+}
+let sum = 0;
+const mask = new Uint8Array([1, 2, 4, 8]);
+const data = new Bytes(64).map((_, i) => i);
+for (let i = 0; i < data.length; i++) sum += data[i] ^ mask[i & 3];
+out.push(sum);
+delete Uint8Array.prototype[7];
+delete Array.prototype[9];
+print(out.join("|"));
+"#;
+    let expected = [
+        "1 2 3 undefined undefined undefined undefined undefined undefined undefined 0.5 -1.25 undefined undefined undefined undefined undefined undefined undefined undefined 10 20 undefined undefined undefined undefined undefined undefined undefined array-proto -3 4 undefined undefined undefined undefined undefined undefined undefined undefined 2 undefined undefined";
+        3
+    ]
+    .join("|")
+        + "|2064";
+    assert_eq!(output(source), [expected]);
+}
+
+#[test]
+fn try_finally_bodies_keep_registers_only_activations() {
+    // A `try`/`finally` whose protected blocks never return emits no return path through
+    // the finalizer (`finally_return_path`); one that returns keeps the path but names it in
+    // no handler outside a generator, so its completion slot moves into a register. Either
+    // body reaches no local and runs as a registers-only activation; returns, nested
+    // finalizers, `catch`, loop exits and a generator's `return()` still run each finalizer
+    // once.
+    let source = r#"
+const out = [];
+const desc = { value: undefined, configurable: true };
+function install(target, v) {
+  desc.value = v;
+  try { Object.defineProperty(target, "k", desc); } finally { desc.value = undefined; }
+  return target.k + (desc.value === undefined ? 1 : 0);
+}
+for (let i = 0; i < 3; i++) out.push(install({}, i));
+function early(x) { try { if (x) return "try" + x; } finally { out.push("fin" + x); } return "after" + x; }
+out.push(early(0), early(1));
+function nested(x) {
+  try { try { if (x > 1) return "inner"; } finally { out.push("a" + x); } if (x) return "outer"; } finally { out.push("b" + x); }
+  return "none";
+}
+out.push(nested(0), nested(1), nested(2));
+function caught(x) { try { if (x) throw new Error("e" + x); } catch (e) { return e.message; } finally { out.push("c" + x); } return "ok"; }
+out.push(caught(0), caught(1));
+function thrower() { try { throw new Error("t"); } finally { out.push("tf"); } }
+try { thrower(); } catch (e) { out.push(e.message); }
+function* gen() { try { yield 1; yield 2; } finally { out.push("gf"); } }
+const g = gen(); out.push(g.next().value, JSON.stringify(g.return(9)));
+function loop(n) { let s = 0; for (let i = 0; i < n; i++) { try { if (i === 2) continue; if (i === 4) break; s += i; } finally { s += 10; } } return s; }
+out.push(loop(6));
+print(out.join(","));
+"#;
+    let program = Engine::specialize(source, "finally-paths.js").unwrap();
+    program.compile_released();
+    // `install` never returns from its `try`; `early` does, through the finalizer's return
+    // path, which no handler names outside a generator (`resumed_return`).
+    for function in [&program.functions[1], &program.functions[2]] {
+        assert!(!function.handlers.is_empty());
+        assert!(function.call_plan(&program).registers_only);
+    }
+    program.validate().unwrap();
+    assert_eq!(
+        output(source),
+        ["1,2,3,fin0,fin1,after0,try1,a0,b0,a1,b1,a2,b2,none,outer,inner,c0,c1,ok,e1,tf,t,gf,1,{\"value\":9,\"done\":true},54"]
+    );
+}
+
+#[test]
+fn iteration_copies_run_in_environment_activations() {
+    // A loop whose block bindings a closure captures copies its environment each iteration
+    // (`CloneEnv`); an arrow making such closures still runs as an environment activation
+    // (`lane_clone_window_env`), each closure keeping its iteration's bindings while all
+    // share the function-level ones, as a frame's copies do.
+    let source = r#"
+const out = [];
+// Each iteration's closure keeps its own block bindings; all share the function-level one.
+const collect = (items) => {
+  let shared = 0;
+  const fs = [];
+  for (const item of items) {
+    const doubled = item * 2;
+    fs.push(() => doubled + shared);
+    shared += 1;
+  }
+  shared += 100;
+  return fs.map((f) => f()).join();
+};
+for (let round = 0; round < 3; round++) out.push(collect([1, 2, 3]));
+// An iteration that makes no closure copies nothing; a later one still sees the shared write.
+const sparse = (items) => {
+  let last = -1;
+  let made = null;
+  for (const item of items) {
+    const seen = item;
+    if (item === 2) made = () => seen + ":" + last;
+    last = item;
+  }
+  return made ? made() : "none";
+};
+for (let round = 0; round < 3; round++) out.push(sparse([1, 2, 3, 4]));
+// A closure assigning the shared binding from an earlier iteration.
+const writer = (n) => {
+  let total = 0;
+  const adders = [];
+  for (let i = 0; i < n; i++) { const k = i; adders.push(() => { total += k; }); }
+  for (const add of adders) add();
+  return total;
+};
+for (let round = 0; round < 3; round++) out.push(writer(5));
+// Nested loops and a throw out of an iterated closure.
+const nested = (rows) => {
+  const fs = [];
+  for (const row of rows) for (const cell of row) fs.push(() => row.length * 10 + cell);
+  try { for (const f of fs) { if (f() > 30) throw new Error("big " + f()); } } catch (e) { return e.message; }
+  return fs.map((f) => f()).join();
+};
+for (let round = 0; round < 3; round++) out.push(nested([[1, 2], [3]]), nested([[1, 2, 3, 4]]));
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "iteration-copies.js").unwrap();
+    program.compile_released();
+    let collect = &program.functions[1];
+    assert!(collect.instructions().any(|instruction| instruction.op() == crate::bytecode::Op::CloneEnv));
+    assert!(collect.call_plan(&program).environment_activation);
+    program.validate().unwrap();
+    assert_eq!(
+        output(source),
+        ["105,107,109|105,107,109|105,107,109|2:4|2:4|2:4|10|10|10|21,22,13|big 41|21,22,13|big 41|21,22,13|big 41"]
+    );
+}
+
+#[test]
 fn closure_making_arrows_run_as_environment_activations_with_their_lexical_this() {
     // An arrow that makes closures runs as an environment activation
     // (`CallPlan::environment_activation`) whose `this` is its environment's; its

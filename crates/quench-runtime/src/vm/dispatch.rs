@@ -733,6 +733,11 @@ impl<H: Host> Vm<H> {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.result_register(), this);
             }
+            Op::LoadCallee => {
+                // The function the frame runs, as its activation filled its self binding.
+                let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
+                self.write(f, i.result_register(), callee);
+            }
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
                 let import_meta = if let Some(value) = self.programs.import_meta(program) {

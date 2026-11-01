@@ -513,6 +513,21 @@ macro_rules! mark_bits {
 }
 use mark_bits;
 
+/// The objects marked as prototypes (`Heap::prototypes`).
+#[derive(Debug)]
+enum PrototypeRegistry {
+    /// Each one, weakly.
+    Known(Vec<Value>),
+    /// Some were marked where no registry saw it.
+    Unknown,
+}
+
+impl Default for PrototypeRegistry {
+    fn default() -> Self {
+        Self::Known(Vec::new())
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
@@ -604,6 +619,10 @@ pub(crate) struct Heap {
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
     /// one and reuse its handle, so each one forgets them.
     marked_prototypes: [Option<Value>; MARKED_PROTOTYPE_WAYS],
+    /// Every object ever marked as a prototype, held weakly: a collection advances
+    /// `prototype_layout_epoch` only when one of them died, since only a dead prototype's
+    /// record can be reused under a proof that names it (`retire_dead_prototypes`).
+    prototypes: PrototypeRegistry,
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -1069,7 +1088,11 @@ impl Heap {
             None => self.object_mut(prototype),
         };
         if let Some(object) = object {
+            let first = !object.was_used_as_prototype();
             object.mark_as_prototype();
+            if first && let PrototypeRegistry::Known(prototypes) = &mut self.prototypes {
+                prototypes.push(prototype);
+            }
             self.marked_prototypes.rotate_right(1);
             self.marked_prototypes[0] = Some(prototype);
         }
@@ -1917,6 +1940,34 @@ impl Heap {
             self.live_after_full >= trimmed.saturating_add(ENVIRONMENT_TRIM_GROWTH.of(trimmed))
         })
     }
+    /// After a sweep: a prototype it freed may have its record reused by an object no proof
+    /// names, so the proofs made under the current `prototype_layout_epoch` retire. A sweep
+    /// that freed none keeps them.
+    fn retire_dead_prototypes(&mut self) {
+        let died = match std::mem::take(&mut self.prototypes) {
+            PrototypeRegistry::Unknown => {
+                self.prototypes = PrototypeRegistry::Unknown;
+                true
+            }
+            PrototypeRegistry::Known(mut prototypes) => {
+                let before = prototypes.len();
+                prototypes.retain(|prototype| self.is_live(*prototype));
+                let died = prototypes.len() != before;
+                self.prototypes = PrototypeRegistry::Known(prototypes);
+                died
+            }
+        };
+        if died {
+            advance_prototype_layout_epoch();
+        }
+    }
+
+    /// A restored heap's prototypes were marked before it was written: which they are is
+    /// unknown, so every collection retires the proofs (`PrototypeRegistry::Unknown`).
+    pub(crate) fn forget_prototypes(&mut self) {
+        self.prototypes = PrototypeRegistry::Unknown;
+    }
+
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
         full
     }
@@ -1936,8 +1987,6 @@ impl Heap {
         // those it promotes.
         let carries_owners = !full && age.ages();
         self.charge_materialized_text();
-        // The sweep may free a prototype whose record a later object reuses.
-        advance_prototype_layout_epoch();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
@@ -2438,6 +2487,7 @@ impl Heap {
             }
         }
         self.peak_survivors = self.peak_survivors.max(live);
+        self.retire_dead_prototypes();
         self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-memory")]
         self.memory_profile.collection_finished();

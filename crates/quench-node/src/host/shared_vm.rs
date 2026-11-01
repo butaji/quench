@@ -1216,14 +1216,12 @@ impl quench_runtime::Host for NodeHost {
     /// phase's short-lived objects, which otherwise stayed resident beside the heap's next
     /// peak (board load, glibc production, same host, 3 runs each, 2026-10-27, final peak
     /// RSS: fastify 41.7-45.3 -> 39.4-40.8 MB, hono 43.0-49.4 -> 38.4-41.1 MB, throughput
-    /// within noise). Only under a policy that
-    /// returns pages at collections (memory-first); every policy counts the collection for
-    /// the release before output (`resident_pages::note_collection`).
+    /// within noise). A policy that returns pages at collections (memory-first) releases at
+    /// every boundary; the default paces it (`resident_pages::release_at_collection`). Every
+    /// policy counts the collection for the release before output
+    /// (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
-        if policy.returns_pages_at_collections() {
-            crate::host::resident_pages::release_read_only_pages();
-            crate::host::resident_pages::release_free_heap_pages();
-        }
+        crate::host::resident_pages::release_at_collection(policy.returns_pages_at_collections());
         quench_alloc::release_empty_pages();
         crate::host::resident_pages::note_collection();
     }
@@ -1260,6 +1258,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+        crate::host::resident_pages::release_at_module_load();
         self.compile_cache.entry(name, parts)?.load()
     }
     fn keeps_compiled_programs(&self) -> bool {

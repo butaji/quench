@@ -974,6 +974,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn compact_live_shapes(&mut self, live_shapes: Vec<u32>) {
+        // Compiled code and proofs name shapes by id, which compaction renumbers.
+        crate::heap::advance_prototype_layout_epoch();
         let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
         #[cfg(feature = "profile-memory")]
         let old_shape_count = old_shapes.len();

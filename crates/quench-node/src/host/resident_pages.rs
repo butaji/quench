@@ -16,11 +16,52 @@
 #[inline(never)]
 pub extern "C" fn quench_entry_compiled() {
     std::hint::black_box(());
+    phase_peak("entry compiled");
 }
 
 /// Preserve the profiling boundary in the native image's exported interface.
 #[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
+
+/// Names the diagnostic that reports, at each start-up phase boundary, the peak resident set
+/// since the previous one (`phase_peak`).
+#[cfg(target_os = "linux")]
+const RSS_PHASES_ENV: &str = "QUENCH_RSS_PHASES";
+
+/// The kernel's per-process status, for `phase_peak`.
+#[cfg(target_os = "linux")]
+const STATUS_PATH: &str = "/proc/self/status";
+
+/// Writing this to `CLEAR_REFS_PATH` resets the process's peak resident set (`VmHWM`).
+#[cfg(target_os = "linux")]
+const RESET_PEAK: &str = "5";
+#[cfg(target_os = "linux")]
+const CLEAR_REFS_PATH: &str = "/proc/self/clear_refs";
+
+/// Diagnostic (`RSS_PHASES_ENV`): reports on stderr the peak resident set since the previous
+/// boundary, and the resident anonymous and file pages now, then resets the peak, so that
+/// each phase of a run (load, start-up, entry compilation, the run up to its first
+/// collection, the rest) reports its own peak.
+#[cfg(target_os = "linux")]
+pub fn phase_peak(phase: &str) {
+    if std::env::var_os(RSS_PHASES_ENV).is_none() {
+        return;
+    }
+    let status = std::fs::read_to_string(STATUS_PATH).unwrap_or_default();
+    let field = |name: &str| {
+        status.lines().find_map(|line| line.strip_prefix(name)).map_or("?", str::trim).to_owned()
+    };
+    eprintln!(
+        "quench: rss phase {phase:<20} peak {:>10} anon {:>10} file {:>10}",
+        field("VmHWM:"),
+        field("RssAnon:"),
+        field("RssFile:")
+    );
+    let _ = std::fs::write(CLEAR_REFS_PATH, RESET_PEAK);
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn phase_peak(_phase: &str) {}
 
 /// The process's own mapping table.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -76,14 +117,6 @@ pub fn release_read_only_pages_after_load() {
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
-    // Under throughput a release comes at most once per `LOAD_RELEASE_INTERVAL`, whatever asks
-    // for it: bootstrap, output, exit and the paced phases each released, 15-20 times in a
-    // short npm scenario, and each release refaulted the run's code page by page.
-    let returns_pages = crate::shared_run::process_memory_policy()
-        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
-    if !returns_pages && released_within(LOAD_RELEASE_INTERVAL) {
-        return;
-    }
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -108,6 +141,37 @@ pub fn release_read_only_pages() {
                 libc::madvise(start as *mut libc::c_void, length, libc::MADV_DONTNEED);
             }
         }
+    }
+}
+
+/// How far apart the default policy's collection-time releases are kept
+/// (`release_at_collection`): V8-v7 Richards no-JIT max RSS 3196-3296 KiB at
+/// `LOAD_RELEASE_INTERVAL`, 3048 at 10 ms and at 2 ms, Score unchanged (static incremental
+/// production build, pinned, x86_64 4 vCPU, 2026-11-01): past 10 ms what stays resident between
+/// releases is the run's working set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// The release at a collection boundary (`at_collection_boundary`): the read-only pages and
+/// the allocator's free pages. A policy that returns pages at collections releases at every
+/// boundary; the default releases at most once per `COLLECTION_RELEASE_INTERVAL` on the shared
+/// release clock, so a run's hot code refaults at most that often. Without it the default
+/// kept every code page a run had touched and every free page its sweeps left: V8-v7
+/// Richards max RSS about 10 MB against 3.8 MB released at every boundary, while releasing at
+/// every young collection cost RayTrace about 40% of its Score in refaults.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_at_collection(returns_pages: bool) {
+    if !returns_pages && released_within(COLLECTION_RELEASE_INTERVAL) {
+        return;
+    }
+    release_read_only_pages();
+    release_free_heap_pages();
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_at_collection(returns_pages: bool) {
+    if returns_pages {
+        release_free_heap_pages();
     }
 }
 
@@ -383,6 +447,18 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     }
 }
 
+/// The release before a kept program loads (`Host::kept_compiled_program`), at most once per
+/// `compile_release_interval`. A bootstrap loads its builtin modules from the compile cache
+/// with no compilation boundary between them, so the code each module's set-up ran stayed
+/// resident beside the next one's: V8-v7 Richards start-up peaked at 4.0 MB, 3.2 MB with
+/// these releases and the two before the bootstrap (`execute_shared_on_worker`).
+pub fn release_at_module_load() {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if release_due() {
+        release_read_only_pages();
+    }
+}
+
 /// The host's action once a compilation offers its program to the compile cache
 /// (`Host::keep_compiled_program`): the compilation is over, and the program runs from its
 /// kept form, so the parser's, code generator's and encoder's pages leave before its decode
@@ -428,16 +504,10 @@ impl CompileRelease {
     }
 }
 
-/// How far apart each compile-phase release's runs are kept, by the process's memory policy.
+/// How far apart each compile-phase release's runs are kept.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn compile_release_interval() -> std::time::Duration {
-    let returns_pages = crate::shared_run::process_memory_policy()
-        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
-    if returns_pages {
-        std::time::Duration::from_micros(tuned("QUENCH_TUNE_COMPILE_RELEASE_US", MEMORY_FIRST_COMPILE_RELEASE_INTERVAL.as_micros() as u64))
-    } else {
-        LOAD_RELEASE_INTERVAL
-    }
+    std::time::Duration::from_micros(tuned("QUENCH_TUNE_COMPILE_RELEASE_US", MEMORY_FIRST_COMPILE_RELEASE_INTERVAL.as_micros() as u64))
 }
 
 /// Under a policy that returns pages at collections, the resident file pages past which a
@@ -489,9 +559,7 @@ impl CompileRelease {
     /// the run's time (`BUDGET_RELEASE_TIME_DIVISOR`) beyond the start's allowance
     /// (`MEMORY_FIRST_START_RELEASES`).
     fn over_budget(self) -> bool {
-        let returns_pages = crate::shared_run::process_memory_policy()
-            .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections);
-        if !self.releases_over_budget() || !returns_pages {
+        if !self.releases_over_budget() {
             return false;
         }
         let Ok(mut releases) = BUDGET_RELEASES.lock() else {
@@ -574,6 +642,7 @@ fn release_once_per_interval(_: CompileRelease, _: fn()) {}
 /// x86_64, 2026-10-22: Crypto 3100-3276 -> 2704-3052 KiB, RayTrace 2996 -> 2764, Richards
 /// 2812 -> 2484).
 pub fn release_before_entry_compile() {
+    phase_peak("start-up");
     release_read_only_code_and_data();
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     ENTRY_COMPILE.store(EntryCompile::Analysis as u8, std::sync::atomic::Ordering::Relaxed);
@@ -642,8 +711,7 @@ fn release_due() -> bool {
 /// 3540 -> 3792).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn shares_release_clock() -> bool {
-    !crate::shared_run::process_memory_policy()
-        .is_some_and(quench_runtime::MemoryPolicy::returns_pages_at_collections)
+    false
 }
 
 /// The loaded segments a release reaches, by the loader's program headers.
@@ -829,6 +897,8 @@ static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
 
 /// Records a collection boundary, after which the next output releases the read-only pages.
 pub fn note_collection() {
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    FIRST.call_once(|| phase_peak("run to collection"));
     COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 

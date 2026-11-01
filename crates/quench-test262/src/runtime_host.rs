@@ -1044,7 +1044,7 @@ mod tests {
             }
             if (calculate() !== 39) throw Error('wrong region continuation');
         "#, "region-continuations.js").unwrap();
-        let options = quench_runtime::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap() };
+        let options = quench_runtime::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap(), backend: quench_runtime::NativeJsBackend::Cranelift };
         let module = quench_runtime::lower_native_js_module_with_options(&program, "regions", options).unwrap();
         quench_runtime::emit_native_module("regions", module.functions, module.data).unwrap();
         let native = quench_runtime::NativeJsProgram::compile_eager_with_options(program, options).unwrap();

@@ -2136,7 +2136,7 @@ fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owne
         answer = saved();
         Promise.resolve().then(() => { answer += 1; });
     "#, "native-regions.js").unwrap();
-    let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap() };
+    let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap(), backend: crate::NativeJsBackend::Cranelift };
     let module = crate::lower_native_js_module_with_options(&program, "native_regions", options).unwrap();
     assert!(module.functions.iter().filter(|function| matches!(function, crate::NativeFunction::Definition { .. })).count() > program.function_count());
     crate::emit_native_module("native_regions", module.functions, module.data).unwrap();
@@ -2278,7 +2278,7 @@ fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effect
     ] {
         let mut runtime = Runtime::new(TestHost::default());
         runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-        let error = runtime.execute_native_module_graph(&[harness.clone()], &modules, &entry).unwrap_err();
+        let error = runtime.execute_native_module_graph(std::slice::from_ref(&harness), &modules, &entry).unwrap_err();
         assert!(error.to_string().contains(message), "{error}");
         let global = runtime.global_root().unwrap();
         for name in ["harnessRan", "entryRan", "depRan"] {
