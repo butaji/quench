@@ -21368,3 +21368,166 @@ fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
         }
     }
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn native_own_stores_share_barriers_and_exact_fallback() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/own-store-proof.js");
+    let typescript = source
+        .replace("function write(object, value)", "function write(object: {left: number, right: number}, value: number): number")
+        .replace("function strictWrite(object, value)", "function strictWrite(object: {left: number, right: number}, value: number): number");
+    for program in [Engine::specialize(source, "own-store-proof.js"),
+        Engine::specialize_typescript(&typescript, "own-store-proof.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let left = vm.intern_atom("left");
+        let effects = vm.intern_atom("effects");
+        for name in ["updateAlias", "write", "strictWrite"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, method: &super::compiled::LaneMethod, object, value| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in [object, value].into_iter().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).unwrap();
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                (pc, registers)
+            };
+            let method = vm.compile_lane_method(&program, id as u32)
+                .unwrap_or_else(|| panic!("native {name}: {instructions:?}"));
+            for object_name in ["packed", "arena"] {
+                let object = global(&mut vm, object_name);
+                let before = vm.own_property(object, left).unwrap().as_number().unwrap();
+                let right = vm.intern_atom("right");
+                let other = vm.own_property(object, right).unwrap().as_number().unwrap();
+                let (pc, registers) = run(&mut vm, &method, object, Value::integer(7));
+                assert_eq!(instructions[pc].op(), Op::Return, "{name}({object_name}) left at {pc}");
+                assert_eq!(vm.own_property(object, left), Some(Value::integer(7)));
+                let expected = if name == "updateAlias" { Value::number(before + 7.0 + other) } else { Value::integer(7) };
+                assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+            }
+            if name == "updateAlias" { continue; }
+            for object_name in ["accessor", "readonly", "proxy"] {
+                let object = global(&mut vm, object_name);
+                let before = vm.own_property(vm.realm.globals, effects).unwrap();
+                let (pc, _) = run(&mut vm, &method, object, Value::integer(3));
+                assert!(matches!(instructions[pc].op(), Op::SetField | Op::SetFieldStrict), "{object_name} leaves before writing");
+                assert_eq!(vm.own_property(vm.realm.globals, effects), Some(before));
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(3)]);
+                assert_eq!(result.is_err(), name == "strictWrite" && object_name == "readonly");
+                let increment = match object_name { "accessor" => 3, "proxy" => 1, _ => 0 };
+                assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before.as_int().unwrap() + increment)));
+            }
+            // A marked owner must use the logged helper. Recompile after GC may
+            // renumber shapes, then create a young value with no independent root.
+            vm.collect_now(&program);
+            vm.collect_now(&program);
+            let object = global(&mut vm, "arena");
+            vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
+            let method = vm.compile_lane_method(&program, id as u32).unwrap();
+            let marked = |vm: &Vm<TestHost>, object: Value| {
+                let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+                let id = object.direct_object_index().unwrap() as usize;
+                let (blocks, count) = vm.heap.native_object_mark_blocks();
+                let block = id / layout.mark_records_per_block;
+                assert!(block < count);
+                let within = id % layout.mark_records_per_block;
+                let offset = block * layout.mark_block_size + layout.mark_offset
+                    + (within / layout.mark_word_bits) * std::mem::size_of::<u64>();
+                // SAFETY: the rooted live record names an initialized mark block;
+                // the authoritative layout derives aligned bitmap offsets.
+                let word = unsafe { blocks.add(offset).cast::<u64>().read() };
+                word & (1 << (within % layout.mark_word_bits)) != 0
+            };
+            assert!(marked(&vm, object), "the first heap write must require logging");
+            let child = vm.heap.alloc_object(crate::heap::Object::new(Value::NULL));
+            let (pc, registers) = run(&mut vm, &method, object, child);
+            assert_eq!(instructions[pc].op(), Op::Return, "a heap write remains native with the logged helper");
+            assert_eq!(registers[usize::from(instructions[pc].register_a())], child);
+            assert_eq!(vm.own_property(object, left), Some(child));
+            assert!(!marked(&vm, object), "the shared barrier records and unmarks its owner");
+            vm.collect_slow(&program, false);
+            assert!(vm.heap.object_record(child).is_some(), "the stored young value survives collection");
+            // Restore the Number fixture for the next function's oracle.
+            vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
+        }
+        let object = global(&mut vm, "methodOwner");
+        let invoke = global(&mut vm, "invoke");
+        assert_eq!(vm.call_value(&program, invoke, Value::UNDEFINED, &[object]).unwrap(), Value::integer(1));
+        // This frontend's Call site uses its lane cache. Install a valid legacy
+        // method entry explicitly to exercise the shared atom-admission policy.
+        let original = vm.own_property(object, left).unwrap();
+        let shape = vm.heap.object_record(object).unwrap().shape();
+        let target = vm.call_target(original).unwrap();
+        let slot = vm.shape_slot(shape, left).unwrap() as u16;
+        let site = vm.method_caches.len();
+        vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
+        vm.record_method_cache(site, MethodCache { shape, atom: left, proto: object,
+            callee: original, guard: super::MethodGuard { owner: object, owner_shape: shape, slot, depth: 0 },
+            target: Some(target) });
+        assert!(vm.method_caches_may_name(left));
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
+        let body = program.function(id);
+        let method = vm.compile_lane_method(&program, id as u32).unwrap();
+        let replacement = global(&mut vm, "replacement");
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        for (index, value) in [object, replacement].into_iter().enumerate() {
+            let register = body.parameter_registers.map(|base| base + index as u16)
+                .or_else(|| body.promoted_register(index as u16)).unwrap();
+            registers[usize::from(register)] = value;
+        }
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+        assert_eq!(body.instructions().nth(pc).unwrap().op(), Op::SetField);
+        assert_eq!(vm.own_property(object, left), Some(original), "method invalidation happens before the write");
+        let write = global(&mut vm, "write");
+        vm.call_value(&program, write, Value::UNDEFINED, &[object, replacement]).unwrap();
+        assert_eq!(vm.call_value(&program, invoke, Value::UNDEFINED, &[object]).unwrap(), Value::integer(2));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn native_chain_append_completes_without_a_store_handoff() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(include_str!("../../tests/fixtures/own-store-proof.js"),
+        "own-store-chain.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "append")).unwrap();
+    let body = program.function(id);
+    let instructions: Vec<_> = body.instructions().collect();
+    assert!(instructions.iter().any(|instruction| instruction.op() == Op::SetField));
+    let method = vm.compile_lane_method(&program, id as u32).unwrap();
+    let left = vm.intern_atom("left");
+    for (head_name, item_name) in [("head", "item"), ("arenaHead", "arenaItem")] {
+        let atom = vm.intern_atom(head_name);
+        let head = vm.own_property(vm.realm.globals, atom).unwrap();
+        let tail = vm.own_property(head, left).unwrap();
+        let atom = vm.intern_atom(item_name);
+        let item = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = head;
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), item, std::ptr::null());
+        assert_eq!(instructions[pc].op(), Op::Return, "append leaves at {pc}: {instructions:?}");
+        assert_eq!(registers[usize::from(instructions[pc].register_a())], head);
+        assert_eq!(vm.own_property(tail, left), Some(item));
+        assert_eq!(vm.own_property(item, left), Some(Value::NULL));
+    }
+}

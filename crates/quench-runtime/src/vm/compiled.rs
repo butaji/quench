@@ -1821,13 +1821,9 @@ fn emit_js_own_field_set(
     fallback: ir::Block,
     exact: &JsExactFallback,
 ) {
-    use crate::value::ValueLayout;
-
     let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
     let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
     emit_js_guard(builder, specialized, fallback);
-    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
     // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
     let word_index = atom / u64::BITS;
     let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
@@ -1851,6 +1847,24 @@ fn emit_js_own_field_set(
     builder.seal_block(name_free);
     let (address, record_id) =
         emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback);
+    emit_unlogged_property_store_guard(builder, payload, record_id, value, fallback);
+    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    if let Some(destination) = result_destination {
+        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    }
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, fallback);
+}
+
+/// The shared RecordSpace::store_logs test: an immediate or unmarked owner
+/// needs no barrier. Otherwise the caller must perform the logged store.
+fn emit_unlogged_property_store_guard(
+    builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
+    value: ir::Value, fallback: ir::Block,
+) {
+    use crate::value::ValueLayout;
+    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
     let heap_value = builder.create_block();
@@ -1899,12 +1913,6 @@ fn emit_js_own_field_set(
     builder.seal_block(heap_value);
     builder.seal_block(write);
     builder.switch_to_block(write);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
-    if let Some(destination) = result_destination {
-        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
-    }
-    builder.ins().jump(next, &[]);
-    exact.emit(builder, fallback);
 }
 
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
@@ -2478,7 +2486,7 @@ pub(super) fn lower_js_general_dispatch(
             continue;
         }
         let store_receiver = match instruction.op() {
-            Op::SetField => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
+            Op::SetField | Op::SetFieldStrict => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
             Op::SetThisField | Op::SetThisFieldStrict => Some(JsFieldReceiver::FixedThis),
             _ => None,
         };
@@ -6758,7 +6766,7 @@ impl<H: Host> Vm<H> {
                         Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
                         _ => return Vec::new(),
                     },
-                    Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
+                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
                     _ => return Vec::new(),
                 };
                 self.native_field_load_descriptors(site)

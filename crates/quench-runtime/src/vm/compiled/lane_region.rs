@@ -599,7 +599,7 @@ impl Lowering<'_, '_> {
         // nothing in a run changes either (`emit_js_own_field_set`).
         let mut store_atoms = BTreeMap::new();
         for instruction in instructions {
-            if matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict) && !store_atoms.contains_key(&instruction.atom_index()) {
+            if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) && !store_atoms.contains_key(&instruction.atom_index()) {
                 let atom = instruction.atom_index();
                 let admitted = self.emit_store_atom_admitted(atom);
                 let variable = self.builder.declare_var(types::I8);
@@ -730,7 +730,7 @@ impl Lowering<'_, '_> {
                 })
             }
             Op::GetField if plain && !instruction.writes_current_this() => self.get_field(state, pc, instruction),
-            Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_this_field(state, pc, instruction),
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction, instructions)
             }
@@ -1004,44 +1004,56 @@ impl Lowering<'_, '_> {
         value
     }
 
-    fn set_this_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
         if source >= self.function.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
             return None;
         }
+        let register = matches!(instruction.op(), Op::SetField | Op::SetFieldStrict).then(|| instruction.register_b());
+        if register.is_some_and(|register| register >= self.function.registers) { return None; }
+        let receiver = register.is_none() || register.is_some_and(|register| state.receivers.contains(&register));
+        let owner = if receiver { None } else { register };
         let exit = self.guard_exit(state, pc as u32);
         let atom = instruction.atom_index();
         let barrier_free = state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER);
         let value = self.tagged(state, source);
+        let object_bits = if receiver {
+            self.builder.use_var(self.entry.as_ref().expect("entry facts").this)
+        } else { self.tagged(state, register.expect("register receiver")) };
+        let field = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
+        let header = if field.is_some() && !receiver {
+            Some(self.object_record(state, register.expect("register receiver"), exit))
+        } else { None };
         let entry = self.entry.as_ref().expect("entry facts");
-        if let Some(field) = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0])) {
-            let projection = state.layouts.get(&(None, field.shape)).copied();
+        if let Some(field) = field {
+            let projection = state.layouts.get(&(owner, field.shape)).copied();
             let admitted = self.builder.use_var(entry.store_atoms[&atom]);
-            let object = self.builder.use_var(entry.receiver.object);
+            let (object, shape, inline) = header.unwrap_or_else(|| (
+                self.builder.use_var(entry.receiver.object),
+                self.builder.use_var(entry.receiver.shape),
+                self.builder.use_var(entry.receiver.inline),
+            ));
             let properties = self.builder.use_var(entry.receiver.properties);
             let properties_len = self.builder.use_var(entry.receiver.properties_len);
-            let this = self.builder.use_var(entry.this);
             let direct = self.builder.create_block();
             let general = self.builder.create_block();
             let done = self.builder.create_block();
             let ok = if projection.is_some() { admitted } else {
-                let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
+                let same = if receiver { self.builder.use_var(entry.receiver_shapes[&field.shape]) }
+                    else { self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape)) };
                 self.ins().band(same, admitted)
-            };
-            // A proved Number needs no barrier; unknown values are tested once here.
-            let ok = if barrier_free {
-                ok
-            } else {
-                let tag = self.ins().band_imm_u(value, crate::value::ValueLayout::TAG_MASK as i64);
-                let immediate = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::HEAP_TAG as i64);
-                self.ins().band(ok, immediate)
             };
             self.ins().brif(ok, direct, &[], general, &[]);
             self.builder.switch_to_block(direct);
+            if !barrier_free {
+                let record_id = self.ins().ireduce(types::I32, object_bits);
+                let record_id = self.ins().uextend(types::I64, record_id);
+                let payload = self.payload;
+                emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
+            }
             let projection = match projection {
                 Some(projection) => projection,
                 None => {
-                    let inline = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.inline);
                     let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
                     CheckedObject::prove(&mut self.builder, object, inline, properties,
                         properties_len, plan, PackedAccess::Reload, general)?
@@ -1051,13 +1063,12 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(general);
-            self.store_helper(this, atom, instruction.cache_site_index(), value, exit);
+            self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(done);
             return Some(true);
         }
-        let this = self.builder.use_var(entry.this);
-        self.store_helper(this, atom, instruction.cache_site_index(), value, exit);
+        self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit);
         Some(true)
     }
 
