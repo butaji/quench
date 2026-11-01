@@ -1473,6 +1473,13 @@ fn js_field_receiver(base: FieldBase, register_offset: &impl Fn(u16) -> Option<i
     }
 }
 
+fn emit_js_fixed_this(builder: &mut FunctionBuilder<'_>, payload: ir::Value, fallback: ir::Block) -> ir::Value {
+    let slot = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
+    let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
+    emit_js_guard(builder, initialized, fallback);
+    builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0)
+}
+
 fn emit_js_cached_field_slot(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
@@ -1489,12 +1496,7 @@ fn emit_js_cached_field_slot(
     let base = match receiver {
         JsFieldReceiver::Register(offset) =>
             builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
-        JsFieldReceiver::FixedThis => {
-            let slot = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
-            let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
-            emit_js_guard(builder, initialized, fallback);
-            builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0)
-        }
+        JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
     };
     let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
     let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
@@ -2169,6 +2171,26 @@ pub(super) fn lower_js_general_dispatch(
                 instruction.cache_site_index(),
                 next,
                 &exact,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        if instruction.op() == Op::LoadThis
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && instruction.numeric_local_target().is_none()
+            && let Some(next) = next
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let fallback = builder.create_block();
+            let value = emit_js_fixed_this(&mut builder, payload, fallback);
+            builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(
+                &mut builder, context, callout, callout_signature, result_pointer,
+                stopped_block, continue_block, pc,
             );
             general_dispatch_native_pcs[pc] = 1;
             continue;

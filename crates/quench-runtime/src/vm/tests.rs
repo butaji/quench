@@ -16102,6 +16102,51 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback() {
+    let source = r#"
+      function receiver() { 'use strict'; const value = this; if (value === null) return 1; return value; }
+      const object = { receiver };
+      for (let i = 0; i < 64; i++) if (object.receiver() !== object) throw Error('this identity');
+      if (receiver.call(null) !== 1 || receiver.call(undefined) !== undefined) throw Error('strict this');
+      class Base {}
+      class Derived extends Base {
+        constructor() {
+          const read = () => this;
+          let caught = false;
+          try { read(); } catch (error) { caught = error instanceof ReferenceError; }
+          if (!caught) throw Error('uninitialized lexical this');
+          super();
+          if (read() !== this) throw Error('initialized lexical this');
+        }
+      }
+      new Derived();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-load-this.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "receiver")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("receiver should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::LoadThis).then_some(pc)
+    }).expect("this load");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
     let source = r#"
       function write(value) { this.x = value; }
