@@ -1610,7 +1610,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "brotli",
- "cc",
  "chrono",
  "crc32fast",
  "encoding_rs",

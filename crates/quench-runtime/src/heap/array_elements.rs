@@ -570,10 +570,10 @@ mod tests {
     #[test]
     fn every_write_keeps_the_others_count_exact() {
         let ints = || ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
-        assert_eq!(ints().holds_only_int32(), true);
-        assert_eq!(ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).holds_only_int32(), false);
-        assert_eq!(ArrayElements::filled(3, Value::integer(0)).holds_only_int32(), true);
-        assert_eq!(ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).holds_only_int32(), false);
+        assert!(ints().holds_only_int32());
+        assert!(!ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).holds_only_int32());
+        assert!(ArrayElements::filled(3, Value::integer(0)).holds_only_int32());
+        assert!(!ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).holds_only_int32());
         let demotions: [(&str, fn(&mut UniqueElements)); 6] = [
             ("set", |elements| elements.set(0, Value::DELETED)),
             ("push", |elements| elements.push(Value::number(0.5))),
@@ -585,33 +585,33 @@ mod tests {
         for (write, demote) in demotions {
             let mut elements = ints();
             demote(elements.make_mut());
-            assert_eq!(elements.holds_only_int32(), false, "{write}");
+            assert!(!elements.holds_only_int32(), "{write}");
         }
         let mut grown = ints();
         for value in 3..64 {
             grown.make_mut().push(Value::integer(value));
         }
         grown.make_mut().set(5, Value::integer(-5));
-        assert_eq!(grown.holds_only_int32(), true, "int32 writes and growth keep the kind");
+        assert!(grown.holds_only_int32(), "int32 writes and growth keep the kind");
         let mut shared = ArrayElements::from(vec![Value::integer(1), Value::NULL]);
         let mut copy = shared.clone();
         copy.make_mut().set(1, Value::integer(2));
         assert_eq!((shared.holds_only_int32(), copy.holds_only_int32()), (false, true), "a detached copy counts its own writes");
         shared.make_mut().truncate(1);
-        assert_eq!(shared.holds_only_int32(), true, "removing the last other value restores Int32");
+        assert!(shared.holds_only_int32(), "removing the last other value restores Int32");
         let mut holey = ints();
         holey.make_mut().resize(4, Value::DELETED);
-        assert_eq!(holey.holds_only_int32(), false);
+        assert!(!holey.holds_only_int32());
         for index in [3, 2] {
             holey.make_mut().set(index, Value::integer(0));
         }
-        assert_eq!(holey.holds_only_int32(), true, "filling every hole with int32s restores Int32");
+        assert!(holey.holds_only_int32(), "filling every hole with int32s restores Int32");
         holey.make_mut().set(0, Value::number(0.5));
         holey.make_mut().pop();
-        assert_eq!(holey.holds_only_int32(), false);
+        assert!(!holey.holds_only_int32());
         holey.make_mut().remove(0);
-        assert_eq!(holey.holds_only_int32(), true);
-        assert_eq!(ArrayElements::new().holds_only_int32(), true);
+        assert!(holey.holds_only_int32());
+        assert!(ArrayElements::new().holds_only_int32());
     }
 
     #[test]
