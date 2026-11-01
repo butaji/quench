@@ -2424,10 +2424,6 @@ pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Buffer)
 }
 
-pub(crate) fn console_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached_builtin(context, BuiltinModule::Console)
-}
-
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Util)
 }
@@ -4096,19 +4092,6 @@ fn load_with_resolution(
         }
         if library_relative == Some(Path::new("lib/diagnostics_channel.js")) {
             crate::modules::console_shared_vm::note_channels_loaded(context)?;
-        }
-        if library_relative == Some(Path::new("lib/internal/console/global.js")) {
-            // Node's bootstrap initializes the global console as it loads it; one loaded on
-            // first use binds its streams before any module writes to it.
-            let initialize = node_library_export(
-                context,
-                "internal/process/pre_execution.js",
-                "internal/console/constructor.js",
-                "initializeGlobalConsole",
-            )?;
-            let undefined = context.undefined();
-            context.call_rooted(initialize, undefined, &[exports])?;
-            crate::modules::console_shared_vm::adopt(context, module, exports)?;
         }
         let exports = get(context, module, "exports")?;
         if let Some(path) = library_relative {

@@ -30,6 +30,8 @@ pub(crate) mod child_process_stdio_shared_vm;
 #[cfg(unix)]
 pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
+pub(crate) mod console_class_shared_vm;
+pub(crate) mod console_format_shared_vm;
 pub(crate) mod console_shared_vm;
 pub(crate) mod contextify_shared_vm;
 #[cfg(quench_openssl_provider)]
