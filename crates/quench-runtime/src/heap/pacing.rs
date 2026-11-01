@@ -597,6 +597,13 @@ impl MemoryPolicy {
 ///   collections do not pay (v2-cloud-jet, x86_64 4 vCPU, 2026-10-22, median of 3-5 against
 ///   no back-off: source-map-wtb 6.58 -> 7.46 at max RSS 56 -> 58 MB, chai-wtb 14.6 -> 15.8,
 ///   web-ssr 18.9 -> 19.6 at 103 -> 110 MB, Bun 119.5; three doublings took web-ssr to 154 MB).
+/// Live sets allocated between full collections once most young allocations survive
+/// (`GenerationalPacing::full_only_headroom`) under the throughput policy: four, so a large
+/// surviving live set is marked a quarter as often. V8-v7 Splay --jit (experiment profile,
+/// x86_64 4 vCPU, 2026-11-01, medians of 3): Score 3549 -> 4293, max RSS 33.8 -> 77.3 MiB; eight
+/// gave 4473 at 135 MiB. The other V8-v7 rows unchanged within noise.
+const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(4, 1);
+
 pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     young: Ratio::new(1, 8),
     minimum_young: THROUGHPUT_MINIMUM_YOUNG,
@@ -611,7 +618,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     productive_full: Ratio::new(1, 8),
     maximum_cap_backoff: 2,
     survival_limit: THROUGHPUT_SURVIVAL_LIMIT,
-    full_only_headroom: Ratio::new(1, 1),
+    full_only_headroom: THROUGHPUT_FULL_ONLY_HEADROOM,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
