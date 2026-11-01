@@ -1617,7 +1617,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_lazy_data_properties_rooted(
         module,
         &["BoundSocket", "_TransferredBoundSocket"],
-        false,
+        true,
         initialize,
     )?;
     let retained = context.retain(find("Socket"))?;
