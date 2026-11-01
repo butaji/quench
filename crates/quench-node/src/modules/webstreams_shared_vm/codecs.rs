@@ -247,6 +247,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
     let member: Member = current(c)?;
     match member {
         Member::EncoderConstruct => {
+            super::require_new(c, Brand::TextEncoderStream.name())?;
             let undefined = c.undefined();
             let state = record(c, &[(PENDING, undefined)])?;
             attach(c, this, Brand::TextEncoderStream, state)?;
@@ -254,6 +255,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             Ok(c.undefined())
         }
         Member::DecoderConstruct => {
+            super::require_new(c, Brand::TextDecoderStream.name())?;
             let decoder = super::intrinsic(c, key::TEXT_DECODER)?;
             let encoding = arg(c, args, 0);
             let encoding = if is_undefined(c, encoding) { c.string_rooted(UTF8) } else { encoding };
@@ -264,8 +266,14 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             codec_transform(c, state, Member::DecodeTransform, Member::DecodeFlush)?;
             Ok(c.undefined())
         }
-        Member::CompressionConstruct => compression(c, this, args, Brand::CompressionStream),
-        Member::DecompressionConstruct => compression(c, this, args, Brand::DecompressionStream),
+        Member::CompressionConstruct => {
+            super::require_new(c, Brand::CompressionStream.name())?;
+            compression(c, this, args, Brand::CompressionStream)
+        }
+        Member::DecompressionConstruct => {
+            super::require_new(c, Brand::DecompressionStream.name())?;
+            compression(c, this, args, Brand::DecompressionStream)
+        }
         Member::Encoding => {
             let (brand, state) = codec(c, this)?;
             if brand == Brand::TextEncoderStream {

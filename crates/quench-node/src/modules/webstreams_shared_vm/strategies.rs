@@ -77,8 +77,14 @@ fn strategy(c: &mut Context<'_>, this: RootId) -> Result<(Brand, RootId), quench
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let member: Member = current(c)?;
     match member {
-        Member::ByteLengthConstruct => construct(c, this, args, Brand::ByteLengthStrategy),
-        Member::CountConstruct => construct(c, this, args, Brand::CountStrategy),
+        Member::ByteLengthConstruct => {
+            super::require_new(c, Brand::ByteLengthStrategy.name())?;
+            construct(c, this, args, Brand::ByteLengthStrategy)
+        }
+        Member::CountConstruct => {
+            super::require_new(c, Brand::CountStrategy.name())?;
+            construct(c, this, args, Brand::CountStrategy)
+        }
         Member::HighWaterMark => {
             let (_, state) = strategy(c, this)?;
             get(c, state, HIGH_WATER_MARK)

@@ -738,7 +738,10 @@ pub(super) fn build(c: &mut Context<'_>, table: RootId) -> Done {
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let member: Member = current(c)?;
     match member {
-        Member::Construct => construct(c, this, args),
+        Member::Construct => {
+            super::require_new(c, Brand::WritableStream.name())?;
+            construct(c, this, args)
+        }
         Member::Locked => {
             let stream = this_state(c, this, Brand::WritableStream)?;
             let locked = is_locked(c, stream)?;
@@ -781,6 +784,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             Ok(c.boolean(value))
         }
         Member::WriterConstruct => {
+            super::require_new(c, Brand::Writer.name())?;
             let stream = arg(c, args, 0);
             let Some(stream) = state_of(c, stream, Brand::WritableStream)? else {
                 return Err(throw(c, WebError::ArgType("stream", "WritableStream", stream)));
@@ -846,7 +850,10 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let data = literal(c, &[("stream", stream_object), ("close", closed), ("ready", ready), ("desiredSize", desired)])?;
             custom_inspect(c, this, Brand::Writer.name(), data, args)
         }
-        Member::ControllerConstruct => Err(throw(c, WebError::IllegalConstructor)),
+        Member::ControllerConstruct => {
+            super::require_new(c, Brand::WritableController.name())?;
+            Err(throw(c, WebError::IllegalConstructor))
+        }
         Member::ControllerSignal => {
             let controller = this_state(c, this, Brand::WritableController)?;
             let abort_controller = get(c, controller, ABORT_CONTROLLER)?;

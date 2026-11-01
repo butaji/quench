@@ -12,6 +12,7 @@ pub(crate) mod async_hooks_module_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod blob_binding_shared_vm;
+pub(crate) mod blob_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_module;

@@ -58,45 +58,9 @@ pub(crate) fn structured_clone(
             .rooted_value(*root)
             .is_some_and(|value| !value.is_undefined())
     });
-    let transfers = if let Some(options) = options {
-        let converters = context.with_startup_intrinsics(|context| {
-            crate::host::shared_vm::commonjs::node_library_export(
-                context,
-                "internal/worker/js_transferable.js",
-                "internal/webidl.js",
-                "converters",
-            )
-        })?;
-        let key = context.string_rooted("StructuredSerializeOptions");
-        let converter = context.get_property_rooted(converters, key)?;
-        let conversion = context.null_object_rooted()?;
-        for (name, value) in [
-            ("prefix", "Failed to execute 'structuredClone'"),
-            ("context", "Options"),
-        ] {
-            let key = context.string_rooted(name);
-            let value = context.string_rooted(value);
-            context.define_data_property_rooted(conversion, key, value, true, true, true)?;
-        }
-        let undefined = context.undefined();
-        let options = context.call_rooted(converter, undefined, &[options, conversion])?;
-        let key = context.string_rooted("transfer");
-        let array = context.get_property_rooted(options, key)?;
-        let key = context.string_rooted("length");
-        let length = context.get_property_rooted(array, key)?;
-        let length = context
-            .rooted_value(length)
-            .and_then(|value| value.as_number())
-            .ok_or_else(|| RootedError::host("Web IDL transfer sequence lost its array length"))?
-            as usize;
-        let mut transfers = Vec::with_capacity(length);
-        for index in 0..length {
-            let key = context.number(index as f64);
-            transfers.push(context.get_property_rooted(array, key)?);
-        }
-        transfers
-    } else {
-        Vec::new()
+    let transfers = match options {
+        Some(options) => serialize_options_transfer(context, options)?,
+        None => Vec::new(),
     };
     #[cfg(quench_openssl_provider)]
     if transfers.is_empty() && context.is_object_rooted(value)? {
@@ -119,10 +83,62 @@ pub(crate) fn structured_clone(
         if let Some(clone) = clone_dom_exception(context, global, value)? {
             return Ok(clone);
         }
+        if let Some(clone) = super::blob_shared_vm::clone(context, value)? {
+            return Ok(clone);
+        }
     }
     context
         .structured_clone_with_transfers_rooted(value, &transfers)
         .map_err(|error| as_dom_exception(context, error))
+}
+
+/// What the Web IDL conversion of `StructuredSerializeOptions` reports, by failure.
+const OPTIONS_PREFIX: &str = "Failed to execute 'structuredClone'";
+const NOT_DICTIONARY: &str = "Options cannot be converted to a dictionary";
+const NOT_SEQUENCE: &str = "transfer in Options can not be converted to sequence.";
+/// Node's object converter reports a non-object element without the prefix.
+const NOT_OBJECT: &str = "Value is not an object";
+
+/// `webidl.converters.StructuredSerializeOptions(options).transfer`: the transfer list as
+/// a `sequence<object>`.
+fn serialize_options_transfer(context: &mut NativeContext<'_, NodeHost>, options: RootId) -> Result<Vec<RootId>, RootedError> {
+    let conversion_error = |context: &mut NativeContext<'_, NodeHost>, message: &str| -> RootedError {
+        let message = if message == NOT_OBJECT { message.to_owned() } else { format!("{OPTIONS_PREFIX}: {message}") };
+        match context.type_error_rooted(&message) {
+            Ok(error) => {
+                let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+                let _ = context.assign_named_property_rooted(error, "code", code);
+                context.throw(error)
+            }
+            Err(error) => error,
+        }
+    };
+    if context.rooted_value(options).is_some_and(|value| value.is_null()) {
+        return Ok(Vec::new());
+    }
+    if !context.is_object_rooted(options)? && !context.is_callable_rooted(options)? {
+        return Err(conversion_error(context, NOT_DICTIONARY));
+    }
+    let transfer = context.get_named_property_rooted(options, "transfer")?;
+    if context.rooted_value(transfer).is_some_and(|value| value.is_undefined()) {
+        return Ok(Vec::new());
+    }
+    if !context.is_object_rooted(transfer)? {
+        return Err(conversion_error(context, NOT_SEQUENCE));
+    }
+    let mut iterator = match context.iterator_rooted(transfer) {
+        Ok(iterator) => iterator,
+        Err(RootedError { exception: Some(_), .. }) => return Err(conversion_error(context, NOT_SEQUENCE)),
+        Err(error) => return Err(error),
+    };
+    let mut transfers = Vec::new();
+    while let Some(item) = context.iterator_step_rooted(&mut iterator)? {
+        if !context.is_object_rooted(item)? && !context.is_callable_rooted(item)? {
+            return Err(conversion_error(context, NOT_OBJECT));
+        }
+        transfers.push(item);
+    }
+    Ok(transfers)
 }
 
 fn clone_dom_exception(

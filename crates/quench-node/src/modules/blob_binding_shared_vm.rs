@@ -55,10 +55,12 @@ fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result
     Ok(())
 }
 
-/// A prototype whose `constructor` is an anonymous class with `methods`.
+/// The `builtin_cache` key of the binding's private data.
+const DATA: &str = "\0binding:blob:data";
+
+/// A handle or reader prototype with `methods`.
 fn native_prototype(c: &mut Context<'_>, methods: &[(&str, &str)], data: RootId) -> Result<RootId, RootedError> {
-    let constructor = crate::host::removed_javascript("node:internal/blob/handle.js")?;
-    let prototype = get(c, constructor, "prototype")?;
+    let prototype = c.object_rooted()?;
     for &(method, operation) in methods {
         let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), method, data)?;
         let key = c.string_rooted(method);
@@ -86,6 +88,8 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             }
             let bytes = c.private_symbol_rooted(Some("node:blob:bytes"));
             put(c, data, data::BYTES, bytes)?;
+            let retained = c.retain(data)?;
+            c.host_mut().shared_state().borrow_mut().builtin_cache.insert(DATA.to_owned(), retained);
             let binding = c.object_rooted()?;
             for &(name, operation) in NATIVES {
                 let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
@@ -94,6 +98,15 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             Ok(binding)
         })
     })
+}
+
+/// The binding's private data, building the binding on first use.
+fn data(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    if let Some(data) = c.host_mut().shared_state().borrow().builtin_cache.get(DATA).copied() {
+        return Ok(data);
+    }
+    binding(c)?;
+    c.host_mut().shared_state().borrow().builtin_cache.get(DATA).copied().ok_or_else(|| RootedError::host("blob binding data missing"))
 }
 
 fn arg(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
@@ -110,7 +123,7 @@ fn number(c: &mut Context<'_>, value: RootId) -> Result<usize, RootedError> {
 
 /// A new object of `prototype` whose private state is `values`.
 fn with_state(c: &mut Context<'_>, prototype_slot: &str, values: &[RootId]) -> Result<RootId, RootedError> {
-    let data = c.host_function_data()?;
+    let data = data(c)?;
     let prototype = get(c, data, prototype_slot)?;
     let object = c.object_rooted()?;
     c.set_prototype_rooted(object, prototype)?;
@@ -125,7 +138,7 @@ fn state_of(c: &mut Context<'_>, object: RootId) -> Result<Option<RootId>, Roote
     if !c.is_object_rooted(object)? {
         return Ok(None);
     }
-    let data = c.host_function_data()?;
+    let data = data(c)?;
     let key = get(c, data, data::BYTES)?;
     let state = c.get_property_rooted(object, key)?;
     Ok(c.is_object_rooted(state)?.then_some(state))
@@ -180,10 +193,14 @@ fn part_bytes(c: &mut Context<'_>, part: &Part) -> Vec<u8> {
 /// Uint8Array the library copied or another handle.
 pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let sources = arg(c, args, 0);
-    let count = length(c, sources)?;
+    let sources = c.array_like_values_rooted(sources)?;
+    create_handle(c, &sources)
+}
+
+/// A handle over `sources`, each a Uint8Array whose bytes the handle owns or another handle.
+pub(crate) fn create_handle(c: &mut Context<'_>, sources: &[RootId]) -> Result<RootId, RootedError> {
     let mut all = Vec::new();
-    for index in 0..count {
-        let source = get(c, sources, &index.to_string())?;
+    for &source in sources {
         if let Some(state) = state_of(c, source)? {
             all.extend(parts(c, state)?);
         } else if c.has_builtin_brand_rooted(source, BuiltinBrand::ArrayBufferView)? {
@@ -202,11 +219,17 @@ pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
 
 /// `handle.slice(start, end)`: a handle over the same bytes between those offsets.
 pub(crate) fn slice(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let state = state_of(c, receiver)?.ok_or_else(|| RootedError::host("Blob handle expected"))?;
     let start = arg(c, args, 0);
     let start = number(c, start)?;
     let end = arg(c, args, 1);
-    let end = number(c, end)?.max(start);
+    let end = number(c, end)?;
+    slice_handle(c, receiver, start, end)
+}
+
+/// A handle over `handle`'s bytes from `start` to `end`.
+pub(crate) fn slice_handle(c: &mut Context<'_>, source: RootId, start: usize, end: usize) -> Result<RootId, RootedError> {
+    let state = state_of(c, source)?.ok_or_else(|| RootedError::host("Blob handle expected"))?;
+    let end = end.max(start);
     let mut offset = 0;
     let mut sliced = Vec::new();
     for part in parts(c, state)? {
@@ -219,6 +242,13 @@ pub(crate) fn slice(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> R
         offset += size;
     }
     handle(c, &sliced)
+}
+
+/// The bytes of each of `handle`'s parts, in order.
+pub(crate) fn handle_chunks(c: &mut Context<'_>, handle: RootId) -> Result<Vec<Vec<u8>>, RootedError> {
+    let state = state_of(c, handle)?.ok_or_else(|| RootedError::host("Blob handle expected"))?;
+    let parts = parts(c, state)?;
+    Ok(parts.iter().map(|part| part_bytes(c, part)).collect())
 }
 
 /// `handle.getReader()`: a reader over this handle's parts.
@@ -273,7 +303,7 @@ pub(crate) fn concat(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<
 }
 
 fn store_call(c: &mut Context<'_>, method: &str, args: &[RootId]) -> Result<RootId, RootedError> {
-    let data = c.host_function_data()?;
+    let data = data(c)?;
     let store = get(c, data, data::STORE)?;
     let function = get(c, data, method)?;
     c.call_rooted(function, store, args)
@@ -283,9 +313,31 @@ fn store_call(c: &mut Context<'_>, method: &str, args: &[RootId]) -> Result<Root
 pub(crate) fn store_data_object(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let id = arg(c, args, 0);
     let entry = args.get(1..4).unwrap_or_default();
-    let entry = c.array_rooted(entry)?;
-    store_call(c, data::MAP_SET, &[id, entry])?;
+    store(c, id, entry)?;
     Ok(c.undefined())
+}
+
+/// Registers `[handle, length, type]` under `id`.
+pub(crate) fn store(c: &mut Context<'_>, id: RootId, entry: &[RootId]) -> Result<(), RootedError> {
+    let entry = c.array_rooted(entry)?;
+    store_call(c, data::MAP_SET, &[id, entry]).map(drop)
+}
+
+/// The `[handle, length, type]` registered under `id`, or undefined.
+pub(crate) fn lookup(c: &mut Context<'_>, id: RootId) -> Result<RootId, RootedError> {
+    store_call(c, data::MAP_GET, &[id])
+}
+
+/// The id a `blob:nodedata:<id>` URL names.
+pub(crate) fn object_url_id(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok().filter(|url| url.scheme() == BLOB_SCHEME)?;
+    let (base, id) = url.path().split_once(':')?;
+    (base == NODE_DATA && !id.contains(':')).then(|| id.to_owned())
+}
+
+/// The URL `URL.createObjectURL` gives the object registered under `id`.
+pub(crate) fn object_url(id: &str) -> String {
+    format!("{BLOB_SCHEME}:{NODE_DATA}:{id}")
 }
 
 /// `getDataObject(id)`: `[handle, length, type]`, or undefined.
@@ -298,11 +350,7 @@ pub(crate) fn get_data_object(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
 pub(crate) fn revoke_object_url(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let url = arg(c, args, 0);
     let url = c.to_string(url)?;
-    let id = url::Url::parse(&url).ok().filter(|url| url.scheme() == BLOB_SCHEME).and_then(|url| {
-        let (base, id) = url.path().split_once(':')?;
-        (base == NODE_DATA && !id.contains(':')).then(|| id.to_owned())
-    });
-    if let Some(id) = id {
+    if let Some(id) = object_url_id(&url) {
         let id = c.string_rooted(&id);
         store_call(c, data::MAP_DELETE, &[id])?;
     }

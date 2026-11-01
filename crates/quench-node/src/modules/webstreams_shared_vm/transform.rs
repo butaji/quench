@@ -339,7 +339,10 @@ pub(crate) fn stream_slots(c: &mut Context<'_>, object: RootId) -> Outcome {
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let member: Member = current(c)?;
     match member {
-        Member::Construct => construct(c, this, args),
+        Member::Construct => {
+            super::require_new(c, Brand::TransformStream.name())?;
+            construct(c, this, args)
+        }
         Member::Readable | Member::Writable => {
             let stream = this_state(c, this, Brand::TransformStream)?;
             side(c, stream, member == Member::Readable)
@@ -352,7 +355,10 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let data = literal(c, &[("readable", readable), ("writable", writable), ("backpressure", backpressure)])?;
             custom_inspect(c, this, Brand::TransformStream.name(), data, args)
         }
-        Member::ControllerConstruct => Err(throw(c, WebError::IllegalConstructor)),
+        Member::ControllerConstruct => {
+            super::require_new(c, Brand::TransformController.name())?;
+            Err(throw(c, WebError::IllegalConstructor))
+        }
         Member::DesiredSize => {
             let controller = this_state(c, this, Brand::TransformController)?;
             let stream = get(c, controller, STREAM)?;

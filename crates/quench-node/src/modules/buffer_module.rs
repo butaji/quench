@@ -1258,12 +1258,10 @@ pub(crate) fn exports(c: &mut Context<'_>, buffer: RootId) -> Result<RootId, Roo
         let value = get(c, binding, source)?;
         c.assign_named_property_rooted(module, name, value)?;
     }
-    let global = c.global_root()?;
-    for name in ["Blob", "File"] {
-        let value = get(c, global, name)?;
-        if !is_undefined(c, value) {
-            c.assign_named_property_rooted(module, name, value)?;
-        }
+    let (blob, file) = crate::modules::blob_shared_vm::classes(c)?;
+    let resolve = crate::modules::blob_shared_vm::resolve_object_url_function(c)?;
+    for (name, value) in [("Blob", blob), ("resolveObjectURL", resolve), ("File", file)] {
+        c.assign_named_property_rooted(module, name, value)?;
     }
     Ok(module)
 }

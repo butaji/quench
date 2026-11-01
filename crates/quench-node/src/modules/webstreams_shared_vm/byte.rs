@@ -1092,7 +1092,10 @@ fn controller_of(c: &mut Context<'_>, this: RootId) -> Outcome {
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let member: Member = current(c)?;
     match member {
-        Member::ControllerConstruct | Member::RequestConstruct => Err(throw(c, WebError::IllegalConstructor)),
+        Member::ControllerConstruct | Member::RequestConstruct => {
+            super::require_new(c, if member == Member::ControllerConstruct { Brand::ByteController.name() } else { Brand::ByobRequest.name() })?;
+            Err(throw(c, WebError::IllegalConstructor))
+        }
         Member::ByobRequestGetter => {
             let controller = controller_of(c, this)?;
             byob_request(c, controller)
@@ -1185,6 +1188,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             custom_inspect(c, this, Brand::ByobRequest.name(), data, args)
         }
         Member::ReaderConstruct => {
+            super::require_new(c, Brand::ByobReader.name())?;
             let stream = arg(c, args, 0);
             readable::construct_byob_reader(c, this, stream)?;
             Ok(c.undefined())

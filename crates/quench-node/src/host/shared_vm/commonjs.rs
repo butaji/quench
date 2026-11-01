@@ -802,11 +802,7 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
 pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &crate::modules::webstreams_shared_vm::GLOBALS;
 // Blob/File are independent of Fetch. Importing buffer must not recursively
 // load undici while the public Buffer binding is still being initialized.
-pub(crate) const WEB_API_GLOBALS: &[&str] = &[
-    "__quenchBlobEnsureReadable",
-    "Blob",
-    "File",
-];
+pub(crate) const WEB_API_GLOBALS: &[&str] = &crate::modules::blob_shared_vm::GLOBALS;
 pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
     "FormData",
     "Headers",
@@ -878,52 +874,6 @@ pub(super) fn initialize_process_surface(
     crate::host::removed_javascript("node:bootstrap/process-surface-lazy.js")?;
     #[cfg(unix)]
     crate::modules::process_metrics_shared_vm::install(context)?;
-    Ok(context.undefined())
-}
-
-pub(super) fn initialize_web_apis(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let expose_web_worker = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-web-worker");
-    if expose_web_worker {
-        // Node exposes the browser-style Worker global only when the
-        // experimental web worker option is enabled. Use Node's own lazy
-        // interface helper so the global has the same accessor semantics and
-        // the implementation remains lazily loaded.
-        let expose_lazy_interfaces = node_library_export(
-            context,
-            "internal/util.js",
-            "internal/util.js",
-            "exposeLazyInterfaces",
-        )?;
-        let global = context.global_root()?;
-        let id = context.string_rooted("internal/webworker");
-        let key = context.string_rooted("Worker");
-        let keys = context.array_rooted(&[key])?;
-        let undefined = context.undefined();
-        context.call_rooted(expose_lazy_interfaces, undefined, &[global, id, keys])?;
-    }
-    crate::host::removed_javascript("node:bootstrap/shared-vm/web-apis.js")?;
-    crate::host::removed_javascript("node:bootstrap/shared-vm/broadcast-channel.js")?;
-    // Keep the global constructor identical to Node's internal EventTarget
-    // export. This is observable in Node's own global-surface assertions and
-    // avoids a second, subtly incompatible CustomEvent implementation.
-    let custom_event = node_library_export(
-        context,
-        "internal/event_target.js",
-        "internal/event_target.js",
-        "CustomEvent",
-    )?;
-    let global = context.global_root()?;
-    let key = context.string_rooted("CustomEvent");
-    context.define_data_property_rooted(global, key, custom_event, true, false, true)?;
     Ok(context.undefined())
 }
 

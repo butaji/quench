@@ -1339,7 +1339,10 @@ pub(crate) fn reader_inspect(c: &mut Context<'_>, this: RootId, brand: Brand, re
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let member: Member = current(c)?;
     match member {
-        Member::Construct => construct(c, this, args),
+        Member::Construct => {
+            super::require_new(c, Brand::ReadableStream.name())?;
+            construct(c, this, args)
+        }
         Member::Locked => {
             let stream = stream_of(c, this)?;
             let locked = is_locked(c, stream)?;
@@ -1383,6 +1386,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             Ok(c.boolean(value))
         }
         Member::ReaderConstruct => {
+            super::require_new(c, Brand::DefaultReader.name())?;
             let stream = arg(c, args, 0);
             initialize_reader(c, this, Brand::DefaultReader, stream)?;
             Ok(c.undefined())
@@ -1407,7 +1411,10 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             reader_cancel(c, this, Brand::DefaultReader, reason)
         }
         Member::ReaderInspect => reader_inspect(c, this, Brand::DefaultReader, "readRequests", args),
-        Member::ControllerConstruct => Err(throw(c, WebError::IllegalConstructor)),
+        Member::ControllerConstruct => {
+            super::require_new(c, Brand::DefaultController.name())?;
+            Err(throw(c, WebError::IllegalConstructor))
+        }
         Member::ControllerDesiredSize => {
             let controller = this_state(c, this, Brand::DefaultController)?;
             desired_size_value(c, controller)

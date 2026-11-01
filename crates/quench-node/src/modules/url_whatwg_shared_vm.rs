@@ -228,6 +228,7 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(url, key, function, true, true, true)?;
     }
+    super::blob_shared_vm::install_url_statics(c, url)?;
     let params = c.host_constructor_named(operation("urlParamsConstruct"), "URLSearchParams")?;
     let key = c.string_rooted("length");
     let zero = c.number(0.0);

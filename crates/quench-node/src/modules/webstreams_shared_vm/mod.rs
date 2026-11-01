@@ -422,6 +422,15 @@ pub(crate) fn this_state(c: &mut Context<'_>, this: RootId, brand: Brand) -> Out
     }
 }
 
+/// A class constructor's `new` check: `TypeError` when called without `new`.
+pub(crate) fn require_new(c: &mut Context<'_>, name: &str) -> Done {
+    if c.new_target_rooted().is_some() {
+        return Ok(());
+    }
+    let error = c.type_error_rooted(&format!("Class constructor {name} cannot be invoked without 'new'"))?;
+    Err(c.throw(error))
+}
+
 /// The internal slots of an object the module made as an instance of `brand`.
 pub(crate) fn slots(c: &mut Context<'_>, object: RootId) -> Outcome {
     let key = intrinsic(c, key::STATE)?;
