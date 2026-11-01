@@ -1798,6 +1798,12 @@ enum JsGeneralBranch {
         left: Operand,
         right: Operand,
     },
+    NullishFalse {
+        source: u16,
+        expected: Value,
+        strict: bool,
+        negated: bool,
+    },
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -2478,14 +2484,30 @@ pub(super) fn lower_js_general_dispatch(
                 let operator = instruction.binary_operator_field();
                 let left = instruction.operand_b();
                 let right = instruction.operand_c();
-                (super::operations::NumberRelation::from_operator(operator).is_some()
-                    && js_tagged_operand_supported(program, left, &register_offset)
-                    && js_tagged_operand_supported(program, right, &register_offset))
-                .then_some(JsGeneralBranch::NumberFalse {
-                    operator,
-                    left,
-                    right,
-                })
+                let nullish = |operand: Operand| {
+                    if operand.kind() != Some(OperandKind::Constant) {
+                        return None;
+                    }
+                    match program.constants.get(usize::from(operand.payload()))? {
+                        crate::bytecode::Constant::Null => Some(Value::NULL),
+                        crate::bytecode::Constant::Undefined => Some(Value::UNDEFINED),
+                        _ => None,
+                    }
+                };
+                let nullish_comparison = nullish(left).zip(right.register_index())
+                    .or_else(|| nullish(right).zip(left.register_index()))
+                    .filter(|(_, source)| register_offset(*source).is_some());
+                let equality = super::operations::equality_operator(operator);
+                if let (Some((expected, source)), Some((strict, negated))) =
+                    (nullish_comparison, equality)
+                {
+                    Some(JsGeneralBranch::NullishFalse { source, expected, strict, negated })
+                } else {
+                    (super::operations::NumberRelation::from_operator(operator).is_some()
+                        && js_tagged_operand_supported(program, left, &register_offset)
+                        && js_tagged_operand_supported(program, right, &register_offset))
+                    .then_some(JsGeneralBranch::NumberFalse { operator, left, right })
+                }
             }
             _ => None,
         };
@@ -2550,6 +2572,28 @@ pub(super) fn lower_js_general_dispatch(
                     )
                     .expect("prevalidated JavaScript numeric relation");
                     builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
+                }
+                JsGeneralBranch::NullishFalse { source, expected, strict, negated } => {
+                    use crate::value::ValueLayout;
+                    let source = register_offset(source).expect("prevalidated branch register");
+                    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+                    let equal = if strict {
+                        builder.ins().icmp_imm_u(IntCC::Equal, value, expected.to_bits() as i64)
+                    } else {
+                        // A non-record heap value may be [[IsHTMLDDA]], which needs the VM.
+                        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+                        let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+                        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
+                        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+                        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+                        let record = builder.ins().bor(object, array);
+                        let safe = builder.ins().bor(immediate, record);
+                        emit_js_guard(&mut builder, safe, fallback);
+                        let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
+                        let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
+                        builder.ins().bor(null, undefined)
+                    };
+                    if negated { equal } else { builder.ins().icmp_imm_u(IntCC::Equal, equal, 0) }
                 }
             };
             if target <= pc {
@@ -6317,6 +6361,30 @@ const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
 fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
+    if instruction.op() == Op::JumpBinaryFalse {
+        let Some((strict, _)) = super::operations::equality_operator(instruction.binary_operator_field()) else {
+            return "branch-relation";
+        };
+        let registers = &vm.frames[frame].registers;
+        let constants = vm.programs.constants(vm.frames[frame].program);
+        let value = |operand: Operand| match operand.kind() {
+            Some(OperandKind::Register) => registers.get(usize::from(operand.payload())).copied(),
+            Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).copied(),
+            _ => None,
+        };
+        let (Some(left), Some(right)) = (value(instruction.operand_b()), value(instruction.operand_c())) else {
+            return "branch-computed-operand";
+        };
+        return if left.is_null() || left.is_undefined() || right.is_null() || right.is_undefined() {
+            if strict { "branch-strict-nullish" } else { "branch-loose-nullish" }
+        } else if left.as_bool().is_some() || right.as_bool().is_some() {
+            if strict { "branch-strict-boolean" } else { "branch-loose-boolean" }
+        } else if left.direct_object_index().is_some() || right.direct_object_index().is_some() {
+            "branch-direct-object"
+        } else {
+            "branch-other-equality"
+        };
+    }
     if instruction.op() == Op::LoadCapture {
         if instruction.capture_depth() != 0 {
             return "capture-outer-depth";

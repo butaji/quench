@@ -15591,6 +15591,50 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
+    let source = r#"
+      function loose(value) { if (value == null) return 1; return 0; }
+      function notLoose(value) { if (value != null) return 1; return 0; }
+      function strict(value) { if (value === null) return 1; return 0; }
+      function notStrict(value) { if (value !== undefined) return 1; return 0; }
+      for (let i = 0; i < 64; i++) {
+        for (const value of [null, undefined, 0, false, '', {}, [], () => {}, $262.IsHTMLDDA]) {
+          const isNullish = value === null || value === undefined || value === $262.IsHTMLDDA;
+          if (loose(value) !== (isNullish ? 1 : 0)) throw Error('loose null');
+          if (notLoose(value) !== (isNullish ? 0 : 1)) throw Error('loose inequality');
+          if (strict(value) !== (value === null ? 1 : 0)) throw Error('strict null');
+          if (notStrict(value) !== (value !== undefined ? 1 : 0)) throw Error('strict undefined');
+        }
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-nullish.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["loose", "notLoose", "strict", "notStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::JumpBinaryFalse).then_some(pc)
+        }).expect("nullish branch");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() {
     let source = r#"
       function identity(value) { return value; }
