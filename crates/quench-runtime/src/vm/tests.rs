@@ -12795,6 +12795,84 @@ fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
+    let source = r#"
+      function update(item, limit, delta) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          const before = item.value;
+          item.value = before + delta;
+          total += item.value;
+        }
+        return total;
+      }
+      function aliases(first, second, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          first.value = first.value + 1;
+          total += second.value;
+        }
+        return total;
+      }
+      function replace(item, value, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          total += item.value;
+          item.value = value;
+        }
+        return total;
+      }
+      const item = { value: 0, left: 1, right: 2 };
+      let total = 0;
+      for (let call = 0; call < 80; call++) total += update(item, 2000, 1);
+      item.value = -0;
+      update(item, 1, -0);
+      if (!Object.is(item.value, -0)) throw 'field cell signed zero';
+      item.value = 2147483647;
+      update(item, 3, 0.5);
+      if (item.value !== 2147483648.5) throw 'field cell precision';
+      let reads = 0, writes = 0, value = 2;
+      Object.defineProperty(item, 'value', {
+        get() { reads++; return value; },
+        set(next) { writes++; value = next; }, configurable: true
+      });
+      update(item, 3, 1);
+      if (reads !== 6 || writes !== 3 || value !== 5) throw 'field cell accessor fallback';
+      const aliased = { value: 0, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) {
+        const before = aliased.value;
+        const answer = aliases(aliased, aliased, 1000);
+        if (answer !== before * 1000 + 500500) throw 'field cell receiver alias';
+      }
+      const replaced = { value: 1, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) replace(replaced, 2, 1000);
+      const reference = {};
+      replace(replaced, reference, 3);
+      if (replaced.value !== reference) throw 'field cell tagged store fallback';
+      print(total + ' ' + reads + ' ' + writes + ' ' + value + ' ' + aliased.value);
+    "#;
+    let program = Engine::specialize(source, "osr-field-cell.js").unwrap();
+    let id = program.functions.iter().position(|body| body.header().name
+        .is_some_and(|atom| &program.atoms[atom as usize] == "update")).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    let mut oracle = Vm::new(TestHost::writing_to(interpreted.clone()));
+    oracle.set_execution_mode(crate::ExecutionMode::Interpreted);
+    oracle.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
+        .unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_and_fills_holes_in_place() {
     // The loops append at the length while the backing has room and fill holes below it.
     // Once a prototype holds an index, the entry declines, and the setter it defines runs.
@@ -15728,6 +15806,78 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_field_guard_observes_reassigned_parameter() {
+    let source = r#"
+      function read(object, replacement) { object = replacement; return object.value + 1; }
+      const object = {value: 7};
+      for (let i = 0; i < 40; i++) {
+        if (read(object, object) !== 8) throw Error('receiver cache warmup');
+      }
+      for (let i = 0; i < 80; i++) {
+        if (!Number.isNaN(read(object, 5))) throw Error('reassigned field receiver');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-reassigned-receiver.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_guarded_boolean_fields_and_captures() {
+    let source = r#"
+      function make(mask, expected) {
+        function check() { return (this.value & mask) !== 0 || this.value == expected; }
+        return {check, setMask(value) { mask = value; }};
+      }
+      const reader = make(2, 4);
+      reader.value = 4;
+      for (let i = 0; i < 80; i++) {
+        if (!reader.check()) throw Error('boolean numeric region');
+      }
+      reader.setMask(1);
+      reader.value = 3;
+      if (!reader.check()) throw Error('capture mutation');
+      reader.setMask(1.5);
+      if (!reader.check()) throw Error('fractional bitwise fallback');
+      reader.setMask(1n);
+      let threw = false;
+      try { reader.check(); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('bigint fallback');
+      reader.setMask(2);
+      let reads = 0;
+      Object.defineProperty(reader, 'value', {
+        configurable: true,
+        get() { reads++; return reads === 1 ? 0 : 4; }
+      });
+      if (!reader.check() || reads !== 2) throw Error('getter fallback ordering');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-capture-boolean.js")).unwrap();
+    let check = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "check")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm.programs
+        .js_tier(super::program_store::ProgramId::MAIN, check) else {
+        panic!("guarded field and capture predicate should compile");
+    };
+    assert!(!compiled.is_general_dispatch());
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
+    assert_eq!(compiled.numeric_field_inputs()[0].source, 0);
+    assert_eq!(compiled.numeric_field_inputs()[1].source, 0);
+    assert!(compiled.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
@@ -16697,6 +16847,93 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_number_relations_with_exact_fallback() {
+    let source = r#"
+      function equal(a, b) { return a == b; }
+      function strict(a, b) { return a === b; }
+      function less(a, b) { return a < b; }
+      for (let i = 0; i < 64; i++) {
+        if (!equal(i, i) || !strict(i, i) || !less(i, i + 1)) throw Error('number relation');
+      }
+      if (!strict(0, -0) || strict(NaN, NaN) || less(NaN, 1)) throw Error('number edges');
+      let calls = 0;
+      const object = { valueOf() { calls++; return 4; } };
+      if (!equal(object, 4) || calls !== 1) throw Error('coercion fallback');
+      if (!equal(4n, 4n) || strict(4n, 4) || !less(3n, 4n)) throw Error('bigint fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-return-relation.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["equal", "strict", "less"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            (instruction.op() == crate::bytecode::Op::Binary && instruction.returns_from_frame()).then_some(pc)
+        }).expect("returning comparison");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
+    let source = r#"
+      function loose(value) { if (value == null) return 1; return 0; }
+      function notLoose(value) { if (value != null) return 1; return 0; }
+      function strict(value) { if (value === null) return 1; return 0; }
+      function notStrict(value) { if (value !== undefined) return 1; return 0; }
+      for (let i = 0; i < 64; i++) {
+        for (const value of [null, undefined, 0, false, '', {}, [], () => {}, $262.IsHTMLDDA]) {
+          const isNullish = value === null || value === undefined || value === $262.IsHTMLDDA;
+          if (loose(value) !== (isNullish ? 1 : 0)) throw Error('loose null');
+          if (notLoose(value) !== (isNullish ? 0 : 1)) throw Error('loose inequality');
+          if (strict(value) !== (value === null ? 1 : 0)) throw Error('strict null');
+          if (notStrict(value) !== (value !== undefined ? 1 : 0)) throw Error('strict undefined');
+        }
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-nullish.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["loose", "notLoose", "strict", "notStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::JumpBinaryFalse).then_some(pc)
+        }).expect("nullish branch");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() {
     let source = r#"
       function identity(value) { return value; }
@@ -16893,10 +17130,33 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
       if (readField(first) !== 11) throw Error('live value');
 
       const small = { value: 30 };
-      if (readField(small) !== 30) throw Error('inline storage fallback');
+      if (readField(small) !== 30) throw Error('inline storage');
+      const reference = { marker: 1 };
+      for (const value of [-7, 0, 17, true, false, null, undefined, reference, 'text']) {
+        const inline = { value };
+        if (readField(inline) !== value) throw Error('inline value');
+      }
+      small.value = 1.5;
+      if (readField(small) !== 1.5) throw Error('inline to wide storage');
 
       const inherited = Object.create({ value: 40 });
       if (readField(inherited) !== 40) throw Error('prototype holder fallback');
+
+      const prototype = { value: 70, a: 1, b: 2 };
+      const child = Object.assign(Object.create(prototype), { a: 3, b: 4, c: 5 });
+      for (let index = 0; index < 64; index++) {
+        if (readField(child) !== 70) throw Error('prototype cache');
+      }
+      prototype.value = 71;
+      if (readField(child) !== 71) throw Error('prototype live value');
+      child.value = 72;
+      if (readField(child) !== 72) throw Error('own shadow');
+      delete child.value;
+      if (readField(child) !== 71) throw Error('remove shadow');
+      Object.defineProperty(prototype, 'value', { get() { return 73; }, configurable: true });
+      if (readField(child) !== 73) throw Error('prototype accessor');
+      Object.setPrototypeOf(child, { value: 74 });
+      if (readField(child) !== 74) throw Error('prototype replacement');
 
       let getterCalls = 0;
       const accessor = { other: 1, more: 2, get value() { getterCalls++; return 50; } };
@@ -16964,6 +17224,66 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
         .collect::<Vec<_>>();
     assert_eq!(get_field_pcs.len(), 1);
     assert!(native.general_dispatch_pc_is_native(get_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
+    let source = include_str!("../../tests/fixtures/captured-field-store.js");
+    let program = Engine::specialize(source, "captured-field-store.js").unwrap();
+    let store = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "store")
+    }).unwrap();
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(store)).is_some());
+    for name in ["and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id))
+            .is_some_and(|store| store.update.is_some()), "{name} should share the guarded update proof");
+    }
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    assert!(compiled.js_tier_runs());
+    compiled.execute(&program).unwrap();
+    for name in ["store", "and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(compiled.programs.js_jit_captured_store_entries(super::ProgramId::MAIN, id as u32)
+            .unwrap_or(0) > 0, "{name} should enter the shared JIT store fast path");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_updates_reject_overwritten_read_registers() {
+    let mut program = Engine::specialize(
+        "function make(mask) { function update() { this.value = this.value | mask; } return update; }",
+        "captured-update-register.js",
+    ).unwrap();
+    let id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "update")
+    }).unwrap();
+    let body = program.function(id);
+    assert!(super::js_compiled::captured_field_store_candidate(&program, body).is_some());
+    let read = body.code[0].as_wide().result_register();
+    let capture = body.code[1].as_wide();
+    let binary = body.code[2].as_wide();
+    program.functions[id].code[1] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::LoadCapture, read, capture.b(), capture.c(), capture.imm(),
+    );
+    program.functions[id].code[2] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::Binary, binary.a(), read, read, binary.imm(),
+    );
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id)).is_none());
 }
 
 #[test]
@@ -17137,6 +17457,243 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
         .collect::<Vec<_>>();
     assert_eq!(returning_reads.len(), 1, "readX returns its field read");
     assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_fused_field_copy_preserves_effects_and_collection() {
+    let source = r#"
+      function copy() { this.out = this.holder.value; return this.out; }
+      function install(owner, n) { owner.holder.value = { n }; owner.copy(); }
+      const holder = { a: 1, b: 2, value: 7 };
+      const target = { a: 1, b: 2, c: 3, holder, out: 0, copy };
+      for (let i = 0; i < 64; i++) if (target.copy() !== 7) throw Error('field copy');
+      $262.gc();
+      install(target, 8);
+      install(target, 9);
+      $262.gc();
+      if (target.out.n !== 9) throw Error('field copy barrier');
+      let reads = 0;
+      Object.defineProperty(holder, 'value', { get() { reads++; return 10; }, configurable: true });
+      if (target.copy() !== 10 || reads !== 1) throw Error('getter fallback');
+      Object.defineProperty(holder, 'value', { value: 11, writable: true, configurable: true });
+      let writes = 0;
+      Object.defineProperty(target, 'out', { set(value) { writes += value; }, configurable: true });
+      target.copy();
+      if (writes !== 11) throw Error('setter fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-copy.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "copy")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("copy should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField && instruction.writes_current_this()).then_some(pc)
+    }).expect("fused field copy");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback() {
+    let source = r#"
+      function receiver() { 'use strict'; const value = this; if (value === null) return 1; return value; }
+      const object = { receiver };
+      for (let i = 0; i < 64; i++) if (object.receiver() !== object) throw Error('this identity');
+      if (receiver.call(null) !== 1 || receiver.call(undefined) !== undefined) throw Error('strict this');
+      class Base {}
+      class Derived extends Base {
+        constructor() {
+          const read = () => this;
+          let caught = false;
+          try { read(); } catch (error) { caught = error instanceof ReferenceError; }
+          if (!caught) throw Error('uninitialized lexical this');
+          super();
+          if (read() !== this) throw Error('initialized lexical this');
+        }
+      }
+      new Derived();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-load-this.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "receiver")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("receiver should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::LoadThis).then_some(pc)
+    }).expect("this load");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function write(value) { this.x = value; }
+      function writeStrict(value) { 'use strict'; this.x = value; }
+      function setYoung(owner, n) { owner.write({ n }); }
+      const target = { a: 1, b: 2, c: 3, x: 0, write, writeStrict };
+      for (let i = 0; i < 64; i++) { target.write(i); target.writeStrict(i + 1); }
+      if (target.x !== 64) throw Error('cached writes');
+      $262.gc();
+      setYoung(target, 7);
+      setYoung(target, 8);
+      $262.gc();
+      if (target.x.n !== 8) throw Error('heap write barrier');
+      let seen = 0;
+      Object.defineProperty(target, 'x', { set(value) { seen = value; }, configurable: true });
+      target.write(71);
+      if (seen !== 71) throw Error('accessor');
+      Object.defineProperty(target, 'x', { value: 1, writable: false, configurable: true });
+      target.write(2);
+      if (target.x !== 1) throw Error('sloppy readonly');
+      let threw = false;
+      try { target.writeStrict(2); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw || target.x !== 1) throw Error('strict readonly');
+      let proxyCalls = 0;
+      const proxy = new Proxy(target, { set() { proxyCalls++; return true; } });
+      write.call(proxy, 5);
+      if (proxyCalls !== 1) throw Error('proxy');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-store.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["write", "writeStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            matches!(super::dispatch_fast::decoded_instruction(body, *packed).op(),
+                crate::bytecode::Op::SetThisField | crate::bytecode::Op::SetThisFieldStrict).then_some(pc)
+        }).expect("this store");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
+    let source = r#"
+      function outer() {
+        let value = { n: 1 };
+        function read(collect) {
+          let seen;
+          for (let i = 0; i < 32; i++) {
+            seen = value;
+            if (collect && i === 7) $262.gc();
+          }
+          return seen.n;
+        }
+        for (let i = 0; i < 64; i++) if (read(i === 63) !== 1) throw Error('capture');
+        value = { n: 2 };
+        if (read(true) !== 2) throw Error('capture mutation');
+      }
+      outer();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-capture.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("read should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::LoadCapture).then_some(pc)
+    }).expect("capture read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function readThis() { const value = this.x; if (value === null) return null; return value; }
+      const plain = { a: 1, b: 2, c: 3, x: 5 };
+      plain.read = readThis;
+      for (let index = 0; index < 64; index++) {
+        if (plain.read() !== 5) throw Error('own field');
+      }
+      Object.defineProperty(plain, 'x', { get() { return 9; } });
+      if (plain.read() !== 9) throw Error('accessor');
+      if (readThis.call(Object.create({x: 7})) !== 7) throw Error('prototype');
+      let threw = false;
+      try { readThis.call(null); } catch (error) { threw = error instanceof TypeError; }
+      if (threw) throw Error('sloppy this conversion');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-field.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "readThis")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("readThis should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField).then_some(pc)
+    }).expect("field read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
 }
 
 #[test]

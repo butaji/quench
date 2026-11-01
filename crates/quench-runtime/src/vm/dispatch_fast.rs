@@ -7051,7 +7051,7 @@ fn lane_loop_run<H: Host>(
         // nothing at entry.
         let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
         let observation = super::compiled::Observation {
-            register: &|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED },
+            register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
             int32_elements: &int32_elements,
             captures: &captures,
             fields: &fields,
@@ -7275,11 +7275,12 @@ fn lane_loop_entry<H: Host>(
         }
     }
     let vm = unsafe { vm(cx) };
-    // These regions cannot run calls or field writes, and their element stores define or
-    // replace own data elements, which changes no shape slot. Thus a hit on an ordinary
-    // data field stays valid for the whole native run. Any miss, accessor, private name, or
-    // non-Number exits before native code can alter a register. A field read through
-    // another's value follows it.
+    // No guest call or allocation occurs in a native run. Field writes replace guarded
+    // own slots, and element stores change no shape slot. Immutable fields keep their
+    // entry values; admitted same-receiver Number writes update SSA field cells. Other
+    // possible aliases are rejected by region admission. Any miss, accessor, private
+    // name or non-Number declines before native effects. Nested receivers follow the
+    // earlier field's value.
     for field in &region.fields {
         let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index))?;
         entry.push_field(value, field.tagged)?;
@@ -7314,7 +7315,8 @@ fn lane_loop_entry<H: Host>(
     // write only Number values (which need no collector barrier). Every miss exits before the
     // store through the interpreter's exact SetField PC.
     // SAFETY: the runtime cache probe proves a primary own-data slot. `osr_loop::admit_region`
-    // admits only Number values and rejects receiver rewrites and same-name field reads.
+    // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
+    // stores remain Numbers; a store-only field may also receive a rooted entry value.
     for field in &region.field_store_sites {
         let object = r.get(field.receiver);
         let pointer = unsafe {

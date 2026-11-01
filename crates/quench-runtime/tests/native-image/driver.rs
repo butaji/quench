@@ -9,10 +9,28 @@ use std::{
 quench_runtime::export_native_js_operations!(SystemHost, semantic_exports);
 
 static ENTRIES: AtomicUsize = AtomicUsize::new(0);
+static BOOLEAN_ENTRIES: AtomicUsize = AtomicUsize::new(0);
+static SCALAR_ENTRIES: AtomicUsize = AtomicUsize::new(0);
+static STORE_BODY_ENTRIES: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
 
 #[unsafe(no_mangle)]
 pub extern "C" fn native_image_entered(image: u64) {
     ENTRIES.fetch_or(1 << image, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn native_boolean_entered(image: u64) {
+    BOOLEAN_ENTRIES.fetch_or(1 << image, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn native_scalar_entered(image: u64) {
+    SCALAR_ENTRIES.fetch_or(1 << image, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn native_store_body_entered(image: u64) {
+    STORE_BODY_ENTRIES[image as usize].fetch_add(1, Ordering::Relaxed);
 }
 
 unsafe extern "C" {
@@ -46,6 +64,21 @@ fn run() -> Result<(), String> {
     let expected = (1 << images.len()) - 1;
     if ENTRIES.load(Ordering::Relaxed) != expected {
         return Err("program roots did not enter the linked objects".into());
+    }
+    if BOOLEAN_ENTRIES.load(Ordering::Relaxed) != expected {
+        return Err("guarded boolean calls did not enter both linked objects".into());
+    }
+    if SCALAR_ENTRIES.load(Ordering::Relaxed) != expected {
+        return Err("typed scalar regions did not enter both linked objects".into());
+    }
+    // One cold entry, two non-number captures, a setter, a proxy, 64 stores
+    // after descriptor replacement makes a dictionary, and the frozen error.
+    const COLD_AND_FALLBACK_STORE_ENTRIES: usize = 70;
+    for count in &STORE_BODY_ENTRIES {
+        let count = count.load(Ordering::Relaxed);
+        if count == 0 || count > COLD_AND_FALLBACK_STORE_ENTRIES {
+            return Err(format!("captured stores did not elide warmed callee entries: {count}"));
+        }
     }
     println!("native JS and TS images passed");
     Ok(())

@@ -772,7 +772,7 @@ macro_rules! opcodes {
     ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
-        #[quench_macros::native_operation_exports(1, "quench_js_op_")]
+        #[quench_macros::native_operation_exports(10, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         #[allow(dead_code)]
@@ -1711,6 +1711,8 @@ impl FactTables for ResidualProgram {
 /// field left out of the list does not compile.
 macro_rules! call_plan_bits {
     ($($field:ident),* $(,)?) => {
+        const CALL_PLAN_FLAG_COUNT: u32 = [$(stringify!($field)),*].len() as u32;
+
         impl CallPlan {
             fn to_bits(self) -> u32 {
                 let mut bits = 0;
@@ -4340,7 +4342,12 @@ impl ResidualProgram {
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
+        const DERIVED_FACT_COUNT_SHIFT: u32 = u8::BITS;
+        assert!(DERIVED_FACT_COUNT <= u8::MAX as u32);
+        assert!(CALL_PLAN_FLAG_COUNT <= u8::MAX as u32);
         ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
+            | ((DERIVED_FACT_COUNT as u64) << DERIVED_FACT_COUNT_SHIFT)
+            | CALL_PLAN_FLAG_COUNT as u64
     };
 
     /// Whether the entry uses module semantics, including an import-only bootstrap.

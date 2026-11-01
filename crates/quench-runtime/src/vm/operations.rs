@@ -280,6 +280,10 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
+            #[cfg(feature = "aot")]
+            pub(super) const fn operator(self) -> u32 {
+                match self { $(Self::$operation => BinaryOperator::$operator as u32,)+ }
+            }
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -382,7 +386,7 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
 /// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
 /// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
-fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
+pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation == NumberBitwise::ShiftRightUnsigned && bits < 0 {
         Value::number(f64::from(bits as u32))

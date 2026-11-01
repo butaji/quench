@@ -3499,13 +3499,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// The raw address for a warmed, own-data store site whose exact receiver shape still
-    /// matches. Shared OSR uses this only for Number values in a region that cannot allocate,
-    /// collect, or call guest code; misses stay on the interpreter path before the store.
+    /// matches. Shared native execution uses this only for Numbers, without allocation,
+    /// collection, or guest calls; misses stay on the ordinary path before the store.
     ///
     /// # Safety
     /// The caller must keep `object` rooted and must use the returned pointer only during the
-    /// current no-allocation OSR run. It may write only non-reference values; heap references
-    /// require the collector's write barrier.
+    /// current no-allocation native operation. It may write only non-reference values;
+    /// heap references require the collector's write barrier.
     #[inline(always)]
     pub(super) unsafe fn cached_field_store_pointer(
         &mut self,
@@ -3545,11 +3545,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
-        // pointer does not outlive the no-allocation native region and applies the owner's
-        // write barrier before native code may store a tagged value through it.
-        let pointer = unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }?;
-        self.heap.write_barrier(object);
-        Some(pointer)
+        // pointer does not outlive the no-allocation native operation and writes only
+        // non-reference Numbers, which cannot add a collector edge to this owner.
+        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }
     }
 
     /// Increment or decrement a cached own writable Number field without

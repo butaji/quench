@@ -3,6 +3,38 @@ use super::*;
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
+#[cfg(all(test, feature = "aot"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_cursors_leave_interpreter_decoding_cold() {
+        let program = crate::Engine::specialize(
+            "var n = 3; while (n > 0) n--; throw n;", "native-cursor.js",
+        ).unwrap();
+        let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+        for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
+            vm.set_execution_mode(mode);
+            let cursor = vm.general_cursor(ProgramId::MAIN, native.residual(), 0, true);
+            assert!(cursor.decoded.is_null(), "linked code must not expand interpreter instructions");
+            assert!(cursor.lane.is_null() && cursor.back_edges.is_none(),
+                "linked code must not prepare an interpreter lane");
+        }
+
+        let mut interpreter = Vm::new(crate::test_host::TestHost::default());
+        interpreter.initialize_for_snapshot(&program).unwrap();
+        program.prime_loop_decoding();
+        let cursor = interpreter.general_cursor(ProgramId::MAIN, &program, 0, false);
+        assert!(!cursor.decoded.is_null(), "an interpreted loop still expands its dispatch cache");
+        let error = interpreter.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct GeneralCodeCursor {
     program: ProgramId,
@@ -112,23 +144,6 @@ pub(super) struct SavedProgram {
 pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
-    fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
-        let function_code = &program.function(function as usize);
-        let decoded = function_code
-            .decoded
-            .on_entry(&function_code.code, &function_code.wide)
-            .map_or(std::ptr::null(), <[WideInstruction]>::as_ptr);
-        Self {
-            program: program_id,
-            function,
-            code: function_code.code.as_ptr(),
-            wide: function_code.wide.as_ptr(),
-            decoded,
-            lane: std::ptr::null(),
-            back_edges: None,
-        }
-    }
-
     #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
@@ -160,14 +175,29 @@ impl<H: Host> Vm<H> {
         function: u32,
         lane: bool,
     ) -> GeneralCodeCursor {
-        let admitted = lane && self.lane_admits(program);
+        let function_code = program.function(function as usize);
+        let interprets = self.execution_mode.allows_dynamic_execution();
+        #[cfg(feature = "native-execution")]
+        let interprets = interprets && self.programs.native_js_code(program_id).is_none();
+        let admitted = interprets && lane && self.lane_admits(program);
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
+        // Native transitions read only boundary metadata from packed code;
+        // they must not warm or allocate an interpreter dispatch expansion.
+        let decoded = if interprets {
+            function_code.decoded.on_entry(&function_code.code, &function_code.wide)
+        } else {
+            None
+        };
         GeneralCodeCursor {
+            program: program_id,
+            function,
+            code: function_code.code.as_ptr(),
+            wide: function_code.wide.as_ptr(),
+            decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
             lane: view,
             // A JavaScript activation deferred its view; a loop that turns hot derives it.
             back_edges: (admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm)
-                .then(|| HotLoop::of(program.function(function as usize))),
-            ..GeneralCodeCursor::new(program_id, program, function)
+                .then(|| HotLoop::of(function_code)),
         }
     }
 

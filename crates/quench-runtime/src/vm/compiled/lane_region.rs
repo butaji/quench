@@ -456,7 +456,7 @@ impl Lowering<'_, '_> {
             receiver_shapes.insert(field.shape, variable);
         }
         // A direct store of an atom needs a specialized run and no method cache naming it;
-        // nothing in a run changes either (`emit_js_store_admits`).
+        // nothing in a run changes either (`emit_js_own_field_set`).
         let mut store_atoms = BTreeMap::new();
         for instruction in instructions {
             if matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict) && !store_atoms.contains_key(&instruction.atom_index()) {

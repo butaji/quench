@@ -112,6 +112,7 @@ const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
+const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());
 const _: () = assert!(RECORD_SPACE_CAPACITY.is_power_of_two());
 const _: () = assert!(RECORD_SPACE_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
@@ -192,12 +193,28 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 }
 
+// Native JIT/AOT guards read `marked` using offsets exported from this layout.
+#[repr(C)]
 struct RecordBlock {
     occupied: [u64; BLOCK_WORDS],
     marked: [u64; BLOCK_WORDS],
     /// Young records that survived one minor collection (`PromotionAge::Second`): unmarked,
     /// swept by the next minor collection, which frees or promotes them.
     aged: [u64; BLOCK_WORDS],
+}
+
+/// Authoritative record-mark layout for native write-barrier guards.
+pub(super) const NATIVE_RECORDS_PER_BLOCK: usize = RECORDS_PER_BLOCK;
+pub(super) const NATIVE_RECORD_MARK_WORD_BITS: usize = OCCUPANCY_WORD_BITS;
+pub(super) const NATIVE_RECORD_BLOCK_SIZE: usize = size_of::<RecordBlock>();
+pub(super) const NATIVE_RECORD_MARK_OFFSET: usize = std::mem::offset_of!(RecordBlock, marked);
+const _: () = assert!(NATIVE_RECORD_MARK_OFFSET + size_of::<[u64; BLOCK_WORDS]>() <= NATIVE_RECORD_BLOCK_SIZE);
+
+impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+    /// The blocks stay valid until a heap callout can allocate or collect.
+    pub(super) fn native_mark_blocks(&self) -> (*const u8, usize) {
+        (self.blocks.as_ptr().cast(), self.blocks.len())
+    }
 }
 
 /// The parallel mark sets a record's bit in its block's `marked` word through an atomic view

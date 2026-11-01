@@ -355,6 +355,25 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
 }
 
 #[test]
+fn decoder_rejects_runtime_abi_without_derived_fact_layout() {
+    let program = crate::Engine::specialize("function check() { return 42; } check();", "fact-layout.js").unwrap();
+    let path = std::env::temp_dir().join(format!("quench-legacy-fact-abi-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    let fingerprint = ResidualProgram::RUNTIME_ABI_FINGERPRINT;
+    let abi = fingerprint.to_le_bytes();
+    let offset = bytes.windows(abi.len()).position(|window| window == abi).unwrap();
+    // The previous signature omitted both one-byte derived-layout widths.
+    const LEGACY_LAYOUT_MASK: u64 = u16::MAX as u64;
+    let legacy = (fingerprint & !LEGACY_LAYOUT_MASK).to_le_bytes();
+    bytes[offset..offset + legacy.len()].copy_from_slice(&legacy);
+    std::fs::write(&path, bytes).unwrap();
+    let result = ResidualProgram::read_binary(&path);
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(result.unwrap_err(), "residual runtime ABI mismatch");
+}
+
+#[test]
 fn decoder_rejects_unknown_property_definition_modes() {
     for wide in [false, true] {
         let mut program = crate::Engine::specialize(

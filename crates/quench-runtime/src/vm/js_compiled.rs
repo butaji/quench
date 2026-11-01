@@ -47,6 +47,8 @@ pub(super) struct JsJitNumericFieldInput {
     pub(super) cache_site: u16,
     pub(super) pc: usize,
     pub(super) receiver: JsJitFieldReceiver,
+    /// The earlier identical data-property read to reuse, or this input's index.
+    pub(super) source: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,8 +145,8 @@ const MAX_INSTRUCTIONS: usize = 256;
 const MAX_REGISTERS: usize = 256;
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
-const MAX_CAPTURE_ARGUMENTS: usize = 4;
-const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
+pub(super) const MAX_CAPTURE_ARGUMENTS: usize = 4;
+pub(super) const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
 
 /// Compile `function_id` when all reachable behavior is represented by the
 /// supported straight-line bytecode subset. Every unsupported shape is left
@@ -160,9 +162,10 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if let Some(capture) = number_capture_candidate(function) {
         return compile_capture_number(function_id, capture);
     }
-    if let Some(captures) = numeric_capture_candidate(function) {
-        return compile_numeric_with_captures(program, function_id, &captures)
-            .or_else(|| compile_numeric(program, function_id));
+    if let Some(captures) = numeric_capture_candidate(function)
+        && let Some(artifact) = compile_numeric_with_captures(program, function_id, &captures)
+    {
+        return Some(artifact);
     }
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
@@ -498,8 +501,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
 pub(super) fn numeric_capture_candidate(
     function: &Function,
 ) -> Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>> {
-    if function.params == 0
-        || function.parent.is_none()
+    if function.parent.is_none()
         || function.is_async
         || function.is_generator
         || function.is_class_constructor
@@ -516,6 +518,7 @@ pub(super) fn numeric_capture_candidate(
         return None;
     }
 
+    let field_inputs = cached_numeric_field_inputs_candidate(function);
     let mut captures = smallvec::SmallVec::new();
     for packed in &function.code {
         let instruction = packed.as_wide();
@@ -528,6 +531,13 @@ pub(super) fn numeric_capture_candidate(
                     depth: instruction.capture_depth(),
                     slot: instruction.capture_slot(),
                 };
+                if field_inputs.as_ref().is_some_and(|inputs| inputs.iter().any(|input| {
+                    matches!(input.receiver, JsJitFieldReceiver::Capture { register, capture: receiver }
+                        if register == instruction.result_register()
+                            && receiver.depth == capture.depth && receiver.slot == capture.slot)
+                })) {
+                    continue;
+                }
                 if !captures.iter().any(|seen: &JsJitCaptureArgument| {
                     seen.depth == capture.depth && seen.slot == capture.slot
                 }) {
@@ -539,9 +549,14 @@ pub(super) fn numeric_capture_candidate(
             }
             Op::LoadConst
             | Op::Move
+            | Op::GetField
             | Op::Binary
             | Op::NumericAdd
             | Op::NumericMultiply
+            | Op::Jump
+            | Op::JumpFalse
+            | Op::JumpTrue
+            | Op::JumpBinaryFalse
             | Op::Return => {}
             _ => return None,
         }
@@ -868,7 +883,9 @@ pub(super) fn cached_numeric_field_inputs_candidate(
         return None;
     }
     let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
+    let mut properties: smallvec::SmallVec<[(JsJitFieldReceiver, crate::bytecode::Atom); MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
     let mut captured_registers = [None; MAX_REGISTERS];
+    let mut parameter_unchanged = [true; MAX_REGISTERS];
     let mut branch_seen = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
         if packed.is_wide() {
@@ -883,7 +900,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 return None;
             }
             let FieldLookup::Atom {
-                base, cache_site, ..
+                atom, base, cache_site,
             } = instruction.field_lookup()?
             else {
                 return None;
@@ -892,7 +909,8 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 JsJitFieldReceiver::This
             } else if let Some(parameter) = base
                 .register_index()
-                .filter(|parameter| *parameter < function.params)
+                .filter(|parameter| *parameter < function.params
+                    && parameter_unchanged.get(usize::from(*parameter)).copied().unwrap_or(false))
             {
                 JsJitFieldReceiver::Parameter(parameter)
             } else {
@@ -913,14 +931,18 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 // entry across forward control flow.
                 return None;
             }
+            if inputs.len() == MAX_NUMERIC_FIELD_INPUTS {
+                return None;
+            }
+            let source = properties.iter().position(|property| *property == (receiver, atom))
+                .unwrap_or(properties.len());
+            properties.push((receiver, atom));
             inputs.push(JsJitNumericFieldInput {
                 cache_site,
                 pc,
                 receiver,
+                source: u16::try_from(source).ok()?,
             });
-            if inputs.len() > MAX_NUMERIC_FIELD_INPUTS {
-                return None;
-            }
         } else if instruction.op() == Op::LoadCapture {
             if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                 return None;
@@ -956,18 +978,16 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             }
             branch_seen = true;
         }
-        if !matches!(instruction.op(), Op::LoadCapture) {
-            let result_register = match instruction.op() {
-                Op::LoadConst
-                | Op::Move
-                | Op::GetField
-                | Op::Binary
-                | Op::NumericAdd
-                | Op::NumericMultiply
-                | Op::Unary => Some(instruction.result_register()),
-                _ => None,
-            };
-            if let Some(register) = result_register {
+        let result_register = match instruction.op() {
+            Op::LoadConst | Op::LoadCapture | Op::Move | Op::GetField | Op::Binary
+            | Op::NumericAdd | Op::NumericMultiply | Op::Unary => Some(instruction.result_register()),
+            _ => None,
+        };
+        if let Some(register) = result_register {
+            if usize::from(register) < usize::from(function.params) {
+                *parameter_unchanged.get_mut(usize::from(register))? = false;
+            }
+            if instruction.op() != Op::LoadCapture {
                 *captured_registers.get_mut(usize::from(register))? = None;
             }
         }
@@ -989,11 +1009,70 @@ pub(super) fn cached_numeric_field_inputs_candidate(
     (!inputs.is_empty()).then_some(inputs)
 }
 
+/// Static inputs and completion of a captured-value field assignment.
+#[derive(Clone, Copy)]
+pub(super) struct CapturedFieldStore {
+    pub(super) atom: crate::bytecode::Atom,
+    pub(super) capture_slot: u16,
+    pub(super) cache_site: u16,
+    pub(super) return_register: u16,
+    pub(super) update: Option<super::operations::NumberBitwise>,
+}
+
+#[cfg(feature = "native-execution")]
+pub(super) const CAPTURED_STORE_ASSIGNMENT: u16 = u16::MAX;
+
+/// A captured-value assignment or bitwise update followed by an undefined return. The
+/// activation and all implicit bindings must be plain before it can be elided.
+pub(super) fn captured_field_store_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<CapturedFieldStore> {
+    const STORE_BODY_RECORDS: usize = 4;
+    const UPDATE_BODY_RECORDS: usize = STORE_BODY_RECORDS + 2;
+    if !matches!(function.code.len(), STORE_BODY_RECORDS | UPDATE_BODY_RECORDS) || function.params != 0
+        || !function.plain_activation(program) || !eligible(function, program) {
+        return None;
+    }
+    let instructions = function.instructions().collect::<smallvec::SmallVec<[_; UPDATE_BODY_RECORDS]>>();
+    let (capture, store, undefined, ret, source, update) = match instructions.as_slice() {
+        [capture, store, undefined, ret] if capture.op() == Op::LoadCapture =>
+            (capture, store, undefined, ret, capture.result_register(), None),
+        [read, capture, binary, store, undefined, ret] => {
+            if read.op() != Op::GetField || capture.op() != Op::LoadCapture || binary.op() != Op::Binary { return None; }
+            let FieldLookup::Atom { atom, base: FieldBase::THIS, .. } = read.field_lookup()? else { return None; };
+            if read.result_flags() != 0 || binary.result_flags() != 0
+                || capture.result_register() == read.result_register()
+                || binary.operand_b().register_index() != Some(read.result_register())
+                || binary.operand_c().register_index() != Some(capture.result_register())
+                || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+                || atom != store.atom_index()
+            { return None; }
+            let operation = super::operations::NumberBitwise::from_js_instruction(binary.op(), binary.binary_operator())?;
+            (capture, store, undefined, ret, binary.result_register(), Some(operation))
+        }
+        _ => return None,
+    };
+    if capture.result_flags() != 0
+        || capture.capture_depth() != 0
+        || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        || store.result_flags() != 0 || store.register_a() != source
+        || undefined.op() != Op::LoadConst || undefined.result_flags() != 0
+        || !matches!(program.constants.get(undefined.constant_index()), Some(crate::bytecode::Constant::Undefined))
+        || ret.op() != Op::Return || ret.result_flags() != 0
+        || ret.register_a() != undefined.result_register()
+    {
+        return None;
+    }
+    Some(CapturedFieldStore {
+        atom: store.atom_index(), capture_slot: capture.capture_slot(),
+        cache_site: store.cache_site_index(), return_register: ret.register_a(),
+        update,
+    })
+}
+
 /// Recognize a direct field getter. The first instruction is an unconditional
-/// frame-returning `GetField`, so the remaining instructions are unreachable
-/// unless it throws. The VM still requires a cached data-property hit; that
-/// path cannot throw or invoke guest code. Accessors, proxies, and cache misses
-/// use the interpreter.
+/// frame-returning `GetField`; accessors, proxies, and misses use the VM.
 pub(super) fn cached_this_field_return_candidate(
     function: &Function,
 ) -> Option<JsJitFieldReturn> {
@@ -1868,11 +1947,65 @@ fn compile_string_transform(
 /// do not constrain the generated function. Dynamic Number comparisons remain
 /// native comparisons. Every non-Number entry is rejected by the caller's
 /// guard and resumes from the untouched interpreter frame.
+pub(super) struct JsBooleanRegion {
+    pub(super) function: ir::Function,
+    pub(super) params: usize,
+    pub(super) requires_signed_int32_arguments: bool,
+    pub(super) field_argument: Option<JsJitFieldArgument>,
+    pub(super) numeric_field_inputs: Vec<JsJitNumericFieldInput>,
+    pub(super) capture_arguments: Vec<JsJitCaptureArgument>,
+}
+
+/// A boolean region returns its exact bytecode PC above the low result bit.
+pub(super) const BOOLEAN_REGION_RESULT_BITS: u32 = 1;
+pub(super) const BOOLEAN_REGION_RESULT_MASK: u32 = (1 << BOOLEAN_REGION_RESULT_BITS) - 1;
+
+fn emit_boolean_region_return(
+    builder: &mut FunctionBuilder<'_>, value: ir::Value, pc: usize,
+) -> Option<()> {
+    let encoded_pc = u32::try_from(pc.checked_mul(1usize << BOOLEAN_REGION_RESULT_BITS)?).ok()?;
+    let encoded = builder.ins().bor_imm_u(value, i64::from(encoded_pc));
+    builder.ins().return_(&[encoded]);
+    Some(())
+}
+
 fn compile_number_domain_boolean_tree(
     program: &ResidualProgram,
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
+    let isa = super::jit_backend::target_isa("speed")?;
+    let region = lower_number_domain_boolean_tree(program, function_id, function, &*isa)?;
+    let mut context = cranelift_codegen::Context::for_function(region.function);
+    let compiled = context
+        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: region.params,
+        requires_signed_int32_arguments: region.requires_signed_int32_arguments,
+        result: JsJitResultKind::Boolean,
+        field_argument: region.field_argument,
+        numeric_field_inputs: region.numeric_field_inputs,
+        capture_arguments: region.capture_arguments,
+        general_dispatch_native_pcs: Vec::new(),
+    })
+}
+
+/// Residualize the boolean Number domain independently of code publication.
+pub(super) fn lower_number_domain_boolean_tree(
+    program: &ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+) -> Option<JsBooleanRegion> {
     if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
     {
@@ -2247,8 +2380,6 @@ fn compile_number_domain_boolean_tree(
     }
 
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed")?;
-
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::I32));
@@ -2434,7 +2565,7 @@ fn compile_number_domain_boolean_tree(
                         _ => return None,
                     };
                     let result = builder.ins().iconst(types::I32, i64::from(source));
-                    builder.ins().return_(&[result]);
+                    emit_boolean_region_return(&mut builder, result, pc)?;
                     emitted_return = true;
                 }
             }
@@ -2512,7 +2643,7 @@ fn compile_number_domain_boolean_tree(
                             let yes = builder.ins().iconst(types::I32, 1);
                             let no = builder.ins().iconst(types::I32, 0);
                             let result = builder.ins().select(condition, yes, no);
-                            builder.ins().return_(&[result]);
+                            emit_boolean_region_return(&mut builder, result, pc)?;
                             emitted_return = true;
                         } else {
                             let yes = builder.ins().f64const(Ieee64::with_bits(1.0f64.to_bits()));
@@ -2653,7 +2784,7 @@ fn compile_number_domain_boolean_tree(
                     }
                     _ => return None,
                 };
-                builder.ins().return_(&[result]);
+                emit_boolean_region_return(&mut builder, result, pc)?;
                 emitted_return = true;
             }
             _ => return None,
@@ -2675,29 +2806,13 @@ fn compile_number_domain_boolean_tree(
     }
 
     builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    Some(JsJitArtifact {
-        code,
+    Some(JsBooleanRegion {
+        function: native,
         params,
-        requires_signed_int32_arguments: false,
-        result: JsJitResultKind::Boolean,
+        requires_signed_int32_arguments: has_int32_bitwise_candidate(program, function),
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
         capture_arguments: capture_arguments.into_vec(),
-        general_dispatch_native_pcs: Vec::new(),
     })
 }
 
@@ -4362,6 +4477,7 @@ fn activation_is_irrelevant(function: &Function) -> bool {
 /// more instructions than interpreted ones (semver npm scenario +4.6%).
 #[derive(Default)]
 pub(super) struct JsEntryFacts {
+    pub(super) captured_store: Option<CapturedFieldStore>,
     pub(super) numeric_find: Option<JsJitNumericFind>,
     pub(super) field_increment: Option<JsJitThisFieldIncrement>,
     pub(super) field_return: Option<JsJitFieldReturn>,
@@ -4400,15 +4516,17 @@ impl JsEntryFacts {
         let numeric_find = numeric_find_candidate(function);
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
+        let captured_store = captured_field_store_candidate(program, function);
         let candidate = function_candidate(function, program);
         let shape = super::compiled::js_general_dispatch_shape(function);
         let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
-        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
+        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some() || captured_store.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
             return Self { candidate, general, general_acyclic, ..Self::default() };
         }
         Self {
+            captured_store,
             enters,
             candidate,
             general,

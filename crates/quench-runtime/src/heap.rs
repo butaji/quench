@@ -107,6 +107,13 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
+    pub(crate) proto_mask: u32,
+    pub(crate) proto_record_base: u32,
+    pub(crate) proto_record_end: u32,
+    pub(crate) mark_records_per_block: usize,
+    pub(crate) mark_word_bits: usize,
+    pub(crate) mark_block_size: usize,
+    pub(crate) mark_offset: usize,
     pub(crate) property_value_size: usize,
     pub(crate) property_value_align: usize,
 }
@@ -127,6 +134,13 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
+    proto_mask: cell::NATIVE_OBJECT_PROTO_MASK,
+    proto_record_base: cell::NATIVE_OBJECT_PROTO_RECORD_BASE,
+    proto_record_end: cell::NATIVE_OBJECT_PROTO_RECORD_END,
+    mark_records_per_block: records::NATIVE_RECORDS_PER_BLOCK,
+    mark_word_bits: records::NATIVE_RECORD_MARK_WORD_BITS,
+    mark_block_size: records::NATIVE_RECORD_BLOCK_SIZE,
+    mark_offset: records::NATIVE_RECORD_MARK_OFFSET,
     property_value_size: std::mem::size_of::<Value>(),
     property_value_align: std::mem::align_of::<Value>(),
 };
@@ -3375,7 +3389,7 @@ impl Heap {
         object: Value,
         slot: usize,
     ) -> Option<*mut Value> {
-        let vector = self.object_mut(object)?.properties();
+        let vector = self.object(object)?.properties();
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
