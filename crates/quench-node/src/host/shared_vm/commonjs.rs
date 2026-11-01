@@ -2145,6 +2145,10 @@ pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Net)
 }
 
+pub(crate) fn child_process_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::ChildProcess)
+}
+
 pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Dns)
 }
@@ -2582,7 +2586,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Http2Binding | BuiltinModule::Http2 => {
             Err(RootedError::host("node:http2 is not implemented".to_owned()))
         }
-        BuiltinModule::Cluster => node_library_module(context, "cluster.js", "cluster.js"),
+        BuiltinModule::Cluster => crate::modules::cluster::module(context),
         BuiltinModule::Repl => {
             // The internal CJS loader normally initializes this list during
             // Node's pre-execution phase. Quench loads the library module on

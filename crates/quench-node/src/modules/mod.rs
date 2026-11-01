@@ -132,6 +132,7 @@ pub(crate) mod readline_shared_vm;
 pub(crate) mod stream_shared_vm;
 pub(crate) mod string_decoder_shared_vm;
 pub(crate) mod test_runner;
+pub(crate) mod cluster;
 pub(crate) mod text_decoder_codec;
 #[cfg(quench_icu)]
 pub(crate) mod text_decoder_icu;

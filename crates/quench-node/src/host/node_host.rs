@@ -136,6 +136,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     pub(crate) node_test: crate::modules::test_runner::State,
+    pub(crate) cluster: crate::modules::cluster::State,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
@@ -381,6 +382,7 @@ impl SharedNodeState {
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             node_test: crate::modules::test_runner::State::default(),
+            cluster: crate::modules::cluster::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]

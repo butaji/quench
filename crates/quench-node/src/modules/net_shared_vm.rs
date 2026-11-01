@@ -1858,6 +1858,9 @@ pub(crate) fn server_address_operation(
     server: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    if let Some(address) = crate::modules::cluster::child::server_address(context, server)? {
+        return Ok(address);
+    }
     let Some(id) = optional_server_id(context, server)? else {
         return Ok(context.null());
     };
