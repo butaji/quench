@@ -1715,6 +1715,15 @@ fn emit_js_own_field_return(
     let fallback = builder.create_block();
     let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    emit_js_guarded_return(builder, value, result_pointer, exact.pc, fallback);
+    exact.emit(builder, fallback);
+}
+
+/// Return a computed value, preserving the exact-PC interruption fallback.
+fn emit_js_guarded_return(
+    builder: &mut RegionCore<'_>, value: ir::Value, result_pointer: ir::Value,
+    pc: usize, fallback: ir::Block,
+) {
     let returns = builder.create_block();
     let interrupted = builder.interrupt_requested();
     builder.ins().brif(interrupted, fallback, &[], returns, &[]);
@@ -1724,10 +1733,9 @@ fn emit_js_own_field_return(
     let status = builder.ins().iconst(
         types::I32,
         i64::from(JS_GENERAL_RETURN_STATUS_BASE)
-            + i64::try_from(exact.pc).expect("bounded general-dispatch PC"),
+            + i64::try_from(pc).expect("bounded general-dispatch PC"),
     );
     builder.ins().return_(&[status]);
-    exact.emit(builder, fallback);
 }
 
 /// Lower an own data-field store as the lane's store hit makes it
@@ -2977,23 +2985,23 @@ pub(super) fn lower_js_general_dispatch(
                 super::operations::NumberRelation::from_operator(instruction.binary_operator())
             })
             .flatten();
+        let relation_returns = instruction.returns_from_frame();
         let relation_result = numeric_binary
             && relation.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
+            && (instruction.result_flags() == 0
+                || (relation_returns && instruction.result_flags() == RETURN_REGISTER))
             && !instruction.writes_current_this()
-            && register_offset(instruction.result_register()).is_some()
+            && (relation_returns || register_offset(instruction.result_register()).is_some())
+            && (relation_returns || next.is_some())
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
-        if let (true, Some(next), Some(_relation), Some((left_operand, right_operand))) =
-            (relation_result, next, relation, operands)
+        if let (true, Some(_relation), Some((left_operand, right_operand))) =
+            (relation_result, relation, operands)
         {
             let fallback = builder.create_block();
-            let destination = register_offset(instruction.result_register())
-                .expect("prevalidated JS relation destination");
             let left_bits = read_js_tagged_operand(
                 &mut builder,
                 program,
@@ -3025,13 +3033,14 @@ pub(super) fn lower_js_general_dispatch(
                 .ins()
                 .iconst(types::I64, Value::FALSE.to_bits() as i64);
             let encoded = builder.ins().select(holds, true_value, false_value);
-            builder.ins().store(
-                MemFlagsData::trusted(),
-                encoded,
-                arguments,
-                destination,
-            );
-            builder.ins().jump(next, &[]);
+            if relation_returns {
+                emit_js_guarded_return(&mut builder, encoded, result_pointer, pc, fallback);
+            } else {
+                let destination = register_offset(instruction.result_register())
+                    .expect("prevalidated JS relation destination");
+                builder.ins().store(MemFlagsData::trusted(), encoded, arguments, destination);
+                builder.ins().jump(next.expect("prevalidated JS relation continuation"), &[]);
+            }
             builder.switch_to_block(fallback);
             emit_js_step_fallback(
                 &mut builder,

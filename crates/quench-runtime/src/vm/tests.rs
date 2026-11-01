@@ -15591,6 +15591,49 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_number_relations_with_exact_fallback() {
+    let source = r#"
+      function equal(a, b) { return a == b; }
+      function strict(a, b) { return a === b; }
+      function less(a, b) { return a < b; }
+      for (let i = 0; i < 64; i++) {
+        if (!equal(i, i) || !strict(i, i) || !less(i, i + 1)) throw Error('number relation');
+      }
+      if (!strict(0, -0) || strict(NaN, NaN) || less(NaN, 1)) throw Error('number edges');
+      let calls = 0;
+      const object = { valueOf() { calls++; return 4; } };
+      if (!equal(object, 4) || calls !== 1) throw Error('coercion fallback');
+      if (!equal(4n, 4n) || strict(4n, 4) || !less(3n, 4n)) throw Error('bigint fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-return-relation.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["equal", "strict", "less"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            (instruction.op() == crate::bytecode::Op::Binary && instruction.returns_from_frame()).then_some(pc)
+        }).expect("returning comparison");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
     let source = r#"
       function loose(value) { if (value == null) return 1; return 0; }
