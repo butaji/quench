@@ -6641,13 +6641,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let bits = self.boxed(value);
                 let receiver = self.register(instruction.register_b());
                 (receiver.representation == Representation::Tagged).then_some(())?;
-                let result = self.result;
+                let (callout, context, result) = self.callout_operands();
                 self.body.builder.ins().store(flags(), bits, result, 0);
                 let operation = super::OSR_FIELD_STORE | (u64::from(atom) << super::OSR_FIELD_STORE_ATOM_SHIFT) | u64::from(site);
                 let operation = self.body.builder.ins().iconst(types::I64, operation as i64);
-                let context = self.body.core.context;
                 let call = self.body.builder.ins().call_indirect(
-                    self.callout_signature, self.callout,
+                    self.callout_signature, callout,
                     &[context, operation, receiver.value, result],
                 );
                 let status = self.body.builder.inst_results(call)[0];
