@@ -12784,6 +12784,44 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Read guarded numeric captures without running guest code.
+    fn numeric_tier_captures(
+        &mut self,
+        captures: TierCaptures,
+        inputs: &[super::js_compiled::JsJitCaptureArgument],
+    ) -> Option<smallvec::SmallVec<[f64; 4]>> {
+        inputs.iter().map(|capture| {
+            self.tier_capture(captures, capture.depth, capture.slot)?.as_number()
+        }).collect()
+    }
+
+    /// Append only cached data-property Numbers; a miss leaves guest effects to the VM.
+    fn append_numeric_tier_fields(
+        &mut self,
+        program: &ResidualProgram,
+        this: Option<Value>,
+        parameters: &[Value],
+        captures: TierCaptures,
+        inputs: &[super::js_compiled::JsJitNumericFieldInput],
+        arguments: &mut smallvec::SmallVec<[f64; 8]>,
+    ) -> Option<()> {
+        for input in inputs {
+            let receiver = match input.receiver {
+                super::js_compiled::JsJitFieldReceiver::This => this?,
+                super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
+                    *parameters.get(usize::from(parameter))?
+                }
+                super::js_compiled::JsJitFieldReceiver::Capture { capture, .. } => {
+                    self.tier_capture(captures, capture.depth, capture.slot)?
+                }
+            };
+            let super::object::FieldCacheProbe::Hit(value) =
+                self.cached_field_hit(program, receiver, input.cache_site) else { return None; };
+            arguments.push(value.as_number()?);
+        }
+        Some(())
+    }
+
     /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
     fn tier_owned_capture(&mut self, captures: TierCaptures, depth: u16, slot: u16) -> Option<Value> {
         match captures {
@@ -13345,63 +13383,18 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let mut capture_values: smallvec::SmallVec<[f64; 4]> = smallvec::SmallVec::new();
-        let captures_numeric = capture_arguments.iter().all(|capture| {
-            self.tier_capture(entry.captures, capture.depth, capture.slot)
-                .and_then(Value::as_number)
-                .is_some_and(|value| {
-                    capture_values.push(value);
-                    true
-                })
-        });
+        let capture_values = self.numeric_tier_captures(entry.captures, &capture_arguments);
+        let captures_numeric = capture_values.is_some();
+        let capture_values = capture_values.unwrap_or_default();
         if captures_numeric {
             arguments.extend(capture_values.iter().copied());
         } else {
             numeric = false;
         }
-        if !numeric_field_inputs.is_empty() {
-            for input in numeric_field_inputs.iter().copied() {
-                let receiver = match input.receiver {
-                    super::js_compiled::JsJitFieldReceiver::This => {
-                        let Some(receiver) = entry.this else {
-                            numeric = false;
-                            break;
-                        };
-                        receiver
-                    }
-                    super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
-                        let Some(receiver) = registers.get(usize::from(parameter)).copied() else {
-                            numeric = false;
-                            break;
-                        };
-                        receiver
-                    }
-                    super::js_compiled::JsJitFieldReceiver::Capture { capture, .. } => {
-                        let Some(receiver) =
-                            self.tier_capture(entry.captures, capture.depth, capture.slot)
-                        else {
-                            numeric = false;
-                            break;
-                        };
-                        receiver
-                    }
-                };
-                match self.cached_field_hit(program, receiver, input.cache_site) {
-                    super::object::FieldCacheProbe::Hit(value) => {
-                        if let Some(value) = value.as_number() {
-                            arguments.push(value);
-                        } else {
-                            numeric = false;
-                            break;
-                        }
-                    }
-                    super::object::FieldCacheProbe::OrdinaryMiss
-                    | super::object::FieldCacheProbe::Ineligible => {
-                        numeric = false;
-                        break;
-                    }
-                }
-            }
+        if self.append_numeric_tier_fields(
+            program, entry.this, &registers, entry.captures, &numeric_field_inputs, &mut arguments,
+        ).is_none() {
+            numeric = false;
         }
         if let Some(field_argument) = field_argument {
             let receiver = first_argument?;
