@@ -495,8 +495,10 @@ pub(crate) fn socket_set_timeout(c: &mut Context<'_>, this: RootId, args: &[Root
         if !c.is_callable_rooted(callback)? {
             return Err(super::util_shared_vm::argument_type_error(c, callback, "callback", "function")?);
         }
+        // `setStreamTimeout`: a zero timeout removes the callback instead of adding it.
         let event = c.string_rooted("timeout");
-        call_method(c, this, "once", &[event, callback])?;
+        let method = if milliseconds == 0.0 { "removeListener" } else { "once" };
+        call_method(c, this, method, &[event, callback])?;
     }
     put(c, this, "timeout", timeout)?;
     hide(c, this, TIMEOUT, timeout)?;

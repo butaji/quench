@@ -2592,9 +2592,6 @@ fn drain_checkpoint(
         if crate::modules::cares_binding::poll(runtime, program)? {
             continue;
         }
-        if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
-            continue;
-        }
         let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
         let transport_progress = crate::modules::net_shared_vm::transport_poll::poll(runtime, program, &shared_state)?;
         // Each turn of the loop is a collection safepoint, once its network writes have gone
@@ -2717,8 +2714,7 @@ fn drain_checkpoint(
         let Some(cutoff) = immediate_cutoff else {
             let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
             if has_referenced_shared_work(&shared_state) {
-                let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
-                    .min(crate::modules::net_shared_vm::poll_interval())
+                let poll_interval = crate::modules::net_shared_vm::poll_interval()
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
@@ -2789,8 +2785,7 @@ fn drain_checkpoint(
         if !ran_immediate {
             let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
             if has_referenced_shared_work(&shared_state) {
-                let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
-                    .min(crate::modules::net_shared_vm::poll_interval())
+                let poll_interval = crate::modules::net_shared_vm::poll_interval()
                     .min(crate::modules::child_process_shared_vm::poll_interval());
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
@@ -2864,7 +2859,6 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || shared_state.borrow().dns.has_work()
         || crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
-        || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::net_shared_vm::has_work(&shared_state.borrow().tcp)
         || crate::modules::napi::has_work()

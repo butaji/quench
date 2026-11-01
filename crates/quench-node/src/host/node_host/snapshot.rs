@@ -112,7 +112,6 @@ impl SharedNodeState {
             report_config: _,
             initial_node_options: _,
             initial_pending_deprecation: _,
-            fetch,
             diagnostics,
             http,
             tcp,
@@ -202,7 +201,6 @@ impl SharedNodeState {
         stream_intrinsics.write(writer)?;
         stream_high_water_marks.write(writer)?;
         timer_duration_warnings.write(writer)?;
-        fetch.write_snapshot(writer)?;
         diagnostics.write(writer)?;
         http.write_snapshot(writer)?;
         tcp.write_snapshot(writer)?;
@@ -276,7 +274,6 @@ impl SharedNodeState {
         self.stream_intrinsics = HostSnap::read(reader)?;
         self.stream_high_water_marks = HostSnap::read(reader)?;
         self.timer_duration_warnings = HostSnap::read(reader)?;
-        self.fetch.read_snapshot(reader)?;
         self.diagnostics = HostSnap::read(reader)?;
         self.http.read_snapshot(reader)?;
         self.tcp.read_snapshot(reader)?;

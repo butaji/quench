@@ -796,41 +796,17 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
 /// The globals each web polyfill defines, in definition order. They are lazy data properties
 /// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
 /// A member materializes writable, so a polyfill defining one read-only says so explicitly.
-pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &[
-    "ReadableStream",
-    "WritableStream",
-    "TransformStream",
-    "CompressionStream",
-    "DecompressionStream",
-    "TextEncoderStream",
-    "TextDecoderStream",
-    "ByteLengthQueuingStrategy",
-    "CountQueuingStrategy",
-    "ReadableStreamDefaultReader",
-    "ReadableStreamBYOBReader",
-    "ReadableStreamBYOBRequest",
-    "ReadableByteStreamController",
-    "ReadableStreamDefaultController",
-    "TransformStreamDefaultController",
-    "WritableStreamDefaultWriter",
-    "WritableStreamDefaultController",
-];
+pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &crate::modules::webstreams_shared_vm::GLOBALS;
 // Blob/File are independent of Fetch. Importing buffer must not recursively
 // load undici while the public Buffer binding is still being initialized.
-pub(crate) const WEB_API_GLOBALS: &[&str] = &[
-    "__quenchBlobEnsureReadable",
-    "Blob",
-    "File",
-];
+pub(crate) const WEB_API_GLOBALS: &[&str] = &crate::modules::blob_shared_vm::GLOBALS;
+/// The Fetch globals, and `MessageEvent`, which the same initializer defines.
 pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
-    "FormData",
-    "Headers",
-    "Request",
-    "Response",
+    crate::modules::fetch_shared_vm::GLOBALS[0],
+    crate::modules::fetch_shared_vm::GLOBALS[1],
+    crate::modules::fetch_shared_vm::GLOBALS[2],
+    crate::modules::fetch_shared_vm::GLOBALS[3],
     "MessageEvent",
-    "CloseEvent",
-    "ErrorEvent",
-    "WebSocket",
 ];
 
 fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -839,6 +815,8 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
         ("webStreamsInitialize", WEB_STREAM_GLOBALS),
         ("webApisInitialize", WEB_API_GLOBALS),
         ("webFetchInitialize", FETCH_API_GLOBALS),
+        ("webBroadcastChannelInitialize", &["BroadcastChannel"]),
+        ("webSocketInitialize", &["WebSocket"]),
     ] {
         let names: Vec<&str> = names.iter().copied().filter(|name| web_global_enabled(context, name)).collect();
         let initializer = context.host_function(super::operation(operation))?;
@@ -858,21 +836,6 @@ fn web_global_enabled(context: &mut Context<'_>, name: &str) -> bool {
         || context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-websocket")
 }
 
-
-pub(super) fn initialize_web_streams(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let module = cached_builtin(context, BuiltinModule::WebStreams)?;
-    let global = context.global_root()?;
-    for name in WEB_STREAM_GLOBALS {
-        let value = get(context, module, name)?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, value, true, false, true)?;
-    }
-    Ok(context.undefined())
-}
 
 /// `process.release`'s key and its members (`process.release.name` is Node's runtime name).
 const PROCESS_RELEASE: &str = "release";
@@ -898,88 +861,6 @@ pub(super) fn initialize_process_release(
     Ok(context.undefined())
 }
 
-pub(super) fn initialize_web_apis(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let expose_web_worker = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-web-worker");
-    if expose_web_worker {
-        // Node exposes the browser-style Worker global only when the
-        // experimental web worker option is enabled. Use Node's own lazy
-        // interface helper so the global has the same accessor semantics and
-        // the implementation remains lazily loaded.
-        let expose_lazy_interfaces = node_library_export(
-            context,
-            "internal/util.js",
-            "internal/util.js",
-            "exposeLazyInterfaces",
-        )?;
-        let global = context.global_root()?;
-        let id = context.string_rooted("internal/webworker");
-        let key = context.string_rooted("Worker");
-        let keys = context.array_rooted(&[key])?;
-        let undefined = context.undefined();
-        context.call_rooted(expose_lazy_interfaces, undefined, &[global, id, keys])?;
-    }
-    crate::host::removed_javascript("node:bootstrap/shared-vm/web-apis.js")?;
-    // Keep the global constructor identical to Node's internal EventTarget
-    // export. This is observable in Node's own global-surface assertions and
-    // avoids a second, subtly incompatible CustomEvent implementation.
-    let custom_event = node_library_export(
-        context,
-        "internal/event_target.js",
-        "internal/event_target.js",
-        "CustomEvent",
-    )?;
-    let global = context.global_root()?;
-    let key = context.string_rooted("CustomEvent");
-    context.define_data_property_rooted(global, key, custom_event, true, false, true)?;
-    Ok(context.undefined())
-}
-
-pub(super) fn initialize_fetch_apis(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    // Execute Node's pinned implementation in this VM, sharing its WebIDL and
-    // Fetch algorithms rather than maintaining a second partial implementation.
-    let global = context.global_root()?;
-    let root = context.host_mut().node_library_root.clone();
-    let path = root.join("deps/undici/undici.js");
-    let parent = module_record(context, &root.join("lib/internal/fetch.js"), None, false)?;
-    let undici = load(context, &path, Some(parent), EntryGoal::CommonJs)?;
-    for name in [
-        "Headers",
-        "Request",
-        "Response",
-        "FormData",
-        "MessageEvent",
-        "CloseEvent",
-        "ErrorEvent",
-        "WebSocket",
-    ] {
-        if !web_global_enabled(context, name) {
-            continue;
-        }
-        let constructor = get(context, undici, name)?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, constructor, true, false, true)?;
-    }
-    // The bootstrap fetch wrapper issues requests through Node's HTTP client.
-    // ESM fixtures have no global `require`, so provide the same builtin client
-    // explicitly instead of letting the wrapper fail before making a request.
-    let http = cached_builtin(context, BuiltinModule::Http)?;
-    let key = context.string_rooted("__nodeHttp");
-    context.define_data_property_rooted(global, key, http, false, false, true)?;
-    Ok(context.undefined())
-}
 
 pub(crate) fn perf_hooks_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::PerfHooks)
@@ -2379,6 +2260,10 @@ pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Module)
 }
 
+pub(crate) fn zlib_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Zlib)
+}
+
 pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Stream)
 }
@@ -2825,7 +2710,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::StreamPromises => crate::modules::stream_shared_vm::promises(context),
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
         BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
-        BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
+        BuiltinModule::WebStreams => crate::modules::webstreams_shared_vm::module(context),
         BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;

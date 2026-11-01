@@ -768,7 +768,7 @@ pub(crate) fn btoa(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Ro
 }
 
 /// WHATWG forgiving-base64 decode: the bytes, or Node's `atob` failure result.
-fn forgiving_base64(units: &[u16]) -> Result<Vec<u8>, f64> {
+pub(crate) fn forgiving_base64(units: &[u16]) -> Result<Vec<u8>, f64> {
     const ASCII_WHITESPACE: [u16; 5] = [0x09, 0x0a, 0x0c, 0x0d, 0x20];
     let mut data: Vec<u8> = Vec::with_capacity(units.len());
     for unit in units.iter().filter(|unit| !ASCII_WHITESPACE.contains(unit)) {

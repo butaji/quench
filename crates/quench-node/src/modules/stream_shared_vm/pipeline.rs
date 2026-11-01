@@ -88,6 +88,9 @@ fn run(c: &mut Context<'_>, streams: RootId, callback: RootId, options: RootId) 
         } else if is_node_stream(c, stream)? {
             node_stage(c, record, current, stream, end, last)?;
             stream
+        } else if utils::is_web_stream(c, stream)? {
+            web_stage(c, record, current, stream, end)?;
+            stream
         } else {
             return Err(unsupported_body(c, stream)?);
         };
@@ -227,8 +230,31 @@ fn function_stage(
     Ok(destination)
 }
 
+/// A web stream stage: the previous stage pumped into it (`pumpToWeb`).
+fn web_stage(c: &mut Context<'_>, record: RootId, previous: RootId, stream: RootId, end: bool) -> Result<(), RootedError> {
+    let input = if is_readable_node_stream(c, previous, false)? {
+        async_iterable(c, previous)?
+    } else if utils::is_readable_stream(c, previous)? || is_iterable(c, previous, None)? {
+        previous
+    } else if utils::is_transform_stream(c, previous)? {
+        get(c, previous, "readable")?
+    } else {
+        let error = errors::invalid_argument_type(
+            c,
+            previous,
+            "val",
+            "an instance of Readable, Iterable, AsyncIterable, ReadableStream, or TransformStream",
+        )?;
+        return Err(c.throw(error));
+    };
+    add_finishes(c, record, 1.0)?;
+    let finish = get(c, record, "finish")?;
+    super::super::webstreams_shared_vm::adapters::pump_to_web(c, input, stream, finish, end)
+}
+
 fn node_stage(c: &mut Context<'_>, record: RootId, previous: RootId, stream: RootId, end: bool, last: bool) -> Result<(), RootedError> {
     let finish = get(c, record, "finish")?;
+    let previous = if utils::is_transform_stream(c, previous)? && !is_node_stream(c, previous)? { get(c, previous, "readable")? } else { previous };
     if is_readable_node_stream(c, previous, false)? {
         add_finishes(c, record, 2.0)?;
         let cleanup = pipe(c, record, previous, stream, end)?;
