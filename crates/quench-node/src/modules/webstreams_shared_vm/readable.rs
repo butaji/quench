@@ -1130,7 +1130,8 @@ mod iterator_record {
     pub(super) const SYNC: &str = "sync";
 }
 
-fn from(c: &mut Context<'_>, iterable: RootId) -> Outcome {
+/// `ReadableStream.from(iterable)`.
+pub(crate) fn from(c: &mut Context<'_>, iterable: RootId) -> Outcome {
     let record = get_async_iterator(c, iterable)?;
     let stream_cell = super::record(c, &[])?;
     let pull = function(c, Member::FromPull, "", &[record, stream_cell])?;

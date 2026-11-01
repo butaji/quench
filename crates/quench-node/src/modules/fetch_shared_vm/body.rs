@@ -111,8 +111,24 @@ pub(crate) fn extract(c: &mut Context<'_>, object: RootId) -> Result<(RootId, Op
         }
         return Ok((from_stream(c, object)?, None));
     }
+    if is_async_iterable(c, object)? {
+        let stream = readable::from(c, object)?;
+        return Ok((from_stream(c, stream)?, None));
+    }
     let text = super::usv_string(c, object)?;
     Ok((from_bytes(c, text.into_bytes())?, Some(TEXT_PLAIN.to_owned())))
+}
+
+/// Whether `object` has an async iterator, which undici reads as a body stream.
+fn is_async_iterable(c: &mut Context<'_>, object: RootId) -> Result<bool, RootedError> {
+    if !c.is_object_rooted(object)? {
+        return Ok(false);
+    }
+    let global = c.global_root()?;
+    let symbol = get(c, global, "Symbol")?;
+    let key = get(c, symbol, "asyncIterator")?;
+    let method = c.get_property_rooted(object, key)?;
+    c.is_callable_rooted(method)
 }
 
 /// Whether `object` is a ReadableStream (a body that cannot be sent twice).
