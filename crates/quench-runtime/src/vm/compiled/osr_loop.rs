@@ -629,6 +629,19 @@ fn tagged_registers_with_failure(
                 .then_some(instruction.result_register())
         }))
         .chain(held.iter().copied())
+        // A field receiver the region's field reads give holds an object.
+        .chain(instructions.iter().filter(|instruction| instruction.op() == Op::GetField).filter_map(|instruction| {
+            let receiver = object_reads(*instruction)?;
+            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(receiver)).peekable();
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(receiver)
+        }))
+        // A branch on a value only field reads give tests its truthiness tagged
+        // (`Lowering::tagged_truthiness`): a field may hold an object.
+        .chain(instructions.iter().filter(|instruction| matches!(instruction.op(), Op::JumpFalse | Op::JumpTrue)).filter_map(|instruction| {
+            let value = instruction.register_a();
+            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
+        }))
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
         // (`LoopRegion::dynamic_field_stores`); a Number result is boxed at the store.
@@ -1706,7 +1719,12 @@ fn admit_lifetime_roles(
             Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply
             | Op::IncDec | Op::ToNumeric | Op::Unary | Op::GetIndex | Op::SetIndex
             | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
-            | Op::JumpBinaryFalse))
+            | Op::JumpBinaryFalse | Op::SetField | Op::SetFieldStrict)
+            // A field read by name from a register or `this`: its base renames as a register
+            // does. A site's lookup names its base in the site table, which keeps VM slots.
+            || (instruction.op() == Op::GetField
+                && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
+                    if base == FieldBase::THIS || base.register_index().is_some())))
     {
         return None;
     }
@@ -1756,6 +1774,11 @@ fn admit_lifetime_roles(
     }
     let mut canonical = flow.instructions.clone();
     for (offset, instruction) in canonical.iter_mut().enumerate() {
+        // Field receivers rename as values do; only array accesses read through an entry
+        // array's root.
+        if !matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) {
+            continue;
+        }
         if let Some(receiver) = object_reads(*instruction) {
             let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
                 Some(root) => root,
@@ -1804,8 +1827,12 @@ fn admit_lifetime_roles(
                         _ => return None,
                     }
                 }
+                FieldLayout::FieldBase => {
+                    let base = FieldBase(raw);
+                    if base == FieldBase::THIS { raw } else { FieldBase::register(read(base.register_index()?)?).0 }
+                }
                 FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
-                | FieldLayout::FieldBase | FieldLayout::RegisterWindowBase => return None,
+                | FieldLayout::RegisterWindowBase => return None,
                 _ => raw,
             })
         };
@@ -1838,6 +1865,21 @@ fn admit_lifetime_roles(
     for array in &mut region.arrays { array.register = original[usize::from(array.register)]; }
     region.dynamic_arrays = region.dynamic_arrays.iter().map(|register| original[usize::from(*register)]).collect();
     for branch in region.identity_branches.values_mut() { branch.register = original[usize::from(branch.register)]; }
+    // Field receivers name VM slots again: an entry receiver's identity is its slot at entry,
+    // and a redefined one's reads go through the canonical instructions' registers.
+    for field in &mut region.fields {
+        if let FieldReceiver::Register(register) = &mut field.receiver {
+            *register = original[usize::from(*register)];
+        }
+    }
+    for store in &mut region.field_store_sites { store.receiver = original[usize::from(store.receiver)]; }
+    region.held = std::mem::take(&mut region.held).into_iter()
+        .map(|(register, (mut path, index))| {
+            if let FieldReceiver::Register(root) = &mut path.root {
+                *root = original[usize::from(*root)];
+            }
+            (original[usize::from(register)], (path, index))
+        }).collect();
     region.instructions = canonical;
     region.live = flow.live.take();
     region.lifetime_roles = Some(LifetimeRoles { tagged_entries, tagged_definitions });
@@ -2400,10 +2442,15 @@ pub(crate) struct Observation<'a> {
     pub(crate) widened: &'a std::collections::BTreeSet<Widening>,
 }
 
+/// The most receiver shapes one native field read tests inline (`Lowering::native_dynamic_field`).
+pub(crate) const NATIVE_FIELD_SHAPES: usize = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFieldLoad {
-    pub(crate) shape: u32,
-    pub(crate) slot: u16,
+    /// The receiver shapes the read loads directly and each one's slot: at most
+    /// `NATIVE_FIELD_SHAPES`, the first `count`.
+    pub(crate) shapes: [(u32, u16); NATIVE_FIELD_SHAPES],
+    pub(crate) count: u8,
     /// Shape IDs are remapped by collection. Compiled users must retire this descriptor when
     /// the process-wide shape-layout epoch changes.
     pub(crate) epoch: u64,
@@ -5102,11 +5149,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .builder
             .ins()
             .load(types::I32, flags(), object, layout.auxiliary_offset as i32);
-        let wrong_shape = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, auxiliary, i64::from(load.shape));
+        // The receiver's shape picks its slot among the site's shapes; any other leaves.
+        let mut matched = self.body.builder.ins().iconst(types::I8, 0);
+        let mut slot = self.body.builder.ins().iconst(types::I32, 0);
+        for &(shape, shape_slot) in &load.shapes[..usize::from(load.count)] {
+            let same = self.body.builder.ins().icmp_imm_u(IntCC::Equal, auxiliary, i64::from(shape));
+            let this_slot = self.body.builder.ins().iconst(types::I32, i64::from(shape_slot));
+            slot = self.body.builder.ins().select(same, this_slot, slot);
+            matched = self.body.builder.ins().bor(matched, same);
+        }
+        let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::Equal, matched, 0);
         self.guard(pc, wrong_shape);
 
         let payload = self
@@ -5143,11 +5195,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.switch_to_block(inline_block);
         self.body.builder.seal_block(inline_block);
         self.chains.insert(inline_block, head);
-        if usize::from(load.slot) >= layout.inline_property_count {
-            let exit = self.exit_block(pc);
-            self.body.builder.ins().jump(exit, &[]);
-        } else {
-            let half = self.body.builder.ins().ushr_imm_u(payload, i64::from(load.slot) * i64::from(u32::BITS));
+        {
+            let beyond = self.body.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, slot, layout.inline_property_count as i64);
+            self.guard(pc, beyond);
+            let shift = self.body.builder.ins().imul_imm_u(slot, i64::from(u32::BITS));
+            let shift = self.body.builder.ins().uextend(types::I64, shift);
+            let half = self.body.builder.ins().ushr(payload, shift);
             let narrow = self.body.builder.ins().ireduce(types::I32, half);
             let integer = self.body.builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
             let integer_block = self.body.builder.create_block();
@@ -5184,7 +5237,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .builder
             .ins()
             .band_imm_u(start, layout.storage_start_mask as i64);
-        let position = self.body.builder.ins().iadd_imm_u(start, i64::from(load.slot));
+        let position = self.body.builder.ins().iadd(start, slot);
         let position = self.body.builder.ins().uextend(types::I64, position);
         let out_of_bounds = self
             .body
