@@ -20,15 +20,31 @@ const NATIVE_JS_REGION_EXIT: u32 = super::compiled::NATIVE_JS_INVALID_PC + 1;
 // The shared entry ABI's memory-base word is unused by JavaScript bodies.
 const REGION_START_PC_PARAMETER: usize = 1;
 
+/// How executable memory receives the call-threaded graph. Both publications
+/// residualize the same graph over the same semantic entries; they differ in
+/// when the residual shape is compiled (`native_stencil`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeJsBackend {
+    /// Copy and patch shapes compiled once per process. Falls back to
+    /// `Cranelift` where the target has no stencil library.
+    #[default]
+    Stencil,
+    /// Lower every function (or region) through Cranelift.
+    Cranelift,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct NativeJsCodegenOptions {
+    /// Bounds the Cranelift working CFG; stencil publication has no CFG.
     pub region_instruction_budget: NonZeroUsize,
+    pub backend: NativeJsBackend,
 }
 
 impl Default for NativeJsCodegenOptions {
     fn default() -> Self {
         Self {
             region_instruction_budget: DEFAULT_REGION_INSTRUCTION_BUDGET,
+            backend: NativeJsBackend::default(),
         }
     }
 }

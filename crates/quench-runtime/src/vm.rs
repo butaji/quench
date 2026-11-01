@@ -5,6 +5,8 @@ pub use native_operands::NativeJsOperands;
 pub(crate) mod native_object;
 #[cfg(feature = "aot")]
 pub(crate) mod native_graph;
+#[cfg(all(feature = "aot", feature = "jit"))]
+pub(crate) mod native_stencil;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
 mod compiled;

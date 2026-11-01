@@ -102,3 +102,7 @@ phf = { version = "0.14", features = ["macros"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[[example]]
+name = "native_publication"
+required-features = ["aot", "jit"]

@@ -5459,15 +5459,29 @@ impl CodeMemory {
     }
 
     pub(super) fn new(bytes: &[u8]) -> Option<Self> {
-        let length = bytes.len().max(1);
+        Self::assemble(bytes.len(), |_, code| {
+            code.copy_from_slice(bytes);
+            Ok(())
+        })
+        .ok()
+    }
+
+    /// Map `length` writable bytes, let `fill` write the code knowing its final
+    /// address, then make the mapping read-only and executable. Copy-and-patch
+    /// publication needs the address to resolve PC-relative continuations.
+    pub(super) fn assemble(
+        length: usize,
+        fill: impl FnOnce(*mut u8, &mut [u8]) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let requested = length;
+        let length = length.max(1);
         // `mmap` rounds to whole pages. Store that rounded length explicitly
         // so the JS tier's budget reflects its executable mappings.
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        let page_size = usize::try_from(page_size).ok()?;
+        let page_size = usize::try_from(page_size).map_err(|_| "page size is unavailable")?;
         let length = length
-            .checked_add(page_size.checked_sub(1)?)?
-            .checked_div(page_size)?
-            .checked_mul(page_size)?;
+            .checked_next_multiple_of(page_size)
+            .ok_or("code mapping size overflow")?;
         // SAFETY: an anonymous private mapping; the result is checked.
         let pointer = unsafe {
             libc::mmap(
@@ -5480,19 +5494,17 @@ impl CodeMemory {
             )
         };
         if pointer == libc::MAP_FAILED {
-            return None;
+            return Err("code mapping failed".into());
         }
-        let pointer = pointer.cast::<u8>();
-        // SAFETY: the mapping is `length` writable bytes.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer, bytes.len()) };
+        let memory = Self { pointer: pointer.cast::<u8>(), length };
+        // SAFETY: the mapping is `length >= requested` writable bytes owned by `memory`.
+        let code = unsafe { std::slice::from_raw_parts_mut(memory.pointer, requested) };
+        fill(memory.pointer, code)?;
         // SAFETY: the same mapping, now read-only and executable.
-        if unsafe { libc::mprotect(pointer.cast(), length, libc::PROT_READ | libc::PROT_EXEC) } != 0
-        {
-            // SAFETY: unmapping the mapping created above.
-            unsafe { libc::munmap(pointer.cast(), length) };
-            return None;
+        if unsafe { libc::mprotect(memory.pointer.cast(), length, libc::PROT_READ | libc::PROT_EXEC) } != 0 {
+            return Err("code mapping could not be made executable".into());
         }
-        Some(Self { pointer, length })
+        Ok(memory)
     }
 }
 
@@ -5775,6 +5787,10 @@ fn compile_and_publish_entry(
 pub(super) fn compile_eager_native<H: Host>(
     program: ResidualProgram, options: super::native_graph::NativeJsCodegenOptions,
 ) -> Result<crate::NativeJsProgram<H>, String> {
+    #[cfg(feature = "jit")]
+    if options.backend == super::native_graph::NativeJsBackend::Stencil && super::native_stencil::available() {
+        return super::native_stencil::compile_program(program).map(|(native, _)| native);
+    }
     program.validate_unless_proven()?;
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
@@ -15066,7 +15082,7 @@ mod tests {
     #[cfg(feature = "aot")]
     fn partitioned_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, Entry) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap() };
+        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap(), backend: crate::NativeJsBackend::Cranelift };
         let native = crate::NativeJsProgram::compile_eager_with_options((*program).clone(), options).unwrap();
         let prepared = vm.prepare_native_script(native).unwrap();
         let entry = prepared.native.as_ref().unwrap().entries()[0];
