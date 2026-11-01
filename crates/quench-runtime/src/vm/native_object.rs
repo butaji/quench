@@ -28,6 +28,9 @@ pub struct NativeData {
 }
 
 /// A symbol's signature has one authority: its definition, or its import.
+// A module holds one entry per symbol and emits each once; most are definitions, so
+// boxing them would add an allocation per function to save space on a few imports.
+#[allow(clippy::large_enum_variant)]
 pub enum NativeFunction {
     Definition {
         name: String,
