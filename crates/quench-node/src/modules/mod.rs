@@ -122,6 +122,7 @@ pub(crate) mod private_slots;
 pub(crate) mod punycode_shared_vm;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod string_decoder_codec;
+pub(crate) mod readline_shared_vm;
 pub(crate) mod stream_shared_vm;
 pub(crate) mod string_decoder_shared_vm;
 pub(crate) mod test_shared_vm;
@@ -156,6 +157,7 @@ pub(crate) mod v8_shared_vm;
 pub(crate) mod vm_shared_vm;
 pub(crate) mod web_stream_consumers_shared_vm;
 pub(crate) mod zlib_constants;
+pub(crate) mod zlib_shared_vm;
 
 pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;

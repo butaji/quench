@@ -26,17 +26,45 @@ impl Mode {
         [Self::Deflate, Self::Inflate, Self::Gzip, Self::Gunzip, Self::DeflateRaw, Self::InflateRaw, Self::Unzip];
 }
 
+/// The constants lib/zlib.js reads by name, each the value of its table entry.
+pub(crate) const Z_NO_FLUSH: f64 = 0.0;
+pub(crate) const Z_PARTIAL_FLUSH: f64 = 1.0;
+pub(crate) const Z_SYNC_FLUSH: f64 = 2.0;
+pub(crate) const Z_FULL_FLUSH: f64 = 3.0;
+pub(crate) const Z_FINISH: f64 = 4.0;
+pub(crate) const Z_BLOCK: f64 = 5.0;
+pub(crate) const Z_DEFAULT_COMPRESSION: f64 = -1.0;
+pub(crate) const Z_FIXED: f64 = 4.0;
+pub(crate) const Z_DEFAULT_STRATEGY: f64 = 0.0;
+pub(crate) const Z_MIN_WINDOWBITS: f64 = 8.0;
+pub(crate) const Z_MAX_WINDOWBITS: f64 = 15.0;
+pub(crate) const Z_DEFAULT_WINDOWBITS: f64 = 15.0;
+pub(crate) const Z_MIN_CHUNK: f64 = 64.0;
+pub(crate) const Z_DEFAULT_CHUNK: f64 = 16384.0;
+pub(crate) const Z_MIN_MEMLEVEL: f64 = 1.0;
+pub(crate) const Z_MAX_MEMLEVEL: f64 = 9.0;
+pub(crate) const Z_DEFAULT_MEMLEVEL: f64 = 8.0;
+pub(crate) const Z_MIN_LEVEL: f64 = -1.0;
+pub(crate) const Z_MAX_LEVEL: f64 = 9.0;
+pub(crate) const BROTLI_OPERATION_PROCESS: f64 = 0.0;
+pub(crate) const BROTLI_OPERATION_FLUSH: f64 = 1.0;
+pub(crate) const BROTLI_OPERATION_FINISH: f64 = 2.0;
+pub(crate) const BROTLI_OPERATION_EMIT_METADATA: f64 = 3.0;
+pub(crate) const ZSTD_E_CONTINUE: f64 = 0.0;
+pub(crate) const ZSTD_E_FLUSH: f64 = 1.0;
+pub(crate) const ZSTD_E_END: f64 = 2.0;
+
 /// Marks the entry whose value comes from the linked zlib's version, not the table.
 const LINKED_ZLIB_VERNUM: f64 = f64::NAN;
 
 /// Node's constants in Node's order.
 const ZLIB_CONSTANTS: &[(&str, f64)] = &[
-    ("Z_NO_FLUSH", 0.0),
-    ("Z_PARTIAL_FLUSH", 1.0),
-    ("Z_SYNC_FLUSH", 2.0),
-    ("Z_FULL_FLUSH", 3.0),
-    ("Z_FINISH", 4.0),
-    ("Z_BLOCK", 5.0),
+    ("Z_NO_FLUSH", Z_NO_FLUSH),
+    ("Z_PARTIAL_FLUSH", Z_PARTIAL_FLUSH),
+    ("Z_SYNC_FLUSH", Z_SYNC_FLUSH),
+    ("Z_FULL_FLUSH", Z_FULL_FLUSH),
+    ("Z_FINISH", Z_FINISH),
+    ("Z_BLOCK", Z_BLOCK),
     ("Z_OK", 0.0),
     ("Z_STREAM_END", 1.0),
     ("Z_NEED_DICT", 2.0),
@@ -49,12 +77,12 @@ const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("Z_NO_COMPRESSION", 0.0),
     ("Z_BEST_SPEED", 1.0),
     ("Z_BEST_COMPRESSION", 9.0),
-    ("Z_DEFAULT_COMPRESSION", -1.0),
+    ("Z_DEFAULT_COMPRESSION", Z_DEFAULT_COMPRESSION),
     ("Z_FILTERED", 1.0),
     ("Z_HUFFMAN_ONLY", 2.0),
     ("Z_RLE", 3.0),
-    ("Z_FIXED", 4.0),
-    ("Z_DEFAULT_STRATEGY", 0.0),
+    ("Z_FIXED", Z_FIXED),
+    ("Z_DEFAULT_STRATEGY", Z_DEFAULT_STRATEGY),
     ("ZLIB_VERNUM", LINKED_ZLIB_VERNUM),
     ("DEFLATE", 1.0),
     ("INFLATE", 2.0),
@@ -67,22 +95,22 @@ const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("BROTLI_ENCODE", 9.0),
     ("ZSTD_DECOMPRESS", 11.0),
     ("ZSTD_COMPRESS", 10.0),
-    ("Z_MIN_WINDOWBITS", 8.0),
-    ("Z_MAX_WINDOWBITS", 15.0),
-    ("Z_DEFAULT_WINDOWBITS", 15.0),
-    ("Z_MIN_CHUNK", 64.0),
+    ("Z_MIN_WINDOWBITS", Z_MIN_WINDOWBITS),
+    ("Z_MAX_WINDOWBITS", Z_MAX_WINDOWBITS),
+    ("Z_DEFAULT_WINDOWBITS", Z_DEFAULT_WINDOWBITS),
+    ("Z_MIN_CHUNK", Z_MIN_CHUNK),
     ("Z_MAX_CHUNK", f64::INFINITY),
-    ("Z_DEFAULT_CHUNK", 16384.0),
-    ("Z_MIN_MEMLEVEL", 1.0),
-    ("Z_MAX_MEMLEVEL", 9.0),
-    ("Z_DEFAULT_MEMLEVEL", 8.0),
-    ("Z_MIN_LEVEL", -1.0),
-    ("Z_MAX_LEVEL", 9.0),
+    ("Z_DEFAULT_CHUNK", Z_DEFAULT_CHUNK),
+    ("Z_MIN_MEMLEVEL", Z_MIN_MEMLEVEL),
+    ("Z_MAX_MEMLEVEL", Z_MAX_MEMLEVEL),
+    ("Z_DEFAULT_MEMLEVEL", Z_DEFAULT_MEMLEVEL),
+    ("Z_MIN_LEVEL", Z_MIN_LEVEL),
+    ("Z_MAX_LEVEL", Z_MAX_LEVEL),
     ("Z_DEFAULT_LEVEL", -1.0),
-    ("BROTLI_OPERATION_PROCESS", 0.0),
-    ("BROTLI_OPERATION_FLUSH", 1.0),
-    ("BROTLI_OPERATION_FINISH", 2.0),
-    ("BROTLI_OPERATION_EMIT_METADATA", 3.0),
+    ("BROTLI_OPERATION_PROCESS", BROTLI_OPERATION_PROCESS),
+    ("BROTLI_OPERATION_FLUSH", BROTLI_OPERATION_FLUSH),
+    ("BROTLI_OPERATION_FINISH", BROTLI_OPERATION_FINISH),
+    ("BROTLI_OPERATION_EMIT_METADATA", BROTLI_OPERATION_EMIT_METADATA),
     ("BROTLI_PARAM_MODE", 0.0),
     ("BROTLI_MODE_GENERIC", 0.0),
     ("BROTLI_MODE_TEXT", 1.0),
@@ -131,6 +159,7 @@ const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("BROTLI_DECODER_ERROR_FORMAT_PADDING_1", -14.0),
     ("BROTLI_DECODER_ERROR_FORMAT_PADDING_2", -15.0),
     ("BROTLI_DECODER_ERROR_FORMAT_DISTANCE", -16.0),
+    ("BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH", -17.0),
     ("BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET", -19.0),
     ("BROTLI_DECODER_ERROR_INVALID_ARGUMENTS", -20.0),
     ("BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES", -21.0),
@@ -140,9 +169,9 @@ const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2", -27.0),
     ("BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES", -30.0),
     ("BROTLI_DECODER_ERROR_UNREACHABLE", -31.0),
-    ("ZSTD_e_continue", 0.0),
-    ("ZSTD_e_flush", 1.0),
-    ("ZSTD_e_end", 2.0),
+    ("ZSTD_e_continue", ZSTD_E_CONTINUE),
+    ("ZSTD_e_flush", ZSTD_E_FLUSH),
+    ("ZSTD_e_end", ZSTD_E_END),
     ("ZSTD_fast", 1.0),
     ("ZSTD_dfast", 2.0),
     ("ZSTD_greedy", 3.0),
@@ -234,6 +263,16 @@ pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<Roo
     let retained = context.retain(object)?;
     shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(object)
+}
+
+/// The largest constant whose name starts with `prefix`: the last parameter index a
+/// Brotli or Zstd stream accepts.
+pub(crate) fn largest_with_prefix(prefix: &str) -> f64 {
+    ZLIB_CONSTANTS
+        .iter()
+        .filter(|(name, _)| name.starts_with(prefix))
+        .map(|&(_, value)| value)
+        .fold(f64::NEG_INFINITY, f64::max)
 }
 
 #[cfg(test)]

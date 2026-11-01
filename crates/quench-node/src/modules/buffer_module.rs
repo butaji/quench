@@ -10,7 +10,7 @@ use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 /// `buffer.kMaxLength`: the largest typed array the engine makes.
-const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
+pub(crate) const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
 /// `buffer.INSPECT_MAX_BYTES`.
 const INSPECT_MAX_BYTES: usize = 50;
 /// `Buffer.poolSize`.
