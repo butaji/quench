@@ -211,11 +211,13 @@ pub(crate) struct KeyAlgorithm {
     curve: Option<&'static str>,
     modulus_length: Option<u32>,
     public_exponent: Option<Vec<u8>>,
+    /// Whether `hash` precedes `length` in the guest projection (an imported HMAC key).
+    hash_first: bool,
 }
 
 impl KeyAlgorithm {
     fn new(algorithm: Algorithm) -> Self {
-        Self { algorithm, hash: None, length: None, curve: None, modulus_length: None, public_exponent: None }
+        Self { algorithm, hash: None, length: None, curve: None, modulus_length: None, public_exponent: None, hash_first: false }
     }
 }
 
@@ -250,8 +252,86 @@ pub(crate) fn crypto_key_object(c: &mut Context<'_>, value: RootId) -> Result<Op
     Ok(Some(object))
 }
 
+/// A same-realm clone of a CryptoKey.
+pub(crate) fn clone_crypto_key(c: &mut Context<'_>, value: RootId) -> Result<Option<RootId>, RootedError> {
+    match crypto_key_state(c, value)? {
+        Some((key, algorithm, extractable, usages)) => crypto_key(c, key, algorithm, extractable, usages).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// A CryptoKey's transport record, without its key material.
+pub(crate) fn crypto_key_record(c: &mut Context<'_>, value: RootId) -> Result<Option<RootId>, RootedError> {
+    let Some((_, algorithm, extractable, usages)) = crypto_key_state(c, value)? else {
+        return Ok(None);
+    };
+    let record = c.null_object_rooted()?;
+    let name = c.string_rooted(algorithm.algorithm.name());
+    put(c, record, "name", name)?;
+    if let Some(hash) = algorithm.hash {
+        let hash = c.string_rooted(hash.name());
+        put(c, record, "hash", hash)?;
+    }
+    for (field, number) in [("length", algorithm.length), ("modulusLength", algorithm.modulus_length)] {
+        if let Some(number) = number {
+            let number = c.number(f64::from(number));
+            put(c, record, field, number)?;
+        }
+    }
+    if let Some(curve) = algorithm.curve {
+        let curve = c.string_rooted(curve);
+        put(c, record, "namedCurve", curve)?;
+    }
+    if let Some(exponent) = &algorithm.public_exponent {
+        let exponent = c.uint8_array_rooted(exponent)?;
+        put(c, record, "publicExponent", exponent)?;
+    }
+    let hash_first = c.boolean(algorithm.hash_first);
+    put(c, record, "hashFirst", hash_first)?;
+    let extractable = c.boolean(extractable);
+    put(c, record, "extractable", extractable)?;
+    let names: Vec<String> = usages.iter().map(|usage| usage.name().to_owned()).collect();
+    let usages = super::string_array(c, &names)?;
+    put(c, record, "usages", usages)?;
+    Ok(Some(record))
+}
+
+/// The CryptoKey a transport record describes, over the received key.
+pub(crate) fn crypto_key_from_record(c: &mut Context<'_>, key: Arc<Key>, record: RootId) -> Outcome {
+    let text = |c: &mut Context<'_>, name: &str| -> Result<Option<String>, RootedError> {
+        let value = get(c, record, name)?;
+        c.string_text(value)
+    };
+    let number = |c: &mut Context<'_>, name: &str| -> Result<Option<u32>, RootedError> {
+        let value = get(c, record, name)?;
+        Ok(c.rooted_value(value).and_then(|value| value.as_number()).map(|number| number as u32))
+    };
+    let name = text(c, "name")?.unwrap_or_default();
+    let algorithm_kind = Algorithm::by_name(&name).ok_or_else(|| RootedError::host("unknown CryptoKey algorithm in transport record"))?;
+    let mut algorithm = KeyAlgorithm::new(algorithm_kind);
+    algorithm.hash = text(c, "hash")?.and_then(|hash| Hash::by_name(&hash));
+    algorithm.length = number(c, "length")?;
+    algorithm.modulus_length = number(c, "modulusLength")?;
+    algorithm.curve = text(c, "namedCurve")?.and_then(|curve| CURVES.iter().find(|(web, _)| *web == curve).map(|(web, _)| *web));
+    let exponent = get(c, record, "publicExponent")?;
+    algorithm.public_exponent = super::buffer_bytes(c, exponent);
+    let hash_first = get(c, record, "hashFirst")?;
+    algorithm.hash_first = c.truthy_rooted(hash_first)?;
+    let extractable = get(c, record, "extractable")?;
+    let extractable = c.truthy_rooted(extractable)?;
+    let usages_value = get(c, record, "usages")?;
+    let mut usages = Vec::new();
+    for item in c.array_like_values_rooted(usages_value)? {
+        let item = c.to_string(item)?;
+        if let Some(&(usage, _)) = USAGES.iter().find(|(_, known)| *known == item) {
+            usages.push(usage);
+        }
+    }
+    crypto_key(c, key, algorithm, extractable, usages)
+}
+
 /// The guest projection of a key algorithm (`key.algorithm`).
-fn algorithm_object(c: &mut Context<'_>, algorithm: &KeyAlgorithm, imported_hmac: bool) -> Outcome {
+fn algorithm_object(c: &mut Context<'_>, algorithm: &KeyAlgorithm) -> Outcome {
     let result = c.object_rooted()?;
     let name = c.string_rooted(algorithm.algorithm.name());
     put(c, result, "name", name)?;
@@ -269,7 +349,7 @@ fn algorithm_object(c: &mut Context<'_>, algorithm: &KeyAlgorithm, imported_hmac
         let value = c.uint8_array_rooted(exponent)?;
         put(c, result, "publicExponent", value)?;
     }
-    if imported_hmac {
+    if algorithm.hash_first {
         if let Some(hash) = algorithm.hash {
             let value = hash_object(c, hash)?;
             put(c, result, "hash", value)?;
@@ -279,7 +359,7 @@ fn algorithm_object(c: &mut Context<'_>, algorithm: &KeyAlgorithm, imported_hmac
         let value = c.number(f64::from(length));
         put(c, result, "length", value)?;
     }
-    if !imported_hmac {
+    if !algorithm.hash_first {
         if let Some(hash) = algorithm.hash {
             let value = hash_object(c, hash)?;
             put(c, result, "hash", value)?;
@@ -293,12 +373,12 @@ fn algorithm_object(c: &mut Context<'_>, algorithm: &KeyAlgorithm, imported_hmac
 }
 
 /// A new CryptoKey over `key`.
-fn crypto_key(c: &mut Context<'_>, key: Arc<Key>, algorithm: KeyAlgorithm, extractable: bool, usages: Vec<Usage>, imported_hmac: bool) -> Outcome {
+fn crypto_key(c: &mut Context<'_>, key: Arc<Key>, algorithm: KeyAlgorithm, extractable: bool, usages: Vec<Usage>) -> Outcome {
     let constructor = super::class(c, Class::CryptoKey)?;
     let prototype = get(c, constructor, "prototype")?;
     let object = c.object_rooted()?;
     c.set_prototype_rooted(object, prototype)?;
-    let algorithm_value = algorithm_object(c, &algorithm, imported_hmac)?;
+    let algorithm_value = algorithm_object(c, &algorithm)?;
     private_slots::write(c, object, ALGORITHM_SLOT, algorithm_value)?;
     let names: Vec<String> = usages.iter().map(|usage| usage.name().to_owned()).collect();
     let usages_value = super::string_array(c, &names)?;
@@ -336,6 +416,36 @@ pub(crate) fn key_algorithm(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> 
 pub(crate) fn key_usages(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     this_crypto_key(c, this)?;
     Ok(private_slots::read(c, this, USAGES_SLOT)?.unwrap_or_else(|| c.undefined()))
+}
+
+/// `cryptoKey[util.inspect.custom](depth, options)`: the key's four members.
+pub(crate) fn key_inspect(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    let (depth, options) = (arg(c, args, 0), arg(c, args, 1));
+    if c.to_number(depth)? < 0.0 {
+        return Ok(this);
+    }
+    let members = c.object_rooted()?;
+    for (name, getter) in [("type", key_type as fn(&mut Context<'_>, RootId, &[RootId]) -> Outcome), ("extractable", key_extractable), ("algorithm", key_algorithm), ("usages", key_usages)] {
+        let value = getter(c, this, &[])?;
+        put(c, members, name, value)?;
+    }
+    let global = c.global_root()?;
+    let object = get(c, global, "Object")?;
+    let copy = c.object_rooted()?;
+    let copy = super::call_method(c, object, "assign", &[copy, options])?;
+    let option_depth = get(c, copy, "depth")?;
+    let nested = if is_nullish(c, option_depth) {
+        c.null()
+    } else {
+        let depth = c.to_number(option_depth)?;
+        c.number(depth - 1.0)
+    };
+    put(c, copy, "depth", nested)?;
+    let inspect = crate::modules::util_shared_vm::internal_inspect(c)?;
+    let undefined = c.undefined();
+    let text = c.call_rooted(inspect, undefined, &[members, copy])?;
+    let text = c.to_string(text)?;
+    Ok(c.string_rooted(&format!("CryptoKey {text}")))
 }
 
 /// The constructors WebIDL forbids calling.
@@ -433,6 +543,12 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
         Members::Assigned,
     )?;
     super::to_string_tag(c, prototype, "CryptoKey")?;
+    let inspect = c.host_function_named(crate::host::shared_vm::operation("cryptoKeyInspect"), "[nodejs.util.inspect.custom]")?;
+    let global = c.global_root()?;
+    let symbol = get(c, global, "Symbol")?;
+    let name = c.string_rooted("nodejs.util.inspect.custom");
+    let custom = super::call_method(c, symbol, "for", &[name])?;
+    c.define_data_property_rooted(prototype, custom, inspect, true, false, true)?;
     Ok(vec![(Class::Crypto, crypto), (Class::SubtleCrypto, subtle), (Class::CryptoKey, key)])
 }
 
@@ -781,7 +897,7 @@ fn generate_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcom
             algorithm.hash = Some(hash);
             algorithm.length = Some(length);
             let bytes = random_secret(c, length.div_ceil(BITS_PER_BYTE) as usize)?;
-            crypto_key(c, Arc::new(Key::Secret(Material::new(bytes))), algorithm, extractable, usages, false)
+            crypto_key(c, Arc::new(Key::Secret(Material::new(bytes))), algorithm, extractable, usages)
         }
         kind if kind.is_aes() => {
             let length = number_member(c, &normalized, "AesKeyGenParams", "length")? as u32;
@@ -792,7 +908,7 @@ fn generate_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcom
             let mut algorithm = KeyAlgorithm::new(kind);
             algorithm.length = Some(length);
             let bytes = random_secret(c, (length / BITS_PER_BYTE) as usize)?;
-            crypto_key(c, Arc::new(Key::Secret(Material::new(bytes))), algorithm, extractable, usages, false)
+            crypto_key(c, Arc::new(Key::Secret(Material::new(bytes))), algorithm, extractable, usages)
         }
         _ => generate_pair(c, &normalized, extractable, usages),
     }
@@ -841,9 +957,9 @@ fn generate_pair(c: &mut Context<'_>, normalized: &Normalized, extractable: bool
     }
     let key = OwnedKey::generate(generation).map_err(|error| keys::key_error(c, error))?;
     let public = key.to_public().map_err(|error| keys::key_error(c, error))?;
-    let public = crypto_key(c, Arc::new(Key::Asymmetric(public)), algorithm.clone(), true, filter_usages(&usages, public_usages), false)?;
-    let private = crypto_key(c, Arc::new(Key::Asymmetric(key)), algorithm, extractable, private_usage, false)?;
-    let pair = c.object_rooted()?;
+    let public = crypto_key(c, Arc::new(Key::Asymmetric(public)), algorithm.clone(), true, filter_usages(&usages, public_usages))?;
+    let private = crypto_key(c, Arc::new(Key::Asymmetric(key)), algorithm, extractable, private_usage)?;
+    let pair = c.null_object_rooted()?;
     put(c, pair, "publicKey", public)?;
     put(c, pair, "privateKey", private)?;
     Ok(pair)
@@ -898,6 +1014,7 @@ fn import_key(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, jwk
             let mut algorithm = KeyAlgorithm::new(kind);
             algorithm.hash = Some(hash);
             algorithm.length = Some(length);
+            algorithm.hash_first = true;
             Imported { key: Arc::new(Key::Secret(Material::new(bytes))), algorithm }
         }
         kind if kind.is_aes() => {
@@ -929,7 +1046,7 @@ fn import_key(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, jwk
     };
     let may_be_empty = imported.key.type_name() == "public";
     check_usages(c, kind, &usages, allowed, may_be_empty)?;
-    crypto_key(c, imported.key, imported.algorithm, extractable, usages, kind == Algorithm::Hmac)
+    crypto_key(c, imported.key, imported.algorithm, extractable, usages)
 }
 
 fn format_name(format: KeyFormat) -> &'static str {

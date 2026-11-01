@@ -1256,24 +1256,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsContextSetOptions" (0) => crate::modules::tls_shared_vm::contexts::set_options,
         method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
         method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
-        method "cryptoHandleSymbol" (0) => crate::modules::crypto_shared_vm::handle_symbol,
         method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
-        method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
-        method "cryptoX509Metadata" (1) => crate::modules::crypto_shared_vm::x509_metadata,
-        method "cryptoX509CheckHost" (3) => crate::modules::crypto_shared_vm::x509_check_host,
-        method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
-        method "cryptoMacDigest" (4) => crate::modules::crypto_shared_vm::mac_digest,
-        method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
-        method "cryptoVerify" (7) => crate::modules::crypto_shared_vm::verify,
-        method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
         #[cfg(quench_openssl_provider)]
         method "get crypto" (0) => crate::modules::crypto_node::webcrypto_getter,
-        method "cryptoPbkdf2" (5) => crate::modules::crypto_shared_vm::pbkdf2,
-        method "cryptoScrypt" (7) => crate::modules::crypto_shared_vm::scrypt,
-        method "cryptoCipherProcess" (10) => crate::modules::crypto_shared_vm::cipher_process,
-        method "cryptoGenerateRsaKeyPair" (4) => crate::modules::crypto_shared_vm::generate_rsa_key_pair,
-        method "cryptoRsaCrypt" (8) => crate::modules::crypto_shared_vm::rsa_crypt,
-        method "cryptoEcdh" (5) => crate::modules::crypto_shared_vm::ecdh,
         #[cfg(quench_openssl_provider)]
         method "cryptoCheckPrime" (1) => crate::modules::crypto_node::random::check_prime,
         #[cfg(quench_openssl_provider)]
@@ -1532,6 +1517,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoKeyAlgorithm" (0) => crate::modules::crypto_node::web::key_algorithm,
         #[cfg(quench_openssl_provider)]
         method "cryptoKeyUsages" (0) => crate::modules::crypto_node::web::key_usages,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyInspect" (2) => crate::modules::crypto_node::web::key_inspect,
         #[cfg(quench_openssl_provider)]
         method "cryptoSubtleEncrypt" (3) => crate::modules::crypto_node::web::subtle_encrypt,
         #[cfg(quench_openssl_provider)]

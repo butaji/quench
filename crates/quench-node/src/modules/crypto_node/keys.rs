@@ -63,6 +63,9 @@ pub(crate) fn key_object(c: &mut Context<'_>, key: Arc<Key>) -> Outcome {
     let prototype = get(c, constructor, "prototype")?;
     let object = c.object_rooted()?;
     c.set_prototype_rooted(object, prototype)?;
+    let symbol = super::intrinsics(c)?.key_type;
+    let type_name = c.string_rooted(key.type_name());
+    c.define_data_property_rooted(object, symbol, type_name, true, true, true)?;
     super::attach(c, object, Native::Key(key))?;
     Ok(object)
 }

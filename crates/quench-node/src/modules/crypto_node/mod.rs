@@ -6,6 +6,7 @@
 //! idle sweep release the state of objects the collector reclaimed.
 
 pub(crate) mod cipher;
+pub(crate) mod clone;
 pub(crate) mod dh;
 pub(crate) mod errors;
 pub(crate) mod hash;
@@ -57,6 +58,8 @@ impl Class {
 pub(crate) struct Intrinsics {
     /// The private symbol each stateful object keys its handle with.
     handle: RootId,
+    /// `kKeyType`: the symbol a KeyObject shows its type under.
+    pub(crate) key_type: RootId,
     classes: [RootId; Class::COUNT],
     module: RootId,
     /// The `Crypto` instance `globalThis.crypto` and `crypto.webcrypto` are.
@@ -644,11 +647,13 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let undefined = c.undefined();
     let handle = c.private_symbol_rooted(Some("kHandle"));
     let handle = c.retain(handle)?;
+    let key_type = c.symbol_rooted(Some("kKeyType"));
+    let key_type = c.retain(key_type)?;
     let module = c.object_rooted()?;
     let module = c.retain(module)?;
     let classes = [undefined; Class::COUNT];
     // Publish the symbol and module first: the classes' builders read them.
-    state(c).borrow_mut().crypto.intrinsics = Some(Intrinsics { handle, classes, module, webcrypto: undefined });
+    state(c).borrow_mut().crypto.intrinsics = Some(Intrinsics { handle, key_type, classes, module, webcrypto: undefined });
     match build(c, module) {
         Ok(()) => Ok(module),
         Err(error) => {
