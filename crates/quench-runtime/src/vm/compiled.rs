@@ -57,8 +57,11 @@ mod lane_region;
 mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
+#[path = "compiled/lane_unit.rs"]
+mod lane_unit;
+pub(super) use lane_unit::{CallTarget, Frame as InlinedCall};
 mod wavefront;
-pub(super) use osr_loop::{
+pub(super) use osr_loop::{CALLEE_CAPTURE, THIS_CAPTURE, NATIVE_FIELD_SHAPES, 
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
@@ -4355,6 +4358,12 @@ const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
 const OSR_RESERVE_ARRAY_APPEND: u64 = u64::MAX - 1;
 /// Read a present own dense element without allocation, coercion or collection.
 const OSR_DENSE_ARRAY_READ: u64 = u64::MAX - 2;
+/// Store the value the scratch word holds into an own data property of the receiver, through
+/// its site's cache entry (`Vm::cached_field_store_hit`): the operation word is this flag,
+/// the atom shifted by `OSR_FIELD_STORE_ATOM_SHIFT` and the site. A store never collects or
+/// runs guest code, and a miss returns before it writes.
+pub(super) const OSR_FIELD_STORE: u64 = 1 << 48;
+pub(super) const OSR_FIELD_STORE_ATOM_SHIFT: u32 = u16::BITS;
 
 /// A no-guest-effect JavaScript OSR helper. Capacity reserve may relocate a backing but
 /// never stores a guest value or collects; it refreshes all entry aliases and exits on debt.
@@ -4402,6 +4411,14 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // writes live values back at this SetIndex before the VM performs its store.
             return (!due).then_some(Value::UNDEFINED);
         }
+        if cache_site & OSR_FIELD_STORE != 0 {
+            let site = cache_site as u16;
+            let atom = ((cache_site & !OSR_FIELD_STORE) >> OSR_FIELD_STORE_ATOM_SHIFT) as crate::bytecode::Atom;
+            // SAFETY: generated code seeded the scratch word with the boxed value.
+            let value = Value::from_bits(unsafe { result.read() });
+            let receiver = Value::from_bits(receiver_bits);
+            return vm.cached_field_store_hit(program, receiver, atom, value, site).then_some(Value::UNDEFINED);
+        }
         if cache_site == OSR_INITIALIZED_LOCAL_READ {
             if vm.lane_has_activations()
                 || vm.frames.get(payload.frame).is_none_or(|frame| frame.function != payload.function)
@@ -4426,8 +4443,10 @@ unsafe extern "C" fn osr_probe<H: Host>(
         }
         match probe {
             super::object::FieldCacheProbe::Hit(value) => Some(value),
+            // A site of several shapes answers from its polymorphic entries, as the lane's
+            // polymorphic read does; neither probe runs guest code.
             super::object::FieldCacheProbe::OrdinaryMiss
-            | super::object::FieldCacheProbe::Ineligible => None,
+            | super::object::FieldCacheProbe::Ineligible => vm.polymorphic_field_hit(program, receiver, site),
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
@@ -6685,6 +6704,9 @@ struct JsStepDispatch {
     /// A lane body's VM and running residual, which its semantic helpers take.
     vm: usize,
     residual: usize,
+    /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
+    /// callee writes the callee's registers.
+    inlined: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6701,11 +6723,44 @@ pub(super) struct LaneMethod {
     /// Whether its code names shape ids as constants, which a shape compaction renumbers:
     /// the compaction unlinks it (`LaneView::clear_field_hints`), so no entry checks them.
     pub(super) names_shapes: bool,
+    /// The calls it runs inlined (`lane_unit::unit`), by frame.
+    pub(super) inlined: Vec<InlinedCall>,
+}
+
+/// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
+/// whose activation the lane then makes (`Vm::lane_body_inlined_activation`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LaneExit {
+    At(usize),
+    Inlined { frame: usize, pc: u32 },
+}
+
+/// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
+/// index sits above the callee PC's word.
+const INLINED_EXIT: u64 = 1 << 63;
+
+impl LaneExit {
+    pub(super) fn word(self) -> u64 {
+        match self {
+            Self::At(pc) => pc as u64,
+            Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
+        }
+    }
+
+    fn decode(word: u64) -> Self {
+        if word & INLINED_EXIT == 0 {
+            return Self::At(usize::try_from(word).unwrap_or(0));
+        }
+        Self::Inlined { frame: ((word & !INLINED_EXIT) >> u32::BITS) as usize, pc: word as u32 }
+    }
 }
 
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
 #[cfg(test)]
 pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Calls lane bodies compiled by this process inline, for tests that inlining happened.
+#[cfg(test)]
+pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A lane body's callout. Every unsupported instruction and failed guard leaves native
 /// code here, with nothing of that instruction done; the lane executes it next.
@@ -6784,24 +6839,35 @@ impl<H: Host> Vm<H> {
 
     /// Specialize `function` for lane activations, admitting a body only where its first
     /// instruction runs natively: an entry that leaves at once is pure cost.
-    pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32) -> Option<LaneMethod> {
+    pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &[Option<CallTarget>]) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
         };
-        let receiver_fields = self.lane_receiver_fields(program, function);
-        let region = lane_region::compile(program, function, helpers, &receiver_fields);
+        let body = program.function_get(function as usize)?;
+        let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize))?;
+        // Until calls stay native (TOD-1219), a body that calls leaves at every call it does
+        // not inline and pays its entry again in each callee's return; it runs cheaper in
+        // the lane.
+        if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) {
+            self.host.after_native_compilation();
+            return None;
+        }
+        let caller_fields = self.lane_receiver_fields(program, function);
+        let callee_fields: Vec<_> = unit.frames.iter().map(|frame| self.lane_receiver_fields(program, frame.target.function)).collect();
+        let receiver_fields: Vec<Vec<ReceiverField>> = unit
+            .origins
+            .iter()
+            .map(|origin| match *origin {
+                lane_unit::Origin::Caller(pc) => caller_fields.get(pc as usize).cloned().unwrap_or_default(),
+                lane_unit::Origin::Inlined { frame, pc } => callee_fields[frame].get(pc as usize).cloned().unwrap_or_default(),
+            })
+            .collect();
+        let region = lane_region::compile(program, function, &unit, helpers, &receiver_fields);
         self.host.after_native_compilation();
         let region = region?;
-        // Until calls stay native (TOD-1219), a body that calls leaves at every call and pays
-        // its entry again in each callee's return; such a body runs cheaper in the lane.
-        let calls = program.function_get(function as usize).is_some_and(|body| {
-            body.code.iter().any(|packed| {
-                super::dispatch_fast::decoded_instruction(body, *packed).op().control_flow_layout() == ControlFlowLayout::Call
-            })
-        });
-        if region.native == 0 || calls {
+        if region.native == 0 {
             return None;
         }
         let code = CodeMemory::new(&region.code)?;
@@ -6812,8 +6878,10 @@ impl<H: Host> Vm<H> {
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
         #[cfg(test)]
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(test)]
+        LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
-        Some(LaneMethod { _code: code, entry, names_shapes })
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -6826,13 +6894,18 @@ impl<H: Host> Vm<H> {
         registers: *mut Value,
         receiver: Value,
         captures: *const crate::heap::EnvironmentSlots,
-    ) -> usize {
+    ) -> LaneExit {
         let (status, word) = LANE_FRAME.with(|frame| {
             // SAFETY: a lane body never re-enters the VM, so no other borrow of this
             // thread's frame is live; the frame is never moved once made.
             let frame = unsafe { &mut *frame.get() };
             let frame = frame.get_or_insert_with(LaneFrame::new);
+            let width = method.inlined.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
+            if frame.scratch.len() < width {
+                frame.scratch.resize(width, Value::UNDEFINED);
+            }
             let dispatch = &mut frame.dispatch;
+            dispatch.inlined = frame.scratch.as_mut_ptr().addr();
             dispatch.program_id = program;
             dispatch.native_registers = registers;
             dispatch.receiver = receiver.to_bits();
@@ -6852,7 +6925,19 @@ impl<H: Host> Vm<H> {
             let status = unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) };
             (status, word)
         });
-        Self::lane_method_exit_pc(status, word)
+        Self::lane_method_exit(status, word)
+    }
+
+    /// Hands `write` each of the `count` registers an inlined callee its lane body left
+    /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
+    pub(super) fn lane_scratch(count: usize, mut write: impl FnMut(u16, Value)) {
+        LANE_FRAME.with(|frame| {
+            // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
+            let Some(frame) = (unsafe { &*frame.get() }).as_ref() else { return };
+            for (register, value) in frame.scratch[..count].iter().enumerate() {
+                write(register as u16, *value);
+            }
+        });
     }
 }
 
@@ -6861,6 +6946,8 @@ impl<H: Host> Vm<H> {
 struct LaneFrame {
     context: CallContext,
     dispatch: JsStepDispatch,
+    /// The registers of an inlined callee its lane body left inside.
+    scratch: Vec<Value>,
 }
 
 impl LaneFrame {
@@ -6899,12 +6986,14 @@ impl LaneFrame {
                 captures: 0,
                 vm: 0,
                 residual: 0,
+                inlined: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
                 global_name_cache_hits: 0,
                 outcome: None,
             },
+            scratch: Vec::new(),
         }
     }
 }
@@ -6914,12 +7003,12 @@ thread_local! {
 }
 
 impl<H: Host> Vm<H> {
-    fn lane_method_exit_pc(status: u32, word: u64) -> usize {
+    fn lane_method_exit(status: u32, word: u64) -> LaneExit {
         match status {
-            NATIVE_JS_STOPPED => usize::try_from(word).unwrap_or(0),
-            status if status >= JS_GENERAL_RETURN_STATUS_BASE => (status - JS_GENERAL_RETURN_STATUS_BASE) as usize,
+            NATIVE_JS_STOPPED => LaneExit::decode(word),
+            status if status >= JS_GENERAL_RETURN_STATUS_BASE => LaneExit::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
-            _ => 0,
+            _ => LaneExit::At(0),
         }
     }
 }
@@ -7008,6 +7097,7 @@ impl JsStepDispatch {
             captures: 0,
             vm: 0,
             residual: 0,
+            inlined: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
@@ -13588,6 +13678,12 @@ impl<H: Host> Vm<H> {
         // non-reference Number is written, before any allocation or guest call.
         unsafe { pointer.write(value); }
         Some(())
+    }
+
+    /// The depth-0 capture `slot` of a closure environment `env`, as an activation of a
+    /// function closed over it reads it (`lane_load_capture`).
+    pub(super) fn environment_capture(&mut self, env: Value, slot: u16) -> Option<Value> {
+        self.tier_capture(TierCaptures::Environment(env), 0, slot)
     }
 
     /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.

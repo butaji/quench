@@ -2447,6 +2447,16 @@ impl Object {
     pub(crate) fn set_arguments_object(&mut self) {
         self.extras_mut().arguments_object = true;
     }
+    /// Whether the object's elements are ordinary, as `dense_array_length` needs them: it
+    /// is extensible and not frozen, and holds no indexed or `length` descriptor and no
+    /// arguments mapping. Read from the integrity bits and one extras record.
+    #[inline(always)]
+    pub(crate) fn holds_ordinary_elements(&self) -> bool {
+        self.meta & VALUE_VEC_INTEGRITY_BITS == 0
+            && self.extras().is_none_or(|extras| {
+                !extras.indexed_descriptors && !extras.arguments_object && !extras.length_descriptor
+            })
+    }
     pub(crate) fn is_arguments_object(&self) -> bool {
         self.extras().is_some_and(|extras| extras.arguments_object)
     }

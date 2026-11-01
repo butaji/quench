@@ -1443,10 +1443,23 @@ impl<H: Host> Vm<H> {
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
     /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
-    pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<(u32, u16)> {
+    /// The own-data (shape, slot) pairs a native OSR field read may load directly for `site`:
+    /// its primary entry, or its inline polymorphic entries, at most `NATIVE_FIELD_SHAPES`;
+    /// `None` for a site with a holder entry or hashed entries, which read through the probe.
+    pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<Vec<(u32, u16)>> {
         let cache = self.field_cache_entry(site);
-        (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
-            .then_some((cache.receiver, cache.slot))
+        if !self.field_site_polymorphic(site) {
+            return (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
+                .then(|| vec![(cache.receiver, cache.slot)]);
+        }
+        let table_index = self.megamorphic_field_indices.get(self.field_cache_index(site));
+        let set = self.megamorphic_fields.get(table_index as usize)?;
+        if set.overflow.is_some() {
+            return None;
+        }
+        let shapes: Vec<(u32, u16)> = set.recorded().map(|entry| (entry.receiver, entry.slot)).collect();
+        let own = set.recorded().all(|entry| entry.holder == NO_FIELD_HOLDER);
+        (own && !shapes.is_empty() && shapes.len() <= super::compiled::NATIVE_FIELD_SHAPES).then_some(shapes)
     }
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
@@ -1457,7 +1470,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
-            return self.native_field_load_descriptor(site).into_iter().collect();
+            return self.native_field_load_descriptor(site).unwrap_or_default();
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };

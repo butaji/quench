@@ -72,7 +72,7 @@ pub(super) struct LaneRegion {
 struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
-    function: &'a Function,
+    unit: &'a super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &'a [Vec<ReceiverField>],
     context: ir::Value,
@@ -288,7 +288,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn operand_supported(&self, operand: Operand) -> bool {
         match operand.kind() {
-            Some(OperandKind::Register) => operand.register_index().is_some_and(|r| r < self.function.registers),
+            Some(OperandKind::Register) => operand.register_index().is_some_and(|r| r < self.unit.registers),
             Some(OperandKind::Constant) => self
                 .program
                 .constants
@@ -302,13 +302,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
 /// after a jump.
-fn leaders(function: &Function) -> Vec<bool> {
-    let mut leaders = vec![false; function.code.len()];
+fn leaders(instructions: &[WideInstruction]) -> Vec<bool> {
+    let mut leaders = vec![false; instructions.len()];
     if let Some(first) = leaders.first_mut() {
         *first = true;
     }
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+    for (pc, instruction) in instructions.iter().enumerate() {
         if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
             if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < leaders.len()) {
                 leaders[target] = true;
@@ -321,14 +320,16 @@ fn leaders(function: &Function) -> Vec<bool> {
     leaders
 }
 
+/// Specializes `unit` (`lane_unit::unit`), whose PCs `fields` gives the folded receiver
+/// fields of.
 pub(super) fn compile(
     program: &ResidualProgram,
     function_id: u32,
+    unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &[Vec<ReceiverField>],
 ) -> Option<LaneRegion> {
-    let function = program.function_get(function_id as usize)?;
-    if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+    if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
     let isa = super::jit_backend::target_isa("speed")?;
@@ -347,23 +348,29 @@ pub(super) fn compile(
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     );
-    let count = usize::from(function.registers);
+    let count = usize::from(unit.registers);
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
         int: (0..count).map(|_| builder.declare_var(types::I32)).collect(),
     };
     let zero = builder.ins().iconst(types::I32, 0);
+    // An inlined callee's registers hold nothing until its call binds them.
+    let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
     for register in 0..count {
-        let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register));
+        let bits = if register < usize::from(unit.caller_registers) {
+            builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
+        } else {
+            undefined
+        };
         builder.def_var(registers.tagged[register], bits);
         builder.def_var(registers.int[register], zero);
     }
-    let leaders = leaders(function);
+    let leaders = leaders(&unit.instructions);
     let blocks: Vec<_> = leaders.iter().map(|leader| leader.then(|| builder.create_block())).collect();
     let mut lowering = Lowering {
         builder,
         program,
-        function,
+        unit,
         helpers,
         fields,
         context,
@@ -379,11 +386,7 @@ pub(super) fn compile(
         pending: Vec::new(),
         facts: super::facts::Facts::default(),
     };
-    let instructions: Vec<_> = function
-        .code
-        .iter()
-        .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
-        .collect();
+    let instructions = unit.instructions.clone();
     lowering.facts = super::facts::analyze(count, &instructions, &leaders, &program.constants, &writes);
     for instruction in &instructions {
         lowering.written.extend(writes(*instruction).into_iter().filter(|r| usize::from(*r) < count));
@@ -416,15 +419,29 @@ pub(super) fn compile(
         lowering.builder.switch_to_block(block);
         lowering.exit(&mut leaving, pc);
     }
-    // The exit blocks: write back every register the function writes, then leave at the PC.
+    // The exit blocks: write back every caller register the unit writes, and an inlined
+    // callee's registers to the scratch window it is made from, then leave at the origin.
     let exits: Vec<_> = lowering.exits.iter().map(|(pc, block)| (*pc, *block)).collect();
     for (pc, block) in exits {
         lowering.builder.switch_to_block(block);
-        for register in lowering.written.clone() {
+        let caller_registers = unit.caller_registers;
+        for register in lowering.written.clone().into_iter().filter(|register| *register < caller_registers) {
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
         }
-        let pc_value = lowering.builder.ins().iconst(types::I64, i64::from(pc));
+        let word = match unit.origins.get(pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
+            super::lane_unit::Origin::Caller(pc) => u64::from(pc),
+            super::lane_unit::Origin::Inlined { frame, pc } => {
+                let inlined = unit.frames[frame];
+                let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
+                for register in 0..inlined.registers {
+                    let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)]);
+                    lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register));
+                }
+                LaneExit::Inlined { frame, pc }.word()
+            }
+        };
+        let pc_value = lowering.builder.ins().iconst(types::I64, word as i64);
         lowering.builder.ins().store(MemFlagsData::trusted(), pc_value, lowering.result, 0);
         let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
         lowering.builder.ins().return_(&[status]);
@@ -522,7 +539,10 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
-            Op::Nop if plain => Some(true),
+            Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
+                Some(frame) => Some(self.inline_call(state, pc, frame)),
+                None => Some(true),
+            },
             Op::LoadConst if plain => {
                 let value = self.program.constants.get(instruction.constant_index()).and_then(super::facts::immediate);
                 match value {
@@ -540,29 +560,7 @@ impl Lowering<'_, '_> {
                 }
             }
             Op::Move if plain => {
-                let (destination, source) = (instruction.result_register(), instruction.register_b());
-                let known = state.known[usize::from(source)];
-                match known {
-                    Known::Int { boxed } => {
-                        let int = self.builder.use_var(self.registers.int[usize::from(source)]);
-                        self.set_int(state, destination, int);
-                        if boxed {
-                            let bits = self.builder.use_var(self.registers.tagged[usize::from(source)]);
-                            self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
-                            state.known[usize::from(destination)] = Known::Int { boxed: true };
-                        }
-                    }
-                    Known::Tagged => {
-                        let bits = self.tagged(state, source);
-                        self.set_tagged(state, destination, bits);
-                    }
-                }
-                if let Some(shape) = state.shapes.get(&source).copied() {
-                    state.shapes.insert(destination, shape);
-                }
-                if state.receivers.contains(&source) {
-                    state.receivers.insert(destination);
-                }
+                self.copy(state, instruction.result_register(), instruction.register_b());
                 Some(true)
             }
             Op::LoadThis if plain && !instruction.writes_current_this() => {
@@ -672,6 +670,58 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// `source`'s value into `destination`, with every fact proved of it.
+    fn copy(&mut self, state: &mut State, destination: Register, source: Register) {
+        match state.known[usize::from(source)] {
+            Known::Int { boxed } => {
+                let int = self.builder.use_var(self.registers.int[usize::from(source)]);
+                self.set_int(state, destination, int);
+                if boxed {
+                    let bits = self.builder.use_var(self.registers.tagged[usize::from(source)]);
+                    self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
+                    state.known[usize::from(destination)] = Known::Int { boxed: true };
+                }
+            }
+            Known::Tagged => {
+                let bits = self.tagged(state, source);
+                self.set_tagged(state, destination, bits);
+            }
+        }
+        if let Some(shape) = state.shapes.get(&source).copied() {
+            state.shapes.insert(destination, shape);
+        }
+        if state.receivers.contains(&source) {
+            state.receivers.insert(destination);
+        }
+    }
+
+    /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
+    /// the call's cache linked and its receiver a direct object, which a plain call binds as
+    /// `this`; anything else leaves at the call, before its effects. The callee's parameters
+    /// take the call's arguments and its other registers `undefined`, as its activation
+    /// would (`lane_push_passed`).
+    fn inline_call(&mut self, state: &mut State, pc: usize, frame: usize) -> bool {
+        let inlined = self.unit.frames[frame];
+        let exit = self.guard_exit(state, pc as u32);
+        let callee = self.tagged(state, inlined.callee_register);
+        let same = self.ins().icmp_imm_u(IntCC::Equal, callee, inlined.target.callee.to_bits() as i64);
+        emit_js_guard(&mut self.builder, same, exit);
+        let receiver = self.tagged(state, inlined.receiver);
+        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        emit_js_guard(&mut self.builder, object, exit);
+        for register in 0..inlined.registers {
+            let destination = inlined.base + register;
+            if register < inlined.arguments {
+                self.copy(state, destination, inlined.window + register);
+            } else {
+                let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+                self.set_tagged(state, destination, undefined);
+            }
+        }
+        true
+    }
+
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         let exit = self.guard_exit(state, pc);
         let context = self.context;
@@ -707,7 +757,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let shapes = self.fields.get(pc).cloned().unwrap_or_default();
         let register = base.register_index();
-        if register.is_some_and(|register| register >= self.function.registers) {
+        if register.is_some_and(|register| register >= self.unit.registers) {
             return None;
         }
         let receiver = base == crate::bytecode::FieldBase::THIS
@@ -812,11 +862,18 @@ impl Lowering<'_, '_> {
 
     fn set_this_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
-        if source >= self.function.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
+        if source >= self.unit.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
             return None;
         }
         let exit = self.guard_exit(state, pc as u32);
         let atom = instruction.atom_index();
+        // An inlined callee's `this` is its call's receiver register, not the entry's.
+        if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc).copied() {
+            let value = self.tagged(state, source);
+            let object = self.tagged(state, self.unit.frames[frame].receiver);
+            self.store_helper(object, atom, instruction.cache_site_index(), value, exit);
+            return Some(true);
+        }
         let known_int = matches!(state.known[usize::from(source)], Known::Int { .. });
         let value = self.tagged(state, source);
         let entry = self.entry.as_ref().expect("entry facts");

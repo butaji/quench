@@ -13004,6 +13004,67 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
+    // A loop walks a list, storing a field of each node it reaches and reading the same name
+    // through the node it moved to (V8-v7 Splay's `splay_` rotations): each store goes through
+    // the cached store at its instruction and each read sees the current slot; a node of
+    // another shape leaves at the store with nothing written.
+    let source = r#"
+      function Node(v) { this.v = v; this.next = null; this.seen = 0; }
+      function walk(head) {
+        var node = head, total = 0;
+        while (node) {
+          node.seen = node.v * 2 + 1;
+          total = total + node.seen;
+          node = node.next;
+        }
+        return total;
+      }
+      var head = null;
+      for (var i = 0; i < 64; i++) { var n = new Node(i); n.next = head; head = n; }
+      var odd = { v: 5, next: null, other: 1, seen: 0 };
+      var sum = 0;
+      for (var r = 0; r < 400; r++) {
+        if (r === 300) { odd.next = head; head = odd; }
+        sum = (sum + walk(head)) | 0;
+      }
+      print(sum + " " + head.seen + " " + odd.seen);
+    "#;
+    let program = Engine::specialize(source, "osr-dynamic-store.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    let expected = interpreted.borrow().clone();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot walk lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native walk under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
     // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
     // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
@@ -14266,6 +14327,40 @@ print(total + " " + w.arr.slice(35, 50).join(","));
             assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
         }
     }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_bounded_entries_prove_products_and_widen_beyond_their_bound() {
+    // `xh` is an `i32` the loop never writes, a factor of products with 14-bit values: a
+    // bound checked at entry proves them exact. A later call's `xh` beyond that bound must
+    // still give the exact (non-`i32`) products, through the widened recompilation.
+    let source = r#"
+(function () {
+function mix(x, a, n) {
+  var xh = x >> 4, s = 0;
+  for (var i = 0; i < n; i++) { var l = a[i] & 0x3fff; s = s + xh * l; }
+  return s;
+}
+var a = []; for (var k = 0; k < 64; k++) a.push((k * 2654435761) & 0xfffffff);
+var t = 0;
+for (var q = 0; q < 3000; q++) t = (t + mix(q & 0xfff, a, 64)) % 1000000007;
+var big = mix(0x7fffffff, a, 64);
+print(t + " " + big + " " + (big > 2147483647));
+})();
+"#;
+    let program = Engine::specialize(source, "osr-bounded-entries.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+    assert!(interpreted_output.borrow()[0].ends_with(" true"), "{:?}", interpreted_output.borrow());
 }
 
 #[test]
@@ -20888,6 +20983,59 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
             }
         }
     }
+}
+
+#[test]
+fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
+    // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
+    // body. A string total makes `add` leave inside it, a double makes its int path
+    // leave, and swapping `add` makes the call's guard leave at the call itself. The callee
+    // reads no capture: its environment is not its caller's.
+    let source = r#"(function () {
+      function Counter(n) { this.n = n; this.total = 0; this.calls = 0; }
+      Counter.prototype.add = function (k) {
+        this.calls = this.calls + 1;
+        this.total = this.total + k;
+        if (this.total > 1000) { this.total = this.total - 1000; }
+        return this.total;
+      };
+      Counter.prototype.step = function (k) {
+        const t = this.add(k);
+        return t + this.n;
+      };
+      const counters = [];
+      for (let i = 0; i < 6; i++) counters.push(new Counter(i));
+      let sum = 0;
+      for (let round = 0; round < 4000; round++) {
+        for (const c of counters) sum = (sum + c.step(round & 31)) % 1000003;
+        if (round === 1500) counters[2].total = "x";
+        if (round === 1501) counters[2].total = 0;
+        if (round === 2200) counters[3].total = 0.25;
+        if (round === 2201) counters[3].total = 0;
+        if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
+      }
+      let calls = 0;
+      for (const c of counters) calls += c.calls;
+      globalThis.answer = sum + calls;
+    })();"#;
+    let program = Engine::specialize(source, "lane-inline.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let before = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+            let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(after > before, "the storing callee runs inlined in its caller's lane body");
+        }
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
 }
 
 /// Lane bodies (`compiled/lane_region.rs`) run declined call-free methods on their lane

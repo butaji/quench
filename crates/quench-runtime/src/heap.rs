@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod cell;
 mod cell_access;
 mod buffer_bytes;
@@ -3297,7 +3297,7 @@ impl Heap {
             elements.resize(length, Value::DELETED);
             for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
                 if index < length && (index >= dense_length || elements[index].is_deleted()) {
-                    elements[index] = value;
+                    elements.set(index, value);
                 }
             }
         });

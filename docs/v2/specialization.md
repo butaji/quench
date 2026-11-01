@@ -387,6 +387,33 @@ therefore:
 | R10 (parallel) | Collection throughput and nursery; Splay all-modes RSS | P11 | Splay, EarleyBoyer | TOD-1223 |
 | R11 | Continuous memory gate and qualification (eleven rounds, Linux and M4) | P11 | all | TOD-123, TOD-1239 |
 
+### Measured: why the method tier does not move the OO fixtures yet
+
+At `b2f946f4f` (callgrind, fixed work, release, Linux x86-64, 4 vCPUs), opt-in lane bodies
+cost more than they save. They admit only call-free functions:
+
+| Fixture | Lane bodies off | On | Change |
+| --- | ---: | ---: | ---: |
+| Richards | 469M | 508M | +8.4% |
+| DeltaBlue | 893M | 871M | -2.5% |
+| RayTrace | 587M | 690M | +17.5% |
+| EarleyBoyer | 947M | 981M | +3.5% |
+
+With bodies on, RayTrace spends 13.8% of its instructions compiling them and 0.1% running
+them. The interpreter still runs 68%. The hot methods of these fixtures are never call-free:
+
+| Fixture | Why its hot methods are not call-free |
+| --- | --- |
+| RayTrace | vector methods allocate |
+| Richards, DeltaBlue | methods store fields |
+| EarleyBoyer | methods make closures and allocate |
+
+Pure callees are too rare to inline profitably. So R3 starts with the multi-frame
+materializer, which lets inlined callees store fields: an exit inside an inlined callee
+builds the callee's lane activation through the lane's own activation path, then resumes
+at the callee's PC. R6's inline allocation follows for RayTrace. Lane-body admission must
+also follow measured native coverage, so the tier stops paying Cranelift for cold code.
+
 ### What is realistic
 
 - **NavierStokes** already clears the bar.

@@ -12,6 +12,25 @@ struct Header {
     owners: u32,
     len: u32,
     capacity: u32,
+    /// How many values below `len` are not int32s, holes (`Value::DELETED`) included: the
+    /// fold of every write, each adding what it writes and removing what it overwrites, so a
+    /// reader proves every value an int32 with one load instead of a scan. At least the
+    /// true count once native code stored unknown values (`OTHERS_UNKNOWN`).
+    others: u32,
+}
+
+/// The `others` count native code stores when it may write values it does not count: above
+/// any length, so the backing stays `Tagged`, and saturating arithmetic keeps it so.
+pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
+
+/// Whether `value` counts among a backing's others.
+#[inline(always)]
+fn other(value: Value) -> u32 {
+    u32::from(value.as_int().is_none())
+}
+
+fn others(values: &[Value]) -> u32 {
+    values.iter().map(|value| other(*value)).sum()
 }
 
 /// The values start right after the header, at their own alignment.
@@ -21,12 +40,17 @@ const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length: native code that
 /// appends within capacity advances the length there.
 pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
+/// The byte offset from a backing's first value to its `u32` count of other values
+/// (`Header::others`), which native code reads at entry, and sets to `OTHERS_UNKNOWN` where
+/// it may store uncounted values.
+pub(crate) const OTHERS_FROM_VALUES: i32 = std::mem::offset_of!(Header, others) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
     owners: 0,
     len: 0,
     capacity: 0,
+    others: 0,
 };
 
 /// The smallest capacity a growing backing takes, as `Vec` grows from empty.
@@ -73,10 +97,16 @@ impl ArrayElements {
         if values.is_empty() {
             return Self::new();
         }
+        Self::copied(values, others(values))
+    }
+
+    /// A backing of `values`, `others` of which are not int32s.
+    fn copied(values: &[Value], others: u32) -> Self {
         let elements = Self::allocate(values.len(), values.len());
         // SAFETY: the new allocation holds `values.len()` slots after the header.
         unsafe {
             std::ptr::copy_nonoverlapping(values.as_ptr(), elements.values(), values.len());
+            (*elements.header.as_ptr()).others = others;
         }
         elements
     }
@@ -92,12 +122,15 @@ impl ArrayElements {
         if len == 0 {
             return Self::new();
         }
-        let elements = Self::allocate(len, len);
+        let mut elements = Self::allocate(len, len);
+        let mut counted = 0;
         for slot in 0..len {
             let written = value(slot);
+            counted += other(written);
             // SAFETY: the new allocation holds `len` slots after the header.
             unsafe { elements.values().add(slot).write(written) };
         }
+        elements.make_mut().set_others(counted);
         elements
     }
 
@@ -125,6 +158,7 @@ impl ArrayElements {
                 owners: 1,
                 len: len as u32,
                 capacity: capacity_word,
+                others: 0,
             });
         }
         Self { header }
@@ -152,6 +186,12 @@ impl ArrayElements {
     pub(crate) fn capacity(&self) -> usize {
         self.header().capacity as usize
     }
+
+    /// Whether every value is an int32 (so none is a hole).
+    pub(crate) fn holds_only_int32(&self) -> bool {
+        self.header().others == 0
+    }
+
 
     /// Whether this array alone owns its backing, so writes reach no other array.
     #[inline(always)]
@@ -188,7 +228,7 @@ impl ArrayElements {
     #[cold]
     #[inline(never)]
     fn detach(&mut self) {
-        *self = Self::from_slice(self);
+        *self = Self::copied(self, self.header().others);
     }
 }
 
@@ -264,6 +304,55 @@ impl PartialEq for ArrayElements {
 }
 
 impl UniqueElements {
+    fn set_others(&mut self, others: u32) {
+        if self.0.capacity() != 0 {
+            // SAFETY: a unique backing with a capacity is this array's own allocation.
+            unsafe { (*self.0.header.as_ptr()).others = others };
+        }
+    }
+
+    /// Counts `added` other values in and `removed` out.
+    #[inline(always)]
+    fn recount(&mut self, added: u32, removed: u32) {
+        if added != removed {
+            let others = self.0.header().others;
+            self.set_others(others.saturating_add(added).saturating_sub(removed));
+        }
+    }
+
+    /// Writes `value` at `index`, below the length.
+    #[inline(always)]
+    pub(crate) fn set(&mut self, index: usize, value: Value) {
+        assert!(index < self.0.len(), "array store index out of bounds");
+        self.recount(other(value), other(self.0[index]));
+        // SAFETY: the index is below the length of this unique backing.
+        unsafe { self.0.values().add(index).write(value) };
+    }
+
+    /// `value` at every index of `range`.
+    pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
+        assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
+        self.recount(other(value) * range.len() as u32, others(&self.0[range.clone()]));
+        for index in range {
+            // SAFETY: the range is within the length of this unique backing.
+            unsafe { self.0.values().add(index).write(value) };
+        }
+    }
+
+    /// `values` at the indices from `start`.
+    pub(crate) fn copy_from(&mut self, start: usize, values: &[Value]) {
+        assert!(start + values.len() <= self.0.len(), "array copy out of bounds");
+        self.recount(others(values), others(&self.0[start..start + values.len()]));
+        // SAFETY: the range is within the length; `values` cannot alias this unique backing.
+        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(start), values.len()) };
+    }
+
+    /// The first value, for native code that writes the backing and keeps its count of
+    /// other values (`OTHERS_FROM_VALUES`).
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut Value {
+        self.0.values()
+    }
+
     fn set_len(&mut self, len: usize) {
         debug_assert!(len <= self.0.capacity());
         if self.0.capacity() != 0 {
@@ -308,6 +397,7 @@ impl UniqueElements {
     pub(crate) fn push(&mut self, value: Value) {
         let len = self.0.len();
         self.reserve(1);
+        self.recount(other(value), 0);
         // SAFETY: `reserve` made room for one more value.
         unsafe { self.0.values().add(len).write(value) };
         self.set_len(len + 1);
@@ -316,12 +406,14 @@ impl UniqueElements {
     pub(crate) fn pop(&mut self) -> Option<Value> {
         let len = self.0.len().checked_sub(1)?;
         let value = self[len];
+        self.recount(0, other(value));
         self.set_len(len);
         Some(value)
     }
 
     pub(crate) fn truncate(&mut self, len: usize) {
         if len < self.0.len() {
+            self.recount(0, others(&self.0[len..]));
             self.set_len(len);
         }
     }
@@ -333,6 +425,7 @@ impl UniqueElements {
             return;
         }
         self.reserve(len - current);
+        self.recount(other(value) * (len - current) as u32, 0);
         // SAFETY: `reserve` made room for the values up to `len`.
         unsafe {
             for slot in current..len {
@@ -345,6 +438,7 @@ impl UniqueElements {
     pub(crate) fn extend_from_slice(&mut self, values: &[Value]) {
         let len = self.0.len();
         self.reserve(values.len());
+        self.recount(others(values), 0);
         // SAFETY: `reserve` made room; `values` cannot alias this unique backing's spare room.
         unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(len), values.len()) };
         self.set_len(len + values.len());
@@ -354,6 +448,7 @@ impl UniqueElements {
         let len = self.0.len();
         assert!(index < len, "array removal index out of bounds");
         let value = self[index];
+        self.recount(0, other(value));
         // SAFETY: the tail shifts down within the initialized values.
         unsafe {
             let at = self.0.values().add(index);
@@ -372,6 +467,7 @@ impl UniqueElements {
             self.reserve(values.len() - removed);
         }
         let new_len = len - removed + values.len();
+        self.recount(others(values), others(&self.0[range.clone()]));
         // SAFETY: the tail moves within the reserved allocation, then `values` fills the gap.
         unsafe {
             let base = self.0.values();
@@ -392,15 +488,6 @@ impl std::ops::Deref for UniqueElements {
     #[inline(always)]
     fn deref(&self) -> &[Value] {
         &self.0
-    }
-}
-
-impl std::ops::DerefMut for UniqueElements {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut [Value] {
-        // SAFETY: the backing is this array's own (or empty), and the first `len` values are
-        // initialized.
-        unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }
     }
 }
 
@@ -481,6 +568,53 @@ mod tests {
     }
 
     #[test]
+    fn every_write_keeps_the_others_count_exact() {
+        let ints = || ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
+        assert_eq!(ints().holds_only_int32(), true);
+        assert_eq!(ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).holds_only_int32(), false);
+        assert_eq!(ArrayElements::filled(3, Value::integer(0)).holds_only_int32(), true);
+        assert_eq!(ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).holds_only_int32(), false);
+        let demotions: [(&str, fn(&mut UniqueElements)); 6] = [
+            ("set", |elements| elements.set(0, Value::DELETED)),
+            ("push", |elements| elements.push(Value::number(0.5))),
+            ("resize", |elements| elements.resize(4, Value::UNDEFINED)),
+            ("fill", |elements| elements.fill(0..1, Value::TRUE)),
+            ("copy_from", |elements| elements.copy_from(1, &[Value::NULL])),
+            ("splice", |elements| elements.splice(0..1, &[Value::FALSE])),
+        ];
+        for (write, demote) in demotions {
+            let mut elements = ints();
+            demote(elements.make_mut());
+            assert_eq!(elements.holds_only_int32(), false, "{write}");
+        }
+        let mut grown = ints();
+        for value in 3..64 {
+            grown.make_mut().push(Value::integer(value));
+        }
+        grown.make_mut().set(5, Value::integer(-5));
+        assert_eq!(grown.holds_only_int32(), true, "int32 writes and growth keep the kind");
+        let mut shared = ArrayElements::from(vec![Value::integer(1), Value::NULL]);
+        let mut copy = shared.clone();
+        copy.make_mut().set(1, Value::integer(2));
+        assert_eq!((shared.holds_only_int32(), copy.holds_only_int32()), (false, true), "a detached copy counts its own writes");
+        shared.make_mut().truncate(1);
+        assert_eq!(shared.holds_only_int32(), true, "removing the last other value restores Int32");
+        let mut holey = ints();
+        holey.make_mut().resize(4, Value::DELETED);
+        assert_eq!(holey.holds_only_int32(), false);
+        for index in [3, 2] {
+            holey.make_mut().set(index, Value::integer(0));
+        }
+        assert_eq!(holey.holds_only_int32(), true, "filling every hole with int32s restores Int32");
+        holey.make_mut().set(0, Value::number(0.5));
+        holey.make_mut().pop();
+        assert_eq!(holey.holds_only_int32(), false);
+        holey.make_mut().remove(0);
+        assert_eq!(holey.holds_only_int32(), true);
+        assert_eq!(ArrayElements::new().holds_only_int32(), true);
+    }
+
+    #[test]
     fn shared_backings_copy_on_write_and_empty_arrays_allocate_nothing() {
         let empty = ArrayElements::new();
         assert_eq!(empty.capacity(), 0);
@@ -492,7 +626,7 @@ mod tests {
         assert_ne!(first.as_ptr(), second.as_ptr());
         assert_eq!(&*first, &[Value::integer(1), Value::integer(2)]);
         assert_eq!(&*second, &[Value::integer(1), Value::integer(2), Value::integer(3)]);
-        first.make_mut()[0] = Value::integer(9);
+        first.make_mut().set(0, Value::integer(9));
         assert_eq!(first[0], Value::integer(9));
 
         let mut grown = ArrayElements::new();
