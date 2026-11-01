@@ -6717,6 +6717,10 @@ struct JsStepDispatch {
 /// A general-dispatch body specialized for frameless lane activations
 /// (`GeneralDispatchMode::Lane`): it runs on the activation's own registers, so they stay
 /// the interpreter's exact state, and leaves at the PC of any instruction it does not run.
+/// The length below which a lane body without loops or inlined calls declines
+/// (`Vm::compile_lane_method`).
+const LANE_BODY_MIN_INSTRUCTIONS: usize = 24;
+
 pub(super) struct LaneMethod {
     _code: CodeMemory,
     entry: Entry,
@@ -6727,6 +6731,27 @@ pub(super) struct LaneMethod {
     pub(super) inlined: Vec<InlinedCall>,
     /// The scratch registers a leave inside its widest inlined call fills (`LaneFrame::scratch`).
     scratch_width: usize,
+    /// The loop header PC of its function a run may also start at (`Vm::run_lane_method`).
+    pub(super) loop_header: Option<u32>,
+    /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
+    amortizes: bool,
+}
+
+impl LaneMethod {
+    /// Whether an entry, which costs a few hundred instructions the lane's own run of a
+    /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
+    /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
+    pub(super) fn amortizes_entry(&self) -> bool {
+        self.amortizes
+    }
+}
+
+/// Where a run of a lane body starts (`Vm::run_lane_method`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LaneStart {
+    First,
+    /// Its loop header (`LaneMethod::loop_header`), from the lane's backward jump there.
+    LoopHeader,
 }
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
@@ -6844,7 +6869,13 @@ impl<H: Host> Vm<H> {
 
     /// Specialize `function` for lane activations, admitting a body only where its first
     /// instruction runs natively: an entry that leaves at once is pure cost.
-    pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &[Option<CallTarget>]) -> Option<LaneMethod> {
+    pub(super) fn compile_lane_method(
+        &mut self,
+        program: &ResidualProgram,
+        function: u32,
+        targets: &[Option<CallTarget>],
+        loop_header: Option<u32>,
+    ) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
@@ -6853,6 +6884,15 @@ impl<H: Host> Vm<H> {
         };
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize))?;
+        let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
+            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && (instruction.imm() as usize) <= pc
+        });
+        let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
+        let loop_entry = match loop_header {
+            Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
+            None => None,
+        };
         let caller_fields = self.lane_receiver_fields(program, function);
         let callee_fields: Vec<_> = unit.frames.iter().map(|frame| self.lane_receiver_fields(program, frame.target.function)).collect();
         let receiver_fields: Vec<Vec<NativeFieldLoad>> = unit
@@ -6863,7 +6903,7 @@ impl<H: Host> Vm<H> {
                 lane_unit::Origin::Inlined { frame, pc } => callee_fields[frame].get(pc as usize).cloned().unwrap_or_default(),
             })
             .collect();
-        let region = lane_region::compile(program, function, &unit, helpers, &receiver_fields);
+        let region = lane_region::compile(program, function, &unit, helpers, &receiver_fields, loop_entry);
         self.host.after_native_compilation();
         let region = region?;
         if region.native == 0 {
@@ -6881,7 +6921,7 @@ impl<H: Host> Vm<H> {
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
         let scratch_width = unit.frames.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width })
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -6889,6 +6929,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn run_lane_method(
         &mut self,
         method: &LaneMethod,
+        start: LaneStart,
         program: ProgramId,
         residual: &ResidualProgram,
         registers: *mut Value,
@@ -6929,7 +6970,14 @@ impl<H: Host> Vm<H> {
         let mut word = 0_u64;
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases set above.
-        let status = unsafe { (method.entry)(&mut *context, 0, 0, registers.cast_const().cast(), &mut word) };
+        let start = match start {
+            LaneStart::First => 0,
+            LaneStart::LoopHeader => {
+                debug_assert!(method.loop_header.is_some(), "a loop entry runs a body compiled with one");
+                1
+            }
+        };
+        let status = unsafe { (method.entry)(&mut *context, start, 0, registers.cast_const().cast(), &mut word) };
         Self::lane_method_exit(status, word)
     }
 
@@ -6950,7 +6998,7 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
-        let exit = self.run_lane_method(method, program, residual, registers, receiver, captures, lane_context);
+        let exit = self.run_lane_method(method, LaneStart::First, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above; the callee's run may have grown the scratch window.
         unsafe {
             saved.install(&mut (*frame).dispatch);

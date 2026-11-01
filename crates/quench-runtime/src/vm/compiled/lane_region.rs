@@ -419,9 +419,10 @@ pub(super) fn compile(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &[Vec<NativeFieldLoad>],
+    loop_entry: Option<usize>,
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, loop_entry, &*isa)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
@@ -434,6 +435,7 @@ fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &[Vec<NativeFieldLoad>],
+    loop_entry: Option<usize>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
@@ -449,7 +451,7 @@ fn lower(
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     let parameters = builder.block_params(entry_block).to_vec();
-    let (context, registers_base, result) = (parameters[0], parameters[3], parameters[4]);
+    let (context, start, registers_base, result) = (parameters[0], parameters[1], parameters[3], parameters[4]);
     let payload = builder.ins().load(
         types::I64,
         MemFlagsData::trusted(),
@@ -467,15 +469,7 @@ fn lower(
     };
     let zero = builder.ins().iconst(types::I32, 0);
     let float_zero = builder.ins().f64const(0.0);
-    let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
     for register in 0..count {
-        let bits = if register < usize::from(unit.caller_registers)
-            && live.is_none_or(|live| live.is_live(0, register as Register)) {
-            builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
-        } else {
-            undefined
-        };
-        builder.def_var(registers.tagged[register], bits);
         builder.def_var(registers.int[register], zero);
         builder.def_var(registers.float[register], float_zero);
     }
@@ -545,10 +539,38 @@ fn lower(
     }
     lowering.facts = super::facts::analyze(&initial, &instructions, &leaders, &program.constants, &writes);
     lowering.entry = Some(lowering.entry_facts(&instructions));
-    let first = lowering.blocks[0].expect("pc 0 leads");
+    // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
+    // from the registers live there, each proved to its header facts or leaving at it.
+    let starts: Vec<usize> = std::iter::once(0).chain(loop_entry).collect();
+    let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
+    if let [at_first, at_header] = start_blocks[..] {
+        let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
+        lowering.builder.ins().brif(from_header, at_header, &[], at_first, &[]);
+    } else {
+        lowering.builder.ins().jump(start_blocks[0], &[]);
+    }
+    for (pc, block) in starts.iter().copied().zip(start_blocks.drain(..)) {
+        lowering.builder.switch_to_block(block);
+        let origin = match lowering.unit.origins.get(pc) {
+            Some(super::lane_unit::Origin::Caller(origin)) => *origin as usize,
+            _ => return None,
+        };
+        let undefined = lowering.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+        for register in 0..count {
+            let bits = if register < usize::from(lowering.unit.caller_registers)
+                && lowering.live.is_none_or(|live| live.is_live(origin, register as Register)) {
+                lowering.builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
+            } else {
+                undefined
+            };
+            lowering.builder.def_var(lowering.registers.tagged[register], bits);
+        }
+        let Some(target) = lowering.blocks.get(pc).copied().flatten() else { return None };
+        let mut state = State::canonical(count);
+        lowering.conform(&mut state, pc);
+        lowering.builder.ins().jump(target, &[]);
+    }
     let mut state = State::canonical(count);
-    lowering.conform(&mut state, 0);
-    lowering.builder.ins().jump(first, &[]);
     let mut reachable = false;
     for (pc, instruction) in instructions.iter().copied().enumerate() {
         if let Some(block) = lowering.blocks[pc] {
@@ -1313,7 +1335,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1336,7 +1358,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &[], &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

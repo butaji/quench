@@ -576,6 +576,16 @@ impl LaneView {
         !matches!(body, LaneBody::Declined)
     }
 
+    /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
+    /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
+    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) {
+        // SAFETY: as `lane_body`; specializing runs no lane body.
+        if let LaneBody::Unspecialized { entries } = unsafe { &mut *self.tier_lane.get() } {
+            *entries = LANE_BODY_WARMUP_ENTRIES - 1;
+        }
+        self.specialize_lane_body(entry, specialize);
+    }
+
     /// The stack room an entry of the specialized body proves (`LaneBody::Specialized`).
     fn lane_body_room(&self) -> u16 {
         // SAFETY: as `lane_body`.
@@ -6857,7 +6867,7 @@ script_handler! {
         if site.analysis_failure.is_some_and(|failure| {
             failure.reason != super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
         }) {
-            lane_loop_retire::<H>(cx, ip, site);
+            lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         if site.exits.get() >= LOOP_TIER_MAX_EXITS
@@ -6872,9 +6882,10 @@ script_handler! {
             None => match lane_inlining_region(cx, r, site) {
                 Some(region) => site.region.get_or_init(|| region),
                 None => {
-                    // The calls do not run inlined: the loop stays the interpreter's.
+                    // The calls do not run inlined: the loop runs in its function's lane
+                    // body, which calls natively, or stays the interpreter's.
                     site.exits.set(LOOP_TIER_MAX_EXITS);
-                    lane_loop_retire::<H>(cx, ip, site);
+                    lane_loop_body_or_retire::<H>(cx, ip, site);
                     next!(cx, r, header, Carried::script(cx))
                 }
             },
@@ -7006,6 +7017,95 @@ script_handler! {
 /// so each iteration takes the jump without the site's checks. The shared JS baseline
 /// observes every backward jump of a site (`note_js_general_dispatch_backedge`), so while
 /// it runs the site stays.
+/// A loop no region runs (`lane_loop_jump`) runs in its function's lane body, entered at its
+/// header (`lane_loop_body_jump`), where lane bodies are enabled and the body specializes
+/// with that entry; else its backward jump retires to the interpreter's.
+fn lane_loop_body_or_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view);
+    let entered = vm.programs.js_jit_lane_methods_enabled()
+        && !vm.programs.js_jit_general_dispatch_enabled()
+        && own.is_some_and(|own| {
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            own.specialize_lane_body_now(lane_body_entry::<H>, || {
+                let targets = code.function_get(site.function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
+                vm.compile_lane_method(code, site.function, &targets, Some(site.header))
+            });
+            own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
+        });
+    if entered {
+        site.exits.set(0);
+        requicken::<H>(ip, lane_loop_body_jump::<H>);
+    } else {
+        lane_loop_retire::<H>(cx, ip, site);
+    }
+}
+
+script_handler! {
+    /// The backward jump of a loop its function's lane body runs from the header
+    /// (`lane_loop_body_or_retire`): the body runs on the activation's registers until it
+    /// leaves, and the lane continues where it left. A loop whose body keeps leaving
+    /// (`LOOP_TIER_MAX_EXITS`) goes back to the interpreter's jump.
+    #[inline(never)]
+    fn lane_loop_body_jump<>(cx, r, ip, i, view) {
+        let site = i.loop_site();
+        // SAFETY: the site records the distance to a validated jump target.
+        let header = unsafe { ip.byte_offset(site.jump) };
+        if below_floor() {
+            return lane_safepoint::<H>(ip, header, Slot::unset());
+        }
+        let vm = unsafe { vm(cx) };
+        // SAFETY: as `lane_loop_body_or_retire`.
+        let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view);
+        let Some((own, method)) = own.and_then(|own| own.lane_body().map(|method| (own, method))) else {
+            lane_loop_retire::<H>(cx, ip, site);
+            next!(cx, r, header, Carried::script(cx))
+        };
+        if !lane_body_admits(cx, own) {
+            next!(cx, r, header, Carried::script(cx))
+        }
+        // The header's PC is the backward jump's target; the function's records start
+        // `site.header` records before it.
+        let base = unsafe { header.sub(site.header as usize) };
+        // SAFETY: the activation's context holds its own receiver and captures.
+        let this = unsafe { (*cx).this };
+        let receiver = if this.is_deleted() { Value::DELETED } else { this };
+        let captures = capture_reads(unsafe { (*cx).capture });
+        let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
+        let pc = match vm.run_lane_method(method, super::compiled::LaneStart::LoopHeader, program, code, r.0, receiver, captures, cx.cast()) {
+            super::compiled::LaneExit::At(pc) => pc,
+            super::compiled::LaneExit::Inlined { frame, pc } => {
+                let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, &method.inlined[frame], pc);
+                next!(cx, registers, resume, carried)
+            }
+            super::compiled::LaneExit::Callee => {
+                let mut carried = Carried::script(cx);
+                // SAFETY: `lane_body_call` set both before the body left.
+                let (registers, resume) = unsafe { ((*cx).registers, (*cx).callee_resume) };
+                carried.acc = Slot::of(unsafe { (*cx).callee_acc });
+                next!(cx, registers, resume, carried)
+            }
+        };
+        if pc as u32 == site.header {
+            site.exits.set(site.exits.get() + 1);
+            if site.exits.get() >= LOOP_TIER_MAX_EXITS {
+                lane_loop_retire::<H>(cx, ip, site);
+            }
+        }
+        // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
+        let resume = unsafe { base.add(pc) };
+        let mut carried = Carried::script(cx);
+        if let Some(&register) = own.accumulator_registers.get(pc)
+            && register != NO_ACCUMULATOR
+        {
+            carried.acc = Slot::of(r.get(register));
+        }
+        next!(cx, r, resume, carried)
+    }
+}
+
 fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     if unsafe { vm(cx) }.programs.js_jit_general_dispatch_enabled() {
@@ -13766,7 +13866,7 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let pc = match vm.run_lane_method(method, program, code, r.0, receiver, captures, cx.cast()) {
+        let pc = match vm.run_lane_method(method, super::compiled::LaneStart::First, program, code, r.0, receiver, captures, cx.cast()) {
             super::compiled::LaneExit::At(pc) => pc,
             super::compiled::LaneExit::Inlined { frame, pc } => {
                 let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, &method.inlined[frame], pc);
@@ -13828,16 +13928,18 @@ fn lane_tier_enter<H: Host>(
     // SAFETY: the activation just set the context to its own function's.
     let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
     let receiver = (binds_this && !this.is_deleted()).then_some(this);
-    // A lane body runs on the activation itself, so it comes before the frame-entering tier:
-    // the activation warms toward it in the lane, and only a declined body leaves the
-    // function to the JavaScript tier.
+    // A lane body runs on the activation itself, so it takes the function from the
+    // frame-entering tier: the activation warms toward it in the lane, and a function whose
+    // body declines runs in the lane, as it does without lane bodies.
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
-        && own.specialize_lane_body(lane_body_entry::<H>, || {
-            let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
-            vm.compile_lane_method(code, function, &targets)
-        })
     {
+        if !own.specialize_lane_body(lane_body_entry::<H>, || {
+            let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
+            vm.compile_lane_method(code, function, &targets, None).filter(super::compiled::LaneMethod::amortizes_entry)
+        }) {
+            own.release_from_tier();
+        }
         return None;
     }
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
@@ -13855,9 +13957,7 @@ fn lane_tier_enter<H: Host>(
     // The general baseline runs only from a VM frame (`Vm::js_tier_frame_entry`), so a
     // function the general tier holds gains nothing from frameless claims either.
     if let Some(own) = own
-        && (vm.programs.js_jit_lane_methods_enabled()
-            || !may_claim
-            || vm.js_tier_holds_for_general(program, function))
+        && (!may_claim || vm.js_tier_holds_for_general(program, function))
     {
         own.release_from_tier();
     }
