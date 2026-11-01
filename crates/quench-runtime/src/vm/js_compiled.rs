@@ -1893,6 +1893,19 @@ pub(super) struct JsBooleanRegion {
     pub(super) capture_arguments: Vec<JsJitCaptureArgument>,
 }
 
+/// A boolean region returns its exact bytecode PC above the low result bit.
+pub(super) const BOOLEAN_REGION_RESULT_BITS: u32 = 1;
+pub(super) const BOOLEAN_REGION_RESULT_MASK: u32 = (1 << BOOLEAN_REGION_RESULT_BITS) - 1;
+
+fn emit_boolean_region_return(
+    builder: &mut FunctionBuilder<'_>, value: ir::Value, pc: usize,
+) -> Option<()> {
+    let encoded_pc = u32::try_from(pc.checked_mul(1usize << BOOLEAN_REGION_RESULT_BITS)?).ok()?;
+    let encoded = builder.ins().bor_imm_u(value, i64::from(encoded_pc));
+    builder.ins().return_(&[encoded]);
+    Some(())
+}
+
 fn compile_number_domain_boolean_tree(
     program: &ResidualProgram,
     function_id: u32,
@@ -2489,7 +2502,7 @@ pub(super) fn lower_number_domain_boolean_tree(
                         _ => return None,
                     };
                     let result = builder.ins().iconst(types::I32, i64::from(source));
-                    builder.ins().return_(&[result]);
+                    emit_boolean_region_return(&mut builder, result, pc)?;
                     emitted_return = true;
                 }
             }
@@ -2567,7 +2580,7 @@ pub(super) fn lower_number_domain_boolean_tree(
                             let yes = builder.ins().iconst(types::I32, 1);
                             let no = builder.ins().iconst(types::I32, 0);
                             let result = builder.ins().select(condition, yes, no);
-                            builder.ins().return_(&[result]);
+                            emit_boolean_region_return(&mut builder, result, pc)?;
                             emitted_return = true;
                         } else {
                             let yes = builder.ins().f64const(Ieee64::with_bits(1.0f64.to_bits()));
@@ -2708,7 +2721,7 @@ pub(super) fn lower_number_domain_boolean_tree(
                     }
                     _ => return None,
                 };
-                builder.ins().return_(&[result]);
+                emit_boolean_region_return(&mut builder, result, pc)?;
                 emitted_return = true;
             }
             _ => return None,

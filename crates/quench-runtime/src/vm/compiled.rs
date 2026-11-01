@@ -7665,7 +7665,7 @@ impl CompiledJsFunction {
             (CompiledJsEntry::Boolean(entry), JsNativeCallInput::Arguments { values, .. }) => {
                 // SAFETY: the Boolean artifact emits the matching ABI.
                 Some(CompiledJsResult::Boolean(unsafe {
-                    entry(values.as_ptr()) != 0
+                    entry(values.as_ptr()) & super::js_compiled::BOOLEAN_REGION_RESULT_MASK != 0
                 }))
             }
             (
@@ -15443,6 +15443,20 @@ mod tests {
         let artifact = super::super::js_compiled::compile(&program, function).unwrap();
         let compiled = CompiledJsFunction::from_artifact(artifact).unwrap();
         assert!(compiled.direct_callable());
+        let CompiledJsEntry::Boolean(entry) = &compiled.entry else {
+            panic!("boolean region should use the boolean entry ABI");
+        };
+        // SAFETY: the region's input is a guarded signed-int32 Number.
+        let yes = unsafe { entry([1.0].as_ptr()) };
+        let no = unsafe { entry([0.0].as_ptr()) };
+        assert_eq!(yes & super::super::js_compiled::BOOLEAN_REGION_RESULT_MASK, 1);
+        assert_eq!(no & super::super::js_compiled::BOOLEAN_REGION_RESULT_MASK, 0);
+        let yes_pc = (yes >> super::super::js_compiled::BOOLEAN_REGION_RESULT_BITS) as usize;
+        let no_pc = (no >> super::super::js_compiled::BOOLEAN_REGION_RESULT_BITS) as usize;
+        assert_ne!(yes_pc, no_pc);
+        for pc in [yes_pc, no_pc] {
+            assert_eq!(program.function(function as usize).code[pc].as_wide().op(), Op::Return);
+        }
         let interrupt = crate::ExecutionInterrupt::default();
         assert!(matches!(direct_call(&compiled, &[Value::number(1.0)], &interrupt),
             Some(CompiledJsCallResult::Value(Value::TRUE))));
