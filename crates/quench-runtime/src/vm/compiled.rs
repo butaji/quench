@@ -7417,29 +7417,38 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             .code
             .get(pc)
             .ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
-        let source_instruction = super::dispatch_fast::decoded_instruction(body, packed);
         let instruction = if SINGLE_OPERATION {
             let selected = operation.as_ref().ok_or_else(||
                 JsError::validation("invalid native semantic opcode".into()))?;
-            if selected.opcode != source_instruction.op() {
+            // Linked operands are already resolved. Admission needs only the
+            // source opcode, not a second decoding of every operand field.
+            let source_opcode = if packed.is_wide() {
+                body.wide[packed.wide_index()].op()
+            } else {
+                packed.op()
+            };
+            if selected.opcode != source_opcode {
                 return Err(JsError::validation("native semantic opcode does not match instruction".into()));
             }
             if arguments.is_null() {
                 return Err(JsError::validation("native semantic operands are missing".into()));
             }
             #[cfg(feature = "profile-native-ops")]
-            super::native_op_profile::record_site(
-                dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
-                body.name.or(body.inferred_name)
-                    .and_then(|atom| program.atoms.get(atom as usize)),
-                || native_operation_fallback_kind(vm, dispatch.frame, source_instruction),
-            );
+            {
+                let source_instruction = super::dispatch_fast::decoded_instruction(body, packed);
+                super::native_op_profile::record_site(
+                    dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
+                    body.name.or(body.inferred_name)
+                        .and_then(|atom| program.atoms.get(atom as usize)),
+                    || native_operation_fallback_kind(vm, dispatch.frame, source_instruction),
+                );
+            }
             // SAFETY: linked code supplies resolved operands under the entry's
             // ABI contract; the source opcode check precedes all guest effects.
             unsafe { &*arguments.cast::<super::native_operands::NativeJsOperands>() }
                 .instruction(selected.opcode)
         } else {
-            source_instruction
+            super::dispatch_fast::decoded_instruction(body, packed)
         };
         let next_pc = pc
             .checked_add(1)
@@ -17174,6 +17183,32 @@ mod tests {
             assert!(outcome.unwrap().result.is_err());
             assert_eq!(vm.frames[0].registers, before);
         }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
+        let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
+        let body = &mut program.functions[0];
+        let pc = body.instructions().position(|instruction| instruction.op() == Op::Throw).unwrap();
+        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let wide_index = body.wide.len();
+        body.wide.push(instruction);
+        body.code[pc] = crate::bytecode::Instr::wide(wide_index).unwrap();
+        let mut vm = semantic_program(program);
+        vm.frames[0].registers[usize::from(instruction.register_a())] = Value::number(7.0);
+        let (status, _, outcome) = invoke_semantic(&mut vm, pc,
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::SetField as usize }>);
+        assert_eq!(status, 1);
+        assert!(outcome.unwrap().result.is_err());
+        assert_eq!(vm.frames[0].registers[usize::from(instruction.register_a())], Value::number(7.0));
+        let (status, _, outcome) = invoke_semantic(&mut vm, pc,
+            native_js_operation_entry::<crate::test_host::TestHost, { Op::Throw as usize }>);
+        assert_eq!(status, 1);
+        let outcome = outcome.unwrap();
+        assert_eq!(outcome.instruction_pc, pc);
+        let Err(error) = outcome.result else { panic!("wide Throw must stop with its original value") };
+        assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
     }
 
     #[cfg(feature = "aot")]
