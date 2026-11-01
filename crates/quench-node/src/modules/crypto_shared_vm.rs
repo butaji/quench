@@ -177,7 +177,7 @@ pub(crate) fn module(
         set(context, module, "setFips", set_fips)?;
         set(context, module, "encapsulate", kem_encapsulate)?;
         set(context, module, "decapsulate", kem_decapsulate)?;
-        super::crypto_hash_source_shared_vm::install(context, module)?;
+        super::crypto_hash_source_shared_vm::install(context, module, transform)?;
         let keygen = crate::host::shared_vm::commonjs::node_library_module(
             context,
             "crypto.js",

@@ -346,6 +346,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterAsyncOwner" (1) => crate::modules::emitter_async_resource_shared_vm::owner,
         method "nodeErrorToString" (0) => crate::modules::node_errors_shared_vm::to_string,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
+        #[cfg(quench_openssl_provider)]
+        method "utilDeprecatedCall" (0) => crate::modules::util_deprecate_shared_vm::call,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
@@ -725,6 +727,37 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoNativeHashNew" (0) => crate::modules::crypto_hash_shared_vm::create_hash,
         #[cfg(quench_openssl_provider)]
         method "cryptoHashBinding" (0) => crate::modules::crypto_hash_shared_vm::binding,
+        #[cfg(quench_openssl_provider)]
+        #[cfg(test)]
+        method "cryptoHashPublicInstall" (2) => crate::modules::crypto_hash_source_shared_vm::install_binding,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHash" (2) => crate::modules::crypto_hash_source_shared_vm::hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmac" (3) => crate::modules::crypto_hash_source_shared_vm::hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicCreateHash" (2) => crate::modules::crypto_hash_source_shared_vm::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicCreateHmac" (3) => crate::modules::crypto_hash_source_shared_vm::create_hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashCopy" (1) => crate::modules::crypto_hash_source_shared_vm::copy,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashUpdate" (2) => crate::modules::crypto_hash_source_shared_vm::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashDigest" (1) => crate::modules::crypto_hash_source_shared_vm::hash_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmacDigest" (1) => crate::modules::crypto_hash_source_shared_vm::hmac_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashTransform" (3) => crate::modules::crypto_hash_source_shared_vm::transform,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashFlush" (1) => crate::modules::crypto_hash_source_shared_vm::hash_flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmacFlush" (1) => crate::modules::crypto_hash_source_shared_vm::hmac_flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransform" (1) => crate::modules::crypto_lazy_transform::construct,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyStateGet" (0) => crate::modules::crypto_lazy_transform::get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyStateSet" (1) => crate::modules::crypto_lazy_transform::set,
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHmacNew" (0) => crate::modules::crypto_hash_shared_vm::create_hmac,
         #[cfg(quench_openssl_provider)]

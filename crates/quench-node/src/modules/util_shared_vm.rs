@@ -378,10 +378,21 @@ pub(crate) fn argument_value_error_units(
     name: &[u16],
     reason: &str,
 ) -> Result<RootedError, RootedError> {
-    const MAX_INSPECTED_VALUE_UNITS: usize = 128;
     let inspect = internal_inspect(context)?;
     let undefined = context.undefined();
     let inspected = context.call_rooted(inspect, undefined, &[value])?;
+    argument_value_error_inspected_units(context, name, reason, inspected)
+}
+
+/// Finish a value error from an already inspected value. Callers with a proven primitive
+/// presentation share the same message, truncation and coded-error construction.
+pub(crate) fn argument_value_error_inspected_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &[u16],
+    reason: &str,
+    inspected: RootId,
+) -> Result<RootedError, RootedError> {
+    const MAX_INSPECTED_VALUE_UNITS: usize = 128;
     let mut detail = context
         .string_code_units(inspected)?
         .ok_or_else(|| RootedError::host("inspect returned a non-string"))?;

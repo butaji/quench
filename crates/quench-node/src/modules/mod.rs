@@ -133,6 +133,8 @@ pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_parse_args_shared_vm;
 pub(crate) mod util_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod util_deprecate_shared_vm;
 pub mod util_strip;
 pub(crate) mod util_style_shared_vm;
 pub(crate) mod util_system_error_shared_vm;
@@ -190,8 +192,9 @@ pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
 #[cfg(quench_openssl_provider)]
-#[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_source_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_lazy_transform;
 
 pub(crate) mod abort_dependencies_shared_vm;
 
