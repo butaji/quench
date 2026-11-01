@@ -1252,8 +1252,8 @@ fn require_for_module_inner(
         set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
-    if specifier == "internal/bootstrap/realm" {
-        return crate::host::removed_javascript("internal/bootstrap/realm.js");
+    if specifier == "internal/bootstrap/realm" && internals_exposed(context) {
+        return cached_native_binding(context, "\0native:internal/bootstrap/realm", crate::modules::bootstrap_realm_shared_vm::module);
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {

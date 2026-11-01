@@ -2113,6 +2113,12 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processResourceUsage" (0) => crate::modules::process_metrics_shared_vm::public_resource_usage,
         #[cfg(unix)]
         method "processExecvePublic" (1) => crate::modules::process_metrics_shared_vm::public_execve,
+        method "realmBuiltinByUsers" (1) => crate::modules::bootstrap_realm_shared_vm::can_be_required_by_users,
+        method "realmBuiltinWithoutScheme" (1) => crate::modules::bootstrap_realm_shared_vm::can_be_required_without_scheme,
+        method "realmBuiltinNormalize" (1) => crate::modules::bootstrap_realm_shared_vm::normalize_requirable_id,
+        method "realmBuiltinIsBuiltin" (1) => crate::modules::bootstrap_realm_shared_vm::is_builtin,
+        method "realmBuiltinSchemeOnly" (0) => crate::modules::bootstrap_realm_shared_vm::scheme_only_names,
+        method "realmBuiltinAll" (0) => crate::modules::bootstrap_realm_shared_vm::all_ids,
         method "permissionHas" (2) => crate::modules::process_permission_shared_vm::has,
         method "permissionDrop" (2) => crate::modules::process_permission_shared_vm::drop_permission,
         method "domainConstruct" (0) => crate::modules::domain_shared_vm::construct,
