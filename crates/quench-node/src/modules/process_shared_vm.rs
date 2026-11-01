@@ -158,6 +158,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "hrtime", hrtime)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
+    // The active domain (`node:domain`), none until one is entered.
+    let null = context.null();
+    install(context, process, "domain", null)?;
     let shared_state = context.host_mut().shared_state();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
@@ -1905,32 +1908,23 @@ pub(crate) fn set_uncaught_exception_capture_callback(
         }
     }
     context.assign_named_property_rooted(state, "captureFn", callback)?;
-    let process = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    // `process.report.reportOnUncaughtException` is the native setting this toggles.
     use super::event_constructor_shared_vm::get;
+    use super::report_configuration_shared_vm::{report_on_uncaught_exception, set_report_on_uncaught_exception};
     if is_null {
         let auxiliary = get(context, state, "auxiliaryCallbacks")?;
         let length = get(context, auxiliary, "length")?;
         let zero = context.number(0.0);
         if context.strict_equal_rooted(length, zero)? {
-            let report = get(context, process, "report")?;
             let flag = get(context, state, "reportFlag")?;
-            context.assign_named_property_rooted(report, "reportOnUncaughtException", flag)?;
+            let flag = context.truthy_rooted(flag)?;
+            set_report_on_uncaught_exception(context, flag);
         }
     } else {
-        let report = get(context, process, "report")?;
-        let flag = get(context, report, "reportOnUncaughtException")?;
-        let yes = context.boolean(true);
-        let enabled = context.strict_equal_rooted(flag, yes)?;
+        let enabled = report_on_uncaught_exception(context);
         let enabled = context.boolean(enabled);
         context.assign_named_property_rooted(state, "reportFlag", enabled)?;
-        let report = get(context, process, "report")?;
-        let no = context.boolean(false);
-        context.assign_named_property_rooted(report, "reportOnUncaughtException", no)?;
+        set_report_on_uncaught_exception(context, false);
     }
     Ok(context.undefined())
 }
