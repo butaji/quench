@@ -484,7 +484,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         // that can require internal modules can replace those exports before a policy's
         // first use, so only then are the policies captured before it runs.
         if internals_exposed(context) {
-            context.scoped(crate::modules::util_shared_vm::initialize_call_site_policy)?;
             // Capture SDK process policies before exposed internal exports can be replaced.
             #[cfg(target_os = "linux")]
             {
@@ -1426,6 +1425,7 @@ fn require_for_module_inner(
             | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
+            | BuiltinModule::Sys
             | BuiltinModule::ChildProcess
             | BuiltinModule::InternalChildProcess
             | BuiltinModule::Https
@@ -1755,6 +1755,8 @@ enum BuiltinModule {
     StringDecoder,
     WorkerThreads,
     Util,
+    /// `sys`, the deprecated alias of `util`.
+    Sys,
     UtilTypes,
     Timers,
     TimersPromises,
@@ -1828,6 +1830,7 @@ impl BuiltinModule {
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
             Self::Util => Some("util"),
+            Self::Sys => Some("sys"),
             Self::UtilTypes => Some("util/types"),
             Self::Timers => Some("timers"),
             Self::InternalTimers => Some("internal/timers"),
@@ -2103,8 +2106,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
     // Node keeps the deprecated `sys` specifier as an alias of `util`.
-    ("sys", BuiltinModule::Util),
-    ("node:sys", BuiltinModule::Util),
+    ("sys", BuiltinModule::Sys),
+    ("node:sys", BuiltinModule::Sys),
     ("node:util", BuiltinModule::Util),
     ("util/types", BuiltinModule::UtilTypes),
     ("node:util/types", BuiltinModule::UtilTypes),
@@ -2494,6 +2497,7 @@ pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Url)
 }
 
+#[cfg(feature = "aot")]
 pub(crate) fn internal_url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::InternalUrl)
 }
@@ -2881,23 +2885,19 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         // Node's `_http_client` builds on its `http_parser` binding, which the native `http`
         // module does not use; until it is projected from it, it stays empty.
         BuiltinModule::Internal("_http_client") => context.object_rooted(),
+        BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
         // Every other such builtin is Node's own library module of that name.
         BuiltinModule::Internal(name) => {
             let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
             node_library_module(context, &relative, &relative)
         }
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
-        BuiltinModule::InternalUrl => {
-            // Node's bootstrap (exposed-window-or-worker.js) installs `URL.createObjectURL`
-            // and `URL.revokeObjectURL`; the module loads on first use here, so it does then.
-            let module = node_library_module(context, "url.js", "internal/url.js")?;
-            let install = get(context, module, "installObjectURLMethods")?;
-            let undefined = context.undefined();
-            context.call_rooted(install, undefined, &[])?;
-            Ok(module)
-        }
+        BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
         // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
-        BuiltinModule::UtilTypes => node_library_module(context, "util/types.js", "util/types.js"),
+        BuiltinModule::UtilTypes => {
+            let util = crate::modules::util_shared_vm::module(context)?;
+            get(context, util, "types")
+        }
         BuiltinModule::FsPromises => {
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
@@ -2907,9 +2907,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Vfs => node_library_module(context, "vfs.js", "vfs.js"),
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::build_module(context),
-        #[cfg(unix)]
-        BuiltinModule::Os => node_library_module(context, "os.js", "os.js"),
-        #[cfg(not(unix))]
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
         BuiltinModule::Stream => crate::modules::stream_shared_vm::module(context),
@@ -2917,9 +2914,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
         BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
-        BuiltinModule::StringDecoder => {
-            node_library_module(context, "string_decoder.js", "string_decoder.js")
-        }
+        BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
             crate::modules::timers_shared_vm::timers_module(context, promises)
@@ -2938,8 +2933,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             }
             crate::modules::worker_shared_vm::module(context, &markers)
         }
-        BuiltinModule::Url => node_library_module(context, "url.js", "url.js"),
-        BuiltinModule::Querystring => node_library_module(context, "querystring.js", "querystring.js"),
+        BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
+        BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
         BuiltinModule::Readline => node_library_module(context, "readline.js", "readline.js"),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
@@ -2985,6 +2980,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "stateful builtin passed to generic shared module builder",
         )),
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
+        BuiltinModule::Sys => crate::modules::util_module_shared_vm::sys_module(context),
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
         BuiltinModule::InternalChildProcess => {
             let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
