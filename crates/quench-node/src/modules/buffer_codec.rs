@@ -88,10 +88,12 @@ pub(crate) fn decode_units_limited(
         "utf16le" => {
             return Some(
                 bytes
-                    .chunks_exact(std::mem::size_of::<u16>())
-                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .as_chunks::<{ std::mem::size_of::<u16>() }>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes(*pair))
                     .collect(),
-            )
+            );
         }
         _ => {
             let text = String::from_utf8_lossy(bytes);

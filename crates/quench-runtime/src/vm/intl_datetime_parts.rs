@@ -161,9 +161,8 @@ pub(super) struct DateTimePartOptions {
 }
 
 pub(super) fn apply_date_style(options: &mut DateTimePartOptions, style: &str) {
-    match style {
-        FORMAT_STYLE_FULL => options.weekday = Some("long".into()),
-        _ => {}
+    if style == FORMAT_STYLE_FULL {
+        options.weekday = Some("long".into());
     }
     match style {
         FORMAT_STYLE_FULL | FORMAT_STYLE_LONG => {
@@ -218,14 +217,13 @@ pub(super) fn format_parts(
     if has_time {
         append_time(&mut parts, fields, options);
     }
-    if !fields.is_temporal {
-        if let Some(name) = &options.time_zone_name {
+    if !fields.is_temporal
+        && let Some(name) = &options.time_zone_name {
             if !parts.is_empty() {
                 push(&mut parts, "literal", " ");
             }
             push(&mut parts, "timeZoneName", name.clone());
         }
-    }
     parts
 }
 
@@ -326,8 +324,8 @@ fn append_date(
         };
         if let Some(related_year) = fields.related_year {
             push(parts, "relatedYear", related_year.to_string());
-            if let Some(cyclic_year) = fields.cyclic_year {
-                if options
+            if let Some(cyclic_year) = fields.cyclic_year
+                && options
                     .month
                     .as_deref()
                     .is_none_or(|style| !matches!(style, "long" | "short" | "narrow"))
@@ -345,7 +343,6 @@ fn append_date(
                         push(parts, "literal", "年");
                     }
                 }
-            }
         } else {
             push(parts, "year", value);
         }
@@ -518,8 +515,8 @@ fn append_time(
         }
         let value = format!("{:0width$}", fields.second, width = TWO_DIGIT_WIDTH);
         push(parts, "second", value);
-        if let Some(digits) = options.fractional_second_digits {
-            if (1..=FULL_FRACTION_DIGITS).contains(&digits) {
+        if let Some(digits) = options.fractional_second_digits
+            && (1..=FULL_FRACTION_DIGITS).contains(&digits) {
                 let divisor = DECIMAL_RADIX.pow(FULL_FRACTION_DIGITS - digits);
                 push(parts, "literal", ".");
                 push(
@@ -532,7 +529,6 @@ fn append_time(
                     ),
                 );
             }
-        }
     }
     if options.hour.is_some() && (hour12 || options.day_period.is_some()) {
         push(parts, "literal", " ");

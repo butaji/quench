@@ -64,6 +64,9 @@ fn script_options(goal: &str) -> Result<HostScriptOptions, String> {
 }
 
 /// Source validation produces either code or a deferred guest syntax failure.
+// Each value is produced once per source and immediately consumed, so boxing the
+// program would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 pub enum NativeSourceCompilation {
     Program(ResidualProgram),
     SyntaxError(String),

@@ -37,7 +37,9 @@ fn main() -> Result<(), String> {
     let show_ast = args.contains("--ast");
     let show_estree = args.contains("--estree");
     let show_comments = args.contains("--comments");
-    let name = args.free_from_str().unwrap_or_else(|_| "test.js".to_string());
+    let name = args
+        .free_from_str()
+        .unwrap_or_else(|_| "test.js".to_string());
 
     // Read source file
     let path = Path::new(&name);
@@ -47,7 +49,10 @@ fn main() -> Result<(), String> {
     // Parse the source code
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, &source_text, source_type)
-        .with_options(ParseOptions { parse_regular_expression: true, ..ParseOptions::default() })
+        .with_options(ParseOptions {
+            parse_regular_expression: true,
+            ..ParseOptions::default()
+        })
         .parse();
     let mut program = ret.program;
 
@@ -74,7 +79,10 @@ fn main() -> Result<(), String> {
         } else {
             println!("TS-ESTree AST:");
         }
-        println!("{}", program.to_pretty_estree_json(!source_type.is_javascript(), false));
+        println!(
+            "{}",
+            program.to_pretty_estree_json(!source_type.is_javascript(), false)
+        );
     }
 
     // Report parsing results

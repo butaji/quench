@@ -38,17 +38,17 @@ impl<'a> Visit<'a> for Validator {
     }
 }
 
-pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), ()> {
+pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), crate::stack::StackExhausted> {
     if parsed.stack_exhausted {
-        return Err(());
+        return Err(crate::stack::StackExhausted);
     }
     validate(&parsed.program)
 }
 
-pub(super) fn validate(program: &Program<'_>) -> Result<(), ()> {
+pub(super) fn validate(program: &Program<'_>) -> Result<(), crate::stack::StackExhausted> {
     let mut validator = Validator::default();
     validator.visit_program(program);
-    if validator.exhausted { Err(()) } else { Ok(()) }
+    if validator.exhausted { Err(crate::stack::StackExhausted) } else { Ok(()) }
 }
 
 #[cfg(test)]

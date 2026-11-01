@@ -191,7 +191,7 @@ impl SharedBacking {
         if !matches!(width, 1 | 2 | 4 | 8) {
             return Err(AccessError::Width);
         }
-        if aligned && offset % width != 0 {
+        if aligned && !offset.is_multiple_of(width) {
             return Err(AccessError::Alignment);
         }
         let end = offset.checked_add(width).ok_or(AccessError::Bounds)?;

@@ -75,7 +75,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::Super(_) => self.super_base(),
             Expression::FunctionExpression(value) => {
                 let function = self.function_expression(value);
-                if value.id.is_none() { if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); } }
+                if value.id.is_none() && let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); }
                 function
             },
             Expression::ArrowFunctionExpression(value) => {
@@ -313,7 +313,11 @@ impl FunctionCompiler<'_, '_> {
                 return Some(copy);
             }
             let dst = self.reg();
-            self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
+            if self.reads_own_callee(atom) {
+                self.emit(Op::LoadCallee, dst, 0, 0, 0);
+            } else {
+                self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
+            }
             Some(dst)
         } else if (compiler_binding || (self.with_depth == 0 && !self.dynamic_eval))
             && let Some((depth, slot)) = self.scopes.find(atom)
@@ -330,6 +334,17 @@ impl FunctionCompiler<'_, '_> {
         } else {
             None
         }
+    }
+
+    /// Whether a read of `atom` is a read of the function's own name binding
+    /// (`SELF_BINDING_MARKER`), which holds the running function itself, the callee its
+    /// activation records: such a read is `LoadCallee`, so a body whose closures do not
+    /// capture the name needs no local slot for it (`frame_registers::drop_unread_self_binding`).
+    /// A generator or async body resumes after its call returned, so it keeps reading its slot.
+    fn reads_own_callee(&self, atom: Atom) -> bool {
+        !self.generator
+            && !self.async_function
+            && self.owner.atoms[atom as usize].contains(crate::bytecode::SELF_BINDING_MARKER)
     }
 
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
@@ -793,12 +808,12 @@ impl FunctionCompiler<'_, '_> {
         if let Some(test) = self.typeof_test(value) {
             return test;
         }
-        let left = if let Some(constant) = binding_time::expression(&value.left).static_value() {
+        let left = if let Some(constant) = binding_time::expression(&value.left) {
             self.constant_operand(constant)
         } else {
             Operand::register(self.expression(&value.left))
         };
-        let right = if let Some(constant) = binding_time::expression(&value.right).static_value() {
+        let right = if let Some(constant) = binding_time::expression(&value.right) {
             self.constant_operand(constant)
         } else if let Expression::Identifier(identifier) = &value.right
             && let Some(operand) = self.local_operand(identifier.name.as_str())
@@ -899,14 +914,14 @@ impl FunctionCompiler<'_, '_> {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
-            let left = if let Some(constant) = binding_time::expression(&binary.left).static_value()
+            let left = if let Some(constant) = binding_time::expression(&binary.left)
             {
                 self.constant_operand(constant)
             } else {
                 Operand::register(self.expression(&binary.left))
             };
             let right =
-                if let Some(constant) = binding_time::expression(&binary.right).static_value() {
+                if let Some(constant) = binding_time::expression(&binary.right) {
                     self.constant_operand(constant)
                 } else if let Expression::Identifier(identifier) = &binary.right
                     && let Some(operand) = self.local_operand(identifier.name.as_str())

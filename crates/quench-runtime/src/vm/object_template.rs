@@ -325,7 +325,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn empty_array(&self, value: Value) -> bool {
-        self.heap.array_elements(value).is_some_and(|elements| elements.len() == 0)
+        self.heap.array_elements(value).is_some_and(|elements| elements.is_empty())
             && self.heap.sparse_length(value).is_none_or(|length| length == 0)
     }
 

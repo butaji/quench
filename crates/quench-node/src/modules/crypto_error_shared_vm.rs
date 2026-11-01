@@ -63,7 +63,14 @@ fn put<H: Host>(
     value: RootId,
 ) -> Result<(), RootedError> {
     let key = context.string_rooted(name);
-    context.define_data_property_rooted(error, key, value, true, true, true)?;
+    if name == "library" {
+        // Node assigns `library` directly, preserving inherited setters and
+        // their exceptions. Other decorations, especially opensslErrorStack,
+        // are defined as own data properties.
+        context.set_property_rooted(error, key, value, error)?;
+    } else {
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
     Ok(())
 }
 
@@ -72,31 +79,38 @@ pub(crate) fn create<H: Host>(
     stack: &openssl::error::ErrorStack,
     decorate: bool,
 ) -> Result<RootId, RootedError> {
-    create_message(context,stack,decorate,None)
+    create_message(context, stack, decorate, None)
 }
 
-fn create_message<H:Host>(context:&mut NativeContext<'_,H>,stack:&openssl::error::ErrorStack,decorate:bool,custom:Option<&str>)->Result<RootId,RootedError> {
+fn create_message<H: Host>(
+    context: &mut NativeContext<'_, H>,
+    stack: &openssl::error::ErrorStack,
+    decorate: bool,
+    custom: Option<&str>,
+) -> Result<RootId, RootedError> {
     let first = stack.errors().first();
-    let text = custom.map(str::to_owned).unwrap_or_else(|| first
-        .map(|error| {
-            message(
-                error.code(),
+    let text = custom.map(str::to_owned).unwrap_or_else(|| {
+        first
+            .map(|error| {
+                message(
+                    error.code(),
+                    if decorate {
+                        SETTER_MESSAGE_BYTES
+                    } else {
+                        STACK_MESSAGE_BYTES
+                    },
+                )
+            })
+            .unwrap_or_else(|| {
                 if decorate {
-                    SETTER_MESSAGE_BYTES
+                    message(0, SETTER_MESSAGE_BYTES)
                 } else {
-                    STACK_MESSAGE_BYTES
-                },
-            )
-        })
-        .unwrap_or_else(|| {
-            if decorate {
-                message(0, SETTER_MESSAGE_BYTES)
-            } else {
-                "ok".to_owned()
-            }
-        }));
+                    "ok".to_owned()
+                }
+            })
+    });
     let error = context.error_rooted(&text)?;
-    let skip=usize::from(custom.is_none());
+    let skip = usize::from(custom.is_none());
     if stack.errors().len() > skip {
         let entries = stack.errors()[skip..]
             .iter()
@@ -158,8 +172,15 @@ pub(crate) fn list<H: Host>(
 /// CryptoJob failures retain their SDK operation message and the complete
 /// actual native error queue with the same shared decoration authority.
 #[cfg(quench_openssl_provider)]
-pub(crate) fn job_failure<H:Host>(context:&mut NativeContext<'_,H>,stack:&openssl::error::ErrorStack,text:&str)->RootedError {
-    match create_message(context,stack,true,Some(text)) {Ok(error)=>context.throw(error),Err(error)=>error}
+pub(crate) fn job_failure<H: Host>(
+    context: &mut NativeContext<'_, H>,
+    stack: &openssl::error::ErrorStack,
+    text: &str,
+) -> RootedError {
+    match create_message(context, stack, true, Some(text)) {
+        Ok(error) => context.throw(error),
+        Err(error) => error,
+    }
 }
 
 unsafe extern "C" {

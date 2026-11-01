@@ -141,7 +141,7 @@ pub(crate) fn remove_other_builds(builds: &std::path::Path) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    kept.sort_by(|left, right| right.0.cmp(&left.0));
+    kept.sort_by_key(|build| std::cmp::Reverse(build.0));
     for (_, build) in kept.into_iter().skip(KEPT_BUILDS) {
         let _ = std::fs::remove_dir_all(build);
     }

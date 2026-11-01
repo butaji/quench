@@ -1,5 +1,5 @@
-use crate::Value;
 use super::wtf16::JsString;
+use crate::Value;
 use crate::bytecode::ResidualProgram;
 use std::rc::{Rc, Weak};
 use crate::heap::{PromotionAge, WeakHandle};
@@ -43,6 +43,7 @@ struct JsJitCounters {
     field_increment_candidate_entries: u64,
     field_increment_fixed_this_entries: u64,
     field_increment_fast_entries: u64,
+    captured_store_fast_entries: u64,
     numeric_find_fast_entries: u64,
     fallback_entries: u64,
     interpreter_completions: u64,
@@ -458,7 +459,9 @@ struct JsTierEntryDecision {
 /// One sparse tier-state table per program. Frontend-specific transitions and
 /// artifacts stay typed, while JS and Wasm share the same state owner and
 /// avoid carrying a second empty hash-map header in every program entry.
+#[derive(Default)]
 enum JitTierManager {
+    #[default]
     Empty,
     JavaScript(FxHashMap<u32, JsTierState>),
     Wasm(WasmTiers),
@@ -492,11 +495,6 @@ impl Default for WasmModuleTier {
     }
 }
 
-impl Default for JitTierManager {
-    fn default() -> Self {
-        Self::Empty
-    }
-}
 
 impl JitTierManager {
     /// Apply JavaScript's bounded statistical promotion transition to the
@@ -870,9 +868,15 @@ pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
 pub(super) enum CompilationOrigin {
     Source,
     /// Execution state in another realm of one logical host Script.
-    SharedScript { source: ProgramId },
-    Eval { caller: Option<JsString> },
-    FunctionConstructor { caller: JsString },
+    SharedScript {
+        source: ProgramId,
+    },
+    Eval {
+        caller: Option<JsString>,
+    },
+    FunctionConstructor {
+        caller: JsString,
+    },
 }
 
 /// Where a stored program's root body evaluates, which decides whether its
@@ -1112,7 +1116,10 @@ impl ProgramStore {
     /// Whether dynamic code may be reclaimable, including dropped host owners.
     pub(crate) fn has_unchecked_reclaimable(&self) -> bool {
         self.unchecked_reclaimable > 0
-            || self.owned_scripts.values().any(|script| script.owner.strong_count() == 0)
+            || self
+                .owned_scripts
+                .values()
+                .any(|script| script.owner.strong_count() == 0)
     }
 
     /// Drops every reclaimable program that `referenced` does not mark and that
@@ -1124,13 +1131,20 @@ impl ProgramStore {
         // escaped function retains its source record even after the owner drops.
         for (&source, script) in &self.owned_scripts {
             let owned = script.owner.strong_count() != 0;
-            let live_instance = script.instances.iter().any(|(_, id)| {
-                referenced.get(id.index()).copied().unwrap_or(false)
-            });
-            if (owned || live_instance) && let Some(mark) = referenced.get_mut(source.index()) { *mark = true; }
+            let live_instance = script
+                .instances
+                .iter()
+                .any(|(_, id)| referenced.get(id.index()).copied().unwrap_or(false));
+            if (owned || live_instance)
+                && let Some(mark) = referenced.get_mut(source.index())
+            {
+                *mark = true;
+            }
             if owned {
                 for (_, id) in &script.instances {
-                    if let Some(mark) = referenced.get_mut(id.index()) { *mark = true; }
+                    if let Some(mark) = referenced.get_mut(id.index()) {
+                        *mark = true;
+                    }
                 }
             }
         }
@@ -1237,8 +1251,10 @@ impl ProgramStore {
                 self.js_general_dispatch_work = None;
             }
             let programs = &self.programs;
-            self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
-            self.owned_scripts.retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
+            self.global_eval_programs
+                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+            self.owned_scripts
+                .retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
         }
         reclaimed
     }
@@ -1284,24 +1300,45 @@ impl ProgramStore {
     }
 
     pub(super) fn register_owned_script(&mut self, script: &Rc<crate::api::CompiledScriptState>) {
-        self.owned_scripts.insert(script.source, OwnedScript { owner: Rc::downgrade(script), instances: Vec::new() });
+        self.owned_scripts.insert(
+            script.source,
+            OwnedScript {
+                owner: Rc::downgrade(script),
+                instances: Vec::new(),
+            },
+        );
     }
 
     pub(super) fn owns_script(&self, script: &Rc<crate::api::CompiledScriptState>) -> bool {
-        self.owned_scripts.get(&script.source).is_some_and(|entry| {
-            std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script))
-        })
+        self.owned_scripts
+            .get(&script.source)
+            .is_some_and(|entry| std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script)))
     }
 
-    pub(super) fn owned_script_instance(&self, source: ProgramId, realm: WeakHandle) -> Option<ProgramId> {
-        self.owned_scripts.get(&source)?.instances.iter()
+    pub(super) fn owned_script_instance(
+        &self,
+        source: ProgramId,
+        realm: WeakHandle,
+    ) -> Option<ProgramId> {
+        self.owned_scripts
+            .get(&source)?
+            .instances
+            .iter()
             .find_map(|(owner, id)| (*owner == realm).then_some(*id))
     }
 
-    pub(super) fn bind_script_instance(&mut self, source: ProgramId, realm: WeakHandle, id: ProgramId) {
+    pub(super) fn bind_script_instance(
+        &mut self,
+        source: ProgramId,
+        realm: WeakHandle,
+        id: ProgramId,
+    ) {
         self.set_origin(id, CompilationOrigin::SharedScript { source });
-        self.owned_scripts.get_mut(&source).expect("registered Script source")
-            .instances.push((realm, id));
+        self.owned_scripts
+            .get_mut(&source)
+            .expect("registered Script source")
+            .instances
+            .push((realm, id));
     }
 
     pub(super) fn source_identity(&self, id: ProgramId) -> ProgramId {
@@ -1337,14 +1374,19 @@ impl ProgramStore {
     }
 
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
-        if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.origin = origin;
+        }
     }
 
     pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
         match &self.entry(id)?.origin {
             CompilationOrigin::Source | CompilationOrigin::SharedScript { .. } => None,
-            CompilationOrigin::Eval { caller } => Some(caller.clone()
-                .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
+            CompilationOrigin::Eval { caller } => Some(
+                caller
+                    .clone()
+                    .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN)),
+            ),
             CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
         }
     }
@@ -2103,6 +2145,12 @@ impl ProgramStore {
             .map(|counters| counters.field_cache_probes)
     }
 
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn js_jit_captured_store_entries(&self, id: ProgramId, function: u32) -> Option<u64> {
+        self.js_jit_diagnostics.as_ref()?.get(&(id.raw(), function))
+            .map(|counters| counters.captured_store_fast_entries)
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
@@ -2494,9 +2542,7 @@ impl ProgramStore {
                 let opcode_counts = opcode_counts
                     .into_iter()
                     .enumerate()
-                    .filter_map(|(opcode, count)| {
-                        (count != 0).then(|| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
-                    })
+                    .filter(|&(_opcode, count)| count != 0).map(|(opcode, count)| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
                     .collect();
                 // This is a bytecode-site census, not a claim that a site is
                 // pure, redundant, or safe to remove. Predicate purity and
@@ -2795,6 +2841,15 @@ impl ProgramStore {
         {
             counters.field_increment_fast_entries =
                 counters.field_increment_fast_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_captured_store_entry(&mut self, id: ProgramId, function: u32) {
+        self.record_js_jit_entry(id, function, false, 0);
+        if let Some(counters) = self.js_jit_diagnostics.as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.captured_store_fast_entries = counters.captured_store_fast_entries.saturating_add(1);
         }
     }
 
@@ -3205,11 +3260,11 @@ impl ProgramStore {
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
 
-    /// Forgets the own-field hints of every program's lane views: a shape compaction
-    /// renumbered the shapes they name.
-    pub(super) fn clear_field_hints(&self) {
+    /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
+    /// the IDs held by field hints and native own-field descriptors.
+    pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.clear_field_hints();
+            entry.lane_views.invalidate_shape_bindings();
         }
     }
 
@@ -3467,11 +3522,11 @@ impl Drop for ProgramStore {
                     let atom = header.name.or(header.inferred_name)? as usize;
                     (atom < entry.residual.atoms.len()).then(|| &entry.residual.atoms[atom])
                 })
-                .or_else(|| counters.function_name.as_deref())
+                .or(counters.function_name.as_deref())
                 .unwrap_or("");
             let source_name = entry
                 .map(|entry| entry.residual.source_name.as_str())
-                .or_else(|| counters.source_name.as_deref())
+                .or(counters.source_name.as_deref())
                 .unwrap_or("");
             let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
             let total_entries = counters.entries.saturating_add(counters.lane_entries);
@@ -3512,7 +3567,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"captured_store_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3539,6 +3594,7 @@ impl Drop for ProgramStore {
                 counters.field_increment_candidate_entries,
                 counters.field_increment_fixed_this_entries,
                 counters.field_increment_fast_entries,
+                counters.captured_store_fast_entries,
                 counters.numeric_find_fast_entries,
                 counters.fallback_entries,
                 counters.interpreter_completions,
@@ -3892,10 +3948,10 @@ fn derive_lane_view<'s>(
 }
 
 impl LaneViews {
-    /// Forgets the own-field hints of every derived view (`LaneView::clear_field_hints`).
-    fn clear_field_hints(&self) {
+    /// Notifies every derived view that shape compaction invalidated its bindings.
+    fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
-            view.clear_field_hints();
+            view.invalidate_shape_bindings();
         }
     }
 

@@ -284,7 +284,7 @@ pub(super) enum FunctionTable<'a> {
         program: &'a [crate::bytecode::FunctionSlot],
         target: u32,
         next: u32,
-        record: Option<crate::bytecode::Function>,
+        record: Option<Box<crate::bytecode::Function>>,
     },
 }
 
@@ -331,7 +331,7 @@ impl<'a> FunctionTable<'a> {
             Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(Box::new(function)),
             Self::Replay { target, record, .. } => {
                 assert_eq!(id, *target, "a replay makes only its target's record");
-                *record = Some(function);
+                *record = Some(Box::new(function));
             }
         }
     }
@@ -343,7 +343,7 @@ impl<'a> FunctionTable<'a> {
                 FunctionEntry::Compiled(function) => Some(function),
                 _ => None,
             },
-            Self::Replay { target, record, .. } => (id == *target).then_some(record.as_ref()?),
+            Self::Replay { target, record, .. } => (id == *target).then_some(record.as_deref()?),
         }
     }
 
@@ -354,7 +354,7 @@ impl<'a> FunctionTable<'a> {
                 _ => None,
             },
             Self::Replay { target, record, .. } => {
-                if id == *target { record.as_mut() } else { None }
+                if id == *target { record.as_deref_mut() } else { None }
             }
         }
     }
@@ -431,7 +431,7 @@ impl<'a> FunctionTable<'a> {
     pub(super) fn into_entries(self) -> Vec<FunctionEntry> {
         match self {
             Self::Owned(entries) => entries,
-            Self::Replay { record, .. } => record.into_iter().map(|record| FunctionEntry::Compiled(Box::new(record))).collect(),
+            Self::Replay { record, .. } => record.into_iter().map(FunctionEntry::Compiled).collect(),
         }
     }
 
@@ -439,7 +439,7 @@ impl<'a> FunctionTable<'a> {
     pub(super) fn into_replayed(self) -> Option<crate::bytecode::Function> {
         match self {
             Self::Owned(_) => None,
-            Self::Replay { record, .. } => record,
+            Self::Replay { record, .. } => record.map(|record| *record),
         }
     }
 }

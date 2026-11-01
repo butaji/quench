@@ -2,7 +2,8 @@ use super::*;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 /// Shared Number/BigInt content mismatch diagnostic.
-pub(super) const MIXED_BIGINT_TYPES: &str = "Cannot mix BigInt and other types, use explicit conversions";
+pub(super) const MIXED_BIGINT_TYPES: &str =
+    "Cannot mix BigInt and other types, use explicit conversions";
 
 pub(super) enum ArrayLikeElementKind {
     Any,
@@ -279,6 +280,10 @@ macro_rules! number_bitwise {
         pub(super) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
+            #[cfg(feature = "aot")]
+            pub(super) const fn operator(self) -> u32 {
+                match self { $(Self::$operation => BinaryOperator::$operator as u32,)+ }
+            }
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -381,7 +386,7 @@ fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) ->
 /// `operation` of int32 operands as a value: the int32 result as it is, but for a zero-fill
 /// shift above `i32::MAX`, which is the Number of its unsigned bits.
 #[inline(always)]
-fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
+pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: i32) -> Value {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation == NumberBitwise::ShiftRightUnsigned && bits < 0 {
         Value::number(f64::from(bits as u32))
@@ -837,11 +842,13 @@ impl RelationalOperator {
 
     pub(super) fn matches(self, ordering: std::cmp::Ordering) -> bool {
         use std::cmp::Ordering::{Equal, Greater, Less};
-        match (self, ordering) {
-            (Self::LessThan, Less) | (Self::LessEqual, Less | Equal) => true,
-            (Self::GreaterThan, Greater) | (Self::GreaterEqual, Greater | Equal) => true,
-            _ => false,
-        }
+        matches!(
+            (self, ordering),
+            (Self::LessThan, Less)
+                | (Self::LessEqual, Less | Equal)
+                | (Self::GreaterThan, Greater)
+                | (Self::GreaterEqual, Greater | Equal)
+        )
     }
 
     #[inline(always)]
@@ -973,7 +980,7 @@ impl<H: Host> Vm<H> {
             };
             return Err(self.type_error(
                 p,
-                format!("Constructor {constructor} requires 'new'").into(),
+                format!("Constructor {constructor} requires 'new'"),
             ));
         }
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
@@ -2555,7 +2562,7 @@ pub(super) fn equality_operator(op: u32) -> Option<(bool, bool)> {
         NEGATED == 1
             && STRICT == 2
             && STRICT_INEQUALITY - EQUALITY == STRICT | NEGATED
-            && EQUALITY % (STRICT << 1) == 0
+            && EQUALITY.is_multiple_of(STRICT << 1)
     );
     let offset = op.wrapping_sub(EQUALITY);
     (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))

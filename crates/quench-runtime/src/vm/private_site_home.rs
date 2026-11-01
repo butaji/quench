@@ -38,15 +38,11 @@ pub(super) enum PrivateElement {
     Getter(Value),
 }
 
+#[derive(Default)]
 pub(super) struct PrivateSiteHomes {
     entries: super::shape_memo::DirectMappedTable<SiteHome, PRIVATE_SITE_HOME_ENTRIES>,
 }
 
-impl Default for PrivateSiteHomes {
-    fn default() -> Self {
-        Self { entries: Default::default() }
-    }
-}
 
 impl PrivateSiteHomes {
     fn index(site: usize) -> usize {

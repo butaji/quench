@@ -2,13 +2,29 @@ use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
 use crate::modules::net_shared_vm;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError, Value};
+use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 const DEFAULT_LISTEN_HOST: &str = "127.0.0.1";
 
-const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, createAgent, destroyAgent, IncomingMessage, ServerResponse) => {
+enum HttpListenAddress {
+    Tcp(SocketAddr),
+    #[cfg(unix)]
+    Local(String),
+}
+
+const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, requestFunction, createAgent, destroyAgent, connect, IncomingMessage, ServerResponse, kHighWaterMark, setupConnectionsTracking, kConnectionsCheckingInterval, connectionListener) => {
+  const DEFAULT_HTTP_MAX_HEADER_SIZE = 16 * 1024;
+  const DEFAULT_HTTP_HIGH_WATER_MARK = 64 * 1024;
+  // Repeated Node options use the final command-line value. Keep this in sync
+  // with startup parsing so the HTTP constant does not retain an earlier one.
+  const maxHeaderArgument = process.execArgv.reduce((last, argument) =>
+    argument.startsWith('--max-http-header-size=') ? argument : last, undefined);
+  const HTTP_MAX_HEADER_SIZE = maxHeaderArgument === undefined
+    ? DEFAULT_HTTP_MAX_HEADER_SIZE
+    : Number(maxHeaderArgument.slice('--max-http-header-size='.length));
   const invalidArgument = (name, expected, value) => {
     let received;
     if (Array.isArray(value)) received = "an instance of Array";
@@ -34,11 +50,204 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
       if (requestListener !== undefined && typeof requestListener !== "function") {
         throw invalidArgument("requestListener", "of type function", requestListener);
       }
+      options = options || {};
+      if (options.insecureHTTPParser !== undefined &&
+          typeof options.insecureHTTPParser !== 'boolean') {
+        const value = options.insecureHTTPParser;
+        const received = Array.isArray(value) ? 'an instance of Array'
+          : value === null ? 'null'
+            : typeof value === 'string' ? `type string ('${value}')`
+              : typeof value === 'number' || typeof value === 'boolean'
+                ? `type ${typeof value} (${String(value)})`
+                : `an instance of ${value?.constructor?.name || 'Object'}`;
+        const error = new TypeError(
+          `The "options.insecureHTTPParser" property must be of type boolean. Received ${received}`
+        );
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+      if (options.httpValidation !== undefined) {
+        const validation = options.httpValidation;
+        if (!['strict', 'relaxed', 'insecure'].includes(validation)) {
+          const received = typeof validation === 'string'
+            ? `'${validation}'`
+            : validation === null ? 'null' : String(validation);
+          const error = new TypeError(
+            `The property 'options.httpValidation' must be one of: 'strict', 'relaxed', 'insecure'. Received ${received}`
+          );
+          error.code = 'ERR_INVALID_ARG_VALUE';
+          throw error;
+        }
+        if (options.insecureHTTPParser !== undefined) {
+          const error = new TypeError(
+            `The property 'options.httpValidation' cannot be used together with options.insecureHTTPParser. Received '${validation}'`
+          );
+          error.code = 'ERR_INVALID_ARG_VALUE';
+          throw error;
+        }
+      }
+      this.insecureHTTPParser = options.insecureHTTPParser;
+      this.httpValidation = options.httpValidation;
+      if (options.rejectNonStandardBodyWrites !== undefined &&
+          typeof options.rejectNonStandardBodyWrites !== 'boolean') {
+        throw invalidArgument(
+          'options.rejectNonStandardBodyWrites',
+          'of type boolean',
+          options.rejectNonStandardBodyWrites,
+        );
+      }
+      this.rejectNonStandardBodyWrites = options.rejectNonStandardBodyWrites ?? false;
+      const validateTimeout = (name, value) => {
+        if (value === undefined) return;
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          const error = new TypeError(`The "${name}" argument must be of type number. Received ${typeof value}`);
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isInteger(value) || value < 0 || value > 2 ** 32 - 1) {
+          const error = new RangeError(`The value of "${name}" is out of range.`);
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+      };
+      validateTimeout("requestTimeout", options.requestTimeout);
+      validateTimeout("headersTimeout", options.headersTimeout);
+      validateTimeout("keepAliveTimeout", options.keepAliveTimeout);
+      validateTimeout("keepAliveTimeoutBuffer", options.keepAliveTimeoutBuffer);
+      validateTimeout("connectionsCheckingInterval", options.connectionsCheckingInterval);
+      this.requestTimeout = options.requestTimeout === undefined ? 300000 : options.requestTimeout;
+      this.headersTimeout = options.headersTimeout === undefined
+        ? Math.min(60000, this.requestTimeout)
+        : options.headersTimeout;
+      if (this.requestTimeout > 0 && this.headersTimeout > 0 && this.headersTimeout > this.requestTimeout) {
+        const error = new RangeError('The value of "headersTimeout" is out of range.');
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      this.keepAliveTimeout = options.keepAliveTimeout === undefined ? 5000 : options.keepAliveTimeout;
+      this.keepAliveTimeoutBuffer = options.keepAliveTimeoutBuffer === undefined ? 1000 : options.keepAliveTimeoutBuffer;
+      this.connectionsCheckingInterval = options.connectionsCheckingInterval === undefined
+        ? 30000
+        : options.connectionsCheckingInterval;
+      this.requireHostHeader = options.requireHostHeader === undefined ? true : options.requireHostHeader;
+      this.joinDuplicateHeaders = options.joinDuplicateHeaders;
+      this.uniqueHeaders = Array.isArray(options.uniqueHeaders)
+        ? options.uniqueHeaders.map((name) => String(name).toLowerCase())
+        : undefined;
+      this.maxHeadersCount = null;
+      this.maxRequestsPerSocket = options.maxRequestsPerSocket ?? 0;
+      this.highWaterMark = options.highWaterMark ?? DEFAULT_HTTP_HIGH_WATER_MARK;
+      this.maxHeaderSize = options.maxHeaderSize ?? HTTP_MAX_HEADER_SIZE;
+      this._quenchIncomingMessage = options.IncomingMessage ?? IncomingMessage;
+      this._quenchServerResponse = options.ServerResponse ?? ServerResponse;
       this.timeout = 0;
+      this.on("listening", setupConnectionsTracking);
+      this.on("close", () => {
+        const interval = this[kConnectionsCheckingInterval];
+        if (interval) clearInterval(interval);
+      });
       initializeServer([this, requestListener]);
+      // Accepted native sockets are parsed by Quench's shared HTTP poller.
+      // For a caller-supplied Duplex (for example stream.duplexPair()), there
+      // is no native HTTPParser handle to attach Node's connection listener
+      // to, so parse the request head from the stream directly.
+      this.on('connection', function onHttpConnection(socket) {
+        if (socket && socket.__quenchHttpSocketId === undefined) {
+          let buffered = Buffer.alloc(0);
+          let handled = false;
+          socket.on('data', (chunk) => {
+            if (handled) return;
+            buffered = Buffer.concat([buffered, Buffer.from(chunk)]);
+            const headerEnd = buffered.indexOf('\r\n\r\n');
+            if (headerEnd === -1) return;
+            handled = true;
+            const headerLength = headerEnd + 4;
+            if (headerLength > (this.maxHeaderSize || HTTP_MAX_HEADER_SIZE)) {
+              const error = new Error('Parse Error');
+              error.code = 'HPE_HEADER_OVERFLOW';
+              this.emit('clientError', error, socket);
+              return;
+            }
+            const lines = buffered.subarray(0, headerEnd).toString('latin1').split('\r\n');
+            const match = /^(\S+)\s+(\S+)\s+HTTP\/(\d+)\.(\d+)$/.exec(lines.shift() || '');
+            if (!match) {
+              const error = new Error('Parse Error');
+              error.code = 'HPE_INVALID_CONSTANT';
+              this.emit('clientError', error, socket);
+              return;
+            }
+            const request = new this._quenchIncomingMessage(socket);
+            request.method = match[1];
+            request.url = match[2];
+            request.httpVersionMajor = Number(match[3]);
+            request.httpVersionMinor = Number(match[4]);
+            request.httpVersion = `${match[3]}.${match[4]}`;
+            request.rawHeaders = [];
+            for (const line of lines) {
+              const colon = line.indexOf(':');
+              if (colon > 0) request.rawHeaders.push(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+            }
+            request._addHeaderLines(request.rawHeaders, request.rawHeaders.length);
+            request.complete = true;
+            // ServerResponse's native lifecycle is keyed by a Quench HTTP
+            // exchange id. Manually supplied Duplex streams have no such
+            // exchange, so provide the small response surface used by this
+            // request path without entering the host-backed response writer.
+            const response = new EventEmitter();
+            const responseHeaders = new Map();
+            response.statusCode = 200;
+            response.statusMessage = undefined;
+            response.headersSent = false;
+            response.writableEnded = false;
+            response.finished = false;
+            response.setHeader = (name, value) => {
+              responseHeaders.set(String(name).toLowerCase(), value);
+              return response;
+            };
+            response.getHeader = (name) => responseHeaders.get(String(name).toLowerCase());
+            response.hasHeader = (name) => responseHeaders.has(String(name).toLowerCase());
+            response.getHeaders = () => Object.fromEntries(responseHeaders);
+            response.getHeaderNames = () => Array.from(responseHeaders.keys());
+            response.removeHeader = (name) => responseHeaders.delete(String(name).toLowerCase());
+            response.writeHead = (statusCode, statusMessage, headers) => {
+              response.statusCode = statusCode;
+              if (statusMessage && typeof statusMessage === 'object') headers = statusMessage;
+              else if (typeof statusMessage === 'string') response.statusMessage = statusMessage;
+              if (headers) for (const [name, value] of Object.entries(headers)) response.setHeader(name, value);
+              response.headersSent = true;
+              return response;
+            };
+            response.write = () => {
+              response.headersSent = true;
+              return true;
+            };
+            response.end = (chunk, encoding, callback) => {
+              const done = typeof chunk === 'function' ? chunk
+                : typeof encoding === 'function' ? encoding : callback;
+              response.headersSent = true;
+              response.writableEnded = true;
+              response.finished = true;
+              response.emit('finish');
+              if (done) done();
+              return response;
+            };
+            this.emit('request', request, response);
+          });
+        }
+      });
   }
   Object.setPrototypeOf(Server, EventEmitter);
   Object.setPrototypeOf(Server.prototype, EventEmitter.prototype);
+  if (typeof Symbol.asyncDispose === "symbol") {
+    Object.defineProperty(Server.prototype, Symbol.asyncDispose, {
+      configurable: true,
+      value: function asyncDispose() {
+        return new Promise((resolve, reject) => {
+          this.close((error) => error ? reject(error) : resolve());
+        });
+      },
+    });
+  }
   Object.defineProperty(Server.prototype, "setTimeout", {
     configurable: true, writable: true,
     value: function setTimeout(msecs, callback) {
@@ -48,7 +257,7 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     }
   });
   const createServer = (...args) => new Server(...args);
-  // Node's lib/_http_agent.js public pool state; the native pool owns the sockets.
+  // Node's lib/_http_agent.js: the public pools hold the sockets `createSocket` hands out.
   const DEFAULT_KEEP_ALIVE_MSECS = 1000;
   const DEFAULT_MAX_FREE_SOCKETS = 256;
   const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER = 1000;
@@ -71,7 +280,6 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
     this.maxFreeSockets = this.options.maxFreeSockets || DEFAULT_MAX_FREE_SOCKETS;
     this.scheduling = this.options.scheduling || "lifo";
     this.maxTotalSockets = this.options.maxTotalSockets;
-    this.totalSocketCount = 0;
     const buffer = this.options.agentKeepAliveTimeoutBuffer;
     this.agentKeepAliveTimeoutBuffer =
       typeof buffer === "number" && buffer >= 0 && Number.isFinite(buffer) ? buffer : DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER;
@@ -98,51 +306,361 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
   Agent.prototype.destroy = function destroy() {
     return destroyAgent(this._quenchSharedAgentId);
   };
+  // Node's Agent methods: ClientRequest takes its socket through `createSocket`, and
+  // the pool arrays above track the public sockets it hands out. `getName` is the
+  // native origin name (`module`).
+  Object.defineProperty(Agent.prototype, 'totalSocketCount', {
+    configurable: true,
+    get() {
+      let total = 0;
+      for (const sockets of Object.values(this.sockets)) total += sockets.length;
+      for (const sockets of Object.values(this.freeSockets)) total += sockets.length;
+      return total;
+    },
+  });
+  Agent.prototype.addRequest = function addRequest(request, options, port, localAddress) {
+    if (typeof options === 'string') {
+      options = { host: options, port: port || this.defaultPort, localAddress };
+    } else {
+      options = options || {};
+      options = {
+        host: options.host ?? request.host,
+        hostname: options.hostname ?? request.host,
+        port: options.port ?? request.port,
+        localAddress: options.localAddress ?? request.localAddress,
+        family: options.family,
+        socketPath: options.socketPath,
+      };
+    }
+    const name = this.getName(options);
+    const sockets = this.sockets[name] || (this.sockets[name] = []);
+    const freeSockets = this.freeSockets[name] || [];
+    if (freeSockets.length > 0) {
+      const socket = freeSockets.pop();
+      if (freeSockets.length === 0) delete this.freeSockets[name];
+      request.onSocket(socket);
+      return;
+    }
+    if (sockets.length < this.maxSockets && sockets.length < this.maxTotalSockets) {
+      const socket = this.createConnection(options);
+      sockets.push(socket);
+      request.onSocket(socket);
+      return;
+    }
+    (this.requests[name] || (this.requests[name] = [])).push(request);
+  };
+  Agent.prototype.createConnection = function createConnection(options = {}, callback) {
+    if (typeof options === 'function') { callback = options; options = {}; }
+    const signal = options && options.signal;
+    const connectionOptions = { ...options };
+    delete connectionOptions.signal;
+    const socket = connect(connectionOptions, callback);
+    if (socket && this._quenchKeylogForwarder) {
+      socket.on('keylog', this._quenchKeylogForwarder);
+    }
+    if (signal && typeof signal.addEventListener === 'function') {
+      const abort = () => {
+        const error = new Error('The operation was aborted');
+        error.name = 'AbortError';
+        error.code = 'ABORT_ERR';
+        socket.destroy(error);
+      };
+      const removeAbortListener = () => signal.removeEventListener('abort', abort);
+      if (signal.aborted) queueMicrotask(abort);
+      else {
+        signal.addEventListener('abort', abort, { once: true });
+        socket.once('close', removeAbortListener);
+      }
+    }
+    return socket;
+  };
+  Agent.prototype.createSocket = function createSocket(request, options = {}, callback) {
+    // ClientRequest passes its original HTTP options here, where `path` is
+    // the request target (for example `/0`), not a Unix socket path. net.connect
+    // interprets `path` as a local socket endpoint, so strip the HTTP target
+    // and translate the documented `socketPath` option explicitly.
+    const connectionOptions = { ...options, ...this.options };
+    if (connectionOptions.socketPath !== undefined) {
+      connectionOptions.path = connectionOptions.socketPath;
+    } else {
+      delete connectionOptions.path;
+    }
+    // Agent.createSocket normally receives addRequest's normalized options.
+    // This implementation is called directly from ClientRequest, so fill
+    // the endpoint from the request when callers only pass lookup/timeout.
+    if (connectionOptions.path === undefined && connectionOptions.socketPath === undefined) {
+      connectionOptions.port ??= request.port ?? this.defaultPort;
+      // URL-parsed request options can have `host` as an authority string
+      // including `:port`; Agent connection setup needs the normalized
+      // hostname separately.
+      connectionOptions.host = request.host ?? connectionOptions.hostname ?? connectionOptions.host ?? 'localhost';
+    }
+    if (this.keepAlive) {
+      connectionOptions.keepAlive = true;
+      connectionOptions.keepAliveInitialDelay = this.keepAliveMsecs;
+    }
+    const timeout = request.timeout || this.options.timeout || 0;
+    if (timeout) connectionOptions.timeout = timeout;
+    // `createConnection` is commonly overridden with the Node callback
+    // contract. Keep that contract intact even when a caller reaches
+    // createSocket without supplying its own completion callback: otherwise
+    // overrides that defer `cb(error)` can throw from nextTick instead of
+    // delivering the failure to the request.
+    let completed = false;
+    const oncreate = (error, socket) => {
+      // Node wraps this callback in `once()`: custom createConnection
+      // implementations may both return a socket and invoke the callback.
+      if (completed) return;
+      completed = true;
+      if (typeof callback === 'function') return callback(error, socket);
+      if (error) request.onSocket(socket, error);
+      else if (socket) request.onSocket(socket);
+    };
+    const socket = this.createConnection(connectionOptions, oncreate);
+    if (socket && typeof socket.on === 'function') {
+      const agent = this;
+      const name = this.getName({
+        ...connectionOptions,
+        host: request.host ?? connectionOptions.host,
+        port: request.port ?? connectionOptions.port,
+      });
+      const removeFromPools = () => {
+        for (const pool of [agent.sockets[name], agent.freeSockets[name]]) {
+          if (!pool) continue;
+          const index = pool.indexOf(socket);
+          if (index !== -1) pool.splice(index, 1);
+        }
+        if (agent.sockets[name]?.length === 0) delete agent.sockets[name];
+        if (agent.freeSockets[name]?.length === 0) delete agent.freeSockets[name];
+      };
+      // Node installs the free-socket error guard only while the socket is
+      // idle in freeSockets. Active request errors are owned by the
+      // ClientRequest listener until the response releases the socket.
+      socket.__quenchFreeSocketErrorListener = () => {
+        if (agent.freeSockets[name]?.includes(socket)) socket.destroy();
+      };
+      this.trackSocketEnd(socket, name, removeFromPools);
+      // Node removes an agent-owned socket from its pools immediately when
+      // `agentRemove` is emitted (for upgrades and other socket handoffs).
+      socket.on('agentRemove', removeFromPools);
+      socket.once('close', removeFromPools);
+    }
+    if (timeout) {
+      // An idle keep-alive socket that times out must be evicted before the
+      // ClientRequest timeout listener runs, matching Node's Agent ordering.
+      const agent = this;
+      const name = this.getName({
+        ...connectionOptions,
+        host: connectionOptions.host ?? request.host,
+        port: connectionOptions.port ?? request.port,
+      });
+      socket.on('timeout', function onTimeout() {
+        const free = agent.freeSockets[name];
+        const index = free?.indexOf(socket) ?? -1;
+        if (index === -1) return;
+        free.splice(index, 1);
+        if (free.length === 0) delete agent.freeSockets[name];
+        socket.destroy();
+      });
+      socket.setTimeout(timeout);
+      request.timeoutCb ||= function emitRequestTimeout() {
+        request.emit('timeout');
+      };
+      socket.once('timeout', request.timeoutCb);
+    }
+    // `createConnection` may complete asynchronously. Do not synthesize a
+    // successful callback with an undefined socket, since that would
+    // consume Node's one-shot callback before the real error arrives.
+    if (socket) oncreate(null, socket);
+    return socket;
+  };
+  Agent.prototype.trackSocketEnd = function trackSocketEnd(socket, name, removeFromPools) {
+    const onSocketEnd = () => {
+      if (this.freeSockets[name]?.includes(socket)) removeFromPools();
+    };
+    socket.on('end', onSocketEnd);
+    // Node removes its Agent end guard while the socket is idle and adds it
+    // again when the socket is assigned to a subsequent request.
+    socket.once('free', () => socket.removeListener('end', onSocketEnd));
+  };
+  Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
+    if (!socket || socket.destroyed) return false;
+    if (this.keepAliveMsecs > 0) socket.setKeepAlive?.(true, this.keepAliveMsecs);
+    socket.unref?.();
+    return true;
+  };
+  const agentOn = EventEmitter.prototype.on;
+  Agent.prototype.on = function(event, listener) {
+    const result = agentOn.call(this, event, listener);
+    if (event === 'keylog' && typeof listener === 'function') {
+      if (!this._quenchKeylogForwarder) {
+        this._quenchKeylogForwarder = (...args) => this.emit('keylog', ...args);
+      }
+      for (const pools of [this.freeSockets, this.sockets]) {
+        for (const sockets of Object.values(pools)) {
+          for (const socket of sockets) {
+            if (!socket.listenerCount('keylog')) {
+              socket.on('keylog', this._quenchKeylogForwarder);
+            }
+          }
+        }
+      }
+    }
+    return result;
+  };
   // Node's internal/http.js getGlobalAgent options.
   const GLOBAL_AGENT_TIMEOUT_MSECS = 5000;
   const globalAgent = new Agent({ keepAlive: true, scheduling: "lifo", timeout: GLOBAL_AGENT_TIMEOUT_MSECS });
+  function request(input, options, callback) {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    if (input && typeof input === 'object') {
+      input = {
+        ...input,
+        ...(typeof input.href === 'string' ? { href: input.href } : {}),
+        agent: input.agent ?? globalAgent,
+      };
+    } else {
+      options = { ...(options || {}), agent: options?.agent ?? globalAgent };
+    }
+    const outgoing = requestFunction(input, options, callback);
+    outgoing.agent = input && typeof input === 'object' ? input.agent : options.agent;
+    const requestOptions = input && typeof input === 'object' ? input : options;
+    outgoing[kHighWaterMark] = requestOptions?.highWaterMark ?? DEFAULT_HTTP_HIGH_WATER_MARK;
+    return outgoing;
+  }
+  // The low-level request factory owns the Writable-backed prototype used by
+  // each request. Reuse it here so requests returned through this public API
+  // also satisfy `instanceof http.ClientRequest`.
+  request.prototype = requestFunction.prototype;
+  Object.defineProperty(request.prototype, 'constructor', {
+    configurable: true, writable: true, value: request,
+  });
   const get = (input, options, callback) => {
     const outgoing = request(input, options, callback);
     outgoing.end();
     return outgoing;
   };
-  // Node's default --max-http-header-size, exposed for HTTP client libraries.
-  const maxHeaderSize = 16 * 1024;
-  const api = { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse };
+  function websocketMask(source, mask, output, offset, length) {
+    const invalidType = (name) => {
+      const error = new TypeError(`The "${name}" argument must be an ArrayBufferView`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      return error;
+    };
+    if (!ArrayBuffer.isView(source)) throw invalidType('source');
+    if (!ArrayBuffer.isView(mask)) throw invalidType('mask');
+    if (mask.byteLength !== 4) {
+      const error = new TypeError('The "mask" argument must be 4 bytes long');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    if (!ArrayBuffer.isView(output)) throw invalidType('output');
+    if (offset === undefined || length === undefined) {
+      const error = new TypeError('The "offset" and "length" arguments are required');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (typeof offset !== 'number' || typeof length !== 'number') {
+      const error = new TypeError('The "offset" and "length" arguments must be numbers');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(offset) || offset < 0 || offset > output.byteLength || !Number.isFinite(offset)) {
+      const error = new RangeError('The value of "offset" is out of range.');
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    if (!Number.isInteger(length) || length < 0 || length > source.byteLength || length > output.byteLength - offset) {
+      const error = new RangeError('The value of "length" is out of range.');
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    if (output.buffer.immutable) {
+      const error = new TypeError("The 'output' must not be backed by an immutable ArrayBuffer");
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    if (length === 0) return;
+    const bytes = new Uint8Array(source.buffer, source.byteOffset, source.byteLength).slice(0, length);
+    const key = new Uint8Array(mask.buffer, mask.byteOffset, mask.byteLength).slice(0, 4);
+    const target = new Uint8Array(output.buffer, output.byteOffset, output.byteLength);
+    for (let index = 0; index < length; index++)
+      target[offset + index] = bytes[index] ^ key[index & 3];
+  }
+  function websocketUnmask(buffer, mask) {
+    if (!ArrayBuffer.isView(buffer) || !ArrayBuffer.isView(mask)) {
+      const error = new TypeError('buffer and key must be ArrayBufferView instances');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (mask.byteLength !== 4) {
+      const error = new TypeError('The "mask" argument must be 4 bytes long');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    if (buffer.buffer.immutable) {
+      const error = new TypeError("The 'buffer' must not be backed by an immutable ArrayBuffer");
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    if (buffer.byteLength === 0) return;
+    const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const key = new Uint8Array(mask.buffer, mask.byteOffset, mask.byteLength).slice(0, 4);
+    const length = buffer.byteLength;
+    for (let index = 0; index < length; index++)
+      bytes[index] ^= key[index & 3];
+  }
+  const httpToken = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+  const invalidHeaderValue = /[^\t\x20-\x7e\x80-\xff]/;
+  const invalidRelaxedHeaderValue = /[\x00\x0a\x0d]|[^\x00-\xff]/;
+  function isValidHeaderName(name) {
+    return typeof name === 'string' && name.length > 0 && httpToken.test(name);
+  }
+  function isValidHeaderValue(value, options) {
+    let relaxed = false;
+    if (options !== undefined) {
+      if (options === null || typeof options !== 'object' || Array.isArray(options))
+        throw invalidArgument('options', 'of type object', options);
+      const validation = options.httpValidation;
+      if (validation === 'relaxed') relaxed = true;
+      else if (validation !== undefined && validation !== 'strict') {
+        const received = typeof validation === 'string'
+          ? ` Received '${validation}'`
+          : validation === null ? ' Received null'
+            : ` Received ${String(validation)}`;
+        const error = new TypeError(`The property 'options.httpValidation' must be one of: 'strict', 'relaxed'.${received}`);
+        error.code = 'ERR_INVALID_ARG_VALUE';
+        throw error;
+      }
+    }
+    if (value === undefined || typeof value === 'symbol') return false;
+    return !(relaxed ? invalidRelaxedHeaderValue : invalidHeaderValue).test(value);
+  }
+  function validateHeaderName(name) {
+    if (isValidHeaderName(name)) return;
+    const error = new TypeError(`Header name must be a valid HTTP token [${String(name)}]`);
+    error.code = 'ERR_INVALID_HTTP_TOKEN';
+    throw error;
+  }
+  function validateHeaderValue(name, value) {
+    if (value === undefined) {
+      const error = new TypeError(`The "${name}" header content must not be undefined`);
+      error.code = 'ERR_HTTP_INVALID_HEADER_VALUE';
+      throw error;
+    }
+    if (invalidHeaderValue.test(value)) {
+      const error = new TypeError(`Invalid character in header content ["${name}"]`);
+      error.code = 'ERR_INVALID_CHAR';
+      throw error;
+    }
+  }
+  const api = { Server, createServer, request, get, Agent, globalAgent, IncomingMessage, ServerResponse, websocketMask, websocketUnmask, isValidHeaderName, isValidHeaderValue, validateHeaderName, validateHeaderValue };
+  // Node's --max-http-header-size, exposed for HTTP client libraries.
   Object.defineProperty(api, "maxHeaderSize", {
     configurable: true,
     enumerable: true,
-    get() { return maxHeaderSize; },
+    get() { return HTTP_MAX_HEADER_SIZE; },
   });
   return api;
-})"#;
-
-// Node's lib/https.js agent over the HTTP agent's pool state. Fastify and the AWS SDK
-// import both transports at initialization; requests need the TLS client transport.
-const HTTPS_FACTORY: &str = r#"((http) => {
-  const DEFAULT_MAX_CACHED_SESSIONS = 100;
-  function Agent(options) {
-    if (!(this instanceof Agent)) return new Agent(options);
-    options = { __proto__: null, ...options };
-    options.defaultPort ??= 443;
-    options.protocol ??= "https:";
-    http.Agent.call(this, options);
-    this.maxCachedSessions = this.options.maxCachedSessions;
-    if (this.maxCachedSessions === undefined) this.maxCachedSessions = DEFAULT_MAX_CACHED_SESSIONS;
-    this._sessionCache = { map: {}, list: [] };
-  }
-  Object.setPrototypeOf(Agent.prototype, http.Agent.prototype);
-  Object.setPrototypeOf(Agent, http.Agent);
-  // Node's internal/http.js getGlobalAgent options.
-  const GLOBAL_AGENT_TIMEOUT_MSECS = 5000;
-  const globalAgent = new Agent({ keepAlive: true, scheduling: "lifo", timeout: GLOBAL_AGENT_TIMEOUT_MSECS });
-  const unavailable = () => new Error("HTTPS transport is unavailable");
-  return {
-    Agent,
-    globalAgent,
-    request: function request() { throw unavailable(); },
-    get: function get() { throw unavailable(); },
-  };
 })"#;
 
 const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
@@ -261,6 +779,8 @@ const REQUEST_DISPATCH_FACTORY: &str = quench_js_check::checked_js!(
     }
     server.emit("request", request, response);
     if (complete && !open) request.complete = true;
+    // The connection keeps its current request, which its peer's abort destroys.
+    return request;
   };
 }"#
 );
@@ -674,6 +1194,62 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         context.host_function(crate::host::shared_vm::operation("httpAgentCreate"))?;
     let destroy_agent =
         context.host_function(crate::host::shared_vm::operation("httpAgentDestroy"))?;
+    // `Agent.prototype.createConnection` is `net.createConnection`.
+    let net = crate::host::shared_vm::commonjs::net_module(context)?;
+    let connect = get(context, net, "connect")?;
+    let writable = get(context, stream, "Writable")?;
+    let outgoing_message = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "_http_outgoing.js",
+        "OutgoingMessage",
+    )?;
+    let k_high_water_mark = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "_http_outgoing.js",
+        "kHighWaterMark",
+    )?;
+    // Node's helper constructs ConnectionsList from internalBinding('http_parser')
+    // and starts a JS timeout scan for Node's own HTTPParser. Quench's shared
+    // HTTP poll owns accepted sockets and timeout handling, while close(),
+    // closeAllConnections(), and closeIdleConnections() below are host-backed.
+    // Keep the listening hook expected by Server, but don't call the Node
+    // helper: its internal ConnectionsList constructor is not part of Quench's
+    // public/shared-VM HTTP parser surface.
+    let connections_checking_interval = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "_http_server.js",
+        "kConnectionsCheckingInterval",
+    )?;
+    let connection_listener = crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "http.js",
+        "_http_server.js",
+        "_connectionListener",
+    )?;
+    // The actual Node helper scans its own HTTPParser connection list. Quench
+    // owns connection/request timeout scanning in the shared HTTP poll, so we
+    // only need the interval's public lifecycle here. Node exposes this timer
+    // through kConnectionsCheckingInterval, and Server.close() destroys it.
+    let setup_connections_tracking_factory = context.evaluate_script_rooted(
+        r#"(key) => function setupConnectionsTracking() {
+          const previous = this[key];
+          if (previous) clearInterval(previous);
+          const interval = setInterval(() => {}, this.connectionsCheckingInterval);
+          interval.unref();
+          this[key] = interval;
+        }"#,
+        "node:http/setup-connections-tracking.js",
+    )?;
+    let undefined = context.undefined();
+    let setup_connections_tracking = context.call_rooted(
+        setup_connections_tracking_factory,
+        undefined,
+        &[connections_checking_interval],
+    )?;
+    context.release_root(setup_connections_tracking_factory);
     let factory = context.evaluate_script_rooted(MODULE_FACTORY, "node:http/shared-api.js")?;
     let module = context.call_rooted(
         factory,
@@ -684,12 +1260,194 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             request,
             create_agent,
             destroy_agent,
+            connect,
             incoming_constructor,
             response_factory,
+            k_high_water_mark,
+            setup_connections_tracking,
+            connections_checking_interval,
+            connection_listener,
         ],
     )?;
+    let request_key = context.string_rooted("request");
+    let request_constructor = context.get_property_rooted(module, request_key)?;
+    set(context, module, "ClientRequest", request_constructor)?;
+    let implicit_header = context.evaluate_script_rooted(
+        "(function _implicitHeader() {})",
+        "node:http/implicit-header.js",
+    )?;
+    for constructor in [request_constructor, response_factory] {
+        let key = context.string_rooted("prototype");
+        let prototype = context.get_property_rooted(constructor, key)?;
+        set(context, prototype, "_implicitHeader", implicit_header)?;
+    }
+    let decorate_outgoing = context.evaluate_script_rooted(
+        r#"(Constructor) => {
+          const headersByMessage = new WeakMap();
+          const erroredGetter = Object.getOwnPropertyDescriptor(Constructor.prototype, 'errored')?.get;
+          const headers = (message) => {
+            let value = headersByMessage.get(message);
+            if (value === undefined) {
+              value = Object.create(null);
+              headersByMessage.set(message, value);
+            }
+            return value;
+          };
+          const invalidHeaderName = (name) => {
+            const error = new TypeError(`Header name must be a valid HTTP token ["${name}"]`);
+            error.code = 'ERR_INVALID_HTTP_TOKEN';
+            return error;
+          };
+          const invalidHeaderValue = (name, value) => {
+            const error = new TypeError(`Invalid character in header content ["${name}"]`);
+            error.code = 'ERR_INVALID_CHAR';
+            return error;
+          };
+          const validateName = (name) => {
+            if (typeof name !== 'string' || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) {
+              throw invalidHeaderName(name);
+            }
+          };
+          Object.defineProperties(Constructor.prototype, {
+            setHeader: { configurable: true, writable: true, value: function setHeader(name, value) {
+              if (this._header) {
+                const error = new Error('Cannot set headers after they are sent to the client');
+                error.code = 'ERR_HTTP_HEADERS_SENT';
+                throw error;
+              }
+              validateName(name);
+              if (value === undefined) {
+                const error = new TypeError(`Invalid value \"${value}\" for header \"${name}\"`);
+                error.code = 'ERR_HTTP_INVALID_HEADER_VALUE';
+                throw error;
+              }
+              const values = Array.isArray(value) ? value.map(String) : String(value);
+              const check = Array.isArray(values) ? values.join('') : values;
+              if (/[^\t\x20-\x7e]/.test(check)) throw invalidHeaderValue(name, value);
+              headers(this)[name.toLowerCase()] = [name, values];
+              return this;
+            } },
+            getHeader: { configurable: true, writable: true, value: function getHeader(name) {
+              return headers(this)[String(name).toLowerCase()]?.[1];
+            } },
+            getHeaders: { configurable: true, writable: true, value: function getHeaders() {
+              const result = Object.create(null);
+              const values = headers(this);
+              for (const name of Object.keys(values)) result[name] = values[name][1];
+              return result;
+            } },
+            getHeaderNames: { configurable: true, writable: true, value: function getHeaderNames() {
+              return Object.keys(headers(this));
+            } },
+            getRawHeaderNames: { configurable: true, writable: true, value: function getRawHeaderNames() {
+              return Object.keys(headers(this)).map((name) => headers(this)[name][0]);
+            } },
+            hasHeader: { configurable: true, writable: true, value: function hasHeader(name) {
+              return Object.hasOwn(headers(this), String(name).toLowerCase());
+            } },
+            removeHeader: { configurable: true, writable: true, value: function removeHeader(name) {
+              validateName(name);
+              delete headers(this)[name.toLowerCase()];
+            } },
+            appendHeader: { configurable: true, writable: true, value: function appendHeader(name, value) {
+              validateName(name);
+              const values = headers(this);
+              const key = name.toLowerCase();
+              const previous = values[key];
+              const next = Array.isArray(value) ? value : [value];
+              if (previous === undefined) values[key] = [name, next];
+              else previous[1] = (Array.isArray(previous[1]) ? previous[1] : [previous[1]]).concat(next);
+              return this;
+            } },
+            addTrailers: { configurable: true, writable: true, value: function addTrailers(trailers) {
+              if (trailers === null || typeof trailers !== 'object') {
+                throw new TypeError('The "headers" argument must be of type object');
+              }
+              for (const name of Object.keys(trailers)) {
+                if (typeof name !== 'string' || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) {
+                  const error = new TypeError(`Trailer name must be a valid HTTP token ["${name}"]`);
+                  error.code = 'ERR_INVALID_HTTP_TOKEN';
+                  throw error;
+                }
+                const value = Array.isArray(trailers[name]) ? trailers[name].join('') : String(trailers[name]);
+                if (/[^\t\x20-\x7e]/.test(value)) {
+                  const error = new TypeError(`Invalid character in trailer content ["${name}"]`);
+                  error.code = 'ERR_INVALID_CHAR';
+                  throw error;
+                }
+              }
+              this._trailer = { ...trailers };
+              const uniqueHeaders = new Set(Array.isArray(this.uniqueHeaders)
+                ? this.uniqueHeaders.map((name) => String(name).toLowerCase())
+                : []);
+              const entries = [];
+              for (const name of Object.keys(trailers)) {
+                const values = Array.isArray(trailers[name])
+                  ? trailers[name].map(String)
+                  : [String(trailers[name])];
+                if (uniqueHeaders.has(name.toLowerCase())) {
+                  entries.push(name, values.join('; '));
+                } else {
+                  for (const value of values) entries.push(name, value);
+                }
+              }
+              this.__quenchTrailerEntries = entries;
+            } },
+          });
+          function DecoratedOutgoingMessage(...args) {
+            const message = Reflect.construct(Constructor, args, new.target || DecoratedOutgoingMessage);
+            if (erroredGetter) {
+              Object.defineProperty(message, 'errored', {
+                configurable: true,
+                get() {
+                  const error = erroredGetter.call(message);
+                  return error === null ? undefined : error;
+                },
+              });
+            }
+            return message;
+          }
+          Object.setPrototypeOf(DecoratedOutgoingMessage, Constructor);
+          DecoratedOutgoingMessage.prototype = Constructor.prototype;
+          return DecoratedOutgoingMessage;
+        }"#,
+        "node:http/outgoing-message-header-api.js",
+    )?;
+    let undefined = context.undefined();
+    let outgoing_message =
+        context.call_rooted(decorate_outgoing, undefined, &[outgoing_message])?;
+    set(context, module, "OutgoingMessage", outgoing_message)?;
+    // ClientRequest is an OutgoingMessage in Node. The shared HTTP request
+    // implementation is backed by Writable, so retain the Writable methods
+    // on its private prototype while linking it into Node's public prototype
+    // chain for `instanceof http.OutgoingMessage` and diagnostics payloads.
+    let request_prototype = get(context, request_constructor, "prototype")?;
+    let writable_prototype = get(context, writable, "prototype")?;
+    let outgoing_prototype = get(context, outgoing_message, "prototype")?;
+    let link_client_request = context.evaluate_script_rooted(
+        r#"(requestPrototype, writablePrototype, outgoingPrototype) => {
+          for (const key of Reflect.ownKeys(writablePrototype)) {
+            if (key === 'constructor' || Object.hasOwn(requestPrototype, key)) continue;
+            Object.defineProperty(
+              requestPrototype,
+              key,
+              Object.getOwnPropertyDescriptor(writablePrototype, key),
+            );
+          }
+          Object.setPrototypeOf(requestPrototype, outgoingPrototype);
+        }"#,
+        "node:http/client-request-prototype.js",
+    )?;
+    context.call_rooted(
+        link_client_request,
+        undefined,
+        &[request_prototype, writable_prototype, outgoing_prototype],
+    )?;
+    let response = get(context, module, "ServerResponse")?;
+    let response_prototype = get(context, response, "prototype")?;
+    let outgoing_prototype = get(context, outgoing_message, "prototype")?;
+    context.set_prototype_rooted(response_prototype, outgoing_prototype)?;
     set(context, module, "STATUS_CODES", status_codes)?;
-    let net = crate::host::shared_vm::commonjs::net_module(context)?;
     let net_server = get(context, net, "Server")?;
     let server = get(context, module, "Server")?;
     let net_prototype = get(context, net_server, "prototype")?;
@@ -749,13 +1507,36 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         .borrow_mut()
         .http
         .incoming_factory = Some(incoming_factory);
-    Ok(module)
-}
-
-pub(crate) fn https_module(context: &mut Context<'_>, http: RootId) -> Result<RootId, RootedError> {
-    let factory = context.evaluate_script_rooted(HTTPS_FACTORY, "node:https.js")?;
+    // Match Node's lazy getters in lib/http.js. Undici imports `node:http`
+    // during initialization, so loading it while this builtin is being
+    // constructed would create a partial module cycle. Defer the load until
+    // one of these properties is actually read.
+    let initialize_fetch = context.host_function(crate::host::shared_vm::operation(
+        "webFetchInitialize",
+    ))?;
+    let global = context.global_root()?;
+    let install_websocket_getters = context.evaluate_script_rooted(
+        r#"(module, initializeFetch, global) => {
+          for (const name of ['WebSocket', 'CloseEvent', 'MessageEvent']) {
+            Object.defineProperty(module, name, {
+              configurable: true,
+              enumerable: true,
+              get() {
+                initializeFetch();
+                return global[name];
+              },
+            });
+          }
+        }"#,
+        "node:http/undici-lazy-getters.js",
+    )?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[http])
+    context.call_rooted(
+        install_websocket_getters,
+        undefined,
+        &[module, initialize_fetch, global],
+    )?;
+    Ok(module)
 }
 
 pub(crate) fn create_server(
@@ -787,10 +1568,26 @@ pub(crate) fn create_server(
         ("listen", "httpServerListen"),
         ("address", "httpServerAddress"),
         ("close", "httpServerClose"),
+        ("closeAllConnections", "httpServerClose"),
+        ("closeIdleConnections", "httpServerClose"),
     ] {
         let function = context
             .host_function_with_data(crate::host::shared_vm::operation(operation), id_value)?;
-        let function = if name == "close" {
+        let function = if name == "closeAllConnections" || name == "closeIdleConnections" {
+            let mode = context.string_rooted(if name == "closeAllConnections" {
+                "all"
+            } else {
+                "idle"
+            });
+            let factory = context.evaluate_script_rooted(
+                "((close, mode) => function() { close(mode); })",
+                "node:http/server-close-connections.js",
+            )?;
+            let undefined = context.undefined();
+            let wrapped = context.call_rooted(factory, undefined, &[function, mode])?;
+            context.release_root(factory);
+            wrapped
+        } else if name == "close" {
             let factory = context
                 .evaluate_script_rooted(SERVER_CLOSE_FACTORY, "node:http/server-close.js")?;
             let undefined = context.undefined();
@@ -879,18 +1676,47 @@ pub(crate) fn server_listen(
     let address = listen_address(context, first, first_is_callback, args.get(1).copied())?;
     let options =
         first.filter(|root| context.is_object_rooted(*root).unwrap_or(false) && !first_is_callback);
-    let backlog = net_shared_vm::listen_backlog(context, options)?;
+    let backlog = if options.is_some() {
+        net_shared_vm::listen_backlog(context, options)?
+    } else if matches!(&address, HttpListenAddress::Local(_))
+        && args.get(1).copied().is_some_and(|value| {
+            !context.is_callable_rooted(value).unwrap_or(false)
+                && context.truthy_rooted(value).unwrap_or(false)
+        })
+    {
+        net_shared_vm::convert_listen_backlog(context, args[1])?
+    } else {
+        net_shared_vm::listen_backlog(context, None)?
+    };
     let host = context.host_mut().shared_state();
     {
-        let mut guard = host.borrow_mut();
+        let guard = host.borrow();
         let Some(server) = guard.http.servers.get(&id) else {
             return Err(RootedError::host("shared HTTP server is closed"));
         };
         if server.listener.is_some() {
             return Err(RootedError::host("shared HTTP server is already listening"));
         }
-        let listener = net_shared_vm::listen_with_backlog(&mut guard.tcp, address, backlog)
-            .map_err(RootedError::host)?;
+    }
+    let listener = match address {
+        HttpListenAddress::Tcp(address) => {
+            let result =
+                net_shared_vm::listen_with_backlog(&mut host.borrow_mut().tcp, address, backlog);
+            match result {
+                Ok(listener) => listener,
+                Err(error) => {
+                    return queue_http_listen_error(context, receiver, error, address);
+                }
+            }
+        }
+        #[cfg(unix)]
+        HttpListenAddress::Local(path) => {
+            net_shared_vm::listen_local_endpoint(context, &path, backlog)
+                .map_err(RootedError::host)?
+        }
+    };
+    {
+        let mut guard = host.borrow_mut();
         let server = guard.http.servers.get_mut(&id).unwrap();
         server.listener = Some(listener);
         server.listening_pending = true;
@@ -919,25 +1745,89 @@ pub(crate) fn server_listen(
     Ok(receiver)
 }
 
+fn queue_http_listen_error(
+    context: &mut Context<'_>,
+    server: RootId,
+    error: io::Error,
+    address: SocketAddr,
+) -> Result<RootId, RootedError> {
+    let errno = error.raw_os_error().map(|value| -f64::from(value));
+    let code = errno
+        .map(crate::modules::util_system_error_shared_vm::system_error_name)
+        .unwrap_or_else(|| "UNKNOWN".to_owned());
+    let reason = error.to_string();
+    let reason = reason
+        .split(" (os error")
+        .next()
+        .unwrap_or(&reason)
+        .to_lowercase();
+    let error = context.error_rooted(&format!(
+        "listen {code}: {reason} {}:{}",
+        address.ip(),
+        address.port()
+    ))?;
+    for (name, value) in [("code", code.as_str()), ("syscall", "listen")] {
+        let key = context.string_rooted(name);
+        let value = context.string_rooted(value);
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
+    let key = context.string_rooted("address");
+    let value = context.string_rooted(&address.ip().to_string());
+    context.define_data_property_rooted(error, key, value, true, true, true)?;
+    let key = context.string_rooted("port");
+    let value = context.number(f64::from(address.port()));
+    context.define_data_property_rooted(error, key, value, true, true, true)?;
+    if let Some(errno) = errno {
+        let key = context.string_rooted("errno");
+        let value = context.number(errno);
+        context.define_data_property_rooted(error, key, value, true, true, true)?;
+    }
+    let callback = context.evaluate_script_rooted(
+        "(server, error) => server.emit('error', error)",
+        "node:http/server-listen-error.js",
+    )?;
+    let undefined = context.undefined();
+    crate::modules::shared_event_loop::queue_next_tick(
+        context,
+        callback,
+        undefined,
+        &[server, error],
+    )?;
+    context.release_root(callback);
+    Ok(server)
+}
+
 fn listen_address(
     context: &mut Context<'_>,
     first: Option<RootId>,
     first_is_callback: bool,
     second: Option<RootId>,
-) -> Result<SocketAddr, RootedError> {
+) -> Result<HttpListenAddress, RootedError> {
     let Some(root) = first.filter(|_| !first_is_callback) else {
-        return resolve_listen_address(DEFAULT_LISTEN_HOST, 0);
+        return resolve_listen_address(DEFAULT_LISTEN_HOST, 0).map(HttpListenAddress::Tcp);
     };
     let value = context
         .rooted_value(root)
         .ok_or_else(|| RootedError::host("shared HTTP listen argument is unavailable"))?;
     if let Some(port) = value.as_number() {
-        return resolve_listen_address(&listen_host(context, second)?, numeric_port(port)?);
+        return resolve_listen_address(&listen_host(context, second)?, numeric_port(port)?)
+            .map(HttpListenAddress::Tcp);
     }
-    if let Some(port) = context.string_text(root)? {
-        return resolve_listen_address(&listen_host(context, second)?, string_port(&port)?);
+    if let Some(path) = context.string_text(root)? {
+        #[cfg(unix)]
+        return Ok(HttpListenAddress::Local(path));
+        #[cfg(not(unix))]
+        return Err(invalid_listen_port());
     }
     if value.is_null() || value.as_bool().is_some() {
+        return Err(invalid_listen_port());
+    }
+    let path_key = context.string_rooted("path");
+    let path = context.get_property_rooted(root, path_key)?;
+    if let Some(path) = context.string_text(path)? {
+        #[cfg(unix)]
+        return Ok(HttpListenAddress::Local(path));
+        #[cfg(not(unix))]
         return Err(invalid_listen_port());
     }
     let key = context.string_rooted("port");
@@ -949,7 +1839,7 @@ fn listen_address(
         Some(value) if value.is_undefined() || value.is_null() => DEFAULT_LISTEN_HOST.to_owned(),
         _ => context.string_text(host)?.ok_or_else(invalid_listen_port)?,
     };
-    resolve_listen_address(&host, port)
+    resolve_listen_address(&host, port).map(HttpListenAddress::Tcp)
 }
 
 fn listen_host(context: &mut Context<'_>, value: Option<RootId>) -> Result<String, RootedError> {
@@ -1019,15 +1909,23 @@ pub(crate) fn server_address(
 ) -> Result<RootId, RootedError> {
     let id = function_data_id(context)?;
     let host = context.host_mut().shared_state();
-    let address = {
+    let (local_path, address) = {
         let guard = host.borrow();
-        guard
+        let listener = guard
             .http
             .servers
             .get(&id)
-            .and_then(|server| server.listener)
-            .and_then(|listener| net_shared_vm::address(&guard.tcp, listener))
+            .and_then(|server| server.listener);
+        (
+            listener.and_then(|listener| {
+                net_shared_vm::listener_path(&guard.tcp, listener).map(str::to_owned)
+            }),
+            listener.and_then(|listener| net_shared_vm::address(&guard.tcp, listener)),
+        )
     };
+    if let Some(path) = local_path {
+        return Ok(context.string_rooted(&path));
+    }
     let Some(address) = address else {
         return Ok(context.null());
     };
@@ -1047,10 +1945,53 @@ pub(crate) fn server_address(
 pub(crate) fn server_close(
     context: &mut Context<'_>,
     receiver: RootId,
-    _: &[RootId],
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = function_data_id(context)?;
+    let connection_mode = match args
+        .first()
+        .and_then(|root| context.string_text(*root).ok().flatten())
+    {
+        Some(mode) if mode == "all" || mode == "idle" => Some(mode),
+        _ => None,
+    };
     let host = context.host_mut().shared_state();
+    if let Some(mode) = connection_mode {
+        let mut guard = host.borrow_mut();
+        let sockets = guard
+            .http
+            .servers
+            .get(&id)
+            .map(|server| {
+                server
+                    .connections
+                    .iter()
+                    .copied()
+                    .filter(|socket| {
+                        mode == "all"
+                            || guard
+                                .http
+                                .connections
+                                .get(socket)
+                                .is_some_and(|connection| {
+                                    connection.received.is_empty()
+                                        && (!connection.request_dispatched
+                                            || guard
+                                                .http
+                                                .responses
+                                                .values()
+                                                .filter(|response| response.socket == *socket)
+                                                .all(|response| response.lifecycle.is_terminal()))
+                                })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for socket in sockets {
+            net_shared_vm::close_socket(&mut guard.tcp, socket);
+        }
+        return Ok(context.undefined());
+    }
     {
         let mut guard = host.borrow_mut();
         let mut idle_sockets = Vec::new();
@@ -1063,24 +2004,30 @@ pub(crate) fn server_close(
         if let Some(listener) = listener {
             net_shared_vm::close_listener(&mut guard.tcp, listener);
         }
+        // An idle connection: not upgraded, no request bytes pending, and every
+        // response it carried is terminal.
         idle_sockets.retain(|socket| {
-            !guard
-                .http
-                .connections
-                .get(socket)
-                .is_some_and(|connection| connection.upgraded)
-                && guard
-                    .http
-                    .responses
-                    .values()
-                    .filter(|response| response.socket == *socket)
-                    .all(|response| response.lifecycle.is_terminal())
+            guard.http.connections.get(socket).is_some_and(|connection| {
+                !connection.upgraded
+                    && connection.received.is_empty()
+                    && (!connection.request_dispatched
+                        || guard
+                            .http
+                            .responses
+                            .values()
+                            .filter(|response| response.socket == *socket)
+                            .all(|response| response.lifecycle.is_terminal()))
+            })
         });
         for socket in idle_sockets {
             // A response can be terminal while its bytes are still queued in
-            // the shared transport. Half-close after the queued writes drain
-            // so server.close() cannot discard a just-finished response.
-            net_shared_vm::end(&mut guard.tcp, socket).map_err(RootedError::host)?;
+            // the shared transport. Drain those bytes before half-closing;
+            // otherwise an already-idle connection can be closed at once.
+            if net_shared_vm::socket_write_queue_size(&guard.tcp, socket) == 0 {
+                net_shared_vm::close_socket(&mut guard.tcp, socket);
+            } else {
+                net_shared_vm::end(&mut guard.tcp, socket, false).map_err(RootedError::host)?;
+            }
         }
     }
     let handle = context.null();
@@ -1244,7 +2191,12 @@ pub(crate) fn response_set_header(
         .and_then(|root| context.rooted_value(*root))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let values = header_values(context, value_root, multiple, &name)?;
+    let relaxed = args
+        .get(4)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let values = header_values(context, value_root, multiple, &name, relaxed)?;
     let lifecycle = context
         .host_mut()
         .shared_state()
@@ -1268,6 +2220,7 @@ pub(crate) fn response_set_header(
         .responses
         .get_mut(&id)
         .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+    response.removed_headers.remove(&name.to_ascii_lowercase());
     response
         .headers
         .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
@@ -1301,6 +2254,7 @@ pub(crate) fn response_remove_header(
         response
             .headers
             .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
+        response.removed_headers.insert(name.to_ascii_lowercase());
         if name.eq_ignore_ascii_case("date") {
             response.send_date = false;
         }
@@ -1412,6 +2366,8 @@ pub(crate) fn response_initialize(
                     body: Default::default(),
                     send_date: true,
                     http10: false,
+                    close_after_response: false,
+                    removed_headers: Default::default(),
                     use_chunked_encoding_by_default: true,
                     lifecycle: super::state::ResponseLifecycle::Open,
                     owner: None,
@@ -1573,6 +2529,9 @@ pub(crate) fn response_write(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
+    if id == 0 {
+        return Ok(context.boolean(true));
+    }
     let chunk_root = argument(context, args.get(1).copied());
     let explicit = args
         .get(2)
@@ -1629,12 +2588,18 @@ pub(crate) fn response_write(
         .responses
         .get_mut(&id)
         .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+    // A response that removed both framing headers sends its body unframed, as Node's
+    // `_storeHeader` does once `removeHeader` has dropped them.
+    let omit_framing = response.removed_headers.contains("content-length")
+        && response.removed_headers.contains("transfer-encoding");
     if response.virtual_response {
         if response.lifecycle == super::state::ResponseLifecycle::Open {
-            enable_streaming_framing(
-                &mut response.headers,
-                response.use_chunked_encoding_by_default,
-            );
+            if !omit_framing {
+                enable_streaming_framing(
+                    &mut response.headers,
+                    response.use_chunked_encoding_by_default,
+                );
+            }
             if invalid_trailer(&response.headers) {
                 drop(host);
                 return throw_invalid_trailer(context);
@@ -1645,12 +2610,13 @@ pub(crate) fn response_write(
         return Ok(context.boolean(true));
     }
     let socket = response.socket;
-    let chunked = is_chunked(&response.headers);
     if response.lifecycle == super::state::ResponseLifecycle::Open {
-        enable_streaming_framing(
-            &mut response.headers,
-            response.use_chunked_encoding_by_default,
-        );
+        if !omit_framing {
+            enable_streaming_framing(
+                &mut response.headers,
+                response.use_chunked_encoding_by_default,
+            );
+        }
         if invalid_trailer(&response.headers) {
             drop(host);
             return throw_invalid_trailer(context);
@@ -1662,13 +2628,16 @@ pub(crate) fn response_write(
             &response.headers,
             &chunk,
             &[],
-            !response.http10,
+            !response.http10 && !response.close_after_response,
+            response.removed_headers.contains("connection"),
+            omit_framing,
             response.http10,
             response.send_date,
             std::time::SystemTime::now(),
         );
         net_shared_vm::write(&mut host.tcp, socket, &head).map_err(RootedError::host)?;
     } else {
+        let chunked = is_chunked(&response.headers);
         let mut write = |body: &[u8]| {
             use crate::modules::http_protocol::{CHUNK_FRAME_END, ChunkFrameHead};
             if chunked && !body.is_empty() {
@@ -1712,15 +2681,14 @@ pub(crate) fn response_write_head(
     // nothing: data properties holding strings, numbers or `undefined`. Anything else
     // answers `false` before any effect, and the guest builds the entries.
     let source = args.get(HEAD_SOURCE_ARGUMENT).and_then(|&root| context.rooted_value(root)).and_then(Value::as_bool) == Some(true);
-    let plain = match source {
-        true => match {
-            let source = argument(context, args.get(3).copied());
-            plain_head_entries(context, source)
-        } {
+    let plain = if source {
+        let source = argument(context, args.get(3).copied());
+        match plain_head_entries(context, source) {
             Some(entries) => Some(entries),
             None => return Ok(context.boolean(false)),
-        },
-        false => None,
+        }
+    } else {
+        None
     };
     let lifecycle = context
         .host_mut()
@@ -1760,19 +2728,31 @@ pub(crate) fn response_write_head(
             "The argument 'headers' is invalid",
         );
     }
+    // A server's `httpValidation: 'relaxed' | 'insecure'` admits header values Node's strict
+    // check rejects; the response carries its server's mode.
+    let relaxed = if let Some(response) = args.get(5).copied() {
+        let key = context.string_rooted("_httpValidation");
+        let mode = context.get_property_rooted(response, key)?;
+        matches!(
+            context.to_string(mode).ok().as_deref(),
+            Some("relaxed" | "insecure")
+        )
+    } else {
+        false
+    };
     let entries = match plain {
         Some(entries) => {
             let mut result = Vec::with_capacity(entries.len());
             for (name, value) in entries {
                 let name = valid_header_name(context, name)?;
-                let values = header_values(context, value, false, &name)?;
+                let values = header_values(context, value, false, &name, relaxed)?;
                 result.push((name, values));
             }
             result
         }
         None => {
             let entry_root = argument(context, args.get(3).copied());
-            write_head_entries(context, entry_root)?
+            write_head_entries(context, entry_root, relaxed)?
         }
     };
     let status_message =
@@ -1787,19 +2767,32 @@ pub(crate) fn response_write_head(
             .responses
             .get_mut(&id)
             .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+        let mut replaced = Vec::<String>::new();
         for (name, values) in entries {
-            response
-                .headers
-                .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
+            response.removed_headers.remove(&name.to_ascii_lowercase());
+            if !replaced
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&name))
+            {
+                response
+                    .headers
+                    .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
+                replaced.push(name.clone());
+            }
             let values = limit_header_values(&name, values);
             response
                 .headers
                 .extend(values.into_iter().map(|value| (name.clone(), value)));
         }
-        enable_streaming_framing(
-            &mut response.headers,
-            response.use_chunked_encoding_by_default,
-        );
+        let omit_framing = response.removed_headers.contains("content-length")
+            && response.removed_headers.contains("transfer-encoding");
+        if !omit_framing {
+            enable_streaming_framing(
+                &mut response.headers,
+                response.use_chunked_encoding_by_default,
+            );
+        }
+        normalize_no_body_response_headers(status, &mut response.headers);
         if invalid_trailer(&response.headers) {
             drop(host);
             return throw_invalid_trailer(context);
@@ -1812,7 +2805,9 @@ pub(crate) fn response_write_head(
             &response.headers,
             &[],
             &[],
-            !response.http10,
+            !response.http10 && !response.close_after_response,
+            response.removed_headers.contains("connection"),
+            omit_framing,
             response.http10,
             response.send_date,
             std::time::SystemTime::now(),
@@ -1838,6 +2833,21 @@ pub(crate) fn response_finish(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
+    let trailers = if let Some(response_root) = args.get(4).copied() {
+        let key = context.string_rooted("__quenchTrailerEntries");
+        let trailer_entries = context.get_property_rooted(response_root, key)?;
+        context.release_root(key);
+        // `addTrailers` records the entries; a response that added none has no list.
+        let trailers = if context.is_object_rooted(trailer_entries)? {
+            super::client::read_headers(context, Some(trailer_entries), false)
+        } else {
+            Ok(Vec::new())
+        };
+        context.release_root(trailer_entries);
+        trailers?
+    } else {
+        Vec::new()
+    };
     let (status, status_message) = response_status(
         context,
         id,
@@ -1900,6 +2910,8 @@ pub(crate) fn response_finish(
                 is_chunked(&response.headers),
                 response.send_date,
                 response.http10,
+                response.close_after_response,
+                response.removed_headers.clone(),
             ))
         }
     };
@@ -1914,22 +2926,56 @@ pub(crate) fn response_finish(
         chunked,
         send_date,
         http10,
+        request_closes,
+        removed_headers,
     )) = response
     else {
         return Ok(context.undefined());
     };
-    let close_after_response = (http10
-        && !chunked
-        && !headers
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("content-length")))
+    let (server_closing, peer_ended, server_root) = {
+        let host = context.host_mut().shared_state();
+        let host = host.borrow();
+        host.http
+            .connections
+            .get(&socket)
+            .and_then(|connection| {
+                host.http.servers.get(&connection.server).map(|server| {
+                    (server.closing, connection.peer_ended, Some(server.root))
+                })
+            })
+            .unwrap_or((false, false, None))
+    };
+    let allow_half_open = if let Some(server_root) = server_root {
+        let property = context.string_rooted("httpAllowHalfOpen");
+        let value = context.get_property_rooted(server_root, property)?;
+        context.release_root(property);
+        let allow = context.rooted_value(value).and_then(Value::as_bool).unwrap_or(false);
+        context.release_root(value);
+        allow
+    } else {
+        false
+    };
+    let close_after_response = request_closes
+        || server_closing
+        || (peer_ended && !allow_half_open)
+        || (removed_headers.contains("content-length")
+            && removed_headers.contains("transfer-encoding")
+            && !headers.iter().any(|(name, _)| {
+                name.eq_ignore_ascii_case("content-length")
+                    || name.eq_ignore_ascii_case("transfer-encoding")
+            }))
+        || (http10
+            && !chunked
+            && !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-length")))
         || headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("connection") && value.eq_ignore_ascii_case("close")
         });
     let bytes = if headers_sent {
         if chunked {
             let mut framed = crate::modules::http_protocol::chunk_frame(&body);
-            framed.extend_from_slice(&crate::modules::http_protocol::chunk_terminator(&[]));
+            framed.extend_from_slice(&crate::modules::http_protocol::chunk_terminator(&trailers));
             framed
         } else {
             body
@@ -1942,13 +2988,20 @@ pub(crate) fn response_finish(
             &headers,
             &body,
             &[],
-            !http10,
+            !http10 && !close_after_response,
+            removed_headers.contains("connection"),
+            removed_headers.contains("content-length")
+                && removed_headers.contains("transfer-encoding")
+                && !headers.iter().any(|(name, _)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        || name.eq_ignore_ascii_case("transfer-encoding")
+                }),
             http10,
             send_date,
             std::time::SystemTime::now(),
         );
         if chunked {
-            framed.extend_from_slice(&crate::modules::http_protocol::chunk_terminator(&[]));
+            framed.extend_from_slice(&crate::modules::http_protocol::chunk_terminator(&trailers));
         }
         framed
     };
@@ -1964,18 +3017,36 @@ pub(crate) fn response_finish(
         net_shared_vm::end(
             &mut context.host_mut().shared_state().borrow_mut().tcp,
             socket,
+            false,
         )
         .map_err(RootedError::host)?;
-    } else if let Some(connection) = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .http
-        .connections
-        .get_mut(&socket)
-    {
-        connection.clear_received();
-        connection.request_dispatched = false;
+    } else {
+        let shared_state = context.host_mut().shared_state();
+        let mut host = shared_state.borrow_mut();
+        // A pipelined connection keeps the bytes past this request for the next one.
+        let buffered = if let Some(connection) = host.http.connections.get_mut(&socket) {
+            let consumed = connection.request_bytes.min(connection.received.len());
+            connection.received.drain(..consumed);
+            connection.request_bytes = 0;
+            connection.request_dispatched = false;
+            connection.headers_timeout_sent = false;
+            connection.request_timeout_sent = false;
+            let buffered = !connection.received.is_empty();
+            if buffered {
+                connection.headers_started = Some(std::time::Instant::now());
+                connection.request_started = Some(std::time::Instant::now());
+            } else {
+                connection.clear_received();
+                connection.headers_started = None;
+                connection.request_started = None;
+            }
+            buffered
+        } else {
+            false
+        };
+        if buffered {
+            net_shared_vm::queue_http_data(&mut host.tcp, socket);
+        }
     }
     if let (Some(request), Some(response), Some(server), Some(socket)) = (
         args.get(3).copied(),
@@ -2088,6 +3159,25 @@ fn enable_streaming_framing(
     }
 }
 
+fn normalize_no_body_response_headers(status: u16, headers: &mut Vec<(String, String)>) {
+    if !matches!(status, 204 | 304) {
+        return;
+    }
+
+    // Node rejects transfer framing for bodyless responses. If the caller
+    // explicitly requested chunked framing, close the connection after the
+    // response rather than leaving the peer waiting for a chunk terminator.
+    let had_transfer_encoding = headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("transfer-encoding"));
+    if !had_transfer_encoding {
+        return;
+    }
+    headers.retain(|(name, _)| !name.eq_ignore_ascii_case("transfer-encoding"));
+    headers.retain(|(name, _)| !name.eq_ignore_ascii_case("connection"));
+    headers.push(("Connection".to_owned(), "close".to_owned()));
+}
+
 fn is_chunked(headers: &[(String, String)]) -> bool {
     headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
@@ -2164,16 +3254,17 @@ fn header_values(
     root: RootId,
     multiple: bool,
     name: &str,
+    relaxed: bool,
 ) -> Result<Vec<String>, RootedError> {
     let values = if multiple {
         let items = context.array_like_values_rooted(root)?;
         let mut values = Vec::with_capacity(items.len());
         for item in items {
-            values.push(header_value(context, item, name)?);
+            values.push(header_value(context, item, name, relaxed)?);
         }
         values
     } else {
-        vec![header_value(context, root, name)?]
+        vec![header_value(context, root, name, relaxed)?]
     };
     Ok(values)
 }
@@ -2182,13 +3273,22 @@ fn header_value(
     context: &mut Context<'_>,
     root: RootId,
     name: &str,
+    relaxed: bool,
 ) -> Result<String, RootedError> {
     if context.rooted_value(root).is_some_and(Value::is_undefined) {
         let issue = crate::modules::http_protocol::HeaderIssue::MissingValue(name.to_owned());
         return throw_header_issue(context, issue);
     }
     let value = context.to_string(root)?;
-    if !crate::modules::http_protocol::valid_header_value(&value) {
+    let valid = if relaxed {
+        value.chars().all(|character| {
+            let code = character as u32;
+            code <= 0xff && !matches!(code, 0x00 | 0x0a | 0x0d)
+        })
+    } else {
+        crate::modules::http_protocol::valid_header_value(&value)
+    };
+    if !valid {
         let issue = crate::modules::http_protocol::HeaderIssue::InvalidContent(name.to_owned());
         return throw_header_issue(context, issue);
     }
@@ -2216,25 +3316,23 @@ fn plain_head_entries(context: &mut Context<'_>, source: RootId) -> Option<Vec<(
 fn write_head_entries(
     context: &mut Context<'_>,
     root: RootId,
+    relaxed: bool,
 ) -> Result<Vec<(String, Vec<String>)>, RootedError> {
     let items = context.array_like_values_rooted(root)?;
-    let entries = items.chunks_exact(HEAD_ENTRY_FIELDS);
-    if !entries.remainder().is_empty() {
+    let (entries, remainder) = items.as_chunks::<HEAD_ENTRY_FIELDS>();
+    if !remainder.is_empty() {
         return Err(RootedError::host(
             "shared HTTP header entries are malformed",
         ));
     }
     let mut result = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let &[name_root, values_root, multiple_root] = entry else {
-            unreachable!("chunks_exact yields entries of HEAD_ENTRY_FIELDS values");
-        };
+    for &[name_root, values_root, multiple_root] in entries {
         let name = header_name(context, name_root)?;
         let multiple = context
             .rooted_value(multiple_root)
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let values = header_values(context, values_root, multiple, &name)?;
+        let values = header_values(context, values_root, multiple, &name, relaxed)?;
         result.push((name, values));
     }
     Ok(result)

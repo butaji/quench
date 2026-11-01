@@ -10,6 +10,37 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn fresh_execution_does_not_reuse_a_capture_walk_from_the_previous_heap() {
+    let program = Engine::specialize("", "capture-heap-lifetime.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.initialize(&program).unwrap();
+    let (old_env, _) = vm.heap.alloc_environment(
+        Value::NULL, 1, vec![Value::number(42.0)].into(),
+        crate::heap::EnvironmentScopeRef::of_program(0),
+    );
+    vm.walked_capture_slots(old_env, false, 0).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    // Keep an old value view alive outside the discarded heap: an erroneous
+    // cache hit returns 42 deterministically instead of dereferencing freed data.
+    let old_slots = Box::new(crate::heap::EnvironmentSlots::from(vec![Value::number(42.0)]));
+    vm.capture_walks.iter_mut().find(|walk| walk.cache.env == old_env).unwrap()
+        .cache.slots = std::ptr::from_ref(old_slots.as_ref());
+
+    vm.initialize(&program).unwrap();
+    let (new_env, _) = vm.heap.alloc_environment(
+        Value::NULL, 1, vec![Value::number(99.0)].into(),
+        crate::heap::EnvironmentScopeRef::of_program(0),
+    );
+    assert_eq!(new_env, old_env, "the new heap reuses the locator");
+    assert_eq!(vm.heap.collection_epoch(), epoch, "the collection counter also restarts");
+    let (slots, root) = vm.walked_capture_slots(new_env, false, 0).unwrap();
+    assert!(root.is_none());
+    // SAFETY: the returned view belongs to either the live environment or the
+    // retained old_slots test value, and neither is mutated during this read.
+    assert_eq!(unsafe { &*slots }.dense_plain(0), Some(Value::number(99.0)));
+}
+
+#[test]
 fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
     let source = r#"
       function exercise() {
@@ -487,7 +518,7 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 fn shape_compaction_clears_own_field_hints() {
     // Read sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
-    // another layout, so the compaction clears every hint (`LaneView::clear_field_hints`).
+    // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
     let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
     let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
@@ -1590,7 +1621,10 @@ fn local_bindings_shadow_captured_function_names_and_constants() {
          var result = named() + ',' + finallyVar();\n\
          var message = (() => { try { n = 1; } catch (error) { return error.message; } })();";
     assert_eq!(global_text(source, "result"), "2,3,4,5");
-    assert_eq!(global_text(source, "message"), "Assignment to constant variable.");
+    assert_eq!(
+        global_text(source, "message"),
+        "Assignment to constant variable."
+    );
 }
 
 #[test]
@@ -4343,7 +4377,8 @@ fn spread_and_aggregate_roots_release_after_guest_failures() {
                     vm.construct_aggregate_error(&program, &args[..3], args[3])
                 } else {
                     let array = vm.new_array(Vec::new());
-                    vm.spread_into_array(&program, array, args[0]).map(|()| array)
+                    vm.spread_into_array(&program, array, args[0])
+                        .map(|()| array)
                 };
                 assert_eq!(
                     result.is_err(),
@@ -4740,12 +4775,11 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
                     let outcome = vm.array_reduce_native(&program, native, source, &args);
                     assert_eq!(outcome.is_err(), fails);
                     assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                    if let Ok(result) = outcome {
-                        if let Some(handle) = vm.heap.weak_handle(result) {
+                    if let Ok(result) = outcome
+                        && let Some(handle) = vm.heap.weak_handle(result) {
                             vm.collect_now(&program);
                             assert!(vm.heap.weak_value(handle).is_none());
                         }
-                    }
                 }
             }
         }
@@ -6349,9 +6383,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .collect::<Vec<_>>();
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
-                    super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
-                    )
+                    super::property_key::PropertyKey::symbol(vm.heap.alloc(super::Cell::Symbol(
+                        crate::heap::SymbolData::public(Some("entry".into())),
+                    )))
                 } else {
                     super::property_key::PropertyKey::string(atom)
                 };
@@ -6819,7 +6853,10 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
+                        vm.heap
+                            .alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some(
+                                "entry".into(),
+                            ))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -6995,7 +7032,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                     }
                     assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
                     assert_eq!(
-                        vm.is_constructable(&program, proxy),
+                        vm.is_constructable(proxy),
                         constructable,
                         "{kind} {owner} {entry}"
                     );
@@ -10783,7 +10820,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
       }
     "#;
     for program in [
-        Engine::compile(crate::ExecutionRequest { source, name: "wtf16-string-coercion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "wtf16-string-coercion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize(source, "wtf16-string-coercion.js").unwrap(),
     ] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
@@ -10793,7 +10835,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
 #[test]
 fn script_directive_completion_survives_declarations_and_preserves_string_units() {
     for program in [
-        Engine::compile(crate::ExecutionRequest { source: "", name: "directive-completion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source: "",
+            name: "directive-completion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize("", "directive-completion.js").unwrap(),
     ] {
         for (source, expected) in [
@@ -10806,7 +10853,9 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
         ] {
             let mut vm = Vm::new(TestHost::default());
             vm.execute(&program).unwrap();
-            let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
+            let value = vm
+                .eval_global_script_named(&program, source, false, "directive-completion.js")
+                .unwrap();
             match expected {
                 Some(expected) => assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == expected), "{source}"),
                 None => assert!(value.is_undefined(), "{source}"),
@@ -10848,7 +10897,7 @@ fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collecti
 
 #[test]
 fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
@@ -10868,7 +10917,7 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
 
 #[test]
 fn nullish_property_diagnostics_include_original_property_names() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const key={toString(){hooks++;throw Error('key hook');}};
       for(const value of [null,undefined]) {
         for(const property of ['length',1,Symbol('x')]) {
@@ -10900,11 +10949,22 @@ for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigI
         let mut vm=Vm::new(TestHost::writing_to(output.clone()));
         let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),[
-            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-        ]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "RangeError",
+                "Start offset -1.5 is outside the bounds of the buffer",
+                "offset",
+                "5",
+                "true",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+            ]
+        );
     }
 }
 
@@ -10918,11 +10978,24 @@ check('proxy-readonly',()=>store(new Proxy(Object.freeze({x:0}),{}),'x'));check(
 check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get toString(){events.push('unexpected-string');throw marker},get [Symbol.toStringTag](){events.push('unexpected-tag');throw marker}};Object.defineProperty(hostile,'x',{value:0,writable:false});check('hostile',()=>field(hostile));for(const key of ['0','length','5'])check(['string',key],()=>store('abc',key));Object.defineProperty(Boolean.prototype,'x',{configurable:true,get(){events.push('unexpected-boolean-get')}});check('primitive-getter',()=>field(false));delete Boolean.prototype.x;out.push(['reflect',Reflect.set(new Proxy({}, {set(){return false}}),'x',1)]);out.push(events);print(JSON.stringify(out));
 
 "#;
-    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assignment-diagnostics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assignment-diagnostics.js").unwrap()] {
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "assignment-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "assignment-diagnostics.js").unwrap(),
+    ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#
+            ]
+        );
     }
 }
 
@@ -10952,7 +11025,7 @@ fn private_field_initialization_does_not_follow_proxy_prototypes() {
         let output=Rc::new(RefCell::new(Vec::new()));
         let mut vm=Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),["[true,true,42,[]]"]);
+        assert_eq!(output.borrow().as_slice(), ["[true,true,42,[]]"]);
     }
 }
 
@@ -10999,7 +11072,9 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     let program = Engine::specialize("void 0", "owned-code-lifetime.js").unwrap();
     vm.execute(&program).unwrap();
     let before = vm.programs.live_count();
-    let script = vm.compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0)).unwrap();
+    let script = vm
+        .compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0))
+        .unwrap();
     let owner = Rc::downgrade(&script.state);
     vm.collect_now(&program);
     vm.collect_now(&program);
@@ -11015,7 +11090,9 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert_eq!(vm.programs.live_count(), before);
 
-    let script = vm.compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0)).unwrap();
+    let script = vm
+        .compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0))
+        .unwrap();
     let function = vm.evaluate_embedding_compiled_script(&script).unwrap();
     let root = vm.heap.root(function);
     drop(script);
@@ -11023,7 +11100,11 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert!(vm.programs.live_count() > before);
     let function = vm.heap.root_value(root).unwrap();
-    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap(), Value::number(41.0));
+    assert_eq!(
+        vm.call_value(&program, function, Value::UNDEFINED, &[])
+            .unwrap(),
+        Value::number(41.0)
+    );
     vm.heap.release_root(root);
     vm.collect_now(&program);
     vm.collect_now(&program);
@@ -12476,6 +12557,84 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
+    let source = r#"
+      function update(item, limit, delta) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          const before = item.value;
+          item.value = before + delta;
+          total += item.value;
+        }
+        return total;
+      }
+      function aliases(first, second, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          first.value = first.value + 1;
+          total += second.value;
+        }
+        return total;
+      }
+      function replace(item, value, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          total += item.value;
+          item.value = value;
+        }
+        return total;
+      }
+      const item = { value: 0, left: 1, right: 2 };
+      let total = 0;
+      for (let call = 0; call < 80; call++) total += update(item, 2000, 1);
+      item.value = -0;
+      update(item, 1, -0);
+      if (!Object.is(item.value, -0)) throw 'field cell signed zero';
+      item.value = 2147483647;
+      update(item, 3, 0.5);
+      if (item.value !== 2147483648.5) throw 'field cell precision';
+      let reads = 0, writes = 0, value = 2;
+      Object.defineProperty(item, 'value', {
+        get() { reads++; return value; },
+        set(next) { writes++; value = next; }, configurable: true
+      });
+      update(item, 3, 1);
+      if (reads !== 6 || writes !== 3 || value !== 5) throw 'field cell accessor fallback';
+      const aliased = { value: 0, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) {
+        const before = aliased.value;
+        const answer = aliases(aliased, aliased, 1000);
+        if (answer !== before * 1000 + 500500) throw 'field cell receiver alias';
+      }
+      const replaced = { value: 1, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) replace(replaced, 2, 1000);
+      const reference = {};
+      replace(replaced, reference, 3);
+      if (replaced.value !== reference) throw 'field cell tagged store fallback';
+      print(total + ' ' + reads + ' ' + writes + ' ' + value + ' ' + aliased.value);
+    "#;
+    let program = Engine::specialize(source, "osr-field-cell.js").unwrap();
+    let id = program.functions.iter().position(|body| body.header().name
+        .is_some_and(|atom| &program.atoms[atom as usize] == "update")).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    let mut oracle = Vm::new(TestHost::writing_to(interpreted.clone()));
+    oracle.set_execution_mode(crate::ExecutionMode::Interpreted);
+    oracle.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
+        .unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
     let source = r#"
       function maskedScan(values, mask) {
@@ -13814,7 +13973,13 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
         print(run(globalThis));
         print(captured);
     "#;
-    let program = Engine::specialize(source, "osr-capture-global-alias.js").unwrap();
+    for dynamic in [false, true] {
+    let source = if dynamic {
+        source.replace("function run(object)", "function run(object, other)")
+            .replace("object.captured = index;", "let target = (index & 1) ? object : other; target.captured = index;")
+            .replace("run(globalThis)", "run(globalThis, globalThis)")
+    } else { source.to_owned() };
+    let program = Engine::specialize(&source, "osr-capture-global-alias.js").unwrap();
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     assert_eq!(interpreted.borrow().as_slice(), ["4495502", "2999"]);
@@ -13823,6 +13988,7 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    }
 }
 
 #[test]
@@ -15166,9 +15332,8 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    // A compiled raw field load embeds an object shape ID. Collection may compact and remap
-    // those IDs, so the next loop admission must retire and rebuild the old region before
-    // it can use the old slot descriptor.
+    // A compiled raw field load embeds a shape ID. Compaction must retire it at
+    // the mutation, before another loop admission can use the old descriptor.
     let native_runs_before_collection = {
         let views = vm
             .programs
@@ -15190,6 +15355,10 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.collect_now(&program);
     assert!(crate::heap::prototype_layout_epoch() > epoch_before_collection);
     assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).unwrap();
+    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 0,
+        "compaction must retire dependent code immediately, without a backedge poll");
 
     let sum_list_atom = vm.intern_atom("sumList");
     let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
@@ -15224,6 +15393,72 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
         Some(0),
         "the out-of-line changing-receiver loads still called the field probe"
     );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_shape_invalidation_retires_only_dependent_code() {
+    let program = Engine::specialize(r#"
+        function sum(node) {
+            let result = 0;
+            while (node !== null) { result += node.value; node = node.next; }
+            return result;
+        }
+        function scalar(n) {
+            let result = 0;
+            for (let i = 0; i < n; i++) result += i;
+            return result;
+        }
+        function mutatePrototype() {
+            Object.defineProperty(Object.prototype, 'unrelatedNativeField', { value: 1 });
+        }
+        let head = null;
+        for (let value = 32; value > 0; value--) head = { pad: 0, marker: 0, value, next: head };
+        globalThis.nativeOwnHead = head;
+        for (let i = 0; i < 300; i++) if (sum(head) !== 528) throw 'sum';
+        if (scalar(3000) !== 4498500) throw 'scalar';
+    "#, "osr-reactive-shapes.js").unwrap();
+    let function_id = |name| program.functions.iter().position(|function|
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let sum_id = function_id("sum");
+    let scalar_id = function_id("scalar");
+    let state = |vm: &Vm<TestHost>, function| {
+        let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+        views.get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics()
+    };
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    let before = state(&vm, sum_id);
+    assert_eq!(before.currently_compiled_sites, 1);
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
+
+    let epoch = crate::heap::prototype_layout_epoch();
+    let mutate_atom = vm.intern_atom("mutatePrototype");
+    let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
+    vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
+    assert!(crate::heap::prototype_layout_epoch() > epoch);
+    let sum_atom = vm.intern_atom("sum");
+    let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
+    let head_atom = vm.intern_atom("nativeOwnHead");
+    let head = vm.own_property(vm.realm.globals, head_atom).unwrap();
+    assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[head]).unwrap(), Value::number(528.0));
+    assert_eq!(state(&vm, sum_id).compile_successes, before.compile_successes,
+        "an unrelated prototype change does not invalidate own-field shape/slot facts");
+
+    let shapes = vm.shapes.len();
+    for index in 0..shapes * 2 {
+        let atom = vm.intern_atom(&format!("dead-reactive-shape-{index}"));
+        vm.transition_shape(0, atom);
+    }
+    let shapes_before_collection = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes_before_collection);
+    assert_eq!(state(&vm, sum_id).currently_compiled_sites, 0,
+        "shape-dependent code is retired by compaction before its next entry");
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1,
+        "scalar code has no shape-ID dependency");
 }
 
 #[test]
@@ -15447,6 +15682,14 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
           let repeated = 0;
           for (let call = 0; call < 300; call++) repeated += sumList(head);
           print(repeated);
+          // One logical shape can have packed, arena and prototype-extras storage.
+          head.value = 0.5;
+          print(sumList(head));
+          head.value = -0;
+          print(1 / head.value);
+          const derived = Object.create(head.next);
+          print(sumList(head));
+          print(Object.getPrototypeOf(derived) === head.next);
 
           let getterCount = 0;
           const getterNode = { next: null };
@@ -15495,7 +15738,7 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
     interpreter.execute(&program).unwrap();
-    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "8", "1", "10", "2", "1", "true"]);
+    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "527.5", "-Infinity", "527", "true", "8", "1", "10", "2", "1", "true"]);
 
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
@@ -15705,7 +15948,7 @@ fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
           }
         "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        &source,
+        source,
         "js-jit-boolean-joins.js",
     ))
     .unwrap();
@@ -15773,7 +16016,7 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
       if (isBindingPattern(null) !== false) throw Error('falsey fallback');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        &source,
+        source,
         "js-jit-kind-field.js",
     ))
     .unwrap();
@@ -15836,6 +16079,78 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
         super::js_compiled::JsJitFieldReceiver::Parameter(1)
     );
     assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_field_guard_observes_reassigned_parameter() {
+    let source = r#"
+      function read(object, replacement) { object = replacement; return object.value + 1; }
+      const object = {value: 7};
+      for (let i = 0; i < 40; i++) {
+        if (read(object, object) !== 8) throw Error('receiver cache warmup');
+      }
+      for (let i = 0; i < 80; i++) {
+        if (!Number.isNaN(read(object, 5))) throw Error('reassigned field receiver');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-reassigned-receiver.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_guarded_boolean_fields_and_captures() {
+    let source = r#"
+      function make(mask, expected) {
+        function check() { return (this.value & mask) !== 0 || this.value == expected; }
+        return {check, setMask(value) { mask = value; }};
+      }
+      const reader = make(2, 4);
+      reader.value = 4;
+      for (let i = 0; i < 80; i++) {
+        if (!reader.check()) throw Error('boolean numeric region');
+      }
+      reader.setMask(1);
+      reader.value = 3;
+      if (!reader.check()) throw Error('capture mutation');
+      reader.setMask(1.5);
+      if (!reader.check()) throw Error('fractional bitwise fallback');
+      reader.setMask(1n);
+      let threw = false;
+      try { reader.check(); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('bigint fallback');
+      reader.setMask(2);
+      let reads = 0;
+      Object.defineProperty(reader, 'value', {
+        configurable: true,
+        get() { reads++; return reads === 1 ? 0 : 4; }
+      });
+      if (!reader.check() || reads !== 2) throw Error('getter fallback ordering');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-capture-boolean.js")).unwrap();
+    let check = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "check")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm.programs
+        .js_tier(super::program_store::ProgramId::MAIN, check) else {
+        panic!("guarded field and capture predicate should compile");
+    };
+    assert!(!compiled.is_general_dispatch());
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
+    assert_eq!(compiled.numeric_field_inputs()[0].source, 0);
+    assert_eq!(compiled.numeric_field_inputs()[1].source, 0);
+    assert!(compiled.native_entries() > 0);
 }
 
 #[test]
@@ -16809,6 +17124,93 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_number_relations_with_exact_fallback() {
+    let source = r#"
+      function equal(a, b) { return a == b; }
+      function strict(a, b) { return a === b; }
+      function less(a, b) { return a < b; }
+      for (let i = 0; i < 64; i++) {
+        if (!equal(i, i) || !strict(i, i) || !less(i, i + 1)) throw Error('number relation');
+      }
+      if (!strict(0, -0) || strict(NaN, NaN) || less(NaN, 1)) throw Error('number edges');
+      let calls = 0;
+      const object = { valueOf() { calls++; return 4; } };
+      if (!equal(object, 4) || calls !== 1) throw Error('coercion fallback');
+      if (!equal(4n, 4n) || strict(4n, 4) || !less(3n, 4n)) throw Error('bigint fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-return-relation.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["equal", "strict", "less"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            (instruction.op() == crate::bytecode::Op::Binary && instruction.returns_from_frame()).then_some(pc)
+        }).expect("returning comparison");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
+    let source = r#"
+      function loose(value) { if (value == null) return 1; return 0; }
+      function notLoose(value) { if (value != null) return 1; return 0; }
+      function strict(value) { if (value === null) return 1; return 0; }
+      function notStrict(value) { if (value !== undefined) return 1; return 0; }
+      for (let i = 0; i < 64; i++) {
+        for (const value of [null, undefined, 0, false, '', {}, [], () => {}, $262.IsHTMLDDA]) {
+          const isNullish = value === null || value === undefined || value === $262.IsHTMLDDA;
+          if (loose(value) !== (isNullish ? 1 : 0)) throw Error('loose null');
+          if (notLoose(value) !== (isNullish ? 0 : 1)) throw Error('loose inequality');
+          if (strict(value) !== (value === null ? 1 : 0)) throw Error('strict null');
+          if (notStrict(value) !== (value !== undefined ? 1 : 0)) throw Error('strict undefined');
+        }
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-nullish.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["loose", "notLoose", "strict", "notStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::JumpBinaryFalse).then_some(pc)
+        }).expect("nullish branch");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_speculates_number_relations_and_falls_back_exactly() {
     let source = r#"
       function identity(value) { return value; }
@@ -17005,10 +17407,33 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
       if (readField(first) !== 11) throw Error('live value');
 
       const small = { value: 30 };
-      if (readField(small) !== 30) throw Error('inline storage fallback');
+      if (readField(small) !== 30) throw Error('inline storage');
+      const reference = { marker: 1 };
+      for (const value of [-7, 0, 17, true, false, null, undefined, reference, 'text']) {
+        const inline = { value };
+        if (readField(inline) !== value) throw Error('inline value');
+      }
+      small.value = 1.5;
+      if (readField(small) !== 1.5) throw Error('inline to wide storage');
 
       const inherited = Object.create({ value: 40 });
       if (readField(inherited) !== 40) throw Error('prototype holder fallback');
+
+      const prototype = { value: 70, a: 1, b: 2 };
+      const child = Object.assign(Object.create(prototype), { a: 3, b: 4, c: 5 });
+      for (let index = 0; index < 64; index++) {
+        if (readField(child) !== 70) throw Error('prototype cache');
+      }
+      prototype.value = 71;
+      if (readField(child) !== 71) throw Error('prototype live value');
+      child.value = 72;
+      if (readField(child) !== 72) throw Error('own shadow');
+      delete child.value;
+      if (readField(child) !== 71) throw Error('remove shadow');
+      Object.defineProperty(prototype, 'value', { get() { return 73; }, configurable: true });
+      if (readField(child) !== 73) throw Error('prototype accessor');
+      Object.setPrototypeOf(child, { value: 74 });
+      if (readField(child) !== 74) throw Error('prototype replacement');
 
       let getterCalls = 0;
       const accessor = { other: 1, more: 2, get value() { getterCalls++; return 50; } };
@@ -17076,6 +17501,66 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
         .collect::<Vec<_>>();
     assert_eq!(get_field_pcs.len(), 1);
     assert!(native.general_dispatch_pc_is_native(get_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
+    let source = include_str!("../../tests/fixtures/captured-field-store.js");
+    let program = Engine::specialize(source, "captured-field-store.js").unwrap();
+    let store = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "store")
+    }).unwrap();
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(store)).is_some());
+    for name in ["and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id))
+            .is_some_and(|store| store.update.is_some()), "{name} should share the guarded update proof");
+    }
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    assert!(compiled.js_tier_runs());
+    compiled.execute(&program).unwrap();
+    for name in ["store", "and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(compiled.programs.js_jit_captured_store_entries(super::ProgramId::MAIN, id as u32)
+            .unwrap_or(0) > 0, "{name} should enter the shared JIT store fast path");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_updates_reject_overwritten_read_registers() {
+    let mut program = Engine::specialize(
+        "function make(mask) { function update() { this.value = this.value | mask; } return update; }",
+        "captured-update-register.js",
+    ).unwrap();
+    let id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "update")
+    }).unwrap();
+    let body = program.function(id);
+    assert!(super::js_compiled::captured_field_store_candidate(&program, body).is_some());
+    let read = body.code[0].as_wide().result_register();
+    let capture = body.code[1].as_wide();
+    let binary = body.code[2].as_wide();
+    program.functions[id].code[1] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::LoadCapture, read, capture.b(), capture.c(), capture.imm(),
+    );
+    program.functions[id].code[2] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::Binary, binary.a(), read, read, binary.imm(),
+    );
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id)).is_none());
 }
 
 #[test]
@@ -17249,6 +17734,243 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
         .collect::<Vec<_>>();
     assert_eq!(returning_reads.len(), 1, "readX returns its field read");
     assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_fused_field_copy_preserves_effects_and_collection() {
+    let source = r#"
+      function copy() { this.out = this.holder.value; return this.out; }
+      function install(owner, n) { owner.holder.value = { n }; owner.copy(); }
+      const holder = { a: 1, b: 2, value: 7 };
+      const target = { a: 1, b: 2, c: 3, holder, out: 0, copy };
+      for (let i = 0; i < 64; i++) if (target.copy() !== 7) throw Error('field copy');
+      $262.gc();
+      install(target, 8);
+      install(target, 9);
+      $262.gc();
+      if (target.out.n !== 9) throw Error('field copy barrier');
+      let reads = 0;
+      Object.defineProperty(holder, 'value', { get() { reads++; return 10; }, configurable: true });
+      if (target.copy() !== 10 || reads !== 1) throw Error('getter fallback');
+      Object.defineProperty(holder, 'value', { value: 11, writable: true, configurable: true });
+      let writes = 0;
+      Object.defineProperty(target, 'out', { set(value) { writes += value; }, configurable: true });
+      target.copy();
+      if (writes !== 11) throw Error('setter fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-copy.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "copy")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("copy should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField && instruction.writes_current_this()).then_some(pc)
+    }).expect("fused field copy");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback() {
+    let source = r#"
+      function receiver() { 'use strict'; const value = this; if (value === null) return 1; return value; }
+      const object = { receiver };
+      for (let i = 0; i < 64; i++) if (object.receiver() !== object) throw Error('this identity');
+      if (receiver.call(null) !== 1 || receiver.call(undefined) !== undefined) throw Error('strict this');
+      class Base {}
+      class Derived extends Base {
+        constructor() {
+          const read = () => this;
+          let caught = false;
+          try { read(); } catch (error) { caught = error instanceof ReferenceError; }
+          if (!caught) throw Error('uninitialized lexical this');
+          super();
+          if (read() !== this) throw Error('initialized lexical this');
+        }
+      }
+      new Derived();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-load-this.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "receiver")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("receiver should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::LoadThis).then_some(pc)
+    }).expect("this load");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function write(value) { this.x = value; }
+      function writeStrict(value) { 'use strict'; this.x = value; }
+      function setYoung(owner, n) { owner.write({ n }); }
+      const target = { a: 1, b: 2, c: 3, x: 0, write, writeStrict };
+      for (let i = 0; i < 64; i++) { target.write(i); target.writeStrict(i + 1); }
+      if (target.x !== 64) throw Error('cached writes');
+      $262.gc();
+      setYoung(target, 7);
+      setYoung(target, 8);
+      $262.gc();
+      if (target.x.n !== 8) throw Error('heap write barrier');
+      let seen = 0;
+      Object.defineProperty(target, 'x', { set(value) { seen = value; }, configurable: true });
+      target.write(71);
+      if (seen !== 71) throw Error('accessor');
+      Object.defineProperty(target, 'x', { value: 1, writable: false, configurable: true });
+      target.write(2);
+      if (target.x !== 1) throw Error('sloppy readonly');
+      let threw = false;
+      try { target.writeStrict(2); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw || target.x !== 1) throw Error('strict readonly');
+      let proxyCalls = 0;
+      const proxy = new Proxy(target, { set() { proxyCalls++; return true; } });
+      write.call(proxy, 5);
+      if (proxyCalls !== 1) throw Error('proxy');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-store.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["write", "writeStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            matches!(super::dispatch_fast::decoded_instruction(body, *packed).op(),
+                crate::bytecode::Op::SetThisField | crate::bytecode::Op::SetThisFieldStrict).then_some(pc)
+        }).expect("this store");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
+    let source = r#"
+      function outer() {
+        let value = { n: 1 };
+        function read(collect) {
+          let seen;
+          for (let i = 0; i < 32; i++) {
+            seen = value;
+            if (collect && i === 7) $262.gc();
+          }
+          return seen.n;
+        }
+        for (let i = 0; i < 64; i++) if (read(i === 63) !== 1) throw Error('capture');
+        value = { n: 2 };
+        if (read(true) !== 2) throw Error('capture mutation');
+      }
+      outer();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-capture.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("read should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::LoadCapture).then_some(pc)
+    }).expect("capture read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function readThis() { const value = this.x; if (value === null) return null; return value; }
+      const plain = { a: 1, b: 2, c: 3, x: 5 };
+      plain.read = readThis;
+      for (let index = 0; index < 64; index++) {
+        if (plain.read() !== 5) throw Error('own field');
+      }
+      Object.defineProperty(plain, 'x', { get() { return 9; } });
+      if (plain.read() !== 9) throw Error('accessor');
+      if (readThis.call(Object.create({x: 7})) !== 7) throw Error('prototype');
+      let threw = false;
+      try { readThis.call(null); } catch (error) { threw = error instanceof TypeError; }
+      if (threw) throw Error('sloppy this conversion');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-field.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "readThis")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("readThis should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField).then_some(pc)
+    }).expect("field read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
 }
 
 #[test]
@@ -18308,12 +19030,16 @@ new A(instance,first);new B(instance,second);
             let strong = vm.heap.root(value);
             weak.push(vm.embedding_host_weak_root(strong).unwrap());
             vm.heap.release_root(strong);
-            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+                .unwrap();
         }
         vm.collect_now(&program);
-        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        for root in &weak {
+            assert!(vm.embedding_host_weak_value(*root).is_some());
+        }
         let instance = vm.intern_atom("instance");
-        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED)
+            .unwrap();
         vm.collect_now(&program);
         for root in weak {
             assert!(vm.embedding_host_weak_value(root).is_none());
@@ -20459,20 +21185,24 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         const t = this.add(k);
         return t + this.n;
       };
+      const COUNTERS = 6, ROUNDS = 4000, REPLACE_AT = 3000;
       const counters = [];
-      for (let i = 0; i < 6; i++) counters.push(new Counter(i));
+      for (let i = 0; i < COUNTERS; i++) counters.push(new Counter(i));
       let sum = 0;
-      for (let round = 0; round < 4000; round++) {
+      for (let round = 0; round < ROUNDS; round++) {
         for (let i = 0; i < counters.length; i++) sum = (sum + counters[i].step(round & 31)) % 1000003;
         if (round === 1500) counters[2].total = true;
         if (round === 1501) counters[2].total = 0;
         if (round === 2200) counters[3].total = 0.25;
         if (round === 2201) counters[3].total = 0;
-        if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
+        if (round === REPLACE_AT) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
       }
       let calls = 0;
       for (let i = 0; i < counters.length; i++) calls += counters[i].calls;
+      // Each original `add` stores its count once per round through the replacement.
+      if (calls !== COUNTERS * (REPLACE_AT + 1)) throw Error('repeated or lost inlined store');
       globalThis.answer = sum + calls;
+      globalThis.totals = counters.map(c => c.total).join(',');
     })();"#;
     let program = Engine::specialize(source, "lane-inline.js").unwrap();
     let mut answers = Vec::new();
@@ -20484,13 +21214,17 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        let answer = vm.own_property(global, atom).map(Value::to_bits);
+        let atom = vm.intern_atom("totals");
+        let totals = vm.own_property(global, atom).and_then(|value| vm.heap.string(value))
+            .map(ToString::to_string);
+        answers.push((answer, totals));
         if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
             let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "the storing callee runs inlined in its caller's lane body");
         }
     }
-    assert!(answers[0].is_some());
+    assert!(answers[0].0.is_some() && answers[0].1.is_some());
     assert_eq!(answers[0], answers[1]);
 }
 
@@ -20559,4 +21293,471 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     }
     assert!(answers[0].is_some());
     assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_bodies_leave_before_a_store_changes_property_storage() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(r#"
+      function put(value) {
+        this.value = value;
+        return this.value + 1;
+      }
+      function aliasPut(value) {
+        const alias = this;
+        this.value = value;
+        return alias.value + 1;
+      }
+      globalThis.direct = { value: 0 };
+      globalThis.aliased = { value: 0 };
+      for (let i = 0; i < 100; i++) {
+        put.call(direct, 0);
+        aliasPut.call(aliased, 0);
+      }
+    "#, "lane-storage-transition.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    for (name, object_name) in [("put", "direct"), ("aliasPut", "aliased")] {
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let body = program.function(id);
+        let instructions: Vec<_> = body.instructions().collect();
+        let store_pc = instructions.iter().position(|instruction|
+            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)).unwrap();
+        let method = vm.compile_lane_method(&program, id as u32, &[]).expect("warmed lane method");
+        let atom = vm.intern_atom(object_name);
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        registers[0] = Value::number(0.5);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+        assert_eq!(pc, store_pc, "{name}: decline before changing the native entry's storage facts");
+        let value_atom = vm.intern_atom("value");
+        assert_eq!(vm.own_property(receiver, value_atom), Some(Value::integer(0)));
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        assert_eq!(vm.call_value(&program, function, receiver, &[Value::number(0.5)]).unwrap(), Value::number(1.5));
+
+        // The same artifact proves the new arena form at its next entry.
+        registers.fill(Value::UNDEFINED);
+        registers[0] = Value::number(2.5);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+        let instruction = instructions[pc];
+        assert_eq!(instruction.op(), Op::Return);
+        assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/typed-lane-numbers.js");
+    let typescript = source
+        .replace("function accumulate(input, count)", "function accumulate(input: number, count: number): number")
+        .replace("function scratch(input)", "function scratch(input: number): number")
+        .replace("function mixed(input, flag)", "function mixed(input: number, flag: boolean): number | boolean")
+        .replace("function preserve(input, flag)", "function preserve(input: number, flag: boolean): number")
+        .replace("function floatingBranch(input)", "function floatingBranch(input: number): number");
+    for program in [Engine::specialize(source, "typed-lane-numbers.js"),
+        Engine::specialize_typescript(&typescript, "typed-lane-numbers.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let inputs = [0.0, -0.0, 0.5, f64::from(i32::MIN), f64::from(i32::MAX),
+            f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        for name in ["accumulate", "scratch", "mixed", "preserve", "floatingBranch"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("typed lane method");
+            let atom = vm.intern_atom(name);
+            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+            for input in inputs {
+                for count in [0, 1, 7] {
+                    let arguments = [Value::number(input), Value::integer(count)];
+                    let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                    let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                    registers[..arguments.len()].copy_from_slice(&arguments);
+                    let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                    let instruction = instructions[pc];
+                    assert_eq!(instruction.op(), Op::Return, "{name}({input}, {count}) exited at {pc}");
+                    let actual = registers[usize::from(instruction.register_a())];
+                    assert_eq!(actual.to_bits(), expected.to_bits(), "{name}({input}, {count})");
+                }
+            }
+            if name != "accumulate" { continue; }
+            let atom = vm.intern_atom("counting");
+            let counting = vm.own_property(vm.realm.globals, atom).unwrap();
+            let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+            registers[0] = Value::number(0.5);
+            registers[1] = counting;
+            let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+            assert_eq!(pc, 0, "a non-Number bound leaves before any coercion");
+            let atom = vm.intern_atom("countCoercions");
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
+            assert_eq!(vm.call_value(&program, function, Value::UNDEFINED,
+                &[Value::number(0.5), counting]).unwrap(), Value::number(0.890625));
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3)),
+                "loop-bound coercion remains once per JS comparison");
+            for input_name in ["textInput", "bigInput", "coercing"] {
+                let atom = vm.intern_atom(input_name);
+                let input = vm.own_property(vm.realm.globals, atom).unwrap();
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                registers[0] = input;
+                registers[1] = Value::integer(1);
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                assert!(pc < instructions.len() && instructions[pc].op() != Op::Return,
+                    "{input_name} must leave before numeric effects");
+                assert_eq!(registers[0].to_bits(), input.to_bits(), "recover the original input");
+                let atom = vm.intern_atom("coercions");
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &[input, Value::integer(1)]);
+                if input_name == "bigInput" {
+                    assert!(result.is_err());
+                } else if input_name == "coercing" {
+                    assert_eq!(result.unwrap(), Value::number(3.9375));
+                    assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(1)));
+                } else {
+                    assert!(result.unwrap().as_number().unwrap().is_nan());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(r#"
+      function loose(value) { let result=0; if (value==null) result=1; return result; }
+      function strictNull(value) { let result=0; if (value===null) result=1; return result; }
+      function strictUndefined(value) { let result=0; if (value===(void 0)) result=1; return result; }
+      function reversed(value) { let result=1; if ((void 0)!=value) result=0; return result; }
+      globalThis.nullValue=null;
+      globalThis.undefinedValue=undefined;
+      globalThis.zeroValue=0;
+      globalThis.nanValue=NaN;
+      globalThis.booleanValue=false;
+      globalThis.objectValue={ valueOf() { throw 'must not coerce'; } };
+      globalThis.arrayValue=[];
+      globalThis.stringValue='';
+      globalThis.bigValue=1n;
+      globalThis.functionValue=function(){};
+      globalThis.symbolValue=Symbol('nullish');
+      globalThis.htmlValue=$262.IsHTMLDDA;
+    "#, "typed-lane-nullish.js").unwrap();
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    vm.execute(&program).unwrap();
+    for name in ["loose", "strictNull", "strictUndefined", "reversed"] {
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let body = program.function(id);
+        let instructions: Vec<_> = body.instructions().collect();
+        let method = vm.compile_lane_method(&program, id as u32, &[]).expect("nullish lane method");
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        for value_name in ["nullValue", "undefinedValue", "zeroValue", "nanValue", "booleanValue",
+            "objectValue", "arrayValue", "stringValue", "bigValue", "functionValue", "symbolValue", "htmlValue"] {
+            let atom = vm.intern_atom(value_name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let expected = vm.call_value(&program, function, Value::UNDEFINED, &[value]).unwrap();
+            let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+            registers[0] = value;
+            let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+            let instruction = instructions[pc];
+            if name.starts_with("strict") || value.is_record() || value.heap_reference().is_none() {
+                assert_eq!(instruction.op(), Op::Return, "{name}({value_name}) exited at {pc}: {instructions:?}");
+                assert_eq!(registers[usize::from(instruction.register_a())], expected, "{name}({value_name})");
+            } else {
+                assert_eq!(instruction.op(), Op::JumpBinaryFalse, "legacy heap values need IsHTMLDDA recovery");
+                assert_eq!(registers[0].to_bits(), value.to_bits());
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_recovery_preserves_observable_parameter_updates() {
+    let program = Engine::specialize(r#"
+      function exposed(value) { value=123; return globalThis.probe.value; }
+      globalThis.probe={ get value() { return exposed.arguments[0]; } };
+    "#, "typed-lane-reflected-parameter.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "exposed")).unwrap();
+    let body = program.function(id);
+    let method = vm.compile_lane_method(&program, id as u32, &[]).expect("native prefix");
+    let parameter = usize::from(body.promoted_register(0).expect("promoted parameter"));
+    let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+    registers[parameter] = Value::integer(111);
+    let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+    assert!(pc < body.code.len());
+    assert_eq!(registers[parameter], Value::integer(123),
+        "f.arguments observes a current parameter even when bytecode no longer reads it");
+    let atom = vm.intern_atom("exposed");
+    let function = vm.own_property(vm.realm.globals, atom).unwrap();
+    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[Value::integer(111)]).unwrap(), Value::integer(123));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/own-slot-proofs.js");
+    let typescript = source
+        .replace("function readPair(node)", "function readPair(node: {left: number, right: number}): number")
+        .replace("function update(value)", "function update(value: number): number");
+    for program in [Engine::specialize(source, "own-slot-proofs.js"),
+        Engine::specialize_typescript(&typescript, "own-slot-proofs.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let packed = global(&mut vm, "packed");
+        let arena = global(&mut vm, "arena");
+        let wider = global(&mut vm, "wider");
+        for name in ["readPair", "reassigned", "joined", "update"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("own-slot native artifact");
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, receiver, arguments: &[Value]| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in arguments.iter().copied().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).expect("register parameter");
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+                (pc, registers)
+            };
+            if name != "update" {
+                for object in [packed, arena] {
+                    for flag in [Value::FALSE, Value::TRUE] {
+                        let arguments = [object, if name == "reassigned" { wider } else { arena }, flag];
+                        let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                        let (pc, registers) = run(&mut vm, Value::UNDEFINED, &arguments[..usize::from(body.params)]);
+                        assert_eq!(instructions[pc].op(), Op::Return, "{name} left at {pc}: {instructions:?}");
+                        assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+                    }
+                }
+                if name == "readPair" {
+                    let effects = vm.intern_atom("effects");
+                    for (name, expected, count) in [("getter", 23, 1), ("proxy", 27, 2), ("extras", 10, 0)] {
+                        let object = global(&mut vm, name);
+                        let before = vm.own_property(vm.realm.globals, effects).unwrap().as_int().unwrap();
+                        let (pc, _) = run(&mut vm, Value::UNDEFINED, &[object]);
+                        assert_eq!(instructions[pc].op(), Op::GetField, "{name} leaves before the first read");
+                        assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before)));
+                        assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[object]).unwrap(), Value::integer(expected));
+                        assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before + count)));
+                    }
+                }
+                continue;
+            }
+            let left = vm.intern_atom("left");
+            let right = vm.intern_atom("right");
+            for object in [packed, arena] {
+                for value in [Value::integer(5), Value::integer(7)] {
+                    let before = vm.own_property(object, left).unwrap().as_number().unwrap();
+                    let other = vm.own_property(object, right).unwrap().as_number().unwrap();
+                    let expected = Value::number(before + value.as_number().unwrap() + other);
+                    let (pc, registers) = run(&mut vm, object, &[value]);
+                    assert_eq!(instructions[pc].op(), Op::Return, "alias store left at {pc}");
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], expected,
+                        "a layout proof must not snapshot writable packed contents");
+                    assert_eq!(vm.own_property(object, left), Some(value));
+                }
+            }
+            let (pc, _) = run(&mut vm, packed, &[Value::number(0.5)]);
+            assert!(matches!(instructions[pc].op(), Op::SetThisField | Op::SetThisFieldStrict),
+                "leave before packed storage widens, after proving its first read");
+            assert_eq!(vm.own_property(packed, left), Some(Value::integer(7)));
+            assert_eq!(vm.call_value(&program, function, packed, &[Value::number(0.5)]).unwrap(), Value::number(9.5));
+            let (pc, registers) = run(&mut vm, packed, &[Value::number(1.5)]);
+            assert_eq!(instructions[pc].op(), Op::Return, "the same artifact admits the new arena layout");
+            assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::number(4.0));
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn native_own_stores_share_barriers_and_exact_fallback() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/own-store-proof.js");
+    let typescript = source
+        .replace("function write(object, value)", "function write(object: {left: number, right: number}, value: number): number")
+        .replace("function strictWrite(object, value)", "function strictWrite(object: {left: number, right: number}, value: number): number");
+    for program in [Engine::specialize(source, "own-store-proof.js"),
+        Engine::specialize_typescript(&typescript, "own-store-proof.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let left = vm.intern_atom("left");
+        let effects = vm.intern_atom("effects");
+        for name in ["updateAlias", "write", "strictWrite"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, method: &super::compiled::LaneMethod, object, value| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in [object, value].into_iter().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).unwrap();
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                (pc, registers)
+            };
+            let method = vm.compile_lane_method(&program, id as u32, &[])
+                .unwrap_or_else(|| panic!("native {name}: {instructions:?}"));
+            for object_name in ["packed", "arena"] {
+                let object = global(&mut vm, object_name);
+                let before = vm.own_property(object, left).unwrap().as_number().unwrap();
+                let right = vm.intern_atom("right");
+                let other = vm.own_property(object, right).unwrap().as_number().unwrap();
+                let (pc, registers) = run(&mut vm, &method, object, Value::integer(7));
+                assert_eq!(instructions[pc].op(), Op::Return, "{name}({object_name}) left at {pc}");
+                assert_eq!(vm.own_property(object, left), Some(Value::integer(7)));
+                let expected = if name == "updateAlias" { Value::number(before + 7.0 + other) } else { Value::integer(7) };
+                assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+            }
+            if name == "updateAlias" { continue; }
+            for object_name in ["accessor", "readonly", "proxy"] {
+                let object = global(&mut vm, object_name);
+                let before = vm.own_property(vm.realm.globals, effects).unwrap();
+                let (pc, _) = run(&mut vm, &method, object, Value::integer(3));
+                assert!(matches!(instructions[pc].op(), Op::SetField | Op::SetFieldStrict), "{object_name} leaves before writing");
+                assert_eq!(vm.own_property(vm.realm.globals, effects), Some(before));
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(3)]);
+                assert_eq!(result.is_err(), name == "strictWrite" && object_name == "readonly");
+                let increment = match object_name { "accessor" => 3, "proxy" => 1, _ => 0 };
+                assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before.as_int().unwrap() + increment)));
+            }
+            // A marked owner must use the logged helper. Recompile after GC may
+            // renumber shapes, then create a young value with no independent root.
+            vm.collect_now(&program);
+            vm.collect_now(&program);
+            let object = global(&mut vm, "arena");
+            vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
+            let marked = |vm: &Vm<TestHost>, object: Value| {
+                let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+                let id = object.direct_object_index().unwrap() as usize;
+                let (blocks, count) = vm.heap.native_object_mark_blocks();
+                let block = id / layout.mark_records_per_block;
+                assert!(block < count);
+                let within = id % layout.mark_records_per_block;
+                let offset = block * layout.mark_block_size + layout.mark_offset
+                    + (within / layout.mark_word_bits) * std::mem::size_of::<u64>();
+                // SAFETY: the rooted live record names an initialized mark block;
+                // the authoritative layout derives aligned bitmap offsets.
+                let word = unsafe { blocks.add(offset).cast::<u64>().read() };
+                word & (1 << (within % layout.mark_word_bits)) != 0
+            };
+            assert!(marked(&vm, object), "the first heap write must require logging");
+            let child = vm.heap.alloc_object(crate::heap::Object::new(Value::NULL));
+            let (pc, registers) = run(&mut vm, &method, object, child);
+            assert_eq!(instructions[pc].op(), Op::Return, "a heap write remains native with the logged helper");
+            assert_eq!(registers[usize::from(instructions[pc].register_a())], child);
+            assert_eq!(vm.own_property(object, left), Some(child));
+            assert!(!marked(&vm, object), "the shared barrier records and unmarks its owner");
+            vm.collect_slow(&program, false);
+            assert!(vm.heap.object_record(child).is_some(), "the stored young value survives collection");
+            // Restore the Number fixture for the next function's oracle.
+            vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
+        }
+        let object = global(&mut vm, "methodOwner");
+        let invoke = global(&mut vm, "invoke");
+        assert_eq!(vm.call_value(&program, invoke, Value::UNDEFINED, &[object]).unwrap(), Value::integer(1));
+        // This frontend's Call site uses its lane cache. Install a valid legacy
+        // method entry explicitly to exercise the shared atom-admission policy.
+        let original = vm.own_property(object, left).unwrap();
+        let shape = vm.heap.object_record(object).unwrap().shape();
+        let target = vm.call_target(original).unwrap();
+        let slot = vm.shape_slot(shape, left).unwrap() as u16;
+        let site = vm.method_caches.len();
+        vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
+        vm.record_method_cache(site, MethodCache { shape, atom: left, proto: object,
+            callee: original, guard: super::MethodGuard { owner: object, owner_shape: shape, slot, depth: 0 },
+            target: Some(target) });
+        assert!(vm.method_caches_may_name(left));
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
+        let body = program.function(id);
+        let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
+        let replacement = global(&mut vm, "replacement");
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        for (index, value) in [object, replacement].into_iter().enumerate() {
+            let register = body.parameter_registers.map(|base| base + index as u16)
+                .or_else(|| body.promoted_register(index as u16)).unwrap();
+            registers[usize::from(register)] = value;
+        }
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+        assert_eq!(body.instructions().nth(pc).unwrap().op(), Op::SetField);
+        assert_eq!(vm.own_property(object, left), Some(original), "method invalidation happens before the write");
+        let write = global(&mut vm, "write");
+        vm.call_value(&program, write, Value::UNDEFINED, &[object, replacement]).unwrap();
+        assert_eq!(vm.call_value(&program, invoke, Value::UNDEFINED, &[object]).unwrap(), Value::integer(2));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn native_chain_append_completes_without_a_store_handoff() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(include_str!("../../tests/fixtures/own-store-proof.js"),
+        "own-store-chain.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "append")).unwrap();
+    let body = program.function(id);
+    let instructions: Vec<_> = body.instructions().collect();
+    assert!(instructions.iter().any(|instruction| instruction.op() == Op::SetField));
+    let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
+    let left = vm.intern_atom("left");
+    for (head_name, item_name) in [("head", "item"), ("arenaHead", "arenaItem")] {
+        let atom = vm.intern_atom(head_name);
+        let head = vm.own_property(vm.realm.globals, atom).unwrap();
+        let tail = vm.own_property(head, left).unwrap();
+        let atom = vm.intern_atom(item_name);
+        let item = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = head;
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), item, std::ptr::null()).caller_pc().expect("caller exit");
+        assert_eq!(instructions[pc].op(), Op::Return, "append leaves at {pc}: {instructions:?}");
+        assert_eq!(registers[usize::from(instructions[pc].register_a())], head);
+        assert_eq!(vm.own_property(tail, left), Some(item));
+        assert_eq!(vm.own_property(item, left), Some(Value::NULL));
+    }
 }

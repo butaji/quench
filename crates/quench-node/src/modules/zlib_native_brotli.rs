@@ -222,6 +222,15 @@ impl Codec {
                 let error = unsafe { BrotliDecoderGetErrorCode(self.state.as_ptr()) };
                 let name =
                     unsafe { CStr::from_ptr(BrotliDecoderErrorString(error)) }.to_string_lossy();
+                // Node exposes this malformed block stream as
+                // FORMAT_BLOCK_SWITCH (-17); the bundled decoder reports
+                // the equivalent older FORMAT_BLOCK_LENGTH_1 enum value.
+                let (error, name) = if name.ends_with("FORMAT_BLOCK_LENGTH_1") {
+                    let prefix = &name[..name.len() - "FORMAT_BLOCK_LENGTH_1".len()];
+                    (-17, format!("{prefix}FORMAT_BLOCK_SWITCH").into())
+                } else {
+                    (error, name)
+                };
                 return Err(Failure {
                     errno: error,
                     code: format!("ERR_{name}"),

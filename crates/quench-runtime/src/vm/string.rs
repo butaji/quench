@@ -313,7 +313,9 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_proto)));
-        self.object_data_mut(prototype).expect("primitive prototype").set_boxed_primitive(empty);
+        self.object_data_mut(prototype)
+            .expect("primitive prototype")
+            .set_boxed_primitive(empty);
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -450,12 +452,11 @@ impl<H: Host> Vm<H> {
                     let segment = vm.get_property(p, raw, atom)?;
                     let segment = vm.coerce_js_string(p, segment)?;
                     output.push_js_string(&segment);
-                    if index + 1 < length {
-                        if let Some(substitution) = args.get(index + 1) {
+                    if index + 1 < length
+                        && let Some(substitution) = args.get(index + 1) {
                             let substitution = vm.coerce_js_string(p, *substitution)?;
                             output.push_js_string(&substitution);
                         }
-                    }
                 }
                 Ok(vm.heap.alloc_string(output))
             })

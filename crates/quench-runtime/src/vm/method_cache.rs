@@ -263,9 +263,7 @@ impl<H: Host> Vm<H> {
         let mut owner = receiver;
         let mut depth = 0_u16;
         loop {
-            if self.heap.object_record(owner).is_none() {
-                return None;
-            }
+            self.heap.object_record(owner)?;
             let data = self.shape_property_lookup(owner, atom)?;
             if let Some(slot) = self.shape_slot(data.shape(), atom) {
                 if slot > u16::MAX as usize

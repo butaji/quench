@@ -87,7 +87,7 @@ impl<H: Host> Vm<H> {
         // An accessor or proxy hides the callee: the failure may be anywhere, so keep the
         // generic message.
         let value = value?;
-        let callable = if construct { self.is_constructable(program, value) } else { self.is_function(value) };
+        let callable = if construct { self.is_constructable(value) } else { self.is_function(value) };
         if callable {
             return None;
         }

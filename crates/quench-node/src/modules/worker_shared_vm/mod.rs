@@ -132,6 +132,16 @@ pub(crate) fn initialize_globals(c: &mut Context<'_>, _: RootId, _: &[RootId]) -
         let key = c.string_rooted(name);
         c.define_data_property_rooted(global, key, class, true, false, true)?;
     }
+    // A MessagePort is an EventTarget by Node's brand (`Symbol.for('nodejs.event_target')`),
+    // set as the global is made rather than with the DOM event family, which builds while
+    // library modules such as `internal/url` are still evaluating.
+    let port = get(c, api, "MessagePort")?;
+    let symbol = get(c, global, "Symbol")?;
+    let registry = get(c, symbol, "for")?;
+    let description = c.string_rooted("nodejs.event_target");
+    let brand_key = c.call_rooted(registry, symbol, &[description])?;
+    let yes = c.boolean(true);
+    c.define_data_property_rooted(port, brand_key, yes, true, true, true)?;
     Ok(c.undefined())
 }
 

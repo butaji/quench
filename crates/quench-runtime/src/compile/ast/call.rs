@@ -53,7 +53,7 @@ impl FunctionCompiler<'_, '_> {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
         }
-        if let Some(constant) = binding_time::unary(value).static_value() {
+        if let Some(constant) = binding_time::unary(value) {
             return self.literal(constant);
         }
         let input = if value.operator == UnaryOperator::Typeof {

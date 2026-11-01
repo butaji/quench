@@ -35,3 +35,6 @@ wait-timeout = "0.2.1"
 name = "emit-native"
 path = "src/bin/emit-native.rs"
 required-features = ["aot"]
+
+[lints]
+workspace = true

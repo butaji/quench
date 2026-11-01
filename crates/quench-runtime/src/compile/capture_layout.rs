@@ -264,11 +264,11 @@ pub(super) fn apply_function(
 /// `dynamic` is `dynamic_name_resolution` of `functions`.
 pub(super) fn dynamic_name_scopes(functions: &[FunctionFacts], dynamic: &[bool]) -> Vec<bool> {
     let mut reachable = dynamic_scope_ancestors(functions, dynamic);
-    for id in 0..functions.len() {
+    for (id, consults_dynamic) in reachable.iter_mut().enumerate() {
         let mut current = Some(id);
         while let Some(function) = current {
             if dynamic[function] {
-                reachable[id] = true;
+                *consults_dynamic = true;
                 break;
             }
             current = functions[function].parent.map(|parent| parent as usize);
@@ -295,8 +295,8 @@ pub(super) fn dynamic_name_resolution(functions: &[FunctionFacts]) -> Vec<bool> 
 /// locals in its environment.
 fn dynamic_scope_ancestors(functions: &[FunctionFacts], dynamic: &[bool]) -> Vec<bool> {
     let mut unsafe_layout = vec![false; functions.len()];
-    for id in 0..functions.len() {
-        if !dynamic[id] {
+    for (id, &is_dynamic) in dynamic.iter().enumerate().take(functions.len()) {
+        if !is_dynamic {
             continue;
         }
         let mut current = Some(id);

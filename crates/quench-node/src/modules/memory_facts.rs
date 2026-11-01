@@ -106,8 +106,8 @@ fn resource_limit() -> Option<u64> {
             // SAFETY: getrlimit initializes this correctly sized output on success.
             if unsafe { libc::getrlimit(resource, limit.as_mut_ptr()) } == 0 {
                 let limit = unsafe { limit.assume_init() }.rlim_cur;
-                if limit != libc::RLIM_INFINITY && (smallest == 0 || (limit as u64) < smallest) {
-                    smallest = limit as u64;
+                if limit != libc::RLIM_INFINITY && (smallest == 0 || limit < smallest) {
+                    smallest = limit;
                 }
             }
         }

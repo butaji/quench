@@ -1011,12 +1011,11 @@ impl<H: Host> Vm<H> {
         hooks: &mut D,
         key: Value,
     ) -> Result<(), JsError> {
-        if let Some(name) = self.heap.string(key) {
-            if let Some(index) = super::object_static::array_index(&name.to_string()) {
+        if let Some(name) = self.heap.string(key)
+            && let Some(index) = super::object_static::array_index(&name.to_string()) {
                 put_number(&serializer.output, f64::from(index));
                 return Ok(());
             }
-        }
         self.wire_write(program, serializer, hooks, key)
     }
 
@@ -1335,10 +1334,10 @@ impl<H: Host> Vm<H> {
                 JsString::from_units(&units)
             }
             _ => {
-                if length % std::mem::size_of::<u16>() != 0 {
+                if !length.is_multiple_of(std::mem::size_of::<u16>()) {
                     return Err(ReadFailure::Invalid);
                 }
-                let units: Vec<u16> = bytes.chunks_exact(2).map(|pair| u16::from_ne_bytes([pair[0], pair[1]])).collect();
+                let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_ne_bytes(*pair)).collect();
                 JsString::from_units(&units)
             }
         };
@@ -1656,7 +1655,7 @@ impl<H: Host> Vm<H> {
             })
         } else {
             let kind = valid(VIEW_TAGS.iter().find(|(_, tag)| *tag == subtag).map(|(kind, _)| *kind))?;
-            if offset % kind.width() != 0 || byte_length % kind.width() != 0 {
+            if !offset.is_multiple_of(kind.width()) || !byte_length.is_multiple_of(kind.width()) {
                 return Err(ReadFailure::Invalid);
             }
             let prototype = self.typed_array_proto(kind);
@@ -1846,11 +1845,10 @@ impl<H: Host> Vm<H> {
             let name = constructor.and_then(|constructor| {
                 self.original_debug_name(constructor).or_else(|| self.debug_function_name(constructor))
             });
-            if let Some(name) = name {
-                if !name.units().is_empty() {
+            if let Some(name) = name
+                && !name.units().is_empty() {
                     return format!("#<{name}>");
                 }
-            }
         }
         let tag = self
             .well_known_symbols

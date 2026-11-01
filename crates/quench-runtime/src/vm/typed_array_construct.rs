@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     if !offset.is_multiple_of(width) {
                         return Err(self
-                            .range_error(p, format!("{name} byte offset is out of range").into()));
+                            .range_error(p, format!("{name} byte offset is out of range")));
                     }
                     let requested_length = match requested_length {
                         Some(root) => {
@@ -137,12 +137,12 @@ impl<H: Host> Vm<H> {
                     let buffer_length = bytes.len();
                     if *detached {
                         return Err(
-                            self.type_error(p, format!("{name} backing buffer is detached").into())
+                            self.type_error(p, format!("{name} backing buffer is detached"))
                         );
                     }
                     if offset > buffer_length {
                         return Err(self
-                            .range_error(p, format!("{name} byte offset is out of range").into()));
+                            .range_error(p, format!("{name} byte offset is out of range")));
                     }
                     if requested_length.is_none()
                         && !resizable
@@ -150,19 +150,19 @@ impl<H: Host> Vm<H> {
                     {
                         return Err(self.range_error(
                             p,
-                            format!("{name} byte length is not divisible by element size").into(),
+                            format!("{name} byte length is not divisible by element size"),
                         ));
                     }
                     let length = requested_length.unwrap_or((buffer_length - offset) / width);
                     let byte_length = length.checked_mul(width).ok_or_else(|| {
-                        self.range_error(p, format!("{name} length is out of range").into())
+                        self.range_error(p, format!("{name} length is out of range"))
                     })?;
                     if offset
                         .checked_add(byte_length)
                         .is_none_or(|end| end > buffer_length)
                     {
                         return Err(
-                            self.range_error(p, format!("{name} length is out of range").into())
+                            self.range_error(p, format!("{name} length is out of range"))
                         );
                     }
                     return Ok(self.heap.alloc(Cell::TypedArray {
@@ -389,7 +389,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(Native::Uint8Array);
             constructor = self.native_value(native);
         }
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(p, "typed array species is not a constructor".into()));
         }
         let target = self.construct_value(p, constructor, args)?;
@@ -430,9 +430,24 @@ impl<H: Host> Vm<H> {
             return Ok(TypedArrayInitialization::TypedArray(length));
         }
         if !self.is_object_like(object) {
-            return self
-                .array_buffer_to_index(p, object)
-                .map(TypedArrayInitialization::Length);
+            // TypedArray length failures have a distinct diagnostic from
+            // ArrayBuffer length failures. Keep ToIndex's conversion rules,
+            // but preserve the original number for Node's constructor error.
+            let number = self.to_number(p, object)?;
+            let integer = number.trunc();
+            if !number.is_nan()
+                && (!number.is_finite() || integer < 0.0 || integer > MAX_SAFE_INTEGER)
+            {
+                return Err(self.range_error(
+                    p,
+                    format!(
+                        "Invalid typed array length: {}",
+                        crate::number_to_string::format(number)
+                    ),
+                ));
+            }
+            let length = if number.is_nan() { 0 } else { integer as usize };
+            return Ok(TypedArrayInitialization::Length(length));
         }
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Iterator) {
             let method = self.get_index(p, object, symbol)?;

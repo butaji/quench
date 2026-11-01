@@ -76,14 +76,15 @@ pub(crate) fn plan(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let module_path = args.first().copied().unwrap_or_else(|| context.undefined());
-    let module_path = if context.string_text(module_path)?.is_some() {
-        module_path
-    } else if {
+    let is_buffer = |context: &mut NativeContext<'_, NodeHost>| -> Result<bool, RootedError> {
         let is_buffer = context.host_function_data()?;
         let undefined = context.undefined();
         let result = context.call_rooted(is_buffer, undefined, &[module_path])?;
-        context.truthy_rooted(result)?
-    } {
+        context.truthy_rooted(result)
+    };
+    let module_path = if context.string_text(module_path)?.is_some() {
+        module_path
+    } else if is_buffer(context)? {
         let bytes = context
             .view_bytes_rooted(module_path)
             .ok_or_else(|| RootedError::host("fork Buffer has no backing bytes"))?;

@@ -131,7 +131,7 @@ impl<H: Host> Vm<H> {
             }
             let value = self.to_string(p, value)?;
             if !allowed.split('|').any(|candidate| candidate == value) {
-                return Err(self.range_error(p, format!("invalid {name}").into()));
+                return Err(self.range_error(p, format!("invalid {name}")));
             }
             parsed.set(name, value);
         }

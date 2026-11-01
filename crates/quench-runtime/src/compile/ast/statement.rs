@@ -406,7 +406,7 @@ impl FunctionCompiler<'_, '_> {
                     if let BindingPattern::BindingIdentifier(identifier) = binding { Some(self.owner.atom(identifier.name.as_str())) } else { None }
                 } else { None };
                 self.expression_with_debug_name(initializer, debug_name)
-            },
+            }
         };
         if Self::anonymous_function_definition(initializer)
             && let BindingPattern::BindingIdentifier(identifier) = binding
@@ -616,7 +616,7 @@ impl FunctionCompiler<'_, '_> {
                         let index = crate::bytecode::typeof_name_index(name.value.as_str())?;
                         self.constant_operand(Constant::Number(index as f64))
                     }
-                    _ => match binding_time::expression(test).static_value() {
+                    _ => match binding_time::expression(test) {
                         Some(constant) => self.constant_operand(constant),
                         None => Operand::register(self.expression(test)),
                     },

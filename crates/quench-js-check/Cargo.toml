@@ -15,3 +15,6 @@ syn = "2"
 oxc_allocator = { workspace = true }
 oxc_parser = { workspace = true, features = ["regular_expression"] }
 oxc_span = { workspace = true }
+
+[lints]
+workspace = true

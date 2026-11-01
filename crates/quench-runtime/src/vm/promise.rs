@@ -102,13 +102,17 @@ impl StaticModuleNode {
     ) -> Rc<Self> {
         let mut sites = FxHashMap::default();
         for (index, (name, _)) in locals.iter().enumerate() {
-            sites.entry(name.clone()).or_insert(StaticExportSite::Local(index));
+            sites
+                .entry(name.clone())
+                .or_insert(StaticExportSite::Local(index));
         }
         for (index, reexport) in reexports.iter().enumerate() {
             if let crate::compile::StaticModuleReexport::Named { exported, .. }
             | crate::compile::StaticModuleReexport::Namespace { exported, .. } = reexport
             {
-                sites.entry(exported.clone()).or_insert(StaticExportSite::Reexport(index));
+                sites
+                    .entry(exported.clone())
+                    .or_insert(StaticExportSite::Reexport(index));
             }
         }
         Rc::new(Self { locals, reexports, sites, dependencies: Default::default(), exported_names: Default::default(), stars: Default::default() })
@@ -1561,7 +1565,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<(Value, Value, Value), JsError> {
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(
                 p,
                 "Promise.withResolvers receiver is not a constructor".into(),
@@ -1645,7 +1649,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     Ok(Value::UNDEFINED)
                 } else {
-                    if !self.is_constructable(p, this) {
+                    if !self.is_constructable(this) {
                         return Err(self.type_error(
                             p,
                             "Promise.resolve receiver is not a constructor".into(),
@@ -2307,16 +2311,43 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
-    fn synchronous_graph_has_await(&self, key: &str, seen: &mut FxHashSet<String>) -> Result<bool, ()> {
+    fn synchronous_graph_has_await(
+        &self,
+        key: &str,
+        seen: &mut FxHashSet<String>,
+    ) -> Result<bool, crate::stack::StackExhausted> {
         let _stack = quench_stack::StackGuard::enter()?;
-        if !seen.insert(key.to_owned()) { return Ok(false); }
-        let Some(record) = self.realm.promise.modules.get(key) else { return Ok(false); };
-        let Some(program) = record.program.and_then(|program| self.programs.get(program)) else { return Ok(false); };
-        if program.functions.first().is_some_and(|function| function.is_async) { return Ok(true); }
-        for (request, dependency) in program.module_requests.iter().zip(&record.resolved_requests) {
+        if !seen.insert(key.to_owned()) {
+            return Ok(false);
+        }
+        let Some(record) = self.realm.promise.modules.get(key) else {
+            return Ok(false);
+        };
+        let Some(program) = record
+            .program
+            .and_then(|program| self.programs.get(program))
+        else {
+            return Ok(false);
+        };
+        if program
+            .functions
+            .first()
+            .is_some_and(|function| function.is_async)
+        {
+            return Ok(true);
+        }
+        for (request, dependency) in program
+            .module_requests
+            .iter()
+            .zip(&record.resolved_requests)
+        {
             if request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
                 && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
-                && self.synchronous_graph_has_await(&module_cache_key(dependency, "javascript"), seen)? {
+                && self.synchronous_graph_has_await(
+                    &module_cache_key(dependency, "javascript"),
+                    seen,
+                )?
+            {
                 return Ok(true);
             }
         }
@@ -2337,22 +2368,52 @@ impl<H: Host> Vm<H> {
                 unreachable!("failed instantiation throws");
             }
         };
-        if self.synchronous_graph_has_await(&key, &mut FxHashSet::default()).map_err(|()| self.stack_exhaustion_error())? {
+        if self
+            .synchronous_graph_has_await(&key, &mut FxHashSet::default())
+            .map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?
+        {
             for (linked_module, _) in linked {
-                if let Some(record) = self.realm.promise.modules.get_mut(&module_cache_key(&linked_module.name, "javascript")) {
+                if let Some(record) = self
+                    .realm
+                    .promise
+                    .modules
+                    .get_mut(&module_cache_key(&linked_module.name, "javascript"))
+                {
                     record.retain_instantiation();
                 }
             }
             return Ok(SynchronousModule::AsyncGraph);
         }
         drop(linked);
-        if self.realm.promise.modules.get(&key).is_some_and(|record| matches!(record.phase(), ModulePhase::Evaluating | ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)) {
+        if self.realm.promise.modules.get(&key).is_some_and(|record| {
+            matches!(
+                record.phase(),
+                ModulePhase::Evaluating
+                    | ModulePhase::EvaluatingAsync
+                    | ModulePhase::WaitingForDependencies
+            )
+        }) {
             return Ok(SynchronousModule::Evaluating);
         }
-        self.evaluate_static_module_source(p, module.clone(), &mut ModuleEvaluationStack::default())?;
-        match self.realm.promise.modules.get(&key).map(|record| record.outcome) {
-            Some(ModuleOutcome::Evaluated(namespace)) => Ok(SynchronousModule::Namespace(namespace)),
-            Some(ModuleOutcome::Errored(reason)) => Err(JsError::thrown(reason, "synchronous module evaluation failed".into())),
+        self.evaluate_static_module_source(
+            p,
+            module.clone(),
+            &mut ModuleEvaluationStack::default(),
+        )?;
+        match self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .map(|record| record.outcome)
+        {
+            Some(ModuleOutcome::Evaluated(namespace)) => {
+                Ok(SynchronousModule::Namespace(namespace))
+            }
+            Some(ModuleOutcome::Errored(reason)) => Err(JsError::thrown(
+                reason,
+                "synchronous module evaluation failed".into(),
+            )),
             _ => Ok(SynchronousModule::Evaluating),
         }
     }
@@ -2364,7 +2425,8 @@ impl<H: Host> Vm<H> {
         name: &str,
         value: Value,
     ) -> Result<Value, JsError> {
-        let mut exports = self.cached_static_exports(namespace)
+        let mut exports = self
+            .cached_static_exports(namespace)
             .ok_or_else(|| self.type_error(p, "module namespace required".into()))?;
         exports.push((name.to_owned(), StaticModuleValue::Cached(value)));
         self.module_namespace_from_static(exports)
@@ -3015,7 +3077,7 @@ impl<H: Host> Vm<H> {
                 .get(&key)
                 .and_then(ModuleRecord::pending_namespace);
             let namespace = if import.phase == crate::bytecode::ModuleRequestPhase::Defer {
-                deferred_namespace.or_else(|| match outcome {
+                deferred_namespace.or(match outcome {
                     Some(
                         ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace),
                     ) => Some(namespace),
@@ -3711,7 +3773,7 @@ impl<H: Host> Vm<H> {
                 .inspect_err(|_| self.record_native_execution_rejection())?,
         };
         let _stack =
-            quench_stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
+            quench_stack::StackGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
         let program = match precompiled {
             Some(program) => program,
             None if let Some(program) = self.kept_static_module_program(module) => self
@@ -4342,7 +4404,7 @@ impl<H: Host> Vm<H> {
             let atom = residual
                 .atoms
                 .iter()
-                .position(|name| name == &import.local)
+                .position(|name| name == import.local)
                 .ok_or_else(|| self.type_error(p, "source import binding is unavailable".into()))?
                 as u32;
             let slot = residual.function(0)
@@ -4543,7 +4605,10 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.type_error(p, "module import was not resolved".into()))?;
                 *value = StaticModuleValue::ModuleSource(self.module_source_value(p, &dependency)?);
             }
-            nodes.insert(identity, StaticModuleNode::new(locals, plan.reexports.clone()));
+            nodes.insert(
+                identity,
+                StaticModuleNode::new(locals, plan.reexports.clone()),
+            );
             return Ok(true);
         }
         self.require_source_compilation(p)?;
@@ -4779,7 +4844,9 @@ impl<H: Host> Vm<H> {
         };
         match node.sites.get(name).copied() {
             Some(StaticExportSite::Local(index)) => {
-                return Ok(StaticModuleResolution::Binding(node.locals[index].1.clone()));
+                return Ok(StaticModuleResolution::Binding(
+                    node.locals[index].1.clone(),
+                ));
             }
             Some(StaticExportSite::Reexport(index)) => match &node.reexports[index] {
                 crate::compile::StaticModuleReexport::Named { source, imported, .. } => {
@@ -4802,16 +4869,14 @@ impl<H: Host> Vm<H> {
                     };
                     let key = module_cache_key(&dependency.name, "javascript");
                     if let Some(namespace) =
-                        self.realm
-                            .promise
-                            .modules
-                            .get(&key)
-                            .and_then(|record| match record.outcome {
+                        self.realm.promise.modules.get(&key).and_then(|record| {
+                            match record.outcome {
                                 ModuleOutcome::Evaluated(namespace)
                                 | ModuleOutcome::Deferred(namespace) => Some(namespace),
                                 ModuleOutcome::Pending(_) => record.pending_namespace(),
                                 ModuleOutcome::Errored(_) => None,
-                            })
+                            }
+                        })
                     {
                         return Ok(StaticModuleResolution::Binding(StaticModuleValue::Cached(
                             namespace,
@@ -4836,7 +4901,8 @@ impl<H: Host> Vm<H> {
                             &mut StaticModuleResolveSet::default(),
                         )? {
                             StaticModuleResolution::Binding(value) => exports.push((name, value)),
-                            StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {}
+                            StaticModuleResolution::Missing | StaticModuleResolution::Ambiguous => {
+                            }
                             StaticModuleResolution::Unsupported => {
                                 return Ok(StaticModuleResolution::Unsupported);
                             }
@@ -5789,7 +5855,7 @@ impl<H: Host> Vm<H> {
         let species = self.species_of(p, constructor)?;
         if species.is_undefined() || species.is_null() {
             Ok(self.intrinsic_promise_constructor())
-        } else if self.is_constructable(p, species) {
+        } else if self.is_constructable(species) {
             Ok(species)
         } else {
             Err(self.type_error(p, "Promise species is not a constructor".into()))
@@ -5966,7 +6032,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(p, "Promise.try receiver is not a constructor".into()));
         }
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);

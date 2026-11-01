@@ -10,8 +10,11 @@ pub struct SharedEventLoop {
 }
 
 /// Async identity and retained resource owned by one queued operation.
-#[derive(Clone,Copy,PartialEq,Eq)]
-pub enum CallbackLifetime { Operation, Resource }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallbackLifetime {
+    Operation,
+    Resource,
+}
 pub struct CallbackExecution {
     pub lifetime: CallbackLifetime,
     pub optional_callback: Option<RootId>,
@@ -41,7 +44,12 @@ pub(crate) fn queue_next_tick(
     let resource = context.record_rooted(&TICK_OBJECT_FIELDS, &[callback, values])?;
     let id = super::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     super::async_hooks_shared_vm::emit_init(context, resource, "TickObject", id)?;
-    let execution = Some(CallbackExecution { lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation, optional_callback: None, id, resource: context.retain(resource)? });
+    let execution = Some(CallbackExecution {
+        lifetime: crate::modules::shared_event_loop::CallbackLifetime::Operation,
+        optional_callback: None,
+        id,
+        resource: context.retain(resource)?,
+    });
     // The job object owns the mutable callback/argument slots. The retained
     // callable is only an invocation view, as for Timeout handles; it is never exposed to
     // guest code, so every tick without a receiver shares one.
@@ -66,7 +74,8 @@ pub(crate) fn queue_next_tick(
         .shared_state()
         .borrow_mut()
         .scheduler
-        .queue_shared_next_tick(SharedCallback { execution,
+        .queue_shared_next_tick(SharedCallback {
+            execution,
             callback,
             receiver,
             args,
@@ -177,7 +186,6 @@ impl SharedEventLoop {
         Some(id)
     }
 
-
     pub fn queue_shared_immediate(
         &mut self,
         id: u64,
@@ -195,8 +203,18 @@ impl SharedEventLoop {
     }
 
     pub fn shared_active_timer_counts(&self) -> (usize, usize) {
-        let timers = self.shared.timers.iter().filter(|timer| timer.refed).count()
-            + self.shared.firing_timers.iter().filter(|(id, refed)| refed.refed && !self.shared.cancelled_timers.contains(id)).count();
+        let timers = self
+            .shared
+            .timers
+            .iter()
+            .filter(|timer| timer.refed)
+            .count()
+            + self
+                .shared
+                .firing_timers
+                .iter()
+                .filter(|(id, refed)| refed.refed && !self.shared.cancelled_timers.contains(id))
+                .count();
         (timers, self.shared.immediate_ref_count as usize)
     }
 
@@ -316,7 +334,14 @@ impl SharedEventLoop {
             .min_by_key(|(_, timer)| timer.due)
             .map(|(index, _)| index)?;
         let timer = self.shared.timers.remove(index)?;
-        self.shared.firing_timers.insert(timer.id, SharedFiringTimer { refed: timer.refed, refreshed_due: None, repeat_started: None });
+        self.shared.firing_timers.insert(
+            timer.id,
+            SharedFiringTimer {
+                refed: timer.refed,
+                refreshed_due: None,
+                repeat_started: None,
+            },
+        );
         Some(timer)
     }
 
@@ -365,7 +390,11 @@ impl SharedEventLoop {
     pub fn refresh_shared_timer(&mut self, id: u64, delay: std::time::Duration) -> bool {
         let due = std::time::Instant::now() + delay;
         if let Some(index) = self.shared.timers.iter().position(|timer| timer.id == id) {
-            let mut timer = self.shared.timers.remove(index).expect("located queued timer");
+            let mut timer = self
+                .shared
+                .timers
+                .remove(index)
+                .expect("located queued timer");
             timer.due = due;
             self.shared.timers.push_back(timer);
             self.shared.cancelled_timers.remove(&id);
@@ -394,13 +423,23 @@ impl SharedEventLoop {
         completed_at: std::time::Instant,
     ) -> Option<SharedCallback> {
         let firing = self.shared.firing_timers.remove(&timer.id);
-        if let Some(firing) = &firing { timer.refed = firing.refed; }
-        if self.shared.cancelled_timers.remove(&timer.id) { return Some(timer.callback); }
+        if let Some(firing) = &firing {
+            timer.refed = firing.refed;
+        }
+        if self.shared.cancelled_timers.remove(&timer.id) {
+            return Some(timer.callback);
+        }
         let next_due = match timer.interval {
-            Some(interval) => firing.as_ref().and_then(|firing| firing.repeat_started).unwrap_or(completed_at).checked_add(interval),
+            Some(interval) => firing
+                .as_ref()
+                .and_then(|firing| firing.repeat_started)
+                .unwrap_or(completed_at)
+                .checked_add(interval),
             None => firing.and_then(|firing| firing.refreshed_due),
         };
-        let Some(next_due) = next_due else { return Some(timer.callback); };
+        let Some(next_due) = next_due else {
+            return Some(timer.callback);
+        };
         self.shared.timers.push_back(SharedTimer {
             id: timer.id,
             due: next_due,
@@ -424,7 +463,9 @@ impl SharedEventLoop {
     }
 
     pub fn begin_shared_exit(&mut self) -> bool {
-        if self.shared.exiting { return false; }
+        if self.shared.exiting {
+            return false;
+        }
         self.shared.exiting = true;
         true
     }
@@ -435,9 +476,17 @@ impl SharedEventLoop {
 }
 
 /// Resolve a native mutable callback slot without inventing a guest wrapper.
-pub(crate) fn optional_callback(context:&mut NativeContext<'_,NodeHost>,receiver:RootId,args:&[RootId])->Result<RootId,RootedError>{
- let callback=context.get_property_rooted(receiver,args[0])?;
- if context.is_callable_rooted(callback)? {Ok(callback)} else {Ok(context.undefined())}
+pub(crate) fn optional_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let callback = context.get_property_rooted(receiver, args[0])?;
+    if context.is_callable_rooted(callback)? {
+        Ok(callback)
+    } else {
+        Ok(context.undefined())
+    }
 }
 
 impl SharedEventLoop {

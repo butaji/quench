@@ -751,14 +751,17 @@ impl<H: Host> Vm<H> {
             let name = well_known.name();
             let value = self
                 .heap
-                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}").into()))));
+                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}")))));
             self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
         self.install_typed_array_iterator_symbol(program)?;
         let symbol_prototype_atom = self.prototype_atom();
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
-        self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Symbol), symbol_prototype);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, Native::Symbol), symbol_prototype);
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
         self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
         let to_primitive = self.well_known_symbols[WellKnownSymbol::ToPrimitive];

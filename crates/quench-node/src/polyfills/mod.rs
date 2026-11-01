@@ -87,7 +87,7 @@ pub enum DirectCallResult {
     Undefined,
 }
 
-/// An ordered set of abilities, built by chained `add` calls.
+/// An ordered set of abilities, built by chained `push` calls.
 pub struct Registry {
     abilities: Vec<Ability>,
 }
@@ -101,7 +101,7 @@ impl Registry {
 
     /// Add a single ability.
     #[allow(dead_code)]
-    pub fn add(mut self, ability: Ability) -> Self {
+    pub fn push(mut self, ability: Ability) -> Self {
         self.abilities.push(ability);
         self
     }
@@ -139,6 +139,12 @@ impl Registry {
     ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
         self.phase(Phase::PostBootstrap)
             .map(|ability| (ability.name, ability.js))
+    }
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -192,6 +198,7 @@ mod tests {
             bootstrap,
             vec![
                 "globals-extra",
+                "broadcast-channel",
                 "fetch",
                 "externalizable-strings",
                 "report",
@@ -224,19 +231,19 @@ mod tests {
     #[test]
     fn bootstrap_source_preserves_order_and_separates_fragments() {
         let registry = Registry::new()
-            .add(Ability {
+            .push(Ability {
                 name: "a",
                 phase: Phase::Bootstrap,
                 kind: super::AbilityKind::JsBridge,
                 js: "A",
             })
-            .add(Ability {
+            .push(Ability {
                 name: "b",
                 phase: Phase::PostBootstrap,
                 kind: super::AbilityKind::JsBridge,
                 js: "B",
             })
-            .add(Ability {
+            .push(Ability {
                 name: "c",
                 phase: Phase::Bootstrap,
                 kind: super::AbilityKind::JsBridge,

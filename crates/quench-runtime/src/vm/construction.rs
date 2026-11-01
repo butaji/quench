@@ -220,7 +220,7 @@ impl<H: Host> Vm<H> {
         self.shape_slot(self.object_data(function)?.shape(), name_atom)
     }
 
-    pub(super) fn is_constructable(&self, p: &ResidualProgram, value: Value) -> bool {
+    pub(super) fn is_constructable(&self, value: Value) -> bool {
         let Some(FunctionRecord { kind, env, .. }) = self.heap.function(value) else {
             return matches!(
                 self.heap.get(value),
@@ -242,7 +242,7 @@ impl<H: Host> Vm<H> {
                 }
                 FunctionKind::Native(Native::FunctionBoundCall) => {
                     self.own_property(*env, self.runtime_atoms.bound_target)
-                        .is_some_and(|target| self.is_constructable(p, target))
+                        .is_some_and(|target| self.is_constructable(target))
                 }
                 FunctionKind::Native(native) => matches!(
                     native,
@@ -726,10 +726,10 @@ impl<H: Host> Vm<H> {
                 if matches!(vm.heap.get(callee), Some(Cell::Proxy { .. })) {
                     return vm.proxy_construct(p, callee, new_target, args);
                 }
-                if !vm.is_constructable(p, callee) {
+                if !vm.is_constructable(callee) {
                     return Err(vm.type_error(p, super::call_printer::NOT_CONSTRUCTOR_MESSAGE.into()));
                 }
-                if !vm.is_constructable(p, new_target) {
+                if !vm.is_constructable(new_target) {
                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
                 }
                 let (kind, derived_constructor) = match vm.heap.function(callee) {
@@ -1047,9 +1047,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         (shape, slot): (u32, usize),
     ) -> Option<Value> {
-        let Some(FunctionRecord { object, .. }) = self.heap.function(constructor) else {
-            return None;
-        };
+        let FunctionRecord { object, .. } = self.heap.function(constructor)?;
         if object.shape() != shape {
             return None;
         }
@@ -1262,7 +1260,7 @@ impl<H: Host> Vm<H> {
         superclass: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_constructable(p, superclass) {
+        if !self.is_constructable(superclass) {
             return Err(self.type_error(p, "superclass is not a constructor".into()));
         }
         let new_target_atom = self.runtime_atoms.new_target;
@@ -1345,7 +1343,7 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(handler) {
                     return Err(self.type_error(p, "Proxy handler must be an object".into()));
                 }
-                let kind = if self.is_constructable(p, target) {
+                let kind = if self.is_constructable(target) {
                     ProxyKind::Constructor
                 } else if self.is_function(target) {
                     ProxyKind::Callable

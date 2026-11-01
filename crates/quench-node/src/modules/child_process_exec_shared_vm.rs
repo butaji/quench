@@ -379,8 +379,11 @@ pub(crate) fn event(
             configured
         } else {
             let emitter = get(context, child, stream)?;
-            if nullish(context, emitter) { undefined }
-            else { get(context, emitter, "readableEncoding")? }
+            if nullish(context, emitter) {
+                undefined
+            } else {
+                get(context, emitter, "readableEncoding")?
+            }
         };
         output.push(if context.truthy_rooted(encoding)? {
             let empty = context.string_rooted("");

@@ -61,10 +61,10 @@ impl<H: Host> Vm<H> {
                 .into_iter()
                 .chain(args.iter().copied()),
             |vm| {
-                if !vm.is_constructable(p, target) {
+                if !vm.is_constructable(target) {
                     return Err(vm.type_error(p, "proxy target is not a constructor".into()));
                 }
-                if !vm.is_constructable(p, new_target) {
+                if !vm.is_constructable(new_target) {
                     return Err(vm.type_error(p, "newTarget is not a constructor".into()));
                 }
                 let trap_atom = vm.intern_atom("construct");

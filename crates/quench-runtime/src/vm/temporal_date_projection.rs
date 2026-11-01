@@ -727,7 +727,7 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainYearMonthMonthGetter => Ok(Value::number(f64::from(
                 calendar_fields
                     .as_ref()
-                    .map_or(month as u32, |fields| fields.month),
+                    .map_or(month, |fields| fields.month),
             ))),
             Native::TemporalPlainYearMonthMonthCodeGetter => Ok(self.heap.alloc_string(
                 calendar_fields
@@ -949,7 +949,7 @@ impl<H: Host> Vm<H> {
             year
         };
         let changed_code = changed_code
-            .or_else(|| (changed_month.is_none() && year != original_year).then(|| month_code));
+            .or_else(|| (changed_month.is_none() && year != original_year).then_some(month_code));
         let changed_code = changed_code
             .map(|code| self.heap.alloc_string(code.into()))
             .map(|code| {
@@ -1332,15 +1332,13 @@ impl<H: Host> Vm<H> {
         if month.is_none()
             && year_value.is_undefined()
             && !matches!(calendar.as_str(), "iso8601" | "gregory")
-        {
-            if let Some(code) = month_code_text.as_deref() {
+            && let Some(code) = month_code_text.as_deref() {
                 let iso = quench_intl::calendar_reference_date_from_code(
                     code, day as u32, &calendar, constrain,
                 )
                 .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
                 return self.make_plain_month_day(p, constructor, iso.1, iso.2, calendar, iso.0);
             }
-        }
         let month_code = month_code
             .map(|month| {
                 (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
@@ -1658,12 +1656,11 @@ fn parse_plain_year_month_string<H: Host>(
             validate_plain_year_month_calendar_string(vm, p, text, &calendar)?;
             return Ok((date, calendar));
         }
-        if !text.contains(['Z', 'z']) {
-            if let Ok(parsed) = parse_plain_year_month_boundary(vm, p, text, year, month) {
+        if !text.contains(['Z', 'z'])
+            && let Ok(parsed) = parse_plain_year_month_boundary(vm, p, text, year, month) {
                 validate_plain_year_month_calendar_string(vm, p, text, &parsed.1)?;
                 return Ok(parsed);
             }
-        }
     }
     Err(vm.range_error(p, "Invalid PlainYearMonth".into()))
 }

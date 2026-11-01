@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![feature(rust_preserve_none_cc)]
 
 mod execution_interrupt;
 pub use execution_interrupt::ExecutionInterrupt;
@@ -13,6 +14,7 @@ mod module_identity;
 mod number_to_string;
 mod profile;
 mod snapshot;
+mod typed_ir;
 pub(crate) use quench_stack as stack;
 mod unicode;
 mod value;

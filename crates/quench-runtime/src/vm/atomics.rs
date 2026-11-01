@@ -262,9 +262,7 @@ impl<H: Host> Vm<H> {
             let raw_input = self.to_number(p, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
             let input = self.atomic_number_value(kind, raw_input);
             let result = match native {
-                Native::AtomicsStore => Some(if raw_input.is_nan() {
-                    0.0
-                } else if raw_input == 0.0 {
+                Native::AtomicsStore => Some(if raw_input.is_nan() || raw_input == 0.0 {
                     0.0
                 } else {
                     raw_input.trunc()
@@ -700,8 +698,8 @@ impl<H: Host> Vm<H> {
         let mut timeout = None;
         let mut count = usize::MAX;
         if native == Native::AtomicsNotify {
-            if let Some(v) = args.get(2).copied() {
-                if !v.is_undefined() {
+            if let Some(v) = args.get(2).copied()
+                && !v.is_undefined() {
                     let n = self.to_number(p, v)?;
                     count = if n.is_nan() || n <= 0.0 {
                         0
@@ -711,7 +709,6 @@ impl<H: Host> Vm<H> {
                         n.trunc() as usize
                     }
                 }
-            }
         } else if native != Native::AtomicsLoad {
             first = convert(self, args.get(2).copied().unwrap_or(Value::UNDEFINED))?;
             if native == Native::AtomicsCompareExchange {

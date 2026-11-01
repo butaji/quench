@@ -1,6 +1,6 @@
 use quench_runtime::RootId;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 pub(crate) struct State {
@@ -84,7 +84,21 @@ pub(crate) struct ServerConnection {
     pub(crate) server: u64,
     pub(crate) received: Vec<u8>,
     pub(crate) request_dispatched: bool,
+    /// Bytes of `received` the dispatched request occupies; a pipelined request's bytes
+    /// after it wait for the next dispatch.
+    pub(crate) request_bytes: usize,
+    pub(crate) peer_ended: bool,
+    /// When the current request's head and whole request began arriving, for the
+    /// server's `headersTimeout` and `requestTimeout`, with whether each expired.
+    pub(crate) headers_started: Option<Instant>,
+    pub(crate) headers_timeout_sent: bool,
+    pub(crate) request_started: Option<Instant>,
+    pub(crate) request_timeout_sent: bool,
     pub(crate) upgraded: bool,
+    /// The connection's public socket facade (`incoming::accepted_socket`), which its
+    /// requests and the server's `connection` event share.
+    pub(crate) socket_root: Option<RootId>,
+    pub(crate) request_root: Option<RootId>,
 }
 
 /// Receive-buffer capacity a connection keeps between requests: room for a request head
@@ -109,6 +123,8 @@ pub(crate) struct Response {
     pub(crate) body: Body,
     pub(crate) send_date: bool,
     pub(crate) http10: bool,
+    pub(crate) close_after_response: bool,
+    pub(crate) removed_headers: HashSet<String>,
     pub(crate) use_chunked_encoding_by_default: bool,
     pub(crate) lifecycle: ResponseLifecycle,
     /// The guest response object, held weakly: an ended response keeps its record, which
@@ -158,11 +174,15 @@ impl ResponseLifecycle {
 }
 
 pub(crate) struct OutgoingRequest {
+    pub(crate) async_id: u64,
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) headers: Vec<(String, String)>,
+    pub(crate) trailers: Vec<(String, String)>,
+    pub(crate) set_default_headers: bool,
+    pub(crate) omit_host: bool,
     pub(crate) body: Body,
     /// The request's destination and, when it has an agent, its pool.
     pub(crate) origin: OriginKey,
@@ -215,6 +235,7 @@ impl Body {
 
 pub(crate) struct Client {
     pub(crate) request_id: u64,
+    pub(crate) async_id: u64,
     pub(crate) request_root: RootId,
     pub(crate) request: Vec<u8>,
     pub(crate) response_parser: super::protocol::ResponseParser,
@@ -230,6 +251,10 @@ pub(crate) struct Client {
     /// This exchange runs on a socket taken from the free pool, which Node reports
     /// as `ClientRequest.reusedSocket`.
     pub(crate) reused: bool,
+    /// The exchange runs on the public net.Socket its request was given
+    /// (`Agent.createConnection`), whose owner keeps or closes it: the native pool
+    /// neither frees nor closes it when the exchange ends.
+    pub(crate) supplied_socket: bool,
 }
 
 /// Where an exchange connects and, when it has an agent, the pool that owns the
