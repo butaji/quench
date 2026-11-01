@@ -1894,7 +1894,15 @@ fn capture_stores(capture: *const crate::heap::EnvironmentSlots) -> Option<*mut 
 /// [`EXIT_TAG`] when the general path must execute it. The carried state is
 /// passed as scalars so every argument stays in a register; the context,
 /// which hot handlers do not touch, is reached through [`LANE_CONTEXT`].
-type Handler = fn(Registers, Ip, *mut u8, Slot<isize>, crate::value::IntegerEncoding, Slot<Value>) -> Ip;
+///
+/// Handlers use the `rust-preserve-none` convention: every register is the caller's to save,
+/// and a handler's caller is only the next handler's tail jump or the lane's entry, so the hot
+/// handlers save none. Under the default convention six arguments left three scratch
+/// registers, and a script call saved and restored six callee-saved ones on every record
+/// (V8-v7 no-JIT, static production build, pinned, 3 interleaved runs, x86_64 4 vCPU,
+/// 2026-11-01: Score DeltaBlue 1936 -> 2097, NavierStokes 4638 -> 4963, RayTrace 5083 -> 5348,
+/// Richards within spread).
+type Handler = extern "rust-preserve-none" fn(Registers, Ip, *mut u8, Slot<isize>, crate::value::IntegerEncoding, Slot<Value>) -> Ip;
 
 thread_local! {
     /// The context of this thread's running lane. A lane run never calls
@@ -2117,7 +2125,7 @@ macro_rules! lane_handler {
     (@define $bytes:ident [$context:expr] $(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         $(#[$meta])*
         #[allow(unused_variables)]
-        fn $name<H: Host, $(const $param: $ty),*>(
+        extern "rust-preserve-none" fn $name<H: Host, $(const $param: $ty),*>(
             $r: Registers,
             $ip: Ip,
             $bytes: *mut u8,
