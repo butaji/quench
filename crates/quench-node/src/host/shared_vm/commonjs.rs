@@ -3288,12 +3288,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let parent_path = root.join("lib/http2.js");
             let parent = module_record(context, &parent_path, None, false)?;
             let compat = load(context, &path, Some(parent), EntryGoal::CommonJs)?;
-            // Share Node's own error constructor with the HTTP/2 session
-            // adapter so parser failures retain the public NghttpError type.
-            let util_path = root.join("lib/internal/http2/util.js");
-            let util = load(context, &util_path, Some(parent), EntryGoal::CommonJs)?;
-            let nghttp_error = get(context, util, "NghttpError")?;
-            let socket_symbol = get(context, util, "kSocket")?;
             let module = context.object_rooted()?;
             for name in ["Http2ServerRequest", "Http2ServerResponse"] {
                 let value = get(context, compat, name)?;
@@ -3507,62 +3501,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 let value = get(context, helpers, name)?;
                 set(context, module, name, value)?;
             }
-            // The protocol engine is exposed through small JavaScript adapters
-            // over Quench's existing net/TLS sockets. Keep these wrappers out
-            // of Node's native-dependent `internal/http2/core.js` path while
-            // preserving the standard EventEmitter and stream surfaces.
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let tls = cached_builtin(context, BuiltinModule::Tls)?;
-            let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            let duplex = get(context, stream, "Duplex")?;
-            let events = cached_builtin(context, BuiltinModule::Events)?;
-            let event_emitter = get(context, events, "EventEmitter")?;
-            let diagnostics_channel =
-                crate::modules::diagnostics_channel_shared_vm::module(context)?;
-            let server_factory = context.evaluate_script_rooted(
-                include_str!("../../modules/http2_shared_vm/server.js"),
-                "node:http2-server-compat.js",
-            )?;
-            let undefined = context.undefined();
-            let server_exports = context.call_rooted(
-                server_factory,
-                undefined,
-                &[
-                    binding,
-                    net,
-                    tls,
-                    duplex,
-                    event_emitter,
-                    compat,
-                    diagnostics_channel,
-                    nghttp_error,
-                    socket_symbol,
-                ],
-            )?;
-            for name in ["createServer", "createSecureServer"] {
-                let value = get(context, server_exports, name)?;
-                set(context, module, name, value)?;
-            }
-            let client_factory = context.evaluate_script_rooted(
-                include_str!("../../modules/http2_shared_vm/client.js"),
-                "node:http2-client-compat.js",
-            )?;
-            let client_exports = context.call_rooted(
-                client_factory,
-                undefined,
-                &[
-                    binding,
-                    net,
-                    tls,
-                    duplex,
-                    event_emitter,
-                    diagnostics_channel,
-                    nghttp_error,
-                    socket_symbol,
-                ],
-            )?;
-            let connect = get(context, client_exports, "connect")?;
-            set(context, module, "connect", connect)?;
             // Node exports the same symbol used by internal/http2/util.js so
             // sensitive headers survive the public API -> internal helper path.
             let util = node_library_module(context, "http2.js", "internal/http2/util.js")?;

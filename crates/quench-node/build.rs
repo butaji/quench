@@ -224,7 +224,6 @@ fn configure_node_compat_version(root: &std::path::Path) {
     }
 }
 
-include!("src/node_source_dependencies.rs");
 include!("src/node_source_set.rs");
 
 /// The pinned Node source set (`NODE_SOURCE_DIR`), which is all of Node the build reads.
@@ -233,74 +232,15 @@ fn node_source_root() -> std::path::PathBuf {
     println!("cargo:rerun-if-changed={}", root.join(NODE_SOURCE_RECORD).display());
     root
 }
-include!("src/undici_bindings.rs");
-include!("src/node_source_patches.rs");
 
-/// Node's pinned library runs as guest JavaScript in the shared VM. Embedding
-/// its immutable sources makes built-ins independent of a development checkout.
+/// Build inputs read from the pinned Node source set: its version, protocol, error and
+/// option tables. Node's JavaScript library is not part of the build.
 fn embed_node_sources() {
     let root = node_source_root();
     configure_node_compat_version(&root);
     embed_node_protocol_constants(&root);
     embed_uv_error_constants(&root);
     embed_empty_string_list_options(&root);
-    embed_legacy_binding_metadata(&root);
-    let bundled = env::var_os("CARGO_FEATURE_BUNDLED_SOURCES").is_some();
-    let mut pending = if bundled { vec![root.join("lib")] } else { Vec::new() };
-    let mut files = if bundled {
-        BUNDLED_DEPENDENCIES.iter().map(|(_, path)| root.join(path)).collect::<Vec<_>>()
-    } else { Vec::new() };
-    while let Some(directory) = pending.pop() {
-        println!("cargo:rerun-if-changed={}", directory.display());
-        for entry in std::fs::read_dir(directory).expect("read pinned Node library") {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "js") {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    let mut generated = String::from("const SOURCES: &[(&str, &str)] = &[\n");
-    let mut entries = files
-        .into_iter()
-        .map(|path| {
-            let relative = path
-                .strip_prefix(&root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
-            (relative, path)
-        })
-        .collect::<Vec<_>>();
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    for (relative, path) in entries {
-        println!("cargo:rerun-if-changed={}", path.display());
-        if let Some(source) = patch_node_source(&relative, &std::fs::read_to_string(&path).unwrap()) {
-            let output_dir = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
-            let override_dir = output_dir.join("node_source_overrides");
-            std::fs::create_dir_all(&override_dir).unwrap();
-            let override_path = override_dir.join("undici.js");
-            if std::fs::read_to_string(&override_path).ok().as_deref() != Some(&source) {
-                std::fs::write(&override_path, source).unwrap();
-            }
-            generated.push_str(&format!(
-                "({relative:?}, include_str!(concat!(env!(\"OUT_DIR\"), \"/node_source_overrides/undici.js\"))),\n"
-            ));
-        } else {
-            generated.push_str(&format!(
-                "({relative:?}, include_str!({:?})),\n",
-                path.to_str().unwrap()
-            ));
-        }
-    }
-    generated.push_str("];\n");
-    let output = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_sources.rs");
-    println!("cargo:rerun-if-changed=src/node_source_patches.rs");
-    if std::fs::read_to_string(&output).ok().as_deref() != Some(&generated) {
-        std::fs::write(output, generated).unwrap();
-    }
 }
 
 /// Legacy TextDecoder mappings follow ICU, as Node does. Hosts without ICU
@@ -568,52 +508,6 @@ fn embed_empty_string_list_options(root: &Path) {
         Path::new(&env::var("OUT_DIR").expect("build output")).join("node_option_defaults.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&generated) {
         std::fs::write(path, generated).expect("write SDK option inventory");
-    }
-}
-
-fn embed_legacy_binding_metadata(root: &Path) {
-    let path = root.join("lib/internal/bootstrap/realm.js");
-    println!("cargo:rerun-if-changed={}", path.display());
-    let source = std::fs::read_to_string(path).expect("read SDK legacy binding metadata");
-    let mut output = String::new();
-    for (name, constant) in [
-        ("processBindingAllowList", "PROCESS_BINDING_ALLOW_LIST"),
-        ("runtimeDeprecatedList", "RUNTIME_DEPRECATED_BINDINGS"),
-        ("legacyWrapperList", "LEGACY_WRAPPER_BINDINGS"),
-    ] {
-        let start = format!("const {name} = new SafeSet([");
-        let body = source
-            .split_once(&start)
-            .expect("SDK binding metadata set")
-            .1
-            .split_once("]);")
-            .expect("SDK binding metadata end")
-            .0;
-        output.push_str(&format!("const {constant}: &[&str] = &[\n"));
-        for line in body
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with("//"))
-        {
-            let value = line
-                .strip_prefix('\'')
-                .and_then(|line| line.split_once('\''))
-                .expect("SDK binding name literal")
-                .0;
-            assert!(
-                !value.is_empty()
-                    && value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            );
-            output.push_str(&format!("    {value:?},\n"));
-        }
-        output.push_str("];\n");
-    }
-    let path =
-        std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("node_legacy_bindings.rs");
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(&output) {
-        std::fs::write(path, output).expect("write SDK legacy binding metadata");
     }
 }
 

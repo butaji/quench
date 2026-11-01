@@ -1,7 +1,7 @@
 //! Legacy public binding policy over the configured SDK/native binding registry.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-include!(concat!(env!("OUT_DIR"), "/node_legacy_bindings.rs"));
+include!("node_legacy_bindings.rs");
 
 fn name(
     context: &mut NativeContext<'_, NodeHost>,

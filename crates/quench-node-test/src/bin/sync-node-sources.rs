@@ -13,7 +13,6 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-include!("../../../quench-node/src/node_source_dependencies.rs");
 include!("../../../quench-node/src/node_source_set.rs");
 
 /// The default checkout: the pinned Node submodule.
@@ -44,7 +43,6 @@ fn source_files(checkout: &Path) -> Result<Vec<PathBuf>, String> {
         .iter()
         .chain(std::iter::once(&NODE_SOURCE_LICENSE))
         .map(PathBuf::from)
-        .chain(BUNDLED_DEPENDENCIES.iter().map(|(_, path)| PathBuf::from(path)))
         .collect();
     for (tree, extensions) in NODE_SOURCE_TREES {
         let mut pending = vec![checkout.join(tree)];

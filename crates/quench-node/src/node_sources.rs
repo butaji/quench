@@ -1,7 +1,8 @@
 //! Immutable, pinned Node library input for the shared JavaScript interpreter.
 use std::borrow::Cow;
 use std::path::{Component, Path, PathBuf};
-include!(concat!(env!("OUT_DIR"), "/node_sources.rs"));
+/// Node's JavaScript library is not embedded; every bundled lookup misses.
+const SOURCES: &[(&str, &str)] = &[];
 include!("node_source_dependencies.rs");
 include!("node_source_set.rs");
 
