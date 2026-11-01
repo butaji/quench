@@ -13,21 +13,21 @@
 //! ```
 //!
 //! Each element depends on the one before it in its row, so a row is one chain of dependent
-//! floating-point operations, whose latency bounds it. Two rows are independent chains once
-//! the second trails the first by one element: native code computes rows `j` and `j + 1` as
-//! a pair, element `t` of row `j` then element `t - 1` of row `j + 1`, which interleaves the
-//! two chains. Every element still reads exactly the values it reads in program order, so
+//! floating-point operations, whose latency bounds it. Rows are independent chains once each
+//! trails the one before it by one element: native code computes a group of `PAIR_ROWS` rows
+//! from `j`, element `t - m` of row `j + m` at step `t`, which interleaves their chains; rows
+//! too few for a group run singly (`Emitter::emit_group`). Every element still reads exactly the values it reads in program order, so
 //! the results are those of the loop, bit for bit, when every read of a written array keeps
 //! its order relative to the writes (`Nest::legal`): a read of the previous row trails its
 //! write by at most one column (`di <= 1`), a read of the next row leads by at least one
 //! (`di >= -1`), and rows are a stride apart that no row's accesses span (checked at entry).
 //!
-//! Native code leaves only where a pair starts, which is a state the loop reaches: the
-//! outer header with the pair's row, or, past the last row, where the loop's test leaves. A
-//! pair whose rows the loop's test or the arrays' lengths do not admit leaves before it
-//! runs. Each store saves the element it replaces; an element that is not a Number (which
-//! the general path converts with observable effects) restores the ones the pair stored and
-//! leaves at the pair's start, where the general path runs the rows in program order.
+//! Native code leaves only where a group starts, which is a state the loop reaches: the
+//! outer header with the group's row, or, past the last row, where the loop's test leaves. A
+//! group whose rows the arrays' lengths do not admit leaves before it runs. Each store saves
+//! the element it replaces; an element that is not a Number (which the general path converts
+//! with observable effects) restores the ones the group stored and leaves at the group's
+//! start, where the general path runs the rows in program order.
 //! Everything a pair does before leaving is reads of record arrays and arithmetic, which
 //! nothing observes.
 
@@ -51,8 +51,9 @@ const MAX_INDEX_INPUT: i64 = 1 << 20;
 const MAX_ROW_ELEMENTS: i64 = 512;
 /// The most arrays a nest may write, each with one store an element.
 const MAX_WRITTEN_ARRAYS: usize = 2;
-/// The rows a pair computes.
-const PAIR_ROWS: i64 = 2;
+/// The rows a group computes together, each one element behind the row before it: as many
+/// independent dependence chains as the floating-point units overlap.
+const PAIR_ROWS: i64 = 4;
 const WORD_BYTES: i64 = 8;
 /// The Cranelift user-function namespace of wavefront nests ("QWAV").
 const WAVEFRONT_NAMESPACE: u32 = 0x5157_4156;
@@ -779,6 +780,8 @@ struct Emitter<'a, 'b> {
     integers: BTreeMap<Atom, ir::Value>,
     /// Number invariants, as `f64`.
     numbers: BTreeMap<Invariant, ir::Value>,
+    /// The elements each row computes, once the entry evaluated it.
+    count: Option<ir::Value>,
     not_entered: ir::Block,
     /// The cold blocks of failed reads, filled once the hot code is emitted: each restores
     /// its pair (`Failure`).
@@ -814,6 +817,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
             arrays: BTreeMap::new(),
             integers: BTreeMap::new(),
             numbers: BTreeMap::new(),
+            count: None,
             not_entered,
             failures: Vec::new(),
         })
@@ -876,7 +880,9 @@ impl<'a, 'b> Emitter<'a, 'b> {
         }
         // Elements a row computes, and the stride no row's accesses span.
         let count = self.evaluate(&self.nest.count, None, None);
-        let empty = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, count, 1);
+        self.count = Some(count);
+        // Every row runs at least as many elements as a group has rows (`PAIR_ROWS`).
+        let empty = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, count, PAIR_ROWS);
         self.fail_if(empty, self.not_entered);
         let long = self.builder.ins().icmp_imm_s(IntCC::SignedGreaterThan, count, MAX_ROW_ELEMENTS);
         self.fail_if(long, self.not_entered);
@@ -899,112 +905,41 @@ impl<'a, 'b> Emitter<'a, 'b> {
         let save = self.builder.ins().stack_addr(types::I64, save, 0);
         let row_bound = self.evaluate(&self.nest.row_bound, None, None);
 
-        // Pairs.
-        let pair = self.builder.create_block();
-        self.builder.append_block_param(pair, types::I64);
-        self.builder.ins().jump(pair, &[ir::BlockArg::Value(row)]);
-        self.builder.switch_to_block(pair);
-        let row = self.builder.block_params(pair)[0];
+        // Groups: of `PAIR_ROWS` rows while that many remain, then of one row each, so every
+        // row of the loop runs here. Each group leaves to the general path only where an
+        // access falls outside its array or an element is not a Number.
+        let groups: Vec<i64> = if PAIR_ROWS > 1 { vec![PAIR_ROWS, 1] } else { vec![1] };
+        let heads: Vec<ir::Block> = groups
+            .iter()
+            .map(|_| {
+                let head = self.builder.create_block();
+                self.builder.append_block_param(head, types::I64);
+                head
+            })
+            .collect();
         let leave = self.builder.create_block();
         self.builder.append_block_param(leave, types::I64);
         self.builder.set_cold_block(leave);
         let finished = self.builder.create_block();
         self.builder.append_block_param(finished, types::I64);
-        // A row past the loop's test ends the loop, as its test would; a pair whose second
-        // row is past leaves its one row to the general path.
+        self.builder.ins().jump(heads[0], &[ir::BlockArg::Value(row)]);
         let condition = if self.nest.row_inclusive { IntCC::SignedGreaterThan } else { IntCC::SignedGreaterThanOrEqual };
-        let done = self.builder.ins().icmp(condition, row, row_bound);
-        self.leave_if(done, finished, row);
-        let second = self.builder.ins().iadd_imm_s(row, 1);
-        let past = self.builder.ins().icmp(condition, second, row_bound);
-        self.leave_if(past, leave, row);
-        // Every access of both rows lies within its array.
-        let last = self.builder.ins().iadd_imm_s(count, -1);
-        for access in self.nest.accesses.clone() {
-            for offset in 0..PAIR_ROWS {
-                let at_row = self.builder.ins().iadd_imm_s(row, offset);
-                let first = self.evaluate(&access.index, Some(at_row), Some(None));
-                let final_column = if access.index.column_step() == Some(1) { Some(last) } else { None };
-                let final_index = self.evaluate(&access.index, Some(at_row), Some(final_column));
-                let length = self.arrays[&access.array].length;
-                let below = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, first, 0);
-                self.leave_if(below, leave, row);
-                let beyond = self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, final_index, length);
-                self.leave_if(beyond, leave, row);
+        for (index, &group) in groups.iter().enumerate() {
+            self.builder.switch_to_block(heads[index]);
+            let row = self.builder.block_params(heads[index])[0];
+            // A row past the loop's test ends the loop, as its test would; a group whose
+            // last row is past hands its rows to the next, smaller group.
+            let done = self.builder.ins().icmp(condition, row, row_bound);
+            self.leave_if(done, finished, row);
+            if let Some(&smaller) = heads.get(index + 1) {
+                let last_row = self.builder.ins().iadd_imm_s(row, group - 1);
+                let past = self.builder.ins().icmp(condition, last_row, row_bound);
+                self.leave_if(past, smaller, row);
             }
+            self.emit_group(row, group, count, save, leave)?;
+            let next_row = self.builder.ins().iadd_imm_s(row, group);
+            self.builder.ins().jump(heads[index], &[ir::BlockArg::Value(next_row)]);
         }
-        // A termination request faults here, between pairs.
-        let page = self.builder.ins().iconst(types::I64, self.poll);
-        self.builder.ins().atomic_load(types::I8, ir::MemFlagsData::trusted(), page);
-        // Each store saves the element it replaces (`Pair::save`); a non-Number element
-        // restores the ones stored so far, by row (`restore`'s parameters).
-        let restore = self.builder.create_block();
-        self.builder.set_cold_block(restore);
-        for _ in 0..self.nest.stores.len() as i64 * PAIR_ROWS {
-            self.builder.append_block_param(restore, types::I64);
-        }
-        let zero = self.builder.ins().iconst(types::I64, 0);
-        let pair_state = Pair { save, restore };
-        // The rows' prologues, then the pair's elements, the second row one behind.
-        let mut values: [Vec<ir::Value>; PAIR_ROWS as usize] = [Vec::new(), Vec::new()];
-        for offset in 0..PAIR_ROWS {
-            let at_row = self.builder.ins().iadd_imm_s(row, offset);
-            values[offset as usize] = self.run_prologue(at_row, Place { pair: pair_state, row: offset, other_stored: zero })?;
-        }
-        let first_row = row;
-        let second_row = self.builder.ins().iadd_imm_s(row, 1);
-        let carried = self.run_element(first_row, zero, &values[0], Place { pair: pair_state, row: 0, other_stored: zero })?;
-        let carried_first = carried;
-        let carried_second = self.carried(&values[1]);
-        let element = self.builder.create_block();
-        let count_carried = carried_first.len();
-        self.builder.append_block_param(element, types::I64);
-        for _ in 0..count_carried + carried_second.len() {
-            self.builder.append_block_param(element, types::F64);
-        }
-        let tail = self.builder.create_block();
-        for _ in 0..count_carried + carried_second.len() {
-            self.builder.append_block_param(tail, types::F64);
-        }
-        let one = self.builder.ins().iconst(types::I64, 1);
-        let mut arguments: Vec<ir::BlockArg> = vec![ir::BlockArg::Value(one)];
-        arguments.extend(carried_first.iter().chain(&carried_second).map(|value| ir::BlockArg::Value(*value)));
-        let done = self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, one, count);
-        let tail_arguments: Vec<ir::BlockArg> = arguments[1..].to_vec();
-        self.builder.ins().brif(done, tail, &tail_arguments, element, &arguments);
-        self.builder.switch_to_block(element);
-        let params = self.builder.block_params(element).to_vec();
-        let column = params[0];
-        let first_carried: Vec<ir::Value> = params[1..1 + count_carried].to_vec();
-        let second_carried: Vec<ir::Value> = params[1 + count_carried..].to_vec();
-        let first_values = self.with_carried(&values[0], &first_carried);
-        // The second row has stored the elements before its previous one; the first, all up
-        // to its current one.
-        let previous = self.builder.ins().iadd_imm_s(column, -1);
-        let first_next = self.run_element(first_row, column, &first_values, Place { pair: pair_state, row: 0, other_stored: previous })?;
-        let second_values = self.with_carried(&values[1], &second_carried);
-        let stored_first = self.builder.ins().iadd_imm_s(column, 1);
-        let second_next =
-            self.run_element(second_row, previous, &second_values, Place { pair: pair_state, row: 1, other_stored: stored_first })?;
-        let next_column = self.builder.ins().iadd_imm_s(column, 1);
-        let more = self.builder.ins().icmp(IntCC::SignedLessThan, next_column, count);
-        let mut arguments: Vec<ir::BlockArg> = vec![ir::BlockArg::Value(next_column)];
-        arguments.extend(first_next.iter().chain(&second_next).map(|value| ir::BlockArg::Value(*value)));
-        let tail_arguments: Vec<ir::BlockArg> = arguments[1..].to_vec();
-        self.builder.ins().brif(more, element, &arguments, tail, &tail_arguments);
-        self.builder.switch_to_block(tail);
-        let params = self.builder.block_params(tail).to_vec();
-        let second_carried: Vec<ir::Value> = params[count_carried..].to_vec();
-        let second_values = self.with_carried(&values[1], &second_carried);
-        self.run_element(second_row, last, &second_values, Place { pair: pair_state, row: 1, other_stored: count })?;
-        let next_row = self.builder.ins().iadd_imm_s(row, PAIR_ROWS);
-        self.builder.ins().jump(pair, &[ir::BlockArg::Value(next_row)]);
-
-        // A non-Number element: restore the pair's stored elements and leave at its start.
-        self.builder.switch_to_block(restore);
-        let stored = self.builder.block_params(restore).to_vec();
-        self.restore_rows(row, &stored, save);
-        self.builder.ins().jump(leave, &[ir::BlockArg::Value(row)]);
 
         // Leaving: the row register holds the pair's row, and the general path runs the
         // header; or the loop is done, and the lane resumes where its test leaves.
@@ -1024,13 +959,22 @@ impl<'a, 'b> Emitter<'a, 'b> {
 
         for failure in std::mem::take(&mut self.failures) {
             self.builder.switch_to_block(failure.block);
+            // At step `s`, a row before this one has stored its elements through `s - r`, one
+            // after it through `s - r - 1`; within the row's length.
+            let row_count = self.count.expect("rows ran with their element count");
+            let zero = self.builder.ins().iconst(types::I64, 0);
             let mut counts = Vec::new();
             for here in &failure.stored_here {
                 for offset in 0..PAIR_ROWS {
                     let count = if offset == failure.place.row {
                         self.builder.ins().iadd_imm_s(failure.column, i64::from(*here))
+                    } else if offset >= failure.place.rows {
+                        zero
                     } else {
-                        failure.place.other_stored
+                        let ahead = i64::from(offset < failure.place.row);
+                        let stored = self.builder.ins().iadd_imm_s(failure.place.step, ahead - offset);
+                        let stored = self.builder.ins().smax(stored, zero);
+                        self.builder.ins().smin(stored, row_count)
                     };
                     counts.push(ir::BlockArg::Value(count));
                 }
@@ -1042,6 +986,116 @@ impl<'a, 'b> Emitter<'a, 'b> {
         self.finish(word);
         self.builder.seal_all_blocks();
         self.builder.finalize(frontend);
+        Some(())
+    }
+
+    /// One group of `group` rows from `row`, each one element behind the row before it:
+    /// their accesses' bounds, the poll, then the steps (`Place`). A non-Number element
+    /// restores what the group stored and leaves at its first row.
+    fn emit_group(&mut self, row: ir::Value, group: i64, count: ir::Value, save: ir::Value, leave: ir::Block) -> Option<()> {
+        // Every access of the group's rows lies within its array.
+        let last = self.builder.ins().iadd_imm_s(count, -1);
+        for access in self.nest.accesses.clone() {
+            for offset in 0..group {
+                let at_row = self.builder.ins().iadd_imm_s(row, offset);
+                let first = self.evaluate(&access.index, Some(at_row), Some(None));
+                let final_column = if access.index.column_step() == Some(1) { Some(last) } else { None };
+                let final_index = self.evaluate(&access.index, Some(at_row), Some(final_column));
+                let length = self.arrays[&access.array].length;
+                let below = self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, first, 0);
+                self.leave_if(below, leave, row);
+                let beyond = self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, final_index, length);
+                self.leave_if(beyond, leave, row);
+            }
+        }
+        // A termination request faults here, between groups.
+        let page = self.builder.ins().iconst(types::I64, self.poll);
+        self.builder.ins().atomic_load(types::I8, ir::MemFlagsData::trusted(), page);
+        // Each store saves the element it replaces (`Pair::save`); a non-Number element
+        // restores the ones stored so far, by row (`restore`'s parameters).
+        let restore = self.builder.create_block();
+        self.builder.set_cold_block(restore);
+        for _ in 0..self.nest.stores.len() as i64 * PAIR_ROWS {
+            self.builder.append_block_param(restore, types::I64);
+        }
+        let pair_state = Pair { save, restore };
+        let rows = group as usize;
+        let row_values: Vec<ir::Value> = (0..group).map(|offset| self.builder.ins().iadd_imm_s(row, offset)).collect();
+        // The rows' prologues, before any step stores.
+        let before = self.builder.ins().iconst(types::I64, -1);
+        let mut values: Vec<Vec<ir::Value>> = Vec::with_capacity(rows);
+        for (offset, at_row) in row_values.iter().enumerate() {
+            values.push(self.run_prologue(*at_row, Place { pair: pair_state, row: offset as i64, rows: group, step: before })?);
+        }
+        // Step `s` runs row `m` at element `s - m`. The ramp: steps before every row runs.
+        let mut carried: Vec<Vec<ir::Value>> = values.iter().map(|row_values| self.carried(row_values)).collect();
+        for step in 0..group - 1 {
+            let step_value = self.builder.ins().iconst(types::I64, step);
+            for m in 0..=step {
+                let column = self.builder.ins().iconst(types::I64, step - m);
+                let current = self.with_carried(&values[m as usize], &carried[m as usize]);
+                carried[m as usize] = self.run_element(
+                    row_values[m as usize], column, &current, Place { pair: pair_state, row: m, rows: group, step: step_value },
+                )?;
+            }
+        }
+        // The steps every row runs.
+        let per_row = carried[0].len();
+        let flat: Vec<ir::Value> = carried.iter().flatten().copied().collect();
+        let element = self.builder.create_block();
+        self.builder.append_block_param(element, types::I64);
+        let tail = self.builder.create_block();
+        for _ in 0..flat.len() {
+            self.builder.append_block_param(element, types::F64);
+            self.builder.append_block_param(tail, types::F64);
+        }
+        let first_step = self.builder.ins().iconst(types::I64, group - 1);
+        let mut arguments: Vec<ir::BlockArg> = vec![ir::BlockArg::Value(first_step)];
+        arguments.extend(flat.iter().map(|value| ir::BlockArg::Value(*value)));
+        let done = self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, first_step, count);
+        let tail_arguments: Vec<ir::BlockArg> = arguments[1..].to_vec();
+        self.builder.ins().brif(done, tail, &tail_arguments, element, &arguments);
+        self.builder.switch_to_block(element);
+        let params = self.builder.block_params(element).to_vec();
+        let step = params[0];
+        let mut next_carried: Vec<ir::Value> = Vec::with_capacity(flat.len());
+        for m in 0..group {
+            let start = 1 + m as usize * per_row;
+            let current = self.with_carried(&values[m as usize], &params[start..start + per_row]);
+            let column = self.builder.ins().iadd_imm_s(step, -m);
+            next_carried.extend(self.run_element(
+                row_values[m as usize], column, &current, Place { pair: pair_state, row: m, rows: group, step },
+            )?);
+        }
+        let next_step = self.builder.ins().iadd_imm_s(step, 1);
+        let more = self.builder.ins().icmp(IntCC::SignedLessThan, next_step, count);
+        let mut arguments: Vec<ir::BlockArg> = vec![ir::BlockArg::Value(next_step)];
+        arguments.extend(next_carried.iter().map(|value| ir::BlockArg::Value(*value)));
+        let tail_arguments: Vec<ir::BlockArg> = arguments[1..].to_vec();
+        self.builder.ins().brif(more, element, &arguments, tail, &tail_arguments);
+        // The drain: steps past the first row's last element.
+        self.builder.switch_to_block(tail);
+        let params = self.builder.block_params(tail).to_vec();
+        let mut carried: Vec<Vec<ir::Value>> = params.chunks(per_row.max(1)).map(<[ir::Value]>::to_vec).collect();
+        carried.resize(rows, Vec::new());
+        for k in 1..group {
+            let step = self.builder.ins().iadd_imm_s(count, k - 1);
+            for m in k..group {
+                let column = self.builder.ins().iadd_imm_s(count, k - 1 - m);
+                let current = self.with_carried(&values[m as usize], &carried[m as usize]);
+                carried[m as usize] = self.run_element(
+                    row_values[m as usize], column, &current, Place { pair: pair_state, row: m, rows: group, step },
+                )?;
+            }
+        }
+        let continuation = self.builder.create_block();
+        self.builder.ins().jump(continuation, &[]);
+        // A non-Number element: restore the group's stored elements and leave at its start.
+        self.builder.switch_to_block(restore);
+        let stored = self.builder.block_params(restore).to_vec();
+        self.restore_rows(row, &stored, save);
+        self.builder.ins().jump(leave, &[ir::BlockArg::Value(row)]);
+        self.builder.switch_to_block(continuation);
         Some(())
     }
 
@@ -1314,7 +1368,10 @@ struct Pair {
 struct Place {
     pair: Pair,
     row: i64,
-    other_stored: ir::Value,
+    /// The rows of the group (`Emitter::emit_group`); rows past them store nothing.
+    rows: i64,
+    /// The step running: row `m` runs its element `step - m` (`Emitter::emit_group`).
+    step: ir::Value,
 }
 
 fn flags() -> ir::MemFlagsData {
