@@ -10,6 +10,9 @@ use std::sync::Mutex;
 mod access;
 mod array_elements;
 pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, UniqueElements};
+mod array_proofs;
+pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
+use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod cell_access;
 mod buffer_bytes;
@@ -1917,8 +1920,10 @@ impl Heap {
         // those it promotes.
         let carries_owners = !full && age.ages();
         self.charge_materialized_text();
-        // The sweep may free a prototype whose record a later object reuses.
+        // The sweep may free a prototype whose record a later object reuses, or an array
+        // whose record a later array reuses.
         advance_prototype_layout_epoch();
+        retire_array_storage_proofs();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking

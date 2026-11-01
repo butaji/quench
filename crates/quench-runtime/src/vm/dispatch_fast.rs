@@ -1790,6 +1790,11 @@ struct LaneContext<H: Host> {
     /// The accumulator the lane loop dispatches its next record with: the one a safepoint
     /// jump carried to its target (`lane_safepoint`), else none.
     resumed_acc: Slot<Value>,
+    /// What this run proved about the storage of the arrays its loops index
+    /// (`ArrayStorageProofs`), which the proved element records read
+    /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
+    /// one; a nested run retires them on entry, and they end with the run.
+    proofs: crate::heap::ArrayStorageProofs,
 }
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
@@ -2944,14 +2949,156 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script(cx))
         };
         r.set(read.a, element);
-        let operator = unsafe { &*following(following(ip)) };
-        let Some(value) =
-            super::operations::number_value_operator::<OP>(r.get(operator.b), r.get(operator.c))
-        else {
-            next!(cx, r, following(following(ip)), Carried::script(cx))
+        return lane_read_operator::<H, OP>(cx, r, ip);
+    }
+}
+
+/// The operation of `lane_update_get_index_operator`'s triple at `ip`, whose read the triple
+/// made: the Number operation, else the operator's own record.
+#[inline(always)]
+fn lane_read_operator<H: Host, const OP: u32>(cx: *mut LaneContext<H>, r: Registers, ip: Ip) -> Ip {
+    // SAFETY: the triple is three records, the third never the view's last.
+    let operator = unsafe { &*following(following(ip)) };
+    let Some(value) =
+        super::operations::number_value_operator::<OP>(r.get(operator.b), r.get(operator.c))
+    else {
+        next!(cx, r, following(following(ip)), Carried::script(cx))
+    };
+    r.set(operator.a, value);
+    next!(cx, r, following(following(following(ip))), Carried::script(cx))
+}
+
+/// The index a proved element record (`specialize_proved_arrays`) reads at: a non-negative
+/// integer key, as `Vm::direct_dense_element` takes one.
+#[inline(always)]
+fn proof_index(key: Value) -> Option<usize> {
+    usize::try_from(key.as_int()?).ok()
+}
+
+/// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
+/// integer that does not overflow; `None` for any other value.
+#[inline(always)]
+fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
+    let integer = value.as_int()?;
+    if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
+}
+
+/// After the proved record at `ip` missed the run's proofs through base register `register`
+/// (`ArrayStorageProofs`): proves the record array `base` names unless its slot already
+/// holds it. Any other base gives the record its generic handler for good: the record's
+/// base is loop-invariant, so it would decline every proved access.
+fn lane_prove_array<H: Host>(cx: *mut LaneContext<H>, ip: Ip, register: u16, base: Value) {
+    // SAFETY: the context's proofs and its VM are distinct, both live for the run.
+    let (proofs, vm) = unsafe { (&mut (*cx).proofs, vm(cx)) };
+    if !proofs.holds(register, base)
+        && !vm.heap.prove_array_storage(proofs, register, base)
+        && let Some(generic) = generic_handler::<H>(lane_own_handler(cx, ip))
+    {
+        requicken::<H>(ip, generic);
+    }
+}
+
+/// The handler the record at `ip` runs as its own: a header record a loop site holds
+/// (`lane_loop_hold_header`) keeps it in the site.
+fn lane_own_handler<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> *const () {
+    // SAFETY: a record of the running view; a held header names its site.
+    unsafe {
+        let handler = (*ip).handler;
+        if handler == lane_loop_header::<H> as Handler as *const ()
+            && let Some(site) = lane_header_site::<H>(cx, ip)
+        {
+            return (*site).header_handler.get();
+        }
+        handler
+    }
+}
+
+script_handler! {
+    /// A proved element read or store (`lane_get_index_proved`, `lane_set_index_proved`,
+    /// `lane_set_index_move_proved`) its proofs declined: proves its base
+    /// (`lane_prove_array`), then runs the generic record. Apart, so the proved records' fast
+    /// paths make no call.
+    #[inline(never)]
+    fn lane_proof_miss<>(cx, r, ip, i, view) {
+        let generic = generic_handler::<H>(lane_own_handler(cx, ip));
+        lane_prove_array(cx, ip, i.b, r.get(i.b));
+        let Some(generic) = generic else {
+            return exit(ip);
         };
-        r.set(operator.a, value);
-        next!(cx, r, following(following(following(ip))), Carried::script(cx))
+        sibling!(generic, r, ip, Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// A proved update and read (`lane_update_get_index_proved` and its operator form) whose
+    /// read its proofs declined after the update: proves the read's base
+    /// (`lane_prove_array`), then runs the read's own record, as the generic pair leaves it.
+    #[inline(never)]
+    fn lane_updated_proof_miss<>(cx, r, ip, i, view) {
+        // SAFETY: the pair is two records, the second never the view's last.
+        let read = unsafe { &*following(ip) };
+        lane_prove_array(cx, ip, read.b, r.get(read.b));
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_index_registers` of a base its loop does not redefine
+    /// (`specialize_proved_arrays`): the element through the run's proof of the array's
+    /// storage (`ArrayStorageProofs`), with no decoding of the array; any other read takes
+    /// `lane_proof_miss`.
+    fn lane_get_index_proved<>(cx, r, ip, i, view) {
+        let Some(value) = proof_index(r.get(i.c))
+            .and_then(|index| unsafe { (*cx).proofs.element(i.b, r.get(i.b), index) })
+        else {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// The proved read (`lane_get_index_proved`) of `lane_update_get_index`'s pair at `ip`, of
+/// the integer update `index` of record `update`, which it writes first; a read the proofs
+/// decline takes `lane_updated_proof_miss`, as the pair's own fast path leaves it.
+macro_rules! proved_updated_read {
+    ($cx:expr, $r:expr, $ip:expr, $update:expr, $index:expr) => {{
+        $r.set($update.a, Value::integer($index));
+        // SAFETY: the pair is two records, the second never the view's last.
+        let read = unsafe { &*following($ip) };
+        let Some(element) = usize::try_from($index)
+            .ok()
+            .and_then(|index| unsafe { (*$cx).proofs.element(read.b, $r.get(read.b), index) })
+        else {
+            sibling!(lane_updated_proof_miss::<H>, $r, $ip, Carried::script($cx))
+        };
+        $r.set(read.a, element);
+    }};
+}
+
+script_handler! {
+    /// `lane_update_get_index` of a base its loop does not redefine: an integer update and
+    /// the proved read of its element (`proved_updated_read`); any other update takes
+    /// `lane_update_get_index`.
+    fn lane_update_get_index_proved<DECREMENT: bool>(cx, r, ip, i, view) {
+        let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
+            sibling!(lane_update_get_index::<H, DECREMENT>, r, ip, Carried::script(cx))
+        };
+        proved_updated_read!(cx, r, ip, i, index);
+        next!(cx, r, following(following(ip)), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_update_get_index_operator` of a base its loop does not redefine: an integer
+    /// update, the proved read of its element (`proved_updated_read`) and the operation;
+    /// any other update takes `lane_update_get_index_operator`.
+    fn lane_update_get_index_operator_proved<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
+        let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
+            sibling!(lane_update_get_index_operator::<H, DECREMENT, OP>, r, ip, Carried::script(cx))
+        };
+        proved_updated_read!(cx, r, ip, i, index);
+        return lane_read_operator::<H, OP>(cx, r, ip);
     }
 }
 
@@ -3781,6 +3928,41 @@ script_handler! {
         if !(unsafe { vm(cx) }).try_replace_record_element(object, key, value) {
             sibling!(lane_set_index_slot::<H>, r, ip, Carried::script(cx))
         }
+        // SAFETY: the pair is two records, the second never the view's last.
+        let copy = unsafe { &*following(ip) };
+        produce!(cx, r, following(ip), copy.a, value, Carried::script(cx))
+    }
+}
+
+/// The value the proved store of `SetIndex` record `i` (`ArrayStorageProofs::replace`) of a
+/// base its loop does not redefine (`specialize_proved_arrays`) wrote; `None` stores
+/// nothing.
+#[inline(always)]
+fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let value = r.get(i.a);
+    let index = proof_index(r.get(i.c))?;
+    unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
+}
+
+script_handler! {
+    /// `lane_set_index` of a base its loop does not redefine: the replacement through the
+    /// run's proof of the array's storage (`lane_proved_store`), else `lane_proof_miss`.
+    fn lane_set_index_proved<>(cx, r, ip, i, view) {
+        if lane_proved_store(cx, r, i).is_none() {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script(cx))
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_set_index_move` of a base its loop does not redefine: the replacement through
+    /// the run's proof of the array's storage (`lane_proved_store`) and the copy, else
+    /// `lane_proof_miss`.
+    fn lane_set_index_move_proved<>(cx, r, ip, i, view) {
+        let Some(value) = lane_proved_store(cx, r, i) else {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script(cx))
+        };
         // SAFETY: the pair is two records, the second never the view's last.
         let copy = unsafe { &*following(ip) };
         produce!(cx, r, following(ip), copy.a, value, Carried::script(cx))
@@ -17555,6 +17737,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
+        specialize_proved_arrays::<H>(&decoded, &mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -18190,6 +18373,97 @@ fn fused_width<H: Host>(handler: *const ()) -> usize {
     }
 }
 
+/// The proved records (`specialize_proved_arrays`), each with the generic record it proves
+/// the array of and the offset from the record to the one whose `b` names the base (the
+/// read's, after a fused update): the one table both directions read (`proved_handler`,
+/// `generic_handler`).
+fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+    macro_rules! updated_operators {
+        ($($operator:ident),*) => {
+            [$((lane_update_get_index_operator::<H, false, $operator> as Handler,
+                lane_update_get_index_operator_proved::<H, false, $operator> as Handler, 1),
+               (lane_update_get_index_operator::<H, true, $operator> as Handler,
+                lane_update_get_index_operator_proved::<H, true, $operator> as Handler, 1)),*]
+        };
+    }
+    [
+        (lane_get_index_registers::<H> as Handler, lane_get_index_proved::<H> as Handler, 0),
+        (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
+        (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
+        (lane_set_index::<H> as Handler, lane_set_index_proved::<H> as Handler, 0),
+        (lane_set_index_move::<H> as Handler, lane_set_index_move_proved::<H> as Handler, 0),
+    ]
+    .into_iter()
+    .chain(fused_arithmetic!(updated_operators))
+}
+
+/// The proved record of generic `handler`, with its base offset (`proved_records`).
+fn proved_handler<H: Host>(handler: *const ()) -> Option<(Handler, usize)> {
+    proved_records::<H>()
+        .find(|&(generic, _, _)| generic as *const () == handler)
+        .map(|(_, proved, access)| (proved, access))
+}
+
+/// The generic record of proved `handler` (`proved_records`).
+fn generic_handler<H: Host>(handler: *const ()) -> Option<Handler> {
+    proved_records::<H>().find(|&(_, proved, _)| proved as *const () == handler).map(|(generic, _, _)| generic)
+}
+
+/// Gives each element read and store whose register base its innermost loop does not
+/// redefine the proved record (`proved_handler`), which reaches the element through the
+/// run's proof of the array's storage (`ArrayStorageProofs`) instead of decoding the array:
+/// the loop proves the array once, at its first access, and each access after checks only
+/// that its slot still proves the base. A base whose proof slot another such base of the
+/// same loop takes keeps its record, as their accesses would evict each other's proofs.
+/// V8-v7 NavierStokes, whose `lin_solve` row loop reads four elements and stores one each
+/// iteration: 795.3 -> 717.4 instructions per element stored, Callgrind, no-JIT static
+/// production build, compile cache and startup snapshot off, x86_64 4 vCPU, 2026-11-01;
+/// Crypto -4.7% instructions at fixed iterations, the other six within +0.06%.
+///
+/// The proofs alone decide soundness, whatever control flow does: a base the loop
+/// redefines through a definition `defined_register` does not report only misses its
+/// proof, and its record takes the generic one. Aggregate profiles count each generic
+/// store, so they keep the generic records.
+fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
+    if cfg!(feature = "profile-aggregate") {
+        return;
+    }
+    let loops: Vec<std::ops::RangeInclusive<usize>> = decoded
+        .iter()
+        .enumerate()
+        .filter(|(pc, instruction)| {
+            instruction.op().immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= *pc
+        })
+        .map(|(pc, instruction)| instruction.imm() as usize..=pc)
+        .collect();
+    // Each candidate: its record, proved handler, base register and innermost loop.
+    let candidates: Vec<(usize, Handler, u16, usize)> = (0..records.len())
+        .filter_map(|pc| {
+            let (proved, access) = proved_handler::<H>(records[pc].handler)?;
+            let base = records.get(pc + access)?.b;
+            let (index, _) = loops
+                .iter()
+                .enumerate()
+                .filter(|(_, body)| body.contains(&pc) && body.contains(&(pc + access)))
+                .min_by_key(|(_, body)| body.end() - body.start())?;
+            decoded[loops[index].clone()]
+                .iter()
+                .all(|instruction| instruction.defined_register() != Some(base))
+                .then_some((pc, proved, base, index))
+        })
+        .collect();
+    for &(pc, proved, base, index) in &candidates {
+        let slot = crate::heap::ArrayStorageProofs::slot(base);
+        let shared = candidates.iter().any(|&(_, _, other, other_index)| {
+            other_index == index && other != base && crate::heap::ArrayStorageProofs::slot(other) == slot
+        });
+        if !shared {
+            records[pc].handler = proved as *const ();
+        }
+    }
+}
+
 /// Gives each `IncDec` that an unconditional jump follows the fused update and jump
 /// (`lane_inc_dec_jump`). The jump record stays, for a jump that enters it and for the
 /// update's own slow path.
@@ -18698,9 +18972,11 @@ impl<H: Host> Vm<H> {
             capture: std::ptr::null(),
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
+            proofs: crate::heap::ArrayStorageProofs::new(),
         };
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
+        let _proofs = crate::heap::LaneProofScope::enter();
         // SAFETY: `cx` is the only access path to the context during the run.
         unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };
         // SAFETY: the view has one record per instruction, and residual
@@ -18826,7 +19102,7 @@ impl<H: Host> Vm<H> {
                 self.frames[frame].pc = pc;
                 let raised = self.lane_raised.take();
                 // SAFETY: as above.
-                unsafe { std::ptr::write(cx, saved) };
+                unsafe { lane_restore_context(cx, saved) };
                 // SAFETY: the lane's program outlives its run.
                 let code = unsafe { &*code };
                 let exited = super::dispatch_frame::LaneExit { executing, raised };
@@ -18960,7 +19236,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: as above; the copy is restored before the general loop runs, as
                 // `lane_native_callback`'s is, then made the caller frame's.
                 unsafe {
-                    std::ptr::write(cx, saved);
+                    lane_restore_context(cx, saved);
                     let frame_registers = Registers(self.frames[caller].registers.as_mut_ptr());
                     (*cx).frame = caller;
                     (*cx).registers = frame_registers;
@@ -18998,6 +19274,19 @@ impl<H: Host> Vm<H> {
             self.set_active_program(program);
         }
         Some(outcome)
+    }
+}
+
+/// Restores the copy `saved` a native's callback took of the lane's context before it ran
+/// (`Vm::lane_native_callback`). The copy's array storage proofs predate whatever the
+/// callback changed, so they retire.
+///
+/// # Safety
+/// `cx` is the running lane's context, which nothing else accesses.
+unsafe fn lane_restore_context<H: Host>(cx: *mut LaneContext<H>, saved: LaneContext<H>) {
+    unsafe {
+        std::ptr::write(cx, saved);
+        (*cx).proofs.retire();
     }
 }
 

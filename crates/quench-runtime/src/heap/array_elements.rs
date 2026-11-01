@@ -173,6 +173,17 @@ impl ArrayElements {
         self.header().owners as usize
     }
 
+    /// The values to write in place when this array alone owns its backing; `None` when
+    /// shared (or the shared empty header), where a write must copy first (`make_mut`).
+    #[inline(always)]
+    pub(crate) fn unique_values_mut(&mut self) -> Option<&mut [Value]> {
+        if !self.is_unique() {
+            return None;
+        }
+        // SAFETY: the backing is this array's own and holds `len` initialized values.
+        Some(unsafe { std::slice::from_raw_parts_mut(self.values(), self.len()) })
+    }
+
     /// This array's values for writing: its own backing, copied first when shared (or when it
     /// is the shared empty header).
     #[inline(always)]
@@ -213,6 +224,8 @@ impl From<Vec<Value>> for ArrayElements {
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
         if self.capacity() != 0 {
+            // An owner more makes in-place replacement reach another array.
+            super::array_proofs::retire_array_storage_proofs();
             let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
             // SAFETY: arrays are single-threaded; the header is live and only owners write it.
             unsafe { (*self.header.as_ptr()).owners = owners };
