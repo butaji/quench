@@ -77,7 +77,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     // Node's startup coverage hook warns when NODE_V8_COVERAGE is requested
     // without the inspector profiler, then clears the variable so it is not
     // inherited by further children as a second failed request.
-    if (globalThis.process.env?.NODE_V8_COVERAGE &&
+    const coverageRequested = globalThis.__quench_v8_coverage === true;
+    delete globalThis.__quench_v8_coverage;
+    if (coverageRequested && globalThis.process.env?.NODE_V8_COVERAGE &&
         !globalThis.process.features.inspector) {
       globalThis.process.emitWarning(
         'The inspector is disabled, coverage could not be collected',

@@ -230,6 +230,17 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
         set_text(context, process, "title", &title)?;
     }
+    // Node's start-up coverage hook reads `NODE_V8_COVERAGE` (`process_surface`). The host
+    // answers whether it is set before the bootstrap runs, so a run without it never reads
+    // `process.env`, whose first read copies the whole environment.
+    if environment_names(context, V8_COVERAGE_ENV) {
+        let global = context.global_root()?;
+        let key = context.string_rooted(V8_COVERAGE_REQUESTED);
+        let value = context.boolean(true);
+        if !context.set_property_rooted(global, key, value, global)? {
+            return Err(RootedError::host("cannot install the coverage request"));
+        }
+    }
     super::child_process_ipc_shared_vm::initialize(context)?;
     // Copied from the OS environment on the first read of `process.env`: most runs never read
     // it, and every variable costs a key and a string.
@@ -4398,6 +4409,22 @@ fn warning_export(
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
+/// The variable through which Node's start-up requests V8 coverage.
+const V8_COVERAGE_ENV: &str = "NODE_V8_COVERAGE";
+/// The bootstrap global through which the host says `V8_COVERAGE_ENV` is set (`process_surface`).
+pub(crate) const V8_COVERAGE_REQUESTED: &str = "__quench_v8_coverage";
+
+/// Whether the environment `environment` reads holds `name` with a non-empty value, without
+/// copying it.
+fn environment_names(context: &mut NativeContext<'_, NodeHost>, name: &str) -> bool {
+    let shared_state = context.host_mut().shared_state();
+    let state = shared_state.borrow();
+    match state.messaging.context.as_ref() {
+        Some(worker) => worker.env.iter().any(|(key, value)| key == name && !value.is_empty()),
+        None => std::env::var_os(name).is_some_and(|value| !value.is_empty()),
+    }
+}
+
 pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
     let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());
     worker_env.unwrap_or_else(|| std::env::vars().collect())
