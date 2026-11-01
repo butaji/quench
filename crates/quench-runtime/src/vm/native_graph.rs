@@ -125,8 +125,12 @@ pub fn lower_native_js_module_with_options(
         .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id))))
         .ok_or("native region count overflow")?;
     let mut boolean_regions = Vec::new();
+    let mut captured_stores = Vec::new();
     for id in 1..program.function_count() {
         let body = program.function(id);
+        if let Some(store) = super::js_compiled::captured_field_store_candidate(program, body) {
+            captured_stores.push((u32::try_from(id).map_err(|_| "native function count exceeds u32")?, store));
+        }
         if body.params != 0 || !body.plain_activation(program) || options.region_count(body) != 0
             || !body.code.iter().copied().enumerate().all(|(pc, packed)| {
                 if packed.is_wide() { return false; }
@@ -293,10 +297,35 @@ pub fn lower_native_js_module_with_options(
         .checked_mul(std::mem::size_of::<super::native_program::NativeBooleanRegion>())
         .and_then(|bytes| entries_bytes.checked_add(bytes))
         .ok_or("native boolean region table size overflow")?;
+    let stores_base = bytes;
+    let bytes = captured_stores.len()
+        .checked_mul(std::mem::size_of::<super::native_program::NativeCapturedStore>())
+        .and_then(|stores| bytes.checked_add(stores))
+        .ok_or("native captured-store table size overflow")?;
     let mut table = vec![0; bytes];
     let count_offset = super::native_program::BOOLEAN_REGION_COUNT_WORD * pointer_bytes;
     table[count_offset..count_offset + pointer_bytes]
         .copy_from_slice(&boolean_regions.len().to_ne_bytes());
+    let store_count_offset = super::native_program::CAPTURED_STORE_COUNT_WORD * pointer_bytes;
+    table[store_count_offset..store_count_offset + pointer_bytes]
+        .copy_from_slice(&captured_stores.len().to_ne_bytes());
+    for (index, (function, store)) in captured_stores.iter().enumerate() {
+        use super::native_program::NativeCapturedStore as Layout;
+        let base = stores_base + index * std::mem::size_of::<Layout>();
+        let mut write = |offset: usize, value: &[u8]| {
+            table[base + offset..base + offset + value.len()].copy_from_slice(value);
+        };
+        write(std::mem::offset_of!(Layout, function), &function.to_ne_bytes());
+        write(std::mem::offset_of!(Layout, atom), &store.atom.to_ne_bytes());
+        write(std::mem::offset_of!(Layout, capture_slot), &store.capture_slot.to_ne_bytes());
+        write(std::mem::offset_of!(Layout, cache_site), &store.cache_site.to_ne_bytes());
+        let operator = match store.update {
+            Some(operation) => u16::try_from(operation.operator())
+                .map_err(|_| "captured-store operator exceeds native layout")?,
+            None => super::js_compiled::CAPTURED_STORE_ASSIGNMENT,
+        };
+        write(std::mem::offset_of!(Layout, operator), &operator.to_ne_bytes());
+    }
     let mut addresses = Vec::with_capacity(words);
     addresses.push(NativeFunctionAddress {
         offset: 0,

@@ -89,9 +89,9 @@ fn derive_native_exports(
         pub const NATIVE_JS_OPERATION_PREFIX: &str = #prefix;
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
-        /// The header contains the ABI marker followed by the optional region count.
+        /// The header contains the ABI marker, boolean-region count and captured-store count.
         #[cfg(feature = "native-execution")]
-        pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 2;
+        pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 3;
 
         /// Export the derived semantic helpers for one host in an executable.
         /// Invoke once, using a host type path and a module name for the exports.

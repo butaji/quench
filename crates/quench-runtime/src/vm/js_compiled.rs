@@ -1012,11 +1012,70 @@ pub(super) fn cached_numeric_field_inputs_candidate(
     (!inputs.is_empty()).then_some(inputs)
 }
 
+/// Static inputs and completion of a captured-value field assignment.
+#[derive(Clone, Copy)]
+pub(super) struct CapturedFieldStore {
+    pub(super) atom: crate::bytecode::Atom,
+    pub(super) capture_slot: u16,
+    pub(super) cache_site: u16,
+    pub(super) return_register: u16,
+    pub(super) update: Option<super::operations::NumberBitwise>,
+}
+
+#[cfg(feature = "native-execution")]
+pub(super) const CAPTURED_STORE_ASSIGNMENT: u16 = u16::MAX;
+
+/// A captured-value assignment or bitwise update followed by an undefined return. The
+/// activation and all implicit bindings must be plain before it can be elided.
+pub(super) fn captured_field_store_candidate(
+    program: &ResidualProgram,
+    function: &Function,
+) -> Option<CapturedFieldStore> {
+    const STORE_BODY_RECORDS: usize = 4;
+    const UPDATE_BODY_RECORDS: usize = STORE_BODY_RECORDS + 2;
+    if !matches!(function.code.len(), STORE_BODY_RECORDS | UPDATE_BODY_RECORDS) || function.params != 0
+        || !function.plain_activation(program) || !eligible(function, program) {
+        return None;
+    }
+    let instructions = function.instructions().collect::<smallvec::SmallVec<[_; UPDATE_BODY_RECORDS]>>();
+    let (capture, store, undefined, ret, source, update) = match instructions.as_slice() {
+        [capture, store, undefined, ret] if capture.op() == Op::LoadCapture =>
+            (capture, store, undefined, ret, capture.result_register(), None),
+        [read, capture, binary, store, undefined, ret] => {
+            if read.op() != Op::GetField || capture.op() != Op::LoadCapture || binary.op() != Op::Binary { return None; }
+            let FieldLookup::Atom { atom, base: FieldBase::THIS, .. } = read.field_lookup()? else { return None; };
+            if read.result_flags() != 0 || binary.result_flags() != 0
+                || capture.result_register() == read.result_register()
+                || binary.operand_b().register_index() != Some(read.result_register())
+                || binary.operand_c().register_index() != Some(capture.result_register())
+                || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+                || atom != store.atom_index()
+            { return None; }
+            let operation = super::operations::NumberBitwise::from_js_instruction(binary.op(), binary.binary_operator())?;
+            (capture, store, undefined, ret, binary.result_register(), Some(operation))
+        }
+        _ => return None,
+    };
+    if capture.result_flags() != 0
+        || capture.capture_depth() != 0
+        || !matches!(store.op(), Op::SetThisField | Op::SetThisFieldStrict)
+        || store.result_flags() != 0 || store.register_a() != source
+        || undefined.op() != Op::LoadConst || undefined.result_flags() != 0
+        || !matches!(program.constants.get(undefined.constant_index()), Some(crate::bytecode::Constant::Undefined))
+        || ret.op() != Op::Return || ret.result_flags() != 0
+        || ret.register_a() != undefined.result_register()
+    {
+        return None;
+    }
+    Some(CapturedFieldStore {
+        atom: store.atom_index(), capture_slot: capture.capture_slot(),
+        cache_site: store.cache_site_index(), return_register: ret.register_a(),
+        update,
+    })
+}
+
 /// Recognize a direct field getter. The first instruction is an unconditional
-/// frame-returning `GetField`, so the remaining instructions are unreachable
-/// unless it throws. The VM still requires a cached data-property hit; that
-/// path cannot throw or invoke guest code. Accessors, proxies, and cache misses
-/// use the interpreter.
+/// frame-returning `GetField`; accessors, proxies, and misses use the VM.
 pub(super) fn cached_this_field_return_candidate(
     function: &Function,
 ) -> Option<JsJitFieldReturn> {
@@ -4429,6 +4488,7 @@ fn activation_is_irrelevant(function: &Function) -> bool {
 /// more instructions than interpreted ones (semver npm scenario +4.6%).
 #[derive(Default)]
 pub(super) struct JsEntryFacts {
+    pub(super) captured_store: Option<CapturedFieldStore>,
     pub(super) numeric_find: Option<JsJitNumericFind>,
     pub(super) field_increment: Option<JsJitThisFieldIncrement>,
     pub(super) field_return: Option<JsJitFieldReturn>,
@@ -4467,15 +4527,17 @@ impl JsEntryFacts {
         let numeric_find = numeric_find_candidate(function);
         let field_increment = cached_this_field_increment_candidate(program, function);
         let field_return = cached_this_field_return_candidate(function);
+        let captured_store = captured_field_store_candidate(program, function);
         let candidate = function_candidate(function, program);
         let shape = super::compiled::js_general_dispatch_shape(function);
         let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
-        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some();
+        let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some() || captured_store.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
             return Self { candidate, general, general_acyclic, ..Self::default() };
         }
         Self {
+            captured_store,
             enters,
             candidate,
             general,

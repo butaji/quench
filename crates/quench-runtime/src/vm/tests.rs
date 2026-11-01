@@ -16044,6 +16044,66 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
+    let source = include_str!("../../tests/fixtures/captured-field-store.js");
+    let program = Engine::specialize(source, "captured-field-store.js").unwrap();
+    let store = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "store")
+    }).unwrap();
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(store)).is_some());
+    for name in ["and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id))
+            .is_some_and(|store| store.update.is_some()), "{name} should share the guarded update proof");
+    }
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    assert!(compiled.js_tier_runs());
+    compiled.execute(&program).unwrap();
+    for name in ["store", "and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(compiled.programs.js_jit_captured_store_entries(super::ProgramId::MAIN, id as u32)
+            .unwrap_or(0) > 0, "{name} should enter the shared JIT store fast path");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_updates_reject_overwritten_read_registers() {
+    let mut program = Engine::specialize(
+        "function make(mask) { function update() { this.value = this.value | mask; } return update; }",
+        "captured-update-register.js",
+    ).unwrap();
+    let id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "update")
+    }).unwrap();
+    let body = program.function(id);
+    assert!(super::js_compiled::captured_field_store_candidate(&program, body).is_some());
+    let read = body.code[0].as_wide().result_register();
+    let capture = body.code[1].as_wide();
+    let binary = body.code[2].as_wide();
+    program.functions[id].code[1] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::LoadCapture, read, capture.b(), capture.c(), capture.imm(),
+    );
+    program.functions[id].code[2] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::Binary, binary.a(), read, read, binary.imm(),
+    );
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id)).is_none());
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_stores_own_fields_through_the_field_cache_and_falls_back_exactly() {
     let source = r#"
       function writeField(object, value) { object.value = value; }

@@ -6929,13 +6929,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                 None
             };
             #[cfg(feature = "native-execution")]
-            let boolean_result = if SINGLE_OPERATION && dispatch.allow_inline_calls && is_call {
-                vm.native_boolean_call(&program, dispatch.program_id, dispatch.frame, current_instruction)
+            let guarded_call_result = if SINGLE_OPERATION && dispatch.allow_inline_calls && is_call {
+                vm.native_guarded_call(&program, dispatch.program_id, dispatch.frame, current_instruction)
             } else {
                 None
             };
             #[cfg(not(feature = "native-execution"))]
-            let boolean_result: Option<Value> = None;
+            let guarded_call_result: Option<Value> = None;
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]
                     .registers
@@ -6945,7 +6945,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                     ))?;
                 *destination = value;
                 Ok(super::StepResult::Continue)
-            } else if let Some(value) = boolean_result {
+            } else if let Some(value) = guarded_call_result {
                 let destination = vm.frames[dispatch.frame].registers
                     .get_mut(usize::from(current_instruction.result_register()))
                     .ok_or_else(|| JsError::validation("native JS call result register is invalid".into()))?;
@@ -12851,10 +12851,10 @@ impl<H: Host> Vm<H> {
         Some(())
     }
 
-    /// Run a pure linked predicate at a call without allocating a callee frame.
-    /// Every guard is effect-free; a miss leaves the call to its ordinary path.
+    /// Run a guarded linked operation without allocating a callee frame.
+    /// A miss precedes guest effects and leaves the call to its ordinary path.
     #[cfg(feature = "native-execution")]
-    fn native_boolean_call(
+    fn native_guarded_call(
         &mut self,
         program: &ResidualProgram,
         program_id: ProgramId,
@@ -12872,13 +12872,22 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let code = self.programs.native_js_code(program_id)?;
-        if !code.has_boolean_regions() { return None; }
+        if !code.has_guarded_calls() { return None; }
         let callee = *self.frames[frame].registers.get(usize::from(instruction.register_b()))?;
         let receiver = *self.frames[frame].registers.get(usize::from(instruction.register_c()))?;
         // An ordinary object binds identically for strict and sloppy methods.
         receiver.direct_object_index()?;
         let (target_program, function, env) = self.same_realm_user_target(callee)?;
         if target_program != program_id { return None; }
+        if let Some(store) = code.captured_store(function) {
+            let _guard = crate::stack::GuestCallGuard::enter().ok()?;
+            if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
+            self.captured_number_field_store(program, receiver, TierCaptures::Environment(env),
+                store.capture_slot, store.atom, store.cache_site, store.update())?;
+            return Some(Value::UNDEFINED);
+        }
         let region = code.boolean_region(function)?;
         let captures = region.capture_slots[..usize::from(region.capture_count)]
             .iter().map(|slot| (0, *slot));
@@ -12909,6 +12918,39 @@ impl<H: Host> Vm<H> {
         } else {
             Value::FALSE
         })
+    }
+
+    /// The store proof shared by tier entries and statically linked call entries.
+    /// A miss precedes the write; Numbers need no collector reference barrier.
+    #[allow(clippy::too_many_arguments)]
+    fn captured_number_field_store(
+        &mut self,
+        program: &ResidualProgram,
+        receiver: Value,
+        captures: TierCaptures,
+        slot: u16,
+        atom: Atom,
+        site: u16,
+        update: Option<super::operations::NumberBitwise>,
+    ) -> Option<()> {
+        let value = self.tier_capture(captures, 0, slot)?;
+        let update = match update {
+            Some(operation) => Some((operation, value.as_int()?)),
+            None => { value.as_number()?; None },
+        };
+        // SAFETY: receiver and capture remain rooted by the active call. This
+        // proof may log the owner but cannot collect or invoke guest code.
+        let pointer = unsafe { self.cached_field_store_pointer(program, receiver, atom, site) }?;
+        let value = if let Some((operation, right)) = update {
+            // The writable own-data proof identifies the same named slot the
+            // source Get reads. No getter, proxy or second cache is involved.
+            let left = unsafe { pointer.read() }.as_int()?;
+            super::operations::number_bitwise_result(operation, left, right)
+        } else { value };
+        // SAFETY: the exact writable own-data slot was proved above. Only a
+        // non-reference Number is written, before any allocation or guest call.
+        unsafe { pointer.write(value); }
+        Some(())
     }
 
     /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
@@ -13297,6 +13339,16 @@ impl<H: Host> Vm<H> {
         // Most entries are of functions no entry path can claim; diagnostics still count them.
         if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
             return None;
+        }
+        if let Some(store) = facts.captured_store
+            && let Some(receiver) = entry.this
+            && self.captured_number_field_store(program, receiver, entry.captures,
+                store.capture_slot, store.atom, store.cache_site, store.update).is_some()
+        {
+            if self.programs.js_jit_diagnostics_enabled() {
+                self.programs.record_js_jit_captured_store_entry(program_id, function_id);
+            }
+            return Some((function.code.len() - 1, store.return_register, Value::UNDEFINED));
         }
         let numeric_find_candidate = facts.numeric_find.filter(|_| jit_numeric_find_enabled());
         if let Some(candidate) = numeric_find_candidate
