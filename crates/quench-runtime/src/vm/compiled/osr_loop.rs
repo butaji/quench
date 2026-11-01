@@ -719,6 +719,10 @@ fn tagged_registers_with_failure(
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum InlineGuard {
     Field(usize),
+    /// The callee's read at this region offset, kept in the region because its receiver
+    /// changes in the loop: native code compares its value with the callee right after it,
+    /// leaving before the read where it differs (`Lowering::instruction`).
+    AtRead(u32),
     /// A depth-zero plain capture, checked by the VM at every native entry.
     Capture(u16),
 }
@@ -787,17 +791,30 @@ pub(crate) struct InlineCallee<'a> {
     pub(crate) live: &'a crate::compile::liveness::RegisterMasks,
 }
 
-/// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
-/// none that names its function's own state (captures, frame, calls).
+/// A field read whose value the bytecode's rewrite also stores into a `this` field (the
+/// `GetSetThis` fusion: `writes_current_this` with a site's sink), as the instructions it
+/// fused: the read of the site's path into the result register, then the `SetThisField`.
+/// `None` for any other instruction.
+fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option<Vec<WideInstruction>> {
+    (instruction.op() == Op::GetField && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER)
+        .then_some(())?;
+    // A site's base names a register of the callee in the site table, which renaming does not
+    // reach: the read runs as one named read per step from the renamed base.
+    let FieldLookup::Site(index) = instruction.field_lookup()? else { return None };
+    let site = *sites.get(index)?;
+    let result = instruction.result_register();
+    let mut parts = vec![WideInstruction::new(Op::GetField, result, site.base.0, site.first.1, site.first.0)];
+    if let Some((atom, cache_site)) = site.second {
+        parts.push(WideInstruction::new(Op::GetField, result, FieldBase::register(result).0, cache_site, atom));
+    }
+    let (sink_atom, sink_site) = site.sink?;
+    parts.push(WideInstruction::new(Op::SetThisField, result, 0, sink_site, sink_atom));
+    Some(parts)
+}
+
 /// Whether an inlined callee's instruction computes its result and returns it in one
 /// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
 /// the computation and the `Return` it makes.
-/// The register a `SetThisField` turned `SetField` names before its receiver is set: none
-/// a callee's renaming reaches (`Operand::PAYLOAD_MASK`), replaced by the frame's receiver.
-const fn frame_receiver_placeholder() -> Register {
-    Operand::PAYLOAD_MASK
-}
-
 fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
         && instruction.op() != Op::Return
@@ -805,6 +822,8 @@ fn inlined_returning(instruction: WideInstruction) -> bool {
         && instruction.defined_register().is_some()
 }
 
+/// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
+/// none that names its function's own state (captures, frame, calls).
 fn inlinable(op: Op) -> bool {
     matches!(
         op,
@@ -1018,6 +1037,20 @@ pub(super) fn inline_region<'a>(
     let mut dropped = std::collections::BTreeSet::new();
     let mut setup: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
     let mut rewritten: std::collections::BTreeMap<u32, WideInstruction> = std::collections::BTreeMap::new();
+    // The names the loop stores: a receiver read through one changes in the loop.
+    let caller_stored: std::collections::BTreeSet<crate::bytecode::Atom> = caller
+        .iter()
+        .filter_map(|instruction| match instruction.op() {
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField => Some(instruction.atom_index()),
+            // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
+            Op::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
+                FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
+                FieldLookup::Atom { .. } => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let mut checked_reads: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
     for (offset, instruction) in caller.iter().copied().enumerate() {
         if instruction.op() != Op::Call {
             continue;
@@ -1042,7 +1075,25 @@ pub(super) fn inline_region<'a>(
         // reads until the call, nor after it. The region gives that read a register of its
         // own, holding the field's value (`held_registers`), and the setup resumes at it.
         let mut resume_offset = read_offset;
-        if defines(receiver) {
+        // A receiver read through a name the loop stores changes in the loop: the callee's
+        // read stays, and native code checks the callee after it (`InlineGuard::AtRead`).
+        let checked = defines(receiver)
+            && read_offset.checked_sub(1).is_some_and(|own| {
+                caller[own].defined_register() == Some(receiver)
+                    && field_path(caller[own], sites, &std::collections::BTreeMap::new())
+                        .is_some_and(|path| path.steps.iter().any(|(atom, _)| caller_stored.contains(atom)))
+            });
+        if checked {
+            checked_reads.insert(pc, read);
+            // The callee resolves now through the receiver's own path; native code checks
+            // the read each iteration, so the path is never an entry snapshot.
+            let own = read_offset - 1;
+            let receiver_path = field_path(caller[own], sites, &std::collections::BTreeMap::new())?;
+            let callee_path = callee_path.as_mut()?;
+            (callee_path.root == FieldReceiver::Register(receiver)).then_some(())?;
+            callee_path.root = receiver_path.root;
+            callee_path.steps.splice(0..0, receiver_path.steps);
+        } else if defines(receiver) {
             let callee_path = callee_path.as_mut()?;
             let own = read_offset.checked_sub(1)?;
             let receiver_path = field_path(caller[own], sites, &std::collections::BTreeMap::new())?;
@@ -1079,7 +1130,7 @@ pub(super) fn inline_region<'a>(
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = reachable(&callee.instructions);
         let body = || callee.instructions.iter().copied().zip(reached.iter()).filter(|(_, reached)| **reached).map(|(instruction, _)| instruction);
-        body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction))).then_some(())?;
+        body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())).then_some(())?;
         // A captured call may bind undefined to the global receiver. Keep this slice
         // receiver-independent; recovery still performs the ordinary binding below.
         if capture.is_some() {
@@ -1101,7 +1152,9 @@ pub(super) fn inline_region<'a>(
             bound[usize::from(parameter)] = Some(caller[moved].register_b());
             dropped.insert(header + moved as u32);
         }
-        dropped.insert(read);
+        if !checked {
+            dropped.insert(read);
+        }
         for setup_pc in resume..pc {
             setup.insert(setup_pc, resume);
         }
@@ -1136,14 +1189,16 @@ pub(super) fn inline_region<'a>(
     let mut caller_flat = Vec::with_capacity(caller.len());
     let mut callee_flat: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
     let mut length = 0u32;
-    for (offset, _) in caller.iter().enumerate() {
+    for (offset, caller_instruction) in caller.iter().enumerate() {
         let pc = header + offset as u32;
         caller_flat.push(header + length);
         if dropped.contains(&pc) {
             continue;
         }
         let Some(site) = calls.get(&pc) else {
-            length += 1;
+            // A fused field read the caller stores into its `this` field runs as its parts,
+            // each leaving at the caller's PC, which reruns the pure read.
+            length += inlined_set_this(*caller_instruction, sites).map_or(1, |parts| parts.len() as u32);
             continue;
         };
         length += site.frame.bound[..usize::from(site.callee.params)].iter().filter(|bound| bound.is_none()).count() as u32;
@@ -1151,7 +1206,13 @@ pub(super) fn inline_region<'a>(
         for (index, instruction) in site.callee.instructions.iter().enumerate() {
             flat.push(header + length);
             if site.reached[index] {
-                length += if instruction.op() == Op::Return { 2 } else if inlined_returning(*instruction) { 3 } else { 1 };
+                length += if instruction.op() == Op::Return {
+                    2
+                } else if inlined_returning(*instruction) {
+                    3
+                } else {
+                    inlined_set_this(*instruction, sites).map_or(1, |parts| parts.len() as u32)
+                };
             }
         }
         callee_flat.insert(pc, flat);
@@ -1188,9 +1249,13 @@ pub(super) fn inline_region<'a>(
             } else {
                 instruction
             };
-            instructions.push(renamed);
-            origins.push(Origin::Caller(resumes));
-            masks.push(mask(resumes)?);
+            let parts = inlined_set_this(renamed, sites).unwrap_or_else(|| vec![renamed]);
+            let resume_mask = mask(resumes)?;
+            for part in parts {
+                instructions.push(part);
+                origins.push(Origin::Caller(resumes));
+                masks.push(resume_mask);
+            }
             continue;
         };
         let frame = site.frame;
@@ -1246,33 +1311,35 @@ pub(super) fn inline_region<'a>(
                 masks.extend([set, set, set]);
                 continue;
             }
-            // A callee's own capture reads its environment, which its identity guard fixes and
-            // no instruction of the region stores: the entry snapshots it.
-            let instruction = if instruction.op() == Op::LoadCapture {
-                (instruction.capture_depth() == 0 && instruction.capture_slot() < CALLEE_CAPTURE).then_some(())?;
-                let capture = (usize::from(index), instruction.capture_slot());
-                let position = callee_captures.iter().position(|existing| *existing == capture).unwrap_or_else(|| {
-                    callee_captures.push(capture);
-                    callee_captures.len() - 1
-                });
-                let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
-                WideInstruction::new(Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot))
-            } else if instruction.op() == Op::SetThisField {
-                // The callee's `this` is the call's receiver, a caller register: its store of
-                // a `this` field is a store to that register's object.
-                WideInstruction::new(Op::SetField, instruction.a(), frame_receiver_placeholder(), instruction.c(), instruction.imm())
-            } else {
-                instruction
-            };
-            let renamed_instruction = renamed(instruction, &register, frame.receiver, &target)?;
-            let renamed_instruction = if renamed_instruction.op() == Op::SetField && instruction.b() == frame_receiver_placeholder() {
-                WideInstruction::new(Op::SetField, renamed_instruction.a(), frame.receiver, renamed_instruction.c(), renamed_instruction.imm())
-            } else {
-                renamed_instruction
-            };
-            instructions.push(renamed_instruction);
-            origins.push(origin);
-            masks.push(set);
+            // A fused read stored into a `this` field runs as its read, then the store.
+            let parts = inlined_set_this(instruction, sites).unwrap_or_else(|| vec![instruction]);
+            for instruction in parts {
+                // A callee's own capture reads its environment, which its identity guard fixes
+                // and no instruction of the region stores: the entry snapshots it.
+                let instruction = if instruction.op() == Op::LoadCapture {
+                    (instruction.capture_depth() == 0 && instruction.capture_slot() < CALLEE_CAPTURE).then_some(())?;
+                    let capture = (usize::from(index), instruction.capture_slot());
+                    let position = callee_captures.iter().position(|existing| *existing == capture).unwrap_or_else(|| {
+                        callee_captures.push(capture);
+                        callee_captures.len() - 1
+                    });
+                    let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
+                    WideInstruction::new(Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot))
+                } else {
+                    instruction
+                };
+                // The callee's `this` is the call's receiver, a caller register: its store of a
+                // `this` field is a store to that register's object.
+                let renamed_instruction = if instruction.op() == Op::SetThisField {
+                    let store = renamed(WideInstruction::new(Op::SetField, instruction.a(), 0, instruction.c(), instruction.imm()), &register, frame.receiver, &target)?;
+                    WideInstruction::new(Op::SetField, store.a(), frame.receiver, store.c(), store.imm())
+                } else {
+                    renamed(instruction, &register, frame.receiver, &target)?
+                };
+                instructions.push(renamed_instruction);
+                origins.push(origin);
+                masks.push(set);
+            }
         }
     }
     debug_assert_eq!(instructions.len(), length as usize);
@@ -1280,7 +1347,14 @@ pub(super) fn inline_region<'a>(
         origins.push(Origin::Leave(*target));
         masks.push(mask(*target)?);
     }
-    let receivers = calls.values().map(|site| site.frame.receiver).collect();
+    // A checked callee's register holds the function its read gives, an object.
+    let receivers = calls
+        .iter()
+        .flat_map(|(pc, site)| {
+            let callee = checked_reads.contains_key(pc).then(|| caller[(*pc - header) as usize].register_b());
+            std::iter::once(site.frame.receiver).chain(callee)
+        })
+        .collect();
     let header_live = masks.first().copied();
     let mut region = admit_region(
         instructions,
@@ -1304,8 +1378,13 @@ pub(super) fn inline_region<'a>(
     let held: std::collections::BTreeMap<Register, FieldPath> =
         region.held.iter().map(|(register, (path, _))| (*register, path.clone())).collect();
     let mut frames = Vec::with_capacity(calls.len());
-    for site in calls.into_values() {
+    for (call_pc, site) in calls.into_iter() {
         let mut frame = site.frame;
+        if let Some(read) = checked_reads.get(&call_pc) {
+            frame.guard = InlineGuard::AtRead(caller_flat[(*read - header) as usize] - header);
+            frames.push(frame);
+            continue;
+        }
         let written = frame.receiver >= caller_registers || defines(frame.receiver);
         (!written || held.contains_key(&frame.receiver)).then_some(())?;
         let Some(FieldPath { root, steps }) = site.callee_path else {
@@ -1982,7 +2061,17 @@ fn admit_register_roles(
     objects: &std::collections::BTreeSet<Register>,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
-    let paths = held_registers(&instructions, sites, header_live, objects);
+    // A held register keeps the value its path read at entry, which a store to any name on
+    // the path could change: a path through a name the region stores is not held.
+    let stored_names: std::collections::BTreeSet<crate::bytecode::Atom> = instructions
+        .iter()
+        .filter(|instruction| matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField))
+        .map(|instruction| instruction.atom_index())
+        .collect();
+    let paths: std::collections::BTreeMap<Register, FieldPath> = held_registers(&instructions, sites, header_live, objects)
+        .into_iter()
+        .filter(|(_, path)| path.steps.iter().all(|(atom, _)| !stored_names.contains(atom)))
+        .collect();
     // An indexed register the region defines, other than one holding a field's value at
     // every read (`paths`), holds no entry array: each access reads the array it holds then
     // (`LoopRegion::dynamic_arrays`). Its every definition reads an element or field or
@@ -2161,7 +2250,8 @@ fn admit_register_roles(
         // A field-resolved method call is owned by the existing inliner. Falling back to
         // the generic exact-PC gateway here would run its loop out of line and regress the
         // inliner's behavior and coverage. Dynamic/direct calls have no such owner.
-        if matches!(instruction.op(), Op::Call | Op::CallArray) {
+        // An inlining region (one with call receivers, `objects`) leaves at a call it kept.
+        if objects.is_empty() && matches!(instruction.op(), Op::Call | Op::CallArray) {
             let callee_register = instruction.register_b();
             if instructions[..offset]
                 .iter()
@@ -2495,6 +2585,20 @@ fn admit(
             {
                 admission.tagged(register)?;
                 admission.constant(constant)?;
+            } else if let (Some(left), Some(right)) =
+                (instruction.operand_b().register_index(), instruction.operand_c().register_index())
+                && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
+                && [left, right].iter().any(|register| {
+                    tagged.contains(register) || matches!(admission.roles.get(register), Some(Role::Tagged))
+                })
+            {
+                // An (in)equality of tagged values (`Lowering::tagged_equality`), which boxes a
+                // Number operand.
+                for register in [left, right] {
+                    if !matches!(admission.roles.get(&register), Some(Role::Number)) {
+                        admission.tagged(register)?;
+                    }
+                }
             } else if super::super::operations::NumberRelation::from_operator(
                 instruction.binary_operator_field(),
             )
@@ -5624,6 +5728,57 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.guard(pc, beyond);
     }
 
+    /// Whether tagged `left` and `right` are (strictly, or loosely) equal where the values
+    /// alone decide it: two Numbers by their values (so -0 equals 0 and NaN nothing); two
+    /// object or array records, Booleans, `null` or `undefined` by identity, and loosely
+    /// `null` with `undefined`. Any other pair (a string, a coercing mix) exits at `pc`.
+    fn tagged_equality(&mut self, pc: u32, left: ir::Value, right: ir::Value, strict: bool) -> ir::Value {
+        let classify = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+            let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+            let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
+            let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
+            let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+            let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+            let double = builder.ins().icmp_imm_u(IntCC::Equal, tagged, 0);
+            let number = builder.ins().bor(integer, double);
+            let payload = builder.ins().ireduce(types::I32, bits);
+            let widened = builder.ins().fcvt_from_sint(types::F64, payload);
+            let raw = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+            let as_f64 = builder.ins().select(integer, widened, raw);
+            let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+            let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+            let mut identity = builder.ins().bor(object, array);
+            let mut nullish = builder.ins().iconst(types::I8, 0);
+            for value in [Value::TRUE, Value::FALSE, Value::NULL, Value::UNDEFINED] {
+                let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, value.to_bits() as i64);
+                identity = builder.ins().bor(identity, equal);
+                if value == Value::NULL || value == Value::UNDEFINED {
+                    nullish = builder.ins().bor(nullish, equal);
+                }
+            }
+            (number, as_f64, identity, nullish)
+        };
+        let (left_number, left_f64, left_identity, left_nullish) = classify(&mut self.body.builder, left);
+        let (right_number, right_f64, right_identity, right_nullish) = classify(&mut self.body.builder, right);
+        let builder = &mut self.body.builder;
+        let numbers = builder.ins().band(left_number, right_number);
+        let identities = builder.ins().band(left_identity, right_identity);
+        let decided = builder.ins().bor(numbers, identities);
+        let undecided = builder.ins().icmp_imm_u(IntCC::Equal, decided, 0);
+        self.guard(pc, undecided);
+        let builder = &mut self.body.builder;
+        let numeric = builder.ins().fcmp(FloatCC::Equal, left_f64, right_f64);
+        let same = builder.ins().icmp(IntCC::Equal, left, right);
+        let by_identity = if strict {
+            same
+        } else {
+            let both_nullish = builder.ins().band(left_nullish, right_nullish);
+            builder.ins().bor(same, both_nullish)
+        };
+        builder.ins().select(numbers, numeric, by_identity)
+    }
+
     /// ToBoolean of tagged `bits` where the value alone decides it (`Value::truthiness`): a
     /// Number by its value, an object or array record true, any other immediate true unless
     /// it is `null`, `undefined`, the hole or `false`. Any other heap value (a string, or a
@@ -6193,6 +6348,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 } else {
                     self.field(field)
                 };
+                // A checked call's callee (`InlineGuard::AtRead`): another function leaves
+                // before this read, which the lane reruns with the call. The read's own value
+                // is checked, as the register's web at this PC is the one the read replaces.
+                let offset = pc - self.region.header;
+                if let Some(frame) = self.region.inlining.as_ref().and_then(|inlining| {
+                    inlining.frames.iter().find(|frame| matches!(frame.guard, InlineGuard::AtRead(at) if at == offset)).copied()
+                }) {
+                    let bits = self.boxed(value);
+                    let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, bits, frame.callee.to_bits() as i64);
+                    self.guard(pc, other);
+                }
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
@@ -6437,6 +6603,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let operator = instruction.binary_operator_field();
                 if let Some(condition) = self.tagged_number_equality(instruction, operator) {
                     return self.branch(pc, instruction.jump_target(), condition, false);
+                }
+                if let (Some(left), Some(right)) =
+                    (instruction.operand_b().register_index(), instruction.operand_c().register_index())
+                    && let Some((strict, negated)) = super::super::operations::equality_operator(operator)
+                {
+                    let (left, right) = (self.register(left), self.register(right));
+                    if left.representation == Representation::Tagged || right.representation == Representation::Tagged {
+                        let left = self.boxed(left);
+                        let right = self.boxed(right);
+                        let equal = self.tagged_equality(pc, left, right, strict);
+                        let holds = if negated { self.body.builder.ins().icmp_imm_u(IntCC::Equal, equal, 0) } else { equal };
+                        return self.branch(pc, instruction.jump_target(), holds, false);
+                    }
                 }
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
