@@ -603,17 +603,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpRequestRemoveHeader" (2) => crate::modules::http_shared_vm::request_remove_header,
         method "httpRequestEnd" (2) => crate::modules::http_shared_vm::request_end,
         method "httpRequestDestroy" (1) => crate::modules::http_shared_vm::request_destroy,
-        method "http2NewSession" (1) => crate::modules::http2_shared_vm::new_session,
-        method "http2SetLocalWindowSize" (2) => crate::modules::http2_shared_vm::set_local_window_size,
-        method "http2SubmitRstStream" (3) => crate::modules::http2_shared_vm::submit_rst_stream,
-        method "http2Feed" (2) => crate::modules::http2_shared_vm::feed,
-        method "http2DrainOutbound" (1) => crate::modules::http2_shared_vm::drain_outbound,
-        method "http2SubmitHeaders" (4) => crate::modules::http2_shared_vm::submit_headers,
-        method "http2SubmitSettings" (2) => crate::modules::http2_shared_vm::submit_settings,
-        method "http2SubmitData" (4) => crate::modules::http2_shared_vm::submit_data,
-        method "http2SubmitRequest" (3) => crate::modules::http2_shared_vm::submit_request,
-        method "http2SubmitPushPromise" (3) => crate::modules::http2_shared_vm::submit_push_promise,
-        method "http2CloseSession" (1) => crate::modules::http2_shared_vm::close_session,
         method "httpClientResponseDestroy" (1) => crate::modules::http_shared_vm::client_response_destroy,
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
@@ -973,57 +962,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "v8CachedDataVersionTag" (0) => crate::modules::v8_shared_vm::cached_data_version_tag,
         method "v8IsStringOneByteRepresentation" (0) => crate::modules::v8_shared_vm::is_string_one_byte_representation,
         method "v8HashSeed" (0) => crate::modules::v8_shared_vm::hash_seed,
-        #[cfg(not(quench_node_cares))]
         method "caresCanonicalizeIp" (0) => crate::modules::dns_shared_vm::canonicalize_ip,
-        #[cfg(not(quench_node_cares))]
         method "caresIpv6Buffer" (0) => crate::modules::dns_shared_vm::ipv6_buffer,
-        #[cfg(not(quench_node_cares))]
         method "caresStrerror" (0) => crate::modules::dns_shared_vm::strerror,
-        #[cfg(not(quench_node_cares))]
         method "caresChannel" (0) => crate::modules::dns_shared_vm::channel,
-        #[cfg(not(quench_node_cares))]
         method "caresChannelRelease" (0) => crate::modules::dns_shared_vm::channel_release,
-        #[cfg(not(quench_node_cares))]
         method "caresQuery" (0) => crate::modules::dns_shared_vm::query,
-        #[cfg(not(quench_node_cares))]
         method "caresGetServers" (0) => crate::modules::dns_shared_vm::get_servers,
-        #[cfg(not(quench_node_cares))]
         method "caresSetServers" (0) => crate::modules::dns_shared_vm::set_servers,
-        #[cfg(not(quench_node_cares))]
         method "caresSetLocalAddress" (0) => crate::modules::dns_shared_vm::set_local_address,
-        #[cfg(not(quench_node_cares))]
         method "caresCancel" (0) => crate::modules::dns_shared_vm::cancel,
-        #[cfg(not(quench_node_cares))]
         method "caresDrain" (0) => crate::modules::dns_shared_vm::drain,
         method "dnsAddressArray" (0) => crate::modules::cares_binding::address_array,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelConstruct" (3) => crate::modules::cares_channel_shared_vm::construct,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelQuery" (2) => crate::modules::cares_channel_shared_vm::query,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelGetServers" (0) => crate::modules::cares_channel_shared_vm::get_servers,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelSetServers" (1) => crate::modules::cares_channel_shared_vm::set_servers,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelSetLocalAddress" (2) => crate::modules::cares_channel_shared_vm::set_local,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelCancel" (0) => crate::modules::cares_channel_shared_vm::cancel,
-        #[cfg(quench_node_cares)]
-        method "dnsChannelStrerror" (1) => crate::modules::cares_channel_shared_vm::strerror,
-        #[cfg(quench_node_cares)]
-        method "dnsCanonicalizeIP" (1) => crate::modules::cares_channel_shared_vm::canonicalize,
-        #[cfg(quench_node_cares)]
-        method "dnsIpv6Buffer" (1) => crate::modules::cares_channel_shared_vm::ipv6_buffer,
-        #[cfg(quench_node_cares)]
-        method "dnsRrCallbackFactory" (1) => crate::modules::cares_channel_shared_vm::callback_factory,
-        #[cfg(quench_node_cares)]
-        method "dnsRrInvoke" (0) => crate::modules::cares_channel_shared_vm::invoke,
-        #[cfg(quench_node_cares)]
-        method "dnsRrArray" (0) => crate::modules::cares_channel_shared_vm::array,
-        #[cfg(quench_node_cares)]
-        method "dnsRrObject" (0) => crate::modules::cares_channel_shared_vm::object,
-        #[cfg(quench_node_cares)]
-        method "dnsRrBinary" (0) => crate::modules::cares_channel_shared_vm::binary,
         method "dnsRequestConstruct" (0) => crate::modules::cares_binding::construct,
         method "dnsGetNameInfo" (3) => crate::modules::cares_binding::getnameinfo,
         method "dnsGetAddrInfo" (5) => crate::modules::cares_binding::getaddrinfo,

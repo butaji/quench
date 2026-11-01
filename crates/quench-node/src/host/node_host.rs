@@ -102,8 +102,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
-    #[cfg(quench_node_cares)]
-    pub(crate) cares: crate::modules::cares_channel_shared_vm::State,
     pub(crate) dns: crate::modules::cares_binding::State,
     pub(crate) performance_native: crate::modules::performance_binding_shared_vm::State,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
@@ -151,7 +149,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
     pub(crate) messaging: crate::modules::worker_shared_vm::State,
     /// Pure-Rust resolver channels for `cares_wrap` when c-ares is not linked.
-    #[cfg(not(quench_node_cares))]
     pub(crate) dns_channels: crate::modules::dns_shared_vm::State,
     pub(crate) serdes: crate::modules::serdes_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
@@ -297,7 +294,6 @@ impl SharedNodeState {
         self.diagnostics = Default::default();
         self.buffer_pool = Default::default();
         self.messaging.reset();
-        #[cfg(not(quench_node_cares))]
         self.dns_channels.reset();
         self.serdes.reset();
         self.commonjs_cache = None;
@@ -354,8 +350,6 @@ impl SharedNodeState {
                 async_identity,
             ),
             native_tasks: Default::default(),
-            #[cfg(quench_node_cares)]
-            cares: Default::default(),
             dns: Default::default(),
             performance_native: Default::default(),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
@@ -395,7 +389,6 @@ impl SharedNodeState {
             crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State::default(),
             zlib_native: crate::modules::zlib_native_shared_vm::State::default(),
             messaging: crate::modules::worker_shared_vm::State::default(),
-            #[cfg(not(quench_node_cares))]
             dns_channels: crate::modules::dns_shared_vm::State::default(),
             serdes: crate::modules::serdes_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,

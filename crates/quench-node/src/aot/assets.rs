@@ -219,14 +219,7 @@ impl crate::NodeHost {
                     format!("module source outside frozen image: {}", path.display()))
             });
         }
-        let bytes = std::fs::read(path).or_else(|error| {
-            #[cfg(feature = "aot")]
-            if matches!(self.module_assets, ModuleAssetState::Capture(_)) {
-                return crate::node_sources::source(path, &self.node_library_root)
-                    .map(|source| source.as_bytes().to_vec()).ok_or(error);
-            }
-            Err(error)
-        })?;
+        let bytes = std::fs::read(path)?;
         #[cfg(feature = "aot")]
         self.record_module_bytes(path, _kind, &bytes)?;
         Ok(bytes)

@@ -1,2 +1,2 @@
-//! Protocol enums derived at build time from the configured Node SDK headers.
-include!(concat!(env!("OUT_DIR"), "/node_protocol_constants.rs"));
+//! Node's exit-code and compile-cache protocol enums.
+include!("node_protocol_tables.rs");

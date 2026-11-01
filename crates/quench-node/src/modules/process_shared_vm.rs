@@ -2550,10 +2550,6 @@ fn drain_checkpoint(
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        #[cfg(quench_node_cares)]
-        if crate::modules::cares_channel_shared_vm::poll(runtime, program)? {
-            continue;
-        }
         if crate::modules::cares_binding::poll(runtime, program)? {
             continue;
         }
@@ -2576,7 +2572,6 @@ fn drain_checkpoint(
         if crate::modules::worker_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        #[cfg(not(quench_node_cares))]
         if crate::modules::dns_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
@@ -2686,8 +2681,6 @@ fn drain_checkpoint(
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
-                #[cfg(quench_node_cares)]
-                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
                 let wait = match until_timer {
@@ -2760,8 +2753,6 @@ fn drain_checkpoint(
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
-                #[cfg(quench_node_cares)]
-                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
                 let wait = match until_timer {
@@ -2828,9 +2819,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
 /// for at the subsystems' poll interval. Without it the loop sleeps until the next timer.
 fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
-    #[cfg(quench_node_cares)]
-    if shared_state.borrow().cares.has_work() { return true; }
-    #[cfg(not(quench_node_cares))]
     if crate::modules::dns_shared_vm::has_work(shared_state) { return true; }
     crate::modules::pipe_binding::has_work(&shared_state.borrow())
         || shared_state.borrow().udp.has_work()
@@ -3814,8 +3802,6 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     super::crypto_signature_shared_vm::cleanup(runtime);
     #[cfg(quench_openssl_provider)]
     super::crypto_hash_shared_vm::cleanup(runtime);
-    #[cfg(quench_node_cares)]
-    super::cares_channel_shared_vm::cleanup(runtime);
     super::cares_binding::cleanup(runtime);
     super::performance_binding_shared_vm::cleanup(runtime);
     super::pipe_binding::cleanup(runtime);

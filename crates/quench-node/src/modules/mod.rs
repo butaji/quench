@@ -15,8 +15,6 @@ pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
-#[cfg(quench_node_cares)]
-pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
@@ -43,7 +41,6 @@ pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
-#[cfg(not(quench_node_cares))]
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod domain_source;
@@ -69,8 +66,6 @@ pub(crate) mod fs_stat_watch_shared_vm;
 pub(crate) mod fs_state;
 pub(crate) mod fs_watch_shared_vm;
 pub(crate) mod fs_write_shared_vm;
-pub(crate) mod http2_native;
-pub(crate) mod http2_shared_vm;
 pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;

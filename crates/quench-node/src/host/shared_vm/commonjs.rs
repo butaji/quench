@@ -1748,10 +1748,7 @@ fn require_for_module_inner(
     }
     let filename = resolve_filename(context, &specifier, parent)?;
     let root = context.host_mut().node_library_root.clone();
-    let bundled = crate::node_sources::BUNDLED_DEPENDENCIES
-        .iter()
-        .any(|(_, relative)| filename == root.join(relative));
-    let goal = if filename.starts_with(root.join("lib")) || bundled {
+    let goal = if filename.starts_with(root.join("lib")) {
         EntryGoal::CommonJs
     } else {
         EntryGoal::Node
@@ -3209,304 +3206,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             get(context, dns, "promises")
         }
         BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
-        BuiltinModule::Http2Binding => {
-            let binding = context.object_rooted()?;
-            // Native constant values and attributes from Node v26.12.0's HTTP/2
-            // binding (src/node_http2.cc), shared by public exports and internals.
-            let descriptors =
-                context.parse_json_rooted(include_str!("../../modules/http2_constants.json"))?;
-            let constants = context.object_rooted()?;
-            for key in context.own_keys_rooted(descriptors)? {
-                let descriptor = context.get_property_rooted(descriptors, key)?;
-                context.define_property_descriptor_rooted(constants, key, descriptor)?;
-            }
-            set(context, binding, "constants", constants)?;
-            crate::modules::http2_shared_vm::install_binding(context, binding)?;
-            let helpers = context.evaluate_script_rooted(
-                r#"(() => ({
-                  Http2Session: function Http2Session() {
-                    const error = new TypeError('Illegal constructor');
-                    error.code = 'ERR_CONSTRUCT_CALL_INVALID';
-                    throw error;
-                  },
-                  Http2Stream: class Http2Stream {
-                    constructor() {
-                      const error = new TypeError('Illegal constructor');
-                      error.code = 'ERR_CONSTRUCT_CALL_INVALID';
-                      throw error;
-                    }
-                  },
-                  nghttp2ErrorString(code) {
-                    const messages = {
-                      '-501': 'Invalid argument', '-502': 'Out of buffer space',
-                      '-503': 'Unsupported SPDY version', '-504': 'Operation would block',
-                      '-505': 'Protocol error', '-506': 'Invalid frame octets',
-                      '-507': 'EOF', '-508': 'Data transfer deferred',
-                      '-509': 'No more Stream ID available', '-510': 'Stream was already closed or invalid',
-                      '-511': 'Stream is closing', '-512': 'The transmission is not allowed for this stream',
-                      '-513': 'Stream ID is invalid', '-514': 'Invalid stream state',
-                      '-515': 'Another DATA frame has already been deferred',
-                      '-516': 'request HEADERS is not allowed', '-517': 'GOAWAY has already been sent',
-                      '-518': 'Invalid header block', '-519': 'Invalid state',
-                      '-520': 'Unknown error code',
-                      '-521': 'The user callback function failed due to the temporal error',
-                      '-522': 'The length of the frame is invalid',
-                      '-523': 'Header compression/decompression error', '-524': 'Flow control error',
-                      '-525': 'Insufficient buffer size given to function',
-                      '-526': 'Callback was paused by the application',
-                      '-527': 'Too many inflight SETTINGS', '-528': 'Server push is disabled by peer',
-                      '-529': 'DATA or HEADERS frame has already been submitted for the stream',
-                      '-530': 'The current session is closing',
-                    };
-                    return messages[code] || 'Unknown error code';
-                  },
-
-                  optionsBuffer: new Float64Array(15),
-                  settingsBuffer: new Float64Array(8),
-                  sessionState: new Float64Array(9),
-                  streamState: new Float64Array(6),
-                }))()"#,
-                "node:http2-binding-compat",
-            )?;
-            for name in [
-                "Http2Session",
-                "Http2Stream",
-                "nghttp2ErrorString",
-                "optionsBuffer",
-                "settingsBuffer",
-                "sessionState",
-                "streamState",
-            ] {
-                let value = get(context, helpers, name)?;
-                set(context, binding, name, value)?;
-            }
-            Ok(binding)
-        }
-        BuiltinModule::Http2 => {
-            let root = context.host_mut().node_library_root.clone();
-            let path = root.join("lib/internal/http2/compat.js");
-            let parent_path = root.join("lib/http2.js");
-            let parent = module_record(context, &parent_path, None, false)?;
-            let compat = load(context, &path, Some(parent), EntryGoal::CommonJs)?;
-            let module = context.object_rooted()?;
-            for name in ["Http2ServerRequest", "Http2ServerResponse"] {
-                let value = get(context, compat, name)?;
-                set(context, module, name, value)?;
-            }
-            let binding = http2_binding(context)?;
-            let constants = get(context, binding, "constants")?;
-            set(context, module, "constants", constants)?;
-            // These helpers are pure JavaScript in Node's public HTTP/2 API.
-            // Keep them usable in lightweight hosts that do not provide the
-            // native session implementation.
-            let helpers = context.evaluate_script_rooted(
-                r#"(() => {
-                  const fields = [
-                    ['headerTableSize', 1, 4096],
-                    ['enablePush', 2, true],
-                    ['maxConcurrentStreams', 3, 0xffffffff],
-                    ['initialWindowSize', 4, 65535],
-                    ['maxFrameSize', 5, 16384],
-                    ['maxHeaderListSize', 6, 65535],
-                    ['enableConnectProtocol', 8, false],
-                  ];
-                  function http2Error(code, name, message) {
-                    const error = new globalThis[name](message);
-                    error.code = code;
-                    return error;
-                  }
-                  function receivedArg(value) {
-                    if (value == null) return ` Received ${value}`;
-                    if (typeof value === 'function') return ` Received function ${value.name}`;
-                    if (typeof value === 'object')
-                      return ` Received an instance of ${value.constructor?.name || 'Object'}`;
-                    const inspected = typeof value === 'string' ? `'${value}'` : String(value);
-                    return ` Received type ${typeof value} (${inspected})`;
-                  }
-                  function validateServerOptions(options, allowHandlerOverload) {
-                    if (allowHandlerOverload && typeof options === 'function')
-                      return {};
-                    if (options === undefined)
-                      return {};
-                    if (options === null || typeof options !== 'object') {
-                      throw http2Error('ERR_INVALID_ARG_TYPE', 'TypeError',
-                        `The \"options\" argument must be of type object.${receivedArg(options)}`);
-                    }
-                    const settings = options.settings;
-                    if (settings !== undefined && (settings === null || typeof settings !== 'object')) {
-                      throw http2Error('ERR_INVALID_ARG_TYPE', 'TypeError',
-                        `The \"options.settings\" property must be of type object.${receivedArg(settings)}`);
-                    }
-                    for (const key of ['maxSessionInvalidFrames', 'maxSessionRejectedStreams']) {
-                      const value = options[key];
-                      if (value !== undefined && !Number.isInteger(value)) {
-                        throw http2Error('ERR_OUT_OF_RANGE', 'RangeError',
-                          `The value of \"options.${key}\" is out of range. It must be an integer. Received ${value}`);
-                      }
-                      if (value !== undefined && (value < 0 || value > 0xffffffff)) {
-                        throw http2Error('ERR_OUT_OF_RANGE', 'RangeError',
-                          `The value of \"options.${key}\" is out of range. It must be >= 0 && <= 4294967295. Received ${value}`);
-                      }
-                    }
-                    return options;
-                  }
-                  function createServer(options, handler) {
-                    validateServerOptions(options, true);
-                    throw new Error('HTTP/2 server sessions are not available in this runtime');
-                  }
-                  function createSecureServer(options, handler) {
-                    validateServerOptions(options, false);
-                    throw new Error('HTTP/2 server sessions are not available in this runtime');
-                  }
-                  function connect(authority, options, listener) {
-                    if (typeof options === 'function') {
-                      listener = options;
-                      options = undefined;
-                    }
-                    throw new Error('HTTP/2 client sessions are not available in this runtime');
-                  }
-                  Object.defineProperty(connect, Symbol.for('nodejs.util.promisify.custom'), {
-                    value(authority, options) {
-                      return new Promise((resolve, reject) => {
-                        let host;
-                        try {
-                          const target = typeof authority === 'string' ? new URL(authority) : authority;
-                          host = target.hostname || target.host || 'localhost';
-                        } catch (error) {
-                          reject(error);
-                          return;
-                        }
-                        const lookup = options?.lookup;
-                        if (typeof lookup !== 'function') {
-                          reject(new Error('HTTP/2 client sessions are not available in this runtime'));
-                          return;
-                        }
-                        let called = false;
-                        const callback = (error) => {
-                          if (called) return;
-                          called = true;
-                          if (error) reject(error);
-                          else reject(new Error('HTTP/2 client sessions are not available in this runtime'));
-                        };
-                        try {
-                          lookup(host, options, callback);
-                        } catch (error) {
-                          reject(error);
-                        }
-                      });
-                    },
-                  });
-                  function getDefaultSettings() {
-                    // Node returns a null-prototype settings record and keeps
-                    // the historical maxHeaderSize alias alongside
-                    // maxHeaderListSize. The packed wire format still has a
-                    // single setting ID for those two names, so expose the
-                    // alias here without adding another entry to `fields`.
-                    const values = Object.fromEntries(fields.map(([key, , value]) => [key, value]));
-                    const ordered = Object.create(null);
-                    for (const key of [
-                      'headerTableSize', 'enablePush', 'initialWindowSize',
-                      'maxFrameSize', 'maxConcurrentStreams',
-                      'maxHeaderSize', 'maxHeaderListSize', 'enableConnectProtocol',
-                    ]) {
-                      ordered[key] = key === 'maxHeaderSize'
-                        ? values.maxHeaderListSize
-                        : values[key];
-                    }
-                    return ordered;
-                  }
-                  function getPackedSettings(settings = {}) {
-                    if (settings === null || typeof settings !== 'object')
-                      throw http2Error('ERR_INVALID_ARG_TYPE', 'TypeError', 'The "settings" argument must be of type object.');
-                    const records = [];
-                    for (const [key, id, fallback] of fields) {
-                      const alias = key === 'maxHeaderListSize' &&
-                        !Object.prototype.hasOwnProperty.call(settings, key) &&
-                        Object.prototype.hasOwnProperty.call(settings, 'maxHeaderSize');
-                      if (!Object.prototype.hasOwnProperty.call(settings, key) && !alias) continue;
-                      const value = alias ? settings.maxHeaderSize : settings[key];
-                      const settingName = alias ? 'maxHeaderSize' : key;
-                      if (typeof fallback === 'boolean') {
-                        if (typeof value !== 'boolean')
-                          throw http2Error('ERR_HTTP2_INVALID_SETTING_VALUE', 'TypeError', `Invalid value for setting "${settingName}": ${value}`);
-                        records.push([id, value ? 1 : 0]);
-                        continue;
-                      }
-                      const valid = Number.isInteger(value) && value >= 0 && value <= 0xffffffff &&
-                        (key !== 'initialWindowSize' || value <= 0x7fffffff) &&
-                        (key !== 'maxFrameSize' || (value >= 16384 && value <= 0xffffff));
-                      if (!valid)
-                        throw http2Error('ERR_HTTP2_INVALID_SETTING_VALUE', 'RangeError', `Invalid value for setting "${settingName}": ${value}`);
-                      records.push([id, value]);
-                    }
-                    const custom = settings.customSettings;
-                    if (custom != null) {
-                      if (typeof custom !== 'object')
-                        throw http2Error('ERR_INVALID_ARG_TYPE', 'TypeError', 'The "settings.customSettings" property must be of type object.');
-                      const entries = Object.entries(custom);
-                      if (entries.length > 10)
-                        throw http2Error('ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS', 'RangeError', 'HTTP/2 allows a maximum of 10 custom settings');
-                      for (const [rawId, value] of entries) {
-                        const id = Number(rawId);
-                        if (!/^\d+$/.test(rawId) || !Number.isInteger(id) || id < 0 || id > 0xffff ||
-                            !Number.isInteger(value) || value < 0 || value > 0xffffffff)
-                          throw http2Error('ERR_HTTP2_INVALID_SETTING_VALUE', 'RangeError', `Invalid value for setting "${rawId}": ${value}`);
-                        records.push([id, value]);
-                      }
-                    }
-                    const out = Buffer.alloc(records.length * 6);
-                    records.forEach(([id, value], i) => {
-                      out.writeUInt16BE(id, i * 6);
-                      out.writeUInt32BE(value, i * 6 + 2);
-                    });
-                    return out;
-                  }
-                  function getUnpackedSettings(buf, options = {}) {
-                    if (!ArrayBuffer.isView(buf) || buf.length === undefined)
-                      throw http2Error('ERR_INVALID_ARG_TYPE', 'TypeError', `The "buf" argument must be an instance of Buffer or TypedArray.${receivedArg(buf)}`);
-                    if (buf.length % 6 !== 0)
-                      throw http2Error('ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH', 'RangeError', 'Packed settings length must be a multiple of six');
-                    const result = {};
-                    const ids = new Map(fields.map(([key, id]) => [id, key]));
-                    for (let offset = 0; offset < buf.length; offset += 6) {
-                      const id = ((buf[offset] & 0xff) << 8) | (buf[offset + 1] & 0xff);
-                      const value = (((buf[offset + 2] & 0xff) * 0x1000000) +
-                        ((buf[offset + 3] & 0xff) << 16) +
-                        ((buf[offset + 4] & 0xff) << 8) + (buf[offset + 5] & 0xff)) >>> 0;
-                      const key = ids.get(id);
-                      if (key === 'enablePush' || key === 'enableConnectProtocol') result[key] = value !== 0;
-                      else if (key) result[key] = value;
-                      else (result.customSettings ||= {})[id] = value;
-                      if (id === 6) result.maxHeaderSize = value;
-                    }
-                    if (options != null && options.validate) {
-                      const packed = getPackedSettings(result);
-                      void packed;
-                    }
-                    return result;
-                  }
-                  return { getDefaultSettings, getPackedSettings, getUnpackedSettings,
-                    createServer, createSecureServer, connect };
-                })()"#,
-                "node:http2/helpers.js",
-            )?;
-            for name in [
-                "getDefaultSettings",
-                "getPackedSettings",
-                "getUnpackedSettings",
-                "createServer",
-                "createSecureServer",
-                "connect",
-            ] {
-                let value = get(context, helpers, name)?;
-                set(context, module, name, value)?;
-            }
-            // Node exports the same symbol used by internal/http2/util.js so
-            // sensitive headers survive the public API -> internal helper path.
-            let util = node_library_module(context, "http2.js", "internal/http2/util.js")?;
-            let sensitive_headers = get(context, util, "kSensitiveHeaders")?;
-            set(context, module, "sensitiveHeaders", sensitive_headers)?;
-            Ok(module)
+        // HTTP/2 has no Rust implementation; its Node-sourced engine was removed.
+        BuiltinModule::Http2Binding | BuiltinModule::Http2 => {
+            Err(RootedError::host("node:http2 is not implemented".to_owned()))
         }
         BuiltinModule::Cluster => node_library_module(context, "cluster.js", "cluster.js"),
         BuiltinModule::Repl => {
@@ -3644,38 +3346,23 @@ fn resolve_filename_from_host(
         && (internal_specifier != "internal/timers" || internals_exposed(context)))
         || (internal_specifier.starts_with('_')
             && module_is_file(context, &node_lib.join(internal_specifier).with_extension("js")));
-    if node_internal {
-        if let Some((_, relative)) = crate::node_sources::BUNDLED_DEPENDENCIES
-            .iter()
-            .find(|(name, _)| *name == internal_specifier)
-        {
-            let root = context.host_mut().node_library_root.clone();
-            let path = root.join(relative);
-            if module_is_file(context, &path) || crate::node_sources::source(&path, &root).is_some() {
-                return Ok(path);
-            }
-        }
-    }
     if !node_internal {
         if let Some(path) = resolve_vfs_module_path(context, &directory, specifier)? {
             return Ok(path);
         }
     }
-    let virtual_path = if node_internal {
-        Some(node_lib.join(internal_specifier).with_extension("js"))
-    } else if specifier.starts_with("./") || specifier.starts_with("../") {
-        Some(directory.join(specifier).with_extension("js"))
-    } else {
-        None
-    };
-    if let Some(path) = virtual_path {
-        #[cfg(feature = "native-execution")]
-        if context.host_mut().embedded_module(&path).is_some() { return Ok(path); }
-        if !path.is_file() {
-            if let Some((canonical, _)) =
-                crate::node_sources::resolve(&path, &context.host_mut().node_library_root)
-            {
-                return Ok(canonical);
+    #[cfg(feature = "native-execution")]
+    {
+        let virtual_path = if node_internal {
+            Some(node_lib.join(internal_specifier).with_extension("js"))
+        } else if specifier.starts_with("./") || specifier.starts_with("../") {
+            Some(directory.join(specifier).with_extension("js"))
+        } else {
+            None
+        };
+        if let Some(path) = virtual_path {
+            if context.host_mut().embedded_module(&path).is_some() {
+                return Ok(path);
             }
         }
     }
@@ -4272,7 +3959,7 @@ pub(crate) fn node_library_present(context: &mut Context<'_>) -> bool {
 fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
     let root = context.host_mut().node_library_root.clone();
     let path = root.join("lib/internal/per_context/primordials.js");
-    (module_is_file(context, &path) || crate::node_sources::source(&path, &root).is_some()).then_some(path)
+    module_is_file(context, &path).then_some(path)
 }
 
 /// Node's primordials snapshot, which only Node's internal modules and their host
@@ -4308,11 +3995,13 @@ fn module_is_file(context: &mut Context<'_>, path: &Path) -> bool {
 }
 
 fn is_node_library_source(context: &mut Context<'_>, path: &Path) -> bool {
+    // Only frozen images can still hold library sources; quench embeds none.
     #[cfg(feature = "native-execution")]
     if path.starts_with(&context.host_mut().node_library_root) && context.host_mut().embedded_module(path).is_some_and(|file| file.kind == quench_runtime::SourceKind::Script) {
         return true;
     }
-    crate::node_sources::source(path, &context.host_mut().node_library_root).is_some()
+    let _ = (context, path);
+    false
 }
 
 /// Read a module's original bytes through the selected module input provider.
@@ -4444,9 +4133,7 @@ fn load_with_resolution(
                 Ok(bytes) => String::from_utf8(bytes)
                     .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
                     .into(),
-                Err(error) => crate::node_sources::source(filename, &context.host_mut().node_library_root)
-                    .ok_or_else(|| RootedError::host(error.to_string()))?
-                    .into(),
+                Err(error) => return Err(RootedError::host(error.to_string())),
             },
         };
         #[cfg(feature = "native-execution")]
@@ -5448,9 +5135,7 @@ pub(crate) fn node_library_module_in_realm(
                 .expect_err("invalid UTF-8 cannot decode as module text")
         })) {
         Ok(source) => source,
-        Err(error) => crate::node_sources::source(&path, &root)
-            .map(str::to_owned)
-            .ok_or_else(|| RootedError::host(format!("{}: {error}", path.display())))?,
+        Err(error) => return Err(RootedError::host(format!("{}: {error}", path.display()))),
     };
     let module = context.object_rooted()?;
     set(context, module, "exports", exports)?;

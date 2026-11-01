@@ -51,8 +51,6 @@ impl SharedNodeState {
             vm_scripts,
             async_hooks,
             native_tasks,
-            #[cfg(quench_node_cares)]
-            cares,
             dns,
             performance_native,
             scheduler,
@@ -91,7 +89,6 @@ impl SharedNodeState {
             crypto_secret_jobs,
             zlib_native,
             messaging,
-            #[cfg(not(quench_node_cares))]
             dns_channels,
             serdes,
             unhandled_rejection_mode: _,
@@ -154,8 +151,6 @@ impl SharedNodeState {
                 && net_handle_close_callbacks.is_empty(),
             "a socket, server or child process",
         )?;
-        #[cfg(quench_node_cares)]
-        cares.write_snapshot(writer)?;
         #[cfg(quench_icu)]
         icu_converters.write_snapshot(writer)?;
         #[cfg(quench_openssl_provider)]
@@ -163,7 +158,6 @@ impl SharedNodeState {
             crypto_hashes.write_snapshot(writer)?;
             crypto_signatures.write_snapshot(writer)?;
         }
-        #[cfg(not(quench_node_cares))]
         dns_channels.write_snapshot(writer)?;
         workers.write_snapshot(writer)?;
         vm_scripts.write_snapshot(writer)?;
@@ -229,8 +223,6 @@ impl SharedNodeState {
 
     /// Restores what `write_snapshot` wrote over this process's fresh state.
     fn read_snapshot(&mut self, reader: &mut SnapshotReader<'_, '_>) -> Result<(), String> {
-        #[cfg(quench_node_cares)]
-        self.cares.read_snapshot(reader)?;
         #[cfg(quench_icu)]
         self.icu_converters.read_snapshot(reader)?;
         #[cfg(quench_openssl_provider)]
@@ -238,7 +230,6 @@ impl SharedNodeState {
             self.crypto_hashes.read_snapshot(reader)?;
             self.crypto_signatures.read_snapshot(reader)?;
         }
-        #[cfg(not(quench_node_cares))]
         self.dns_channels.read_snapshot(reader)?;
         self.workers.read_snapshot(reader)?;
         self.vm_scripts.read_snapshot(reader)?;

@@ -903,7 +903,7 @@ fn qualify_runtime_loaded_node_api(profile: &str, support: Option<String>) {
     let mut rustc = Command::new("rustc");
     rustc.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/aot-bootstrap/napi-addon.rs"))
         .args(["--edition=2024", "--crate-type=cdylib", "--crate-name=quench_napi_fixture", "-C", "panic=abort", "-o"]).arg(&addon)
-        .env("QUENCH_FIXTURE_NODE_API_VERSION", env!("QUENCH_NODE_API_DEFAULT_MODULE_API_VERSION"));
+        .env("QUENCH_FIXTURE_NODE_API_VERSION", "8");
     #[cfg(target_os = "macos")]
     rustc.args(["-C", "link-arg=-Wl,-undefined,dynamic_lookup"]);
     let built = rustc.output().unwrap();

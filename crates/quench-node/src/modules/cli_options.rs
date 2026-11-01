@@ -1,5 +1,5 @@
 //! Parsed startup values for implemented Node feature switches.
-include!(concat!(env!("OUT_DIR"), "/node_option_defaults.rs"));
+include!("node_option_tables.rs");
 const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     // The default Node condition includes native addon exports. Workers can
     // opt out with --no-addons, which is also a valid boolean negation.
