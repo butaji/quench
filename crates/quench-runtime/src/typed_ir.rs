@@ -157,7 +157,9 @@ impl Fact {
         (match self.projection {
             Projection::Exact => self.representation.accepts(self.ty),
             Projection::CheckedDefinitions => {
-                self.representation == Representation::Int32
+                self.binding == BindingTime::Dynamic
+                    && self.proof == Proof::Definition
+                    && self.representation == Representation::Int32
                     && self.ty.is_subtype(Type::NUMBER) && self.ty != Type::NEVER
             }
         })
@@ -260,6 +262,22 @@ mod tests {
             assert!(Fact { ty, ..definition }.verified().is_none());
         }
         assert!(Fact { ty: Type::INT32, ..definition }.verified().is_some());
+    }
+
+    #[test]
+    fn checked_definitions_cannot_stand_in_for_static_or_entry_proofs() {
+        let definition = Fact::number(Representation::Int32, BindingTime::Dynamic, Proof::Definition);
+        for (binding, proof) in [
+            (BindingTime::Static, Proof::Static),
+            (BindingTime::Location, Proof::EntryGuard),
+            (BindingTime::Site, Proof::EntryGuard),
+        ] {
+            let fact = Fact { binding, proof, ..definition };
+            assert!(fact.verified().is_none(), "{fact:?}");
+        }
+        assert!(definition.verified().is_some());
+        assert!(Fact::number(Representation::Int32, BindingTime::Location, Proof::EntryGuard)
+            .verified().is_some());
     }
 
     #[test]

@@ -3237,6 +3237,7 @@ pub(super) fn verify_region<'a>(
             if instruction.op() == Op::LoadConst && definition_counts[root] == 1 {
                 values[root].binding = BindingTime::Static;
                 values[root].proof = Proof::Static;
+                values[root].projection = Projection::Exact;
             }
         }
         if !changed { break; }
@@ -7227,6 +7228,26 @@ mod tests {
         region.numbers.retain(|register| *register != 0);
         region.tagged.push(0);
         assert!(matches!(verify_unprofiled(&region), Err(TypeError::NonNumberOperand { register: 0, .. })));
+    }
+
+    #[test]
+    fn typed_constants_have_exact_static_proofs() {
+        for number in [1.0, -0.0, 0.5, f64::NAN, f64::INFINITY] {
+            let region = admit_region(vec![
+                WideInstruction::new(Op::LoadConst, 0, 0, 0, 0),
+                WideInstruction::new(Op::Jump, 0, 0, 0, 0),
+            ], 1, &[Value::number(number)], &[],
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![0, 1]))),
+                Some(0), 0, &Default::default())
+                .unwrap_or_else(|failure| panic!("constant admission: {failure:?}"));
+            let verified = verify_unprofiled(&region).unwrap();
+            let definition = verified.webs.defined(&region, 0);
+            let fact = verified.values[definition].unwrap();
+            assert_eq!(fact.ty, Type::immediate(Value::number(number)));
+            assert_eq!(fact.binding, BindingTime::Static);
+            assert_eq!(fact.proof, Proof::Static);
+            assert_eq!(fact.projection, Projection::Exact);
+        }
     }
 
     #[test]
