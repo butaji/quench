@@ -119,13 +119,7 @@ fn drain(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
         }
         if kind == RETURN {
             call_method(c, queue, "shift", &[])?;
-            match super::attempt(conclude(c, record))? {
-                Ok(_) => {
-                    let done = iterator_result(c, value, true)?;
-                    c.resolve_promise_rooted(promise, done)?;
-                }
-                Err(thrown) => c.reject_promise_rooted(promise, thrown)?,
-            }
+            await_at_yield(c, record, promise, value, "streamIteratorReturned")?;
             continue;
         }
         if kind == THROW {
@@ -216,8 +210,7 @@ fn step(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
         }
     };
     if !is_null(c, chunk) {
-        let result = iterator_result(c, chunk, false)?;
-        return c.resolve_promise_rooted(promise, result);
+        return await_at_yield(c, record, promise, chunk, "streamIteratorYielded");
     }
     let error = get(c, record, "error")?;
     if c.truthy_rooted(error)? {
@@ -237,6 +230,49 @@ fn step(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
     set_status(c, record, AWAITING)?;
     let wake = closure(c, "streamIteratorResume", "", &[record])?;
     put(c, record, "callback", wake)
+}
+
+/// The `Await` a suspended generator takes at its `yield`: of the value it yields, or of
+/// the value `return(value)` resumes it with; `settled` continues with the result.
+fn await_at_yield(c: &mut Context<'_>, record: RootId, promise: RootId, value: RootId, settled: &str) -> Result<(), RootedError> {
+    set_status(c, record, AWAITING)?;
+    let fulfilled = closure(c, settled, "", &[record, promise])?;
+    let rejected = closure(c, "streamIteratorYieldFailed", "", &[record, promise])?;
+    super::await_then(c, value, fulfilled, rejected)
+}
+
+pub(crate) fn yielded(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let [record, promise] = captures(c)?;
+    let value = arg(c, args, 0);
+    set_status(c, record, SUSPENDED)?;
+    let result = iterator_result(c, value, false)?;
+    c.resolve_promise_rooted(promise, result)?;
+    drain(c, record)?;
+    Ok(c.undefined())
+}
+
+pub(crate) fn returned(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let [record, promise] = captures(c)?;
+    let value = arg(c, args, 0);
+    match super::attempt(conclude(c, record))? {
+        Ok(_) => {
+            let done = iterator_result(c, value, true)?;
+            c.resolve_promise_rooted(promise, done)?;
+        }
+        Err(thrown) => c.reject_promise_rooted(promise, thrown)?,
+    }
+    drain(c, record)?;
+    Ok(c.undefined())
+}
+
+/// A rejected `Await` at the `yield`: the rejection is thrown into the generator there.
+pub(crate) fn yield_failed(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let [record, promise] = captures(c)?;
+    let reason = arg(c, args, 0);
+    set_status(c, record, SUSPENDED)?;
+    fail(c, record, promise, reason)?;
+    drain(c, record)?;
+    Ok(c.undefined())
 }
 
 /// The generator's `catch`: aggregate the error, run `finally`, reject.

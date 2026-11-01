@@ -226,12 +226,14 @@ pub(crate) struct Intrinsics {
     ticks: [RootId; Tick::ALL.len()],
     /// The `nop` callback Node's writable compares callbacks with.
     pub(crate) nop: RootId,
-    /// `Promise.prototype.then` as the module found it: `await` does not look it up.
+    /// `Promise` and `Promise.prototype.then` as the module found them: `await` looks
+    /// neither up.
+    promise: RootId,
     promise_then: RootId,
     pub(crate) module: RootId,
 }
 
-crate::host::startup_snapshot::host_snap_struct!(Intrinsics { slots, classes, ticks, nop, promise_then, module });
+crate::host::startup_snapshot::host_snap_struct!(Intrinsics { slots, classes, ticks, nop, promise, promise_then, module });
 
 impl Intrinsics {
     pub(crate) fn slot(&self, slot: Slot) -> RootId {
@@ -400,11 +402,25 @@ pub(crate) fn attempt<T>(result: Result<T, RootedError>) -> Result<Result<T, Roo
 
 /// `await value`, continuing with `fulfilled(result)` or `rejected(reason)` as reactions.
 pub(crate) fn await_then(c: &mut Context<'_>, value: RootId, fulfilled: RootId, rejected: RootId) -> Result<(), RootedError> {
-    let promise = c.pending_promise_rooted()?;
-    c.resolve_promise_rooted(promise, value)?;
-    let then = intrinsics(c)?.promise_then;
-    c.call_rooted(then, promise, &[fulfilled, rejected])?;
+    let intrinsics = intrinsics(c)?;
+    let promise = if promise_resolves_to_itself(c, value, intrinsics.promise)? {
+        value
+    } else {
+        let promise = c.pending_promise_rooted()?;
+        c.resolve_promise_rooted(promise, value)?;
+        promise
+    };
+    c.call_rooted(intrinsics.promise_then, promise, &[fulfilled, rejected])?;
     Ok(())
+}
+
+/// `PromiseResolve(%Promise%, value)` returns `value` itself: a promise of `%Promise%`.
+fn promise_resolves_to_itself(c: &mut Context<'_>, value: RootId, constructor: RootId) -> Result<bool, RootedError> {
+    if !c.is_promise_rooted(value)? {
+        return Ok(false);
+    }
+    let own = get(c, value, "constructor")?;
+    c.strict_equal_rooted(own, constructor)
 }
 
 /// An iterator result `{ value, done }`.
@@ -514,7 +530,8 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let promise_prototype = get(c, promise, "prototype")?;
     let promise_then = get(c, promise_prototype, "then")?;
     let promise_then = c.retain(promise_then)?;
-    let mut intrinsics = Intrinsics { slots, classes: [undefined; Class::COUNT], ticks, nop, promise_then, module: undefined };
+    let promise = c.retain(promise)?;
+    let mut intrinsics = Intrinsics { slots, classes: [undefined; Class::COUNT], ticks, nop, promise, promise_then, module: undefined };
     c.host_mut().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
     let emitter = get(c, global, "__nodeEventEmitter")?;
     let buffer = super::buffer_shared_vm::fast_buffer(c)?;
