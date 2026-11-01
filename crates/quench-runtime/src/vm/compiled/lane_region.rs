@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::bytecode::FieldLayout;
-use crate::specialize::{BindingTime, Fact, Projection, Proof, Representation, Type};
+use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
 use super::object_slots::{CheckedObject, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -304,7 +304,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
             } else if ty != Type::INT32 && ty != Type::NUMBER {
                 self.tagged(state, register);
             }
-            self.valid &= state.values[index].value.ty.is_subtype(ty);
+            // A fact this edge does not prove and cannot guard leaves at the target, exactly:
+            // the edge loses native code, never the body (AGENTS.md, check once).
+            if !state.values[index].value.ty.is_subtype(ty) {
+                let exit = self.guard_exit(state, target as u32);
+                self.builder.ins().jump(exit, &[]);
+                let unreached = self.builder.create_block();
+                self.builder.switch_to_block(unreached);
+                return;
+            }
         }
     }
 
