@@ -21295,6 +21295,58 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     assert_eq!(answers[0], answers[1]);
 }
 
+/// Lane bodies call the callees they do not inline natively (`dispatch_fast::lane_body_call`):
+/// a callee that completes in its own body returns its value to the caller's native code; one
+/// that leaves continues in the lane in its own activation; a callee with no body, a host
+/// function or a throwing one leaves the caller at the call. Every result must equal the
+/// interpreter's.
+#[test]
+fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
+    let source = r#"(function () {
+      const MASK = 65535, DEPTH = 3;
+      function Node(id) { this.id = id; this.v = 0; this.next = null; this.tag = "n"; }
+      Node.prototype.inner = function (k) { let a = 0; for (let i = 0; i < 3; i++) { a = (a + i + k) | 0; } this.v = (this.v + a) & MASK; return a; };
+      Node.prototype.outer = function (k) {
+        let r = this.inner(k) + this.inner(k + 1);
+        if (k === 13) { this.tag = this.tag + k; }
+        return (r + this.v) & MASK;
+      };
+      Node.prototype.deep = function (d) { if (d === 0) return this.id; return (this.deep(d - 1) + d) & MASK; };
+      Node.prototype.risky = function (k) { if (k === 99) throw new Error("x" + k); return k + this.id; };
+      Node.prototype.top = function (k) {
+        let s = this.outer(k);
+        s = (s + this.deep(DEPTH)) & MASK;
+        s = (s + Math.max(k, this.id)) & MASK;
+        try { s = (s + this.risky(k)) & MASK; } catch (e) { s = s + 1; }
+        this.v = (this.v + s) & MASK;
+        return s;
+      };
+      let head = null;
+      for (let i = 0; i < 6; i++) { const n = new Node(i); n.next = head; head = n; }
+      let total = 0;
+      for (let round = 0; round < 2000; round++) {
+        for (let n = head; n !== null; n = n.next) {
+          total = (total + n.top(round % 101)) & 1048575;
+          if (round === 1200) n.v = 0.25;
+        }
+      }
+      globalThis.answer = total + head.tag.length;
+    })();"#;
+    let program = Engine::specialize(source, "lane-body-calls.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
 #[test]
 #[cfg(not(quench_profiled))]
 fn lane_bodies_leave_before_a_store_changes_property_storage() {
@@ -21331,7 +21383,7 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         registers[0] = Value::number(0.5);
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
         assert_eq!(pc, store_pc, "{name}: decline before changing the native entry's storage facts");
         let value_atom = vm.intern_atom("value");
         assert_eq!(vm.own_property(receiver, value_atom), Some(Value::integer(0)));
@@ -21343,7 +21395,7 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         registers.fill(Value::UNDEFINED);
         registers[0] = Value::number(2.5);
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
         let instruction = instructions[pc];
         assert_eq!(instruction.op(), Op::Return);
         assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
@@ -21383,7 +21435,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
                     registers[..arguments.len()].copy_from_slice(&arguments);
                     let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
                     let instruction = instructions[pc];
                     assert_eq!(instruction.op(), Op::Return, "{name}({input}, {count}) exited at {pc}");
                     let actual = registers[usize::from(instruction.register_a())];
@@ -21397,7 +21449,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
             registers[0] = Value::number(0.5);
             registers[1] = counting;
             let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
             assert_eq!(pc, 0, "a non-Number bound leaves before any coercion");
             let atom = vm.intern_atom("countCoercions");
             assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
@@ -21412,7 +21464,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                 registers[0] = input;
                 registers[1] = Value::integer(1);
                 let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
                 assert!(pc < instructions.len() && instructions[pc].op() != Op::Return,
                     "{input_name} must leave before numeric effects");
                 assert_eq!(registers[0].to_bits(), input.to_bits(), "recover the original input");
@@ -21472,7 +21524,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
             let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
             registers[0] = value;
             let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
             let instruction = instructions[pc];
             if name.starts_with("strict") || value.is_record() || value.heap_reference().is_none() {
                 assert_eq!(instruction.op(), Op::Return, "{name}({value_name}) exited at {pc}: {instructions:?}");
@@ -21502,7 +21554,7 @@ fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
     registers[parameter] = Value::integer(111);
     let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
     assert!(pc < body.code.len());
     assert_eq!(registers[parameter], Value::integer(123),
         "f.arguments observes a current parameter even when bytecode no longer reads it");
@@ -21546,7 +21598,7 @@ fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
                     registers[usize::from(register)] = value;
                 }
                 let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                    &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+                    &program, registers.as_mut_ptr(), receiver, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
                 (pc, registers)
             };
             if name != "update" {
@@ -21632,7 +21684,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                     registers[usize::from(register)] = value;
                 }
                 let pc = vm.run_lane_method(method, super::program_store::ProgramId::MAIN,
-                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
                 (pc, registers)
             };
             let method = vm.compile_lane_method(&program, id as u32, &[])
@@ -21720,7 +21772,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             registers[usize::from(register)] = value;
         }
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
         assert_eq!(body.instructions().nth(pc).unwrap().op(), Op::SetField);
         assert_eq!(vm.own_property(object, left), Some(original), "method invalidation happens before the write");
         let write = global(&mut vm, "write");
@@ -21754,7 +21806,7 @@ fn native_chain_append_completes_without_a_store_handoff() {
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
         registers[usize::from(parameter)] = head;
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), item, std::ptr::null()).caller_pc().expect("caller exit");
+            &program, registers.as_mut_ptr(), item, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
         assert_eq!(instructions[pc].op(), Op::Return, "append leaves at {pc}: {instructions:?}");
         assert_eq!(registers[usize::from(instructions[pc].register_a())], head);
         assert_eq!(vm.own_property(tail, left), Some(item));

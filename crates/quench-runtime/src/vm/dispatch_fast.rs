@@ -1858,6 +1858,10 @@ struct LaneContext<H: Host> {
     /// The accumulator the lane loop dispatches its next record with: the one a safepoint
     /// jump carried to its target (`lane_safepoint`), else none.
     resumed_acc: Slot<Value>,
+    /// The record a lane body's native call left the lane to continue at, in the callee's
+    /// activation it made (`lane_body_call`), and the accumulator that record reads.
+    callee_resume: Ip,
+    callee_acc: Value,
 }
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
@@ -13703,10 +13707,18 @@ script_handler! {
             let captures = capture_reads(unsafe { (*cx).capture });
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*cx).code };
-            let pc = match vm.run_lane_method(method, program, code, r.0, receiver, captures) {
+            let pc = match vm.run_lane_method(method, program, code, r.0, receiver, captures, cx.cast()) {
                 super::compiled::LaneExit::At(pc) => pc,
                 super::compiled::LaneExit::Inlined { frame, pc } => {
                     let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, &method.inlined[frame], pc);
+                    next!(cx, registers, resume, carried)
+                }
+                // A native call made its callee's activation and left the lane there.
+                super::compiled::LaneExit::Callee => {
+                    let mut carried = Carried::script(cx);
+                    // SAFETY: `lane_body_call` set both before the body left.
+                    let (registers, resume) = unsafe { ((*cx).registers, (*cx).callee_resume) };
+                    carried.acc = Slot::of(unsafe { (*cx).callee_acc });
                     next!(cx, registers, resume, carried)
                 }
             };
@@ -13769,6 +13781,18 @@ fn lane_tier_enter<H: Host>(
     // SAFETY: the activation just set the context to its own function's.
     let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
     let receiver = (binds_this && !this.is_deleted()).then_some(this);
+    // A lane body runs on the activation itself, so it comes before the frame-entering tier:
+    // the activation warms toward it in the lane, and only a declined body leaves the
+    // function to the JavaScript tier.
+    if vm.programs.js_jit_lane_methods_enabled()
+        && let Some(own) = own
+        && own.specialize_lane_body(|| {
+            let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
+            vm.compile_lane_method(code, function, &targets)
+        })
+    {
+        return None;
+    }
     // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
     let may_claim = vm.js_tier_may_claim(code, program, function);
     if may_claim
@@ -13788,17 +13812,6 @@ fn lane_tier_enter<H: Host>(
             || !may_claim
             || vm.js_tier_holds_for_general(program, function))
     {
-        // A declined function may still run natively on its lane activations: the
-        // prologue keeps the start once that body compiles. Frame entries keep whatever
-        // tier holds the function.
-        if vm.programs.js_jit_lane_methods_enabled()
-            && own.specialize_lane_body(|| {
-                let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
-                vm.compile_lane_method(code, function, &targets)
-            })
-        {
-            return None;
-        }
         own.release_from_tier();
     }
     None
@@ -13874,6 +13887,86 @@ fn lane_body_inlined_activation<H: Host>(
         carried.acc = Slot::of(registers.get(register));
     }
     (registers, resume, carried)
+}
+
+/// A lane body's call at `call_pc` of the running activation (`lane_region`'s `Call`): the
+/// activation `lane_script_call`'s common form makes, then the callee's own lane body. A
+/// callee whose body returns completes the call (`lane_return_plain`), the result in the
+/// call's register; one that leaves, or has no body, leaves the lane at its record in that
+/// activation (`LaneContext::callee_resume`). A call the common form does not make misses,
+/// before any of its effects.
+///
+/// # Safety
+/// `context` is the running lane's context, whose activation's registers hold the caller's
+/// state; nothing the call runs allocates or collects.
+pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
+    let cx = context as usize as *mut LaneContext<H>;
+    let vm = unsafe { vm(cx) };
+    let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
+    let i = unsafe { &*ip };
+    let callee = r.get(i.b);
+    if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) || vm.with_scope_entered {
+        return LANE_CALL_MISSED;
+    }
+    let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else { return LANE_CALL_MISSED };
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    let target = unsafe { &*target };
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else { return LANE_CALL_MISSED };
+    if target.entry != CallEntry::Activates
+        || argc > target.params
+        || argc > FIXED_ARGUMENT_COPIES
+        || !lane_activation_room(vm, target)
+        || lane_crosses::<H, false>(cx, target)
+    {
+        return LANE_CALL_MISSED;
+    }
+    // SAFETY: the record's window of `r` holds its values.
+    let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+    let (registers, start) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, false);
+    let leave = |resume: Ip, acc: Value| {
+        unsafe {
+            (*cx).callee_resume = resume;
+            (*cx).callee_acc = acc;
+        }
+        LANE_CALL_LEFT
+    };
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
+    let Some(own) = own else { return leave(start, Value::UNDEFINED) };
+    let Some(method) = own.lane_body().filter(|method| lane_inlined_calls_activate(cx, method)) else {
+        return leave(start, Value::UNDEFINED);
+    };
+    let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
+    let (program, code, base) = unsafe { ((*cx).program, &*(*cx).code, (*cx).base) };
+    let captures = capture_reads(unsafe { (*cx).capture });
+    match vm.run_lane_method(method, program, code, registers.0, receiver, captures, cx.cast()) {
+        super::compiled::LaneExit::At(pc) => {
+            // A plain `Return` the body left at completes the call here.
+            let returned = code
+                .function_get(target.function as usize)
+                .and_then(|body| body.code.get(pc).map(|packed| decoded_instruction(body, *packed)))
+                .filter(|instruction| instruction.op() == Op::Return && instruction.result_flags() == 0);
+            if let Some(instruction) = returned
+                && lane_return_plain(cx, registers.get(instruction.register_a())).is_some()
+            {
+                return LANE_CALL_COMPLETED;
+            }
+            let acc = own
+                .accumulator_registers
+                .get(pc)
+                .filter(|register| **register != NO_ACCUMULATOR)
+                .map_or(Value::UNDEFINED, |register| registers.get(*register));
+            // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
+            leave(unsafe { base.add(pc) }, acc)
+        }
+        super::compiled::LaneExit::Inlined { frame, pc } => {
+            let (_, resume, carried) = lane_body_inlined_activation(cx, registers, base, &method.inlined[frame], pc);
+            leave(resume, unsafe { carried.acc.get() })
+        }
+        super::compiled::LaneExit::Callee => LANE_CALL_LEFT,
+    }
 }
 
 /// Whether activating `target` leaves the running program. Every activation tests it, so an
@@ -19171,6 +19264,8 @@ impl<H: Host> Vm<H> {
                 }),
             this: self.frame_lane_this(*frame),
             resumed_acc: Slot::of(Value::UNDEFINED),
+            callee_resume: std::ptr::null(),
+            callee_acc: Value::UNDEFINED,
             backedges_left: self
                 .lane_credits_backedges(code, program)
                 .then_some(super::program_store::WASM_JIT_BACKEDGES_PER_ENTRY),

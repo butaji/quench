@@ -106,6 +106,9 @@ struct Lowering<'a, 'f> {
     native: usize,
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
     pending: Vec<(ir::Block, State, u32)>,
+    /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
+    /// so no read or store folds the receiver facts its entry proved.
+    native_calls: bool,
     /// The registers' types at each block leader (`facts::analyze`).
     facts: super::facts::Facts,
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
@@ -493,6 +496,7 @@ fn lower(
         entry: None,
         native: 0,
         pending: Vec::new(),
+        native_calls: unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
         facts: super::facts::Facts::default(),
         live,
         valid: true,
@@ -685,6 +689,7 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
+            Op::Call if plain && !instruction.direct_eval() && !instruction.parameter_eval() => Some(self.call(state, pc, instruction)),
             Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
@@ -904,6 +909,53 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// A call the unit does not inline, made natively (`dispatch_fast::lane_body_call`) from
+    /// the caller's registers, which it writes back first: a completed call's result is in
+    /// its register; a missed one leaves at the call; one that left the lane in its callee's
+    /// activation leaves the body there too (`LaneExit::Callee`).
+    fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let Some(super::lane_unit::Origin::Caller(call_pc)) = self.unit.origins.get(pc).copied() else {
+            self.exit(state, pc as u32);
+            return false;
+        };
+        let missed = self.guard_exit(state, pc as u32);
+        self.canonicalize(state, pc);
+        let caller_registers = self.unit.caller_registers;
+        for register in self.written.clone().into_iter().filter(|register| *register < caller_registers) {
+            if !self.is_live(pc, register) { continue; }
+            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
+            let base = self.registers_base;
+            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+        }
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let call_pc = self.ins().iconst(types::I64, i64::from(call_pc));
+        let status = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.call, &[context, call_pc]);
+        let completed = self.builder.create_block();
+        let other = self.builder.create_block();
+        let left = self.builder.create_block();
+        self.builder.set_cold_block(left);
+        let done = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64);
+        self.ins().brif(done, completed, &[], other, &[]);
+        self.builder.switch_to_block(other);
+        let miss = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
+        self.ins().brif(miss, missed, &[], left, &[]);
+        self.builder.switch_to_block(left);
+        let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
+        let result = self.result;
+        self.ins().store(MemFlagsData::trusted(), word, result, 0);
+        let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
+        self.ins().return_(&[stopped]);
+        self.builder.switch_to_block(completed);
+        // The callee may have changed any object: block-local proofs of them retire.
+        state.shapes.clear();
+        state.layouts.clear();
+        let destination = instruction.result_register();
+        let base = self.registers_base;
+        let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
+        self.set_tagged(state, destination, bits);
+        true
+    }
+
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         let exit = self.guard_exit(state, pc);
         let context = self.context;
@@ -942,9 +994,10 @@ impl Lowering<'_, '_> {
         if register.is_some_and(|register| register >= self.unit.registers) {
             return None;
         }
-        let receiver = base == crate::bytecode::FieldBase::THIS
-            || register.is_some_and(|register| state.receivers.contains(&register));
-        if !shapes.is_empty() {
+        let receiver = !self.native_calls
+            && (base == crate::bytecode::FieldBase::THIS
+                || register.is_some_and(|register| state.receivers.contains(&register)));
+        if !shapes.is_empty() && (receiver || register.is_some()) {
             // The site's proved shapes and slots, folded: one shape load of the object (the
             // receiver's was proved at entry), a compare per shape, a direct read.
             let (object, shape, inline) = if receiver {
@@ -962,7 +1015,7 @@ impl Lowering<'_, '_> {
             self.set_tagged(state, destination, value);
             return Some(true);
         }
-        let object_bits = if receiver && register.is_none() {
+        let object_bits = if register.is_none() {
             let entry = self.entry.as_ref().expect("entry facts");
             self.builder.use_var(entry.this)
         } else {
@@ -1056,12 +1109,17 @@ impl Lowering<'_, '_> {
             Some(self.unit.frames[*frame].receiver)
         } else { None };
         if register.is_some_and(|register| register >= self.unit.registers) { return None; }
-        let receiver = register.is_none() || register.is_some_and(|register| state.receivers.contains(&register));
+        let receiver = register.is_none() || (!self.native_calls && register.is_some_and(|register| state.receivers.contains(&register)));
         let owner = if receiver { None } else { register };
         let exit = self.guard_exit(state, pc as u32);
         let atom = instruction.atom_index();
         let barrier_free = state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER);
         let value = self.tagged(state, source);
+        if self.native_calls && register.is_none() {
+            let this = self.builder.use_var(self.entry.as_ref().expect("entry facts").this);
+            self.store_helper(this, atom, instruction.cache_site_index(), value, exit);
+            return Some(true);
+        }
         let object_bits = if receiver {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").this)
         } else { self.tagged(state, register.expect("register receiver")) };
@@ -1260,7 +1318,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1283,7 +1341,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0 }, &[], &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &[], &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

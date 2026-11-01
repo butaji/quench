@@ -2034,6 +2034,8 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, rec
 pub(super) struct LaneHelpers {
     field_get: usize,
     field_set: usize,
+    /// A call the body does not inline (`dispatch_fast::lane_body_call`).
+    call: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -6705,6 +6707,8 @@ struct JsStepDispatch {
     /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     inlined: usize,
+    /// A lane body's running lane context, which its native calls make activations in.
+    lane_context: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6731,25 +6735,41 @@ pub(super) struct LaneMethod {
 pub(super) enum LaneExit {
     At(usize),
     Inlined { frame: usize, pc: u32 },
+    /// A native call made its callee's activation and the lane continues in it
+    /// (`dispatch_fast::lane_body_call`).
+    Callee,
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
 /// index sits above the callee PC's word.
 const INLINED_EXIT: u64 = 1 << 63;
+/// The result word of a leave into a native call's callee activation.
+const CALLEE_EXIT: u64 = 1 << 62;
+
+/// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
+/// result in the call's register; missed before any effect, so the body leaves at the call;
+/// or left the lane in the callee's activation it made.
+pub(super) const LANE_CALL_COMPLETED: u64 = 0;
+pub(super) const LANE_CALL_MISSED: u64 = 1;
+pub(super) const LANE_CALL_LEFT: u64 = 2;
 
 impl LaneExit {
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } => None }
+        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } | Self::Callee => None }
     }
     pub(super) fn word(self) -> u64 {
         match self {
             Self::At(pc) => pc as u64,
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
+            Self::Callee => CALLEE_EXIT,
         }
     }
 
     fn decode(word: u64) -> Self {
+        if word == CALLEE_EXIT {
+            return Self::Callee;
+        }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
         }
@@ -6844,16 +6864,14 @@ impl<H: Host> Vm<H> {
         let helpers = LaneHelpers {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
+            call: super::dispatch_fast::lane_body_call::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize))?;
         // Until calls stay native (TOD-1219), a body that calls leaves at every call it does
         // not inline and pays its entry again in each callee's return; it runs cheaper in
         // the lane.
-        if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) {
-            self.host.after_native_compilation();
-            return None;
-        }
+
         let caller_fields = self.lane_receiver_fields(program, function);
         let callee_fields: Vec<_> = unit.frames.iter().map(|frame| self.lane_receiver_fields(program, frame.target.function)).collect();
         let receiver_fields: Vec<Vec<NativeFieldLoad>> = unit
@@ -6894,33 +6912,49 @@ impl<H: Host> Vm<H> {
         registers: *mut Value,
         receiver: Value,
         captures: *const crate::heap::EnvironmentSlots,
+        lane_context: *mut (),
     ) -> LaneExit {
-        let (status, word) = LANE_FRAME.with(|frame| {
-            // SAFETY: a lane body never re-enters the VM, so no other borrow of this
-            // thread's frame is live; the frame is never moved once made.
-            let frame = unsafe { &mut *frame.get() };
-            let frame = frame.get_or_insert_with(LaneFrame::new);
-            let width = method.inlined.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
-            if frame.scratch.len() < width {
-                frame.scratch.resize(width, Value::UNDEFINED);
+        // A lane body re-enters here only through a native call (`lane_body_call`), whose
+        // callee's entry completes before its caller continues: each entry saves the
+        // per-entry words it overwrites and restores them for the body it returns to.
+        let frame = LANE_FRAME.with(|frame| frame.get());
+        // SAFETY: the frame lives for the thread and is never moved once made; no reference
+        // into it is held across the body's run, which may enter it again.
+        let frame = unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame };
+        let width = method.inlined.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
+        let (context, dispatch, saved) = unsafe {
+            if (*frame).scratch.len() < width {
+                (*frame).scratch.resize(width, Value::UNDEFINED);
             }
-            let dispatch = &mut frame.dispatch;
-            dispatch.inlined = frame.scratch.as_mut_ptr().addr();
-            dispatch.native_registers = registers;
-            dispatch.receiver = receiver.to_bits();
-            dispatch.captures = captures as usize;
-            dispatch.vm = (self as *mut Self).addr();
-            dispatch.residual = residual as *const ResidualProgram as usize;
-            dispatch.refresh_lane_bases(self, program, &mut frame.program);
-            let context = &mut frame.context;
-            context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
-            context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
-            let mut word = 0_u64;
-            // SAFETY: the body was compiled for this function, never allocates or
-            // collects, and reads only the registers, constants and heap bases set above.
-            let status = unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) };
-            (status, word)
-        });
+            let dispatch = &raw mut (*frame).dispatch;
+            let saved = LaneEntry::of(&*dispatch);
+            LaneEntry {
+                lane_context: lane_context.addr(),
+                native_registers: registers,
+                receiver: receiver.to_bits(),
+                captures: captures as usize,
+                residual: residual as *const ResidualProgram as usize,
+            }
+            .install(&mut *dispatch);
+            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
+            (*dispatch).vm = (self as *mut Self).addr();
+            (*dispatch).refresh_lane_bases(self, program, &mut (*frame).program);
+            let context = &raw mut (*frame).context;
+            (*context).adapter_payload = dispatch.cast();
+            (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            (context, dispatch, saved)
+        };
+        let mut word = 0_u64;
+        // SAFETY: the body was compiled for this function, never allocates or collects, and
+        // reads only the registers, constants and heap bases set above.
+        let status = unsafe { (method.entry)(&mut *context, 0, 0, registers.cast_const().cast(), &mut word) };
+        // SAFETY: as above. The caller's entry, if any, continues with its own words; its
+        // callee ran in the same program (`lane_crosses`) and allocated nothing, so the
+        // program's bases stand.
+        unsafe {
+            saved.install(&mut *dispatch);
+            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
+        }
         Self::lane_method_exit(status, word)
     }
 
@@ -6934,6 +6968,36 @@ impl<H: Host> Vm<H> {
                 write(register as u16, *value);
             }
         });
+    }
+}
+
+/// The words of `JsStepDispatch` one lane body entry owns (`Vm::run_lane_method`).
+#[derive(Clone, Copy)]
+struct LaneEntry {
+    lane_context: usize,
+    native_registers: *mut Value,
+    receiver: u64,
+    captures: usize,
+    residual: usize,
+}
+
+impl LaneEntry {
+    fn of(dispatch: &JsStepDispatch) -> Self {
+        Self {
+            lane_context: dispatch.lane_context,
+            native_registers: dispatch.native_registers,
+            receiver: dispatch.receiver,
+            captures: dispatch.captures,
+            residual: dispatch.residual,
+        }
+    }
+
+    fn install(self, dispatch: &mut JsStepDispatch) {
+        dispatch.lane_context = self.lane_context;
+        dispatch.native_registers = self.native_registers;
+        dispatch.receiver = self.receiver;
+        dispatch.captures = self.captures;
+        dispatch.residual = self.residual;
     }
 }
 
@@ -6985,6 +7049,7 @@ impl LaneFrame {
                 vm: 0,
                 residual: 0,
                 inlined: 0,
+                lane_context: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7097,6 +7162,7 @@ impl JsStepDispatch {
             vm: 0,
             residual: 0,
             inlined: 0,
+            lane_context: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
