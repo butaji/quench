@@ -18,13 +18,11 @@ pub(super) fn install(
     if context.truthy_rooted(installed)? {
         return Ok(());
     }
-    let native = context.host_function_with_data(
+    let getter = context.host_function_named_with_data(
         crate::host::shared_vm::operation("emitterAsyncConstructor"),
+        "get EventEmitterAsyncResource",
         api,
     )?;
-    let factory = crate::host::removed_javascript("node:events/async-resource-getter.js")?;
-    let undefined = context.undefined();
-    let getter = context.call_rooted(factory, undefined, &[native])?;
     let descriptor = context.null_object_rooted()?;
     context.assign_named_property_rooted(descriptor, "get", getter)?;
     let yes = context.boolean(true);
@@ -245,7 +243,7 @@ pub(crate) fn emit(
     } else {
         context.call_rooted(unshift, values, &prefix)?;
     }
-    let arguments = super::events_shared_vm::listener_records(context, values)?;
+    let arguments = context.array_like_values_rooted(values)?;
     let method = get(context, resource, "runInAsyncScope")?;
     context.call_rooted(method, resource, &arguments)
 }

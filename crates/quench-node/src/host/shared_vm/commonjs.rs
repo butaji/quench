@@ -810,7 +810,6 @@ pub(crate) const WEB_API_GLOBALS: &[&str] = &[
     "__quenchBlobEnsureReadable",
     "Blob",
     "File",
-    "CustomEvent",
 ];
 pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
     "FormData",
@@ -2211,22 +2210,8 @@ fn cached_builtin(
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
     // `fs` installs its library policy with the rest of its members (`initialize_module`).
-    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
+    if matches!(builtin, BuiltinModule::Crypto) {
         let policy = context.with_startup_intrinsics(|context| {
-            if matches!(builtin, BuiltinModule::Events) {
-                let listener = get(context, module, "addAbortListener")?;
-                let data = context.array_rooted(&[module, listener])?;
-                let initialize = context.host_function_with_data(
-                    crate::host::shared_vm::operation("eventsOnInitialize"),
-                    data,
-                )?;
-                return context.define_lazy_data_properties_rooted(
-                    module,
-                    &["on"],
-                    true,
-                    initialize,
-                );
-            }
             let setter =
                 node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
             set(context, module, "setEngine", setter)
@@ -2257,24 +2242,6 @@ pub(crate) fn cached_native_binding(
         .builtin_cache
         .insert(key.to_owned(), retained);
     Ok(value)
-}
-
-pub(crate) fn events_on_initialize(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let module = get(context, data, "0")?;
-    let listener = get(context, data, "1")?;
-    // The pinned public policy uses the same native abort authority as events.
-    // Capture it before guest replacement of the public alias, and load policy
-    // only when `on` is observed, through the VM's ordinary data-property model.
-    let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
-    set(context, abort, "addAbortListener", listener)?;
-    let on = node_library_export(context, "events.js", "events.js", "on")?;
-    set(context, module, "on", on)?;
-    Ok(context.undefined())
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
