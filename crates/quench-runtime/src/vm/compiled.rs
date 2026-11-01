@@ -1688,37 +1688,8 @@ fn emit_js_own_field_set(
     next: ir::Block,
     exact: &JsExactFallback,
 ) {
-    use crate::value::ValueLayout;
-
     let fallback = builder.create_block();
-    let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
-    let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-    emit_js_guard(builder, specialized, fallback);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
-    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-    emit_js_guard(builder, immediate, fallback);
-    // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
-    let word_index = atom / u64::BITS;
-    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
-    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
-    let word_present = builder.create_block();
-    let name_free = builder.create_block();
-    let covered = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
-    builder.ins().brif(covered, word_present, &[], name_free, &[]);
-    builder.switch_to_block(word_present);
-    builder.seal_block(word_present);
-    let word = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        words,
-        i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
-    );
-    let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
-    let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
-    builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
-    builder.switch_to_block(name_free);
-    builder.seal_block(name_free);
+    let value = emit_js_store_admits(builder, arguments, payload, value_offset, atom, fallback);
     let address = emit_js_own_field_slot(builder, base_source, payload, base_offset, site, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     builder.ins().jump(next, &[]);
@@ -1806,6 +1777,51 @@ fn emit_lane_field_set(
     exact.emit(builder, exit);
 }
 
+/// The checks a direct own-field store makes before writing, as the lane's store hit does
+/// (`Vm::primary_own_field_store_hit`): a specialized run, a value outside the heap (which
+/// the write barrier never logs) and a name no method cache holds. The value to store,
+/// after which every check has passed; `fallback` otherwise.
+fn emit_js_store_admits(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    value_offset: i32,
+    atom: Atom,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::value::ValueLayout;
+
+    let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+    let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
+    emit_js_guard(builder, specialized, fallback);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
+    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    emit_js_guard(builder, immediate, fallback);
+    // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
+    let word_index = atom / u64::BITS;
+    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
+    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
+    let word_present = builder.create_block();
+    let name_free = builder.create_block();
+    let covered = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
+    builder.ins().brif(covered, word_present, &[], name_free, &[]);
+    builder.switch_to_block(word_present);
+    builder.seal_block(word_present);
+    let word = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        words,
+        i32::try_from(word_index as usize * std::mem::size_of::<u64>()).expect("atom word offset fits i32"),
+    );
+    let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
+    let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
+    builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
+    builder.switch_to_block(name_free);
+    builder.seal_block(name_free);
+    value
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1820,6 +1836,198 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
 pub(super) enum GeneralDispatchMode {
     Frame,
     Lane(LaneHelpers),
+}
+
+/// A receiver field site whose cache entry a lane body folds (Ershov's online division):
+/// the holderless exact shape and slot it proved when the body compiled, under the
+/// shape-layout epoch the body records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ReceiverField {
+    shape: u32,
+    slot: u16,
+}
+
+/// What a lane body knows of its receiver from entry on: nothing in a body's run allocates
+/// or changes a shape (calls and stores that add properties leave it), so the record, exact
+/// shape and storage mode found at entry hold for the whole run.
+struct LaneReceiver {
+    object: Variable,
+    shape: Variable,
+    inline: Variable,
+    properties: Variable,
+    properties_len: Variable,
+}
+
+/// Read own data slot `slot` of the object record at `object`, whose meta's inline-storage
+/// bits are `inline`, as `Object::inline_property` and arena storage hold it; `miss` where
+/// the payload carries extras or the slot is outside the arena.
+#[allow(clippy::too_many_arguments)]
+fn emit_object_slot_read(
+    builder: &mut FunctionBuilder<'_>,
+    object: ir::Value,
+    inline: ir::Value,
+    properties: ir::Value,
+    properties_len: ir::Value,
+    slot: u16,
+    miss: ir::Block,
+) -> ir::Value {
+    use crate::value::ValueLayout;
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
+    let extras = builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
+    let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
+    emit_js_guard(builder, plain, miss);
+    let inline_block = builder.create_block();
+    let arena_block = builder.create_block();
+    let join = builder.create_block();
+    let bits = builder.append_block_param(join, types::I64);
+    builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
+
+    builder.switch_to_block(inline_block);
+    if usize::from(slot) >= layout.inline_property_count {
+        builder.ins().jump(miss, &[]);
+    } else {
+        let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
+        let narrow = builder.ins().ireduce(types::I32, half);
+        let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
+        let integer_block = builder.create_block();
+        let reference_block = builder.create_block();
+        builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
+        builder.switch_to_block(integer_block);
+        let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+        let value = builder.ins().uextend(types::I64, value);
+        let encoded = builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
+        builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+        builder.switch_to_block(reference_block);
+        let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+        let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
+        let code = builder.ins().uextend(types::I64, code);
+        let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
+        let table = builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
+        let address = builder.ins().iadd(table, offset);
+        let upper = builder.ins().load(types::I64, invariant(), address, 0);
+        let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
+        let lower = builder.ins().uextend(types::I64, lower);
+        let encoded = builder.ins().bor(upper, lower);
+        builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    }
+
+    builder.switch_to_block(arena_block);
+    let address = emit_arena_slot_address(builder, payload, properties, properties_len, slot, miss);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+
+    builder.switch_to_block(join);
+    bits
+}
+
+/// The address of arena slot `slot` of an object whose payload word `payload` holds plain
+/// storage (`Object::plain_storage_start`); `miss` where it lies outside the arena.
+fn emit_arena_slot_address(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    properties: ir::Value,
+    properties_len: ir::Value,
+    slot: u16,
+    miss: ir::Block,
+) -> ir::Value {
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let start = builder.ins().ireduce(types::I32, payload);
+    let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
+    let position = builder.ins().iadd_imm_u(start, i64::from(slot));
+    let position = builder.ins().uextend(types::I64, position);
+    let inside = builder.ins().icmp(IntCC::UnsignedLessThan, position, properties_len);
+    emit_js_guard(builder, inside, miss);
+    let offset = builder.ins().imul_imm_u(position, layout.property_value_size as i64);
+    builder.ins().iadd(properties, offset)
+}
+
+/// A lane body's folded receiver store: under the site's proved shape, an admitted value
+/// (`emit_js_store_admits`) written straight to the receiver's arena slot. Inline storage,
+/// whose narrow encoding the lane's store makes, and every failed proof take `general`.
+#[allow(clippy::too_many_arguments)]
+fn emit_lane_receiver_store(
+    builder: &mut FunctionBuilder<'_>,
+    receiver: &LaneReceiver,
+    arguments: ir::Value,
+    payload: ir::Value,
+    value_offset: i32,
+    atom: Atom,
+    field: ReceiverField,
+    next: ir::Block,
+    general: ir::Block,
+) {
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let shape = builder.use_var(receiver.shape);
+    let same = builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+    emit_js_guard(builder, same, general);
+    let inline = builder.use_var(receiver.inline);
+    let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+    emit_js_guard(builder, arena, general);
+    let value = emit_js_store_admits(builder, arguments, payload, value_offset, atom, general);
+    let object = builder.use_var(receiver.object);
+    let properties = builder.use_var(receiver.properties);
+    let properties_len = builder.use_var(receiver.properties_len);
+    let word = builder.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
+    let extras = builder.ins().band_imm_u(word, layout.extras_tag_mask as i64);
+    let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
+    emit_js_guard(builder, plain, general);
+    let address = emit_arena_slot_address(builder, word, properties, properties_len, field.slot, general);
+    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    builder.ins().jump(next, &[]);
+}
+
+/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
+/// where the receiver is no direct object or the heap bases are absent, which no folded
+/// field matches.
+fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, receiver_offset: i32) -> LaneReceiver {
+    use crate::value::ValueLayout;
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let receiver = LaneReceiver {
+        object: builder.declare_var(types::I64),
+        shape: builder.declare_var(types::I32),
+        inline: builder.declare_var(types::I32),
+        properties: builder.declare_var(types::I64),
+        properties_len: builder.declare_var(types::I64),
+    };
+    let this = builder.ins().load(types::I64, MemFlagsData::trusted(), payload, receiver_offset);
+    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let properties = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
+    let properties_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+    builder.def_var(receiver.properties, properties);
+    builder.def_var(receiver.properties_len, properties_len);
+    let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
+    let zero = builder.ins().iconst(types::I32, 0);
+    let null = builder.ins().iconst(types::I64, 0);
+    builder.def_var(receiver.shape, none);
+    builder.def_var(receiver.inline, zero);
+    builder.def_var(receiver.object, null);
+    let found = builder.create_block();
+    let done = builder.create_block();
+    let family = builder.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let record_id = builder.ins().ireduce(types::I32, this);
+    let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
+    let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+    let has_properties = builder.ins().icmp_imm_u(IntCC::NotEqual, properties, 0);
+    let ok = builder.ins().band(object, in_range);
+    let ok = builder.ins().band(ok, has_records);
+    let ok = builder.ins().band(ok, has_properties);
+    builder.ins().brif(ok, found, &[], done, &[]);
+    builder.switch_to_block(found);
+    let record_id = builder.ins().uextend(types::I64, record_id);
+    let offset = builder.ins().imul_imm_u(record_id, layout.record_size as i64);
+    let address = builder.ins().iadd(records, offset);
+    // The exact shape carries the dictionary bit, so a dictionary never matches.
+    let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
+    let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.meta_offset as i32);
+    let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+    builder.def_var(receiver.object, address);
+    builder.def_var(receiver.shape, shape);
+    builder.def_var(receiver.inline, inline);
+    builder.ins().jump(done, &[]);
+    builder.switch_to_block(done);
+    receiver
 }
 
 /// The host-specific semantic helpers a lane body calls where its native path does not
@@ -1848,6 +2056,7 @@ pub(super) fn compile_js_general_dispatch(
     function_id: u32,
     unresolved_names_are_global: bool,
     mode: GeneralDispatchMode,
+    receiver_fields: &[Option<ReceiverField>],
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
     let helpers = match mode {
         GeneralDispatchMode::Lane(helpers) => Some(helpers),
@@ -1917,6 +2126,10 @@ pub(super) fn compile_js_general_dispatch(
     let start_pc = builder
         .ins()
         .load(types::I64, MemFlagsData::trusted(), start_pc_address, 0);
+    let lane_receiver = lane.then(|| {
+        let offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, receiver)).expect("JS dispatch offset fits i32");
+        emit_lane_receiver(&mut builder, payload, offset)
+    });
     builder
         .ins()
         .jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
@@ -1954,6 +2167,11 @@ pub(super) fn compile_js_general_dispatch(
     // `this` through the VM.
     let receiver_offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, receiver))
         .expect("JS dispatch offset fits i32");
+    let terminal_return = function.code.len().checked_sub(1).and_then(|pc| {
+        let terminal = super::dispatch_fast::decoded_instruction(function, function.code[pc]);
+        (terminal.op() == Op::Return && terminal.result_flags() == 0 && !terminal.writes_current_this())
+            .then(|| (pc, terminal.register_a()))
+    });
     let field_base = |base: crate::bytecode::FieldBase| -> Option<(ir::Value, i32)> {
         match base.register_index() {
             Some(register) => register_offset(register).map(|offset| (arguments, offset)),
@@ -2039,6 +2257,21 @@ pub(super) fn compile_js_general_dispatch(
                 pc,
             };
             let helpers = helpers.expect("a lane body has helpers");
+            if let (Some(receiver), Some(Some(field))) = (&lane_receiver, receiver_fields.get(pc)) {
+                let general = builder.create_block();
+                emit_lane_receiver_store(
+                    &mut builder,
+                    receiver,
+                    arguments,
+                    payload,
+                    value_offset,
+                    instruction.atom_index(),
+                    *field,
+                    next,
+                    general,
+                );
+                builder.switch_to_block(general);
+            }
             emit_lane_field_set(
                 &mut builder,
                 arguments,
@@ -2182,6 +2415,24 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
+            if base == crate::bytecode::FieldBase::THIS
+                && let (Some(receiver), Some(Some(field))) = (&lane_receiver, receiver_fields.get(pc))
+            {
+                // The site's proved shape and slot, folded: one shape test of the receiver
+                // found at entry and a direct read; anything else takes the general read.
+                let general = builder.create_block();
+                let shape = builder.use_var(receiver.shape);
+                let same = builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+                emit_js_guard(&mut builder, same, general);
+                let object = builder.use_var(receiver.object);
+                let inline = builder.use_var(receiver.inline);
+                let properties = builder.use_var(receiver.properties);
+                let properties_len = builder.use_var(receiver.properties_len);
+                let value = emit_object_slot_read(&mut builder, object, inline, properties, properties_len, field.slot, general);
+                builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+                builder.ins().jump(next, &[]);
+                builder.switch_to_block(general);
+            }
             match helpers {
                 Some(helpers) => emit_lane_field_get(&mut builder, arguments, payload, helpers, base_source, base_offset, cache_site, destination_offset, next, &exact),
                 None => emit_js_own_field_get(&mut builder, arguments, payload, base_source, base_offset, cache_site, destination_offset, next, &exact),
@@ -2713,8 +2964,23 @@ pub(super) fn compile_js_general_dispatch(
             continue;
         }
 
-        // The operator is read only once the op is a numeric binary.
+        // Where an arithmetic result goes and where control continues. A lane body completes
+        // an instruction that returns its result at the function's terminal `Return`: the
+        // activation ends, so that record's register is free, and the lane resumes there.
         let numeric_binary = instruction.op().js_denotation() == JsDenotation::NumericBinary;
+        let (result_target, result_next) = if !numeric_binary {
+            (None, None)
+        } else if !instruction.returns_from_frame() {
+            (Some(instruction.result_register()), next)
+        } else if lane
+            && instruction.result_flags() == crate::bytecode::RETURN_REGISTER
+            && let Some((terminal_pc, register)) = terminal_return
+        {
+            (Some(register), blocks.get(terminal_pc).copied())
+        } else {
+            (None, None)
+        };
+        // The operator is read only once the op is a numeric binary.
         let arithmetic = numeric_binary
             .then(|| {
                 super::operations::NumberArithmetic::from_js_instruction(
@@ -2732,22 +2998,25 @@ pub(super) fn compile_js_general_dispatch(
                 )
             })
             .flatten();
+        // A returning result's flags are the return bit alone (`result_target`).
+        let result_flags_plain = instruction.result_flags() == 0
+            || (instruction.returns_from_frame() && result_target.is_some());
         let numeric_result = numeric_binary
             && arithmetic.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
+            && result_flags_plain
             && !instruction.writes_current_this()
-            && register_offset(instruction.result_register()).is_some()
+            && result_target.and_then(register_offset).is_some()
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
         if let (true, Some(next), Some(arithmetic), Some((left_operand, right_operand))) =
-            (numeric_result, next, arithmetic, operands)
+            (numeric_result, result_next, arithmetic, operands)
         {
             let fallback = builder.create_block();
-            let destination = register_offset(instruction.result_register())
+            let destination = result_target
+                .and_then(register_offset)
                 .expect("prevalidated JS numeric destination");
             let left_bits = read_js_tagged_operand(
                 &mut builder,
@@ -2817,20 +3086,20 @@ pub(super) fn compile_js_general_dispatch(
         let bitwise_result = numeric_binary
             && bitwise.is_some()
             && instruction.numeric_local_target().is_none()
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
+            && result_flags_plain
             && !instruction.writes_current_this()
-            && register_offset(instruction.result_register()).is_some()
+            && result_target.and_then(register_offset).is_some()
             && operands.is_some_and(|(left, right)| {
                 js_tagged_operand_supported(program, left, &register_offset)
                     && js_tagged_operand_supported(program, right, &register_offset)
             });
         if let (true, Some(next), Some(operation), Some((left_operand, right_operand))) =
-            (bitwise_result, next, bitwise, operands)
+            (bitwise_result, result_next, bitwise, operands)
         {
             let fallback = builder.create_block();
             let native = builder.create_block();
-            let destination = register_offset(instruction.result_register())
+            let destination = result_target
+                .and_then(register_offset)
                 .expect("prevalidated JS bitwise destination");
             let left_bits = read_js_tagged_operand(
                 &mut builder,
@@ -6323,6 +6592,9 @@ struct JsStepDispatch {
 pub(super) struct LaneMethod {
     _code: CodeMemory,
     entry: Entry,
+    /// The shape-layout epoch its folded receiver fields were proved under, if it folds any.
+    /// Collection may remap shape IDs; a later epoch runs the lane instead.
+    shape_epoch: Option<u64>,
 }
 
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
@@ -6380,6 +6652,28 @@ unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
 }
 
 impl<H: Host> Vm<H> {
+    /// The receiver field sites of `function` whose cache entries prove a holderless exact
+    /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
+    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Option<ReceiverField>> {
+        let Some(body) = program.function_get(function as usize) else { return Vec::new() };
+        body.code
+            .iter()
+            .map(|packed| {
+                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+                let site = match instruction.op() {
+                    Op::GetField => match instruction.field_lookup() {
+                        Some(FieldLookup::Atom { base, cache_site, .. })
+                            if base == crate::bytecode::FieldBase::THIS => cache_site,
+                        _ => return None,
+                    },
+                    Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
+                    _ => return None,
+                };
+                self.native_field_load_descriptor(site).map(|(shape, slot)| ReceiverField { shape, slot })
+            })
+            .collect()
+    }
+
     /// Specialize `function` for lane activations, admitting a body only where its first
     /// instruction runs natively: an entry that leaves at once is pure cost.
     pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32) -> Option<LaneMethod> {
@@ -6388,18 +6682,24 @@ impl<H: Host> Vm<H> {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
         };
-        let artifact = compile_js_general_dispatch(program, function, false, GeneralDispatchMode::Lane(helpers));
+        let epoch = crate::heap::prototype_layout_epoch();
+        let receiver_fields = self.lane_receiver_fields(program, function);
+        let artifact = compile_js_general_dispatch(program, function, false, GeneralDispatchMode::Lane(helpers), &receiver_fields);
         self.host.after_native_compilation();
         let artifact = artifact.ok()?;
         if artifact.general_dispatch_native_pcs.first() != Some(&1) {
             return None;
         }
         let code = CodeMemory::new(&artifact.code)?;
+        if let Some(directory) = native_dump_directory() {
+            dump_native_code(directory, function, &code, "lane body: no CLIF retained");
+        }
         // SAFETY: the general dispatcher emits the shared native-entry ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
         #[cfg(test)]
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Some(LaneMethod { _code: code, entry })
+        let shape_epoch = receiver_fields.iter().any(Option::is_some).then_some(epoch);
+        Some(LaneMethod { _code: code, entry, shape_epoch })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -6413,6 +6713,10 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         captures: *const crate::heap::EnvironmentSlots,
     ) -> usize {
+        if method.shape_epoch.is_some_and(|epoch| epoch != crate::heap::prototype_layout_epoch()) {
+            // The folded shapes may name others now: nothing ran, so the lane starts here.
+            return 0;
+        }
         let (status, word) = LANE_FRAME.with(|frame| {
             // SAFETY: a lane body never re-enters the VM, so no other borrow of this
             // thread's frame is live; the frame is never moved once made.
@@ -13023,6 +13327,7 @@ impl<H: Host> Vm<H> {
                             function_id,
                             unresolved_names_are_global,
                             GeneralDispatchMode::Frame,
+                            &[],
                         ) {
                             Ok(artifact) => (Some(artifact), None),
                             Err(rejection) => (None, Some(rejection)),
