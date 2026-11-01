@@ -299,6 +299,12 @@ pub(crate) fn is_function(c: &mut Context<'_>, value: RootId) -> Result<bool, Ro
     c.is_callable_rooted(value)
 }
 
+/// Whether `object[name]` is truthy.
+pub(crate) fn truthy_member(c: &mut Context<'_>, object: RootId, name: &str) -> Result<bool, RootedError> {
+    let value = get(c, object, name)?;
+    c.truthy_rooted(value)
+}
+
 /// The number a numeric field holds, read as JavaScript arithmetic reads it.
 pub(crate) fn number(c: &mut Context<'_>, object: RootId, name: &str) -> Result<f64, RootedError> {
     let value = get(c, object, name)?;

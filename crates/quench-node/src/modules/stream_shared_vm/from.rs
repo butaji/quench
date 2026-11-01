@@ -78,18 +78,13 @@ pub(crate) fn whole_read(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Out
     Ok(c.undefined())
 }
 
-fn flag(c: &mut Context<'_>, record: RootId, name: &str) -> Result<bool, RootedError> {
-    let value = get(c, record, name)?;
-    c.truthy_rooted(value)
-}
-
 pub(crate) fn read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     let [record] = captures(c)?;
-    if !flag(c, record, "reading")? {
+    if !super::truthy_member(c, record, "reading")? {
         put_bool(c, record, "reading", true)?;
-        if flag(c, record, "isAsync")? {
+        if super::truthy_member(c, record, "isAsync")? {
             next_async(c, record)?;
-        } else if flag(c, record, "isAsyncValues")? {
+        } else if super::truthy_member(c, record, "isAsyncValues")? {
             next_sync_with_async_values(c, record)?;
         } else {
             next_sync(c, record)?;

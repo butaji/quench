@@ -306,10 +306,6 @@ fn clear_await_drain(c: &mut Context<'_>, state: RootId) -> Result<(), RootedErr
     Ok(())
 }
 
-fn chunk_size(c: &mut Context<'_>, state: RootId, chunk: RootId) -> Result<f64, RootedError> {
-    if state::has(c, state, state::OBJECT_MODE)? { Ok(1.0) } else { length_of(c, chunk) }
-}
-
 /// `addChunk(stream, state, chunk, addToFront)`.
 fn add_chunk(c: &mut Context<'_>, stream: RootId, state: RootId, chunk: RootId, front: bool) -> Result<(), RootedError> {
     let field = bits(c, state)?;
@@ -319,7 +315,7 @@ fn add_chunk(c: &mut Context<'_>, stream: RootId, state: RootId, chunk: RootId, 
         change(c, state, DATA_EMITTED, 0)?;
         emit(c, stream, "data", &[chunk])?;
     } else {
-        let size = chunk_size(c, state, chunk)?;
+        let size = state::chunk_size(c, state, chunk)?;
         let length = number(c, state, "length")?;
         put_number(c, state, "length", length + size)?;
         let buffer = get(c, state, "buffer")?;
@@ -673,7 +669,7 @@ fn on_eof_chunk(c: &mut Context<'_>, stream: RootId, state: RootId) -> Result<()
         if c.truthy_rooted(chunk)? && length_of(c, chunk)? != 0.0 {
             let buffer = get(c, state, "buffer")?;
             call_method(c, buffer, "push", &[chunk])?;
-            let size = chunk_size(c, state, chunk)?;
+            let size = state::chunk_size(c, state, chunk)?;
             let length = number(c, state, "length")?;
             put_number(c, state, "length", length + size)?;
         }
@@ -751,12 +747,6 @@ pub(crate) fn maybe_read_more_tick(c: &mut Context<'_>, _: RootId, args: &[RootI
 
 pub(crate) fn default_read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     Err(errors::throw(c, StreamError::MethodNotImplemented("_read()")))
-}
-
-/// The record one `pipe` call's listeners share.
-fn pipe_record(c: &mut Context<'_>) -> Outcome {
-    let [record] = captures(c)?;
-    Ok(record)
 }
 
 const PIPE_LISTENERS: &[(&str, &str)] = &[
@@ -847,7 +837,7 @@ fn new_set(c: &mut Context<'_>, values: RootId) -> Outcome {
 }
 
 pub(crate) fn pipe_on_unpipe(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     let (readable, info) = (arg(c, args, 0), arg(c, args, 1));
     let src = get(c, record, "src")?;
     if c.strict_equal_rooted(readable, src)? && c.truthy_rooted(info)? {
@@ -862,14 +852,14 @@ pub(crate) fn pipe_on_unpipe(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
 }
 
 pub(crate) fn pipe_on_end(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     let dest = get(c, record, "dest")?;
     call_method(c, dest, "end", &[])?;
     Ok(c.undefined())
 }
 
 pub(crate) fn pipe_cleanup(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     pipe_cleanup_now(c, record)?;
     Ok(c.undefined())
 }
@@ -944,7 +934,7 @@ fn pipe_pause(c: &mut Context<'_>, record: RootId) -> Result<(), RootedError> {
 }
 
 pub(crate) fn pipe_on_data(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     let chunk = arg(c, args, 0);
     let dest = get(c, record, "dest")?;
     let written = call_method(c, dest, "write", &[chunk])?;
@@ -956,7 +946,7 @@ pub(crate) fn pipe_on_data(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> O
 }
 
 pub(crate) fn pipe_on_error(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     let error = arg(c, args, 0);
     pipe_unpipe_now(c, record)?;
     let dest = get(c, record, "dest")?;
@@ -981,7 +971,7 @@ pub(crate) fn pipe_on_error(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 }
 
 pub(crate) fn pipe_on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     let dest = get(c, record, "dest")?;
     let listener = get(c, record, "onfinish")?;
     remove_listener(c, dest, "finish", listener)?;
@@ -990,7 +980,7 @@ pub(crate) fn pipe_on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Out
 }
 
 pub(crate) fn pipe_on_finish(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     let dest = get(c, record, "dest")?;
     let listener = get(c, record, "onclose")?;
     remove_listener(c, dest, "close", listener)?;
@@ -999,7 +989,7 @@ pub(crate) fn pipe_on_finish(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Ou
 }
 
 pub(crate) fn pipe_unpipe(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = pipe_record(c)?;
+    let [record] = captures(c)?;
     pipe_unpipe_now(c, record)?;
     Ok(c.undefined())
 }

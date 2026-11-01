@@ -82,13 +82,8 @@ pub(crate) fn pipe(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     Ok(dest)
 }
 
-fn record(c: &mut Context<'_>) -> Outcome {
-    let [record] = captures(c)?;
-    Ok(record)
-}
-
 pub(crate) fn on_data(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let chunk = arg(c, args, 0);
     let source = get(c, record, "source")?;
     let dest = get(c, record, "dest")?;
@@ -105,7 +100,7 @@ pub(crate) fn on_data(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcom
 }
 
 pub(crate) fn on_drain(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let source = get(c, record, "source")?;
     let readable = get(c, source, "readable")?;
     let resume = get(c, source, "resume")?;
@@ -126,7 +121,7 @@ fn end_once(c: &mut Context<'_>, record: RootId) -> Result<bool, RootedError> {
 }
 
 pub(crate) fn on_end(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     if end_once(c, record)? {
         let dest = get(c, record, "dest")?;
         call_method(c, dest, "end", &[])?;
@@ -135,7 +130,7 @@ pub(crate) fn on_end(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
 }
 
 pub(crate) fn on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     if end_once(c, record)? {
         let dest = get(c, record, "dest")?;
         let destroy = get(c, dest, "destroy")?;
@@ -147,7 +142,7 @@ pub(crate) fn on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome 
 }
 
 pub(crate) fn on_error(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let error = arg(c, args, 0);
     cleanup_now(c, record)?;
     if listener_count(c, this, "error")? == 0.0 {
@@ -157,7 +152,7 @@ pub(crate) fn on_error(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Ou
 }
 
 pub(crate) fn cleanup(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     cleanup_now(c, record)?;
     Ok(c.undefined())
 }

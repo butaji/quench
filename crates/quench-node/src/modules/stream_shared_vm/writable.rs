@@ -205,10 +205,6 @@ pub(crate) fn set_default_encoding(c: &mut Context<'_>, this: RootId, args: &[Ro
     Ok(this)
 }
 
-fn chunk_size(c: &mut Context<'_>, state: RootId, chunk: RootId) -> Result<f64, RootedError> {
-    if state::has(c, state, state::OBJECT_MODE)? { Ok(1.0) } else { length_of(c, chunk) }
-}
-
 /// `state.writecb = cb` unless it is `nop`.
 fn hold_callback(c: &mut Context<'_>, state: RootId, callback: RootId) -> Result<(), RootedError> {
     let nop = intrinsics(c)?.nop;
@@ -221,7 +217,7 @@ fn hold_callback(c: &mut Context<'_>, state: RootId, callback: RootId) -> Result
 
 /// `writeOrBuffer(stream, state, chunk, encoding, callback)`.
 fn write_or_buffer(c: &mut Context<'_>, stream: RootId, state: RootId, chunk: RootId, encoding: RootId, callback: RootId) -> Result<bool, RootedError> {
-    let size = chunk_size(c, state, chunk)?;
+    let size = state::chunk_size(c, state, chunk)?;
     let length = number(c, state, "length")? + size;
     put_number(c, state, "length", length)?;
     let field = bits(c, state)?;
@@ -467,7 +463,7 @@ fn error_buffer(c: &mut Context<'_>, state: RootId) -> Result<(), RootedError> {
             let request = get(c, list, &(index as u64).to_string())?;
             let chunk = get(c, request, "chunk")?;
             let callback = get(c, request, "callback")?;
-            let size = chunk_size(c, state, chunk)?;
+            let size = state::chunk_size(c, state, chunk)?;
             let length = number(c, state, "length")?;
             put_number(c, state, "length", length - size)?;
             let error = destroyed_error(c, state, "write")?;

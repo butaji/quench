@@ -26,12 +26,6 @@ pub(crate) fn pipeline_impl(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
     run(c, streams, callback, options)
 }
 
-/// The record one pipeline run shares with its stages' callbacks.
-fn record(c: &mut Context<'_>) -> Outcome {
-    let [record] = captures(c)?;
-    Ok(record)
-}
-
 fn run(c: &mut Context<'_>, streams: RootId, callback: RootId, options: RootId) -> Outcome {
     let mut stages = c.array_like_values_rooted(streams)?;
     if stages.len() == 1 && c.is_array_rooted(stages[0])? {
@@ -301,7 +295,7 @@ pub(crate) fn stage_destroy(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
 }
 
 pub(crate) fn on_error(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let error = arg(c, args, 0);
     if c.truthy_rooted(error)? {
         let name = get(c, error, "name")?;
@@ -320,7 +314,7 @@ pub(crate) fn remove_error_listener(c: &mut Context<'_>, _: RootId, _: &[RootId]
 }
 
 pub(crate) fn finish(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let error = arg(c, args, 0);
     let count = number(c, record, "finishCount")? - 1.0;
     put_number(c, record, "finishCount", count)?;
@@ -329,14 +323,14 @@ pub(crate) fn finish(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
 }
 
 pub(crate) fn finish_only_handle_error(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let error = arg(c, args, 0);
     finish_impl(c, record, error, false)?;
     Ok(c.undefined())
 }
 
 pub(crate) fn abort(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let signal = get(c, record, "outerSignal")?;
     let reason = if is_nullish(c, signal) { c.undefined() } else { get(c, signal, "reason")? };
     let error = errors::abort_error(c, Some(reason))?;
@@ -445,13 +439,8 @@ fn pipe(c: &mut Context<'_>, record: RootId, source: RootId, destination: RootId
     super::eos::eos_with(c, destination, Some(false), Some(true), finish)
 }
 
-fn link(c: &mut Context<'_>) -> Outcome {
-    let [link] = captures(c)?;
-    Ok(link)
-}
-
 pub(crate) fn destination_closed(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let link = link(c)?;
+    let [link] = captures(c)?;
     let ended = get(c, link, "ended")?;
     if !c.truthy_rooted(ended)? {
         let record = get(c, link, "record")?;
@@ -462,7 +451,7 @@ pub(crate) fn destination_closed(c: &mut Context<'_>, _: RootId, _: &[RootId]) -
 }
 
 pub(crate) fn end_destination(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let link = link(c)?;
+    let [link] = captures(c)?;
     put_bool(c, link, "ended", true)?;
     let destination = get(c, link, "destination")?;
     call_method(c, destination, "end", &[])?;
@@ -472,7 +461,7 @@ pub(crate) fn end_destination(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> O
 /// The source's end of stream: a premature close of a source that ended cleanly waits for
 /// its `end`.
 pub(crate) fn source_done(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let link = link(c)?;
+    let [link] = captures(c)?;
     let error = arg(c, args, 0);
     let record = get(c, link, "record")?;
     let source = get(c, link, "source")?;

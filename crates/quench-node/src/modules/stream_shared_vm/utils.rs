@@ -14,11 +14,6 @@ fn has_function(c: &mut Context<'_>, object: RootId, name: &str) -> Result<bool,
     is_function(c, value)
 }
 
-fn member_truthy(c: &mut Context<'_>, object: RootId, name: &str) -> Result<bool, RootedError> {
-    let value = get(c, object, name)?;
-    c.truthy_rooted(value)
-}
-
 /// `object?.[name]`.
 fn optional(c: &mut Context<'_>, object: RootId, name: &str) -> Outcome {
     if is_nullish(c, object) { Ok(c.undefined()) } else { get(c, object, name) }
@@ -39,7 +34,7 @@ pub(crate) fn is_readable_node_stream(c: &mut Context<'_>, object: RootId, stric
     if strict && (!has_function(c, object, "pause")? || !has_function(c, object, "resume")?) {
         return Ok(false);
     }
-    if member_truthy(c, object, "_writableState")? {
+    if super::truthy_member(c, object, "_writableState")? {
         let readable_state = get(c, object, "_readableState")?;
         let readable = optional(c, readable_state, "readable")?;
         if is_false(c, readable) || !c.truthy_rooted(readable_state)? {
@@ -53,7 +48,7 @@ pub(crate) fn is_writable_node_stream(c: &mut Context<'_>, object: RootId) -> Re
     if !c.truthy_rooted(object)? || !has_function(c, object, "write")? || !has_function(c, object, "on")? {
         return Ok(false);
     }
-    if member_truthy(c, object, "_readableState")? {
+    if super::truthy_member(c, object, "_readableState")? {
         let writable_state = get(c, object, "_writableState")?;
         let writable = optional(c, writable_state, "writable")?;
         return Ok(!is_false(c, writable));
@@ -64,7 +59,7 @@ pub(crate) fn is_writable_node_stream(c: &mut Context<'_>, object: RootId) -> Re
 pub(crate) fn is_duplex_node_stream(c: &mut Context<'_>, object: RootId) -> Result<bool, RootedError> {
     Ok(c.truthy_rooted(object)?
         && has_function(c, object, "pipe")?
-        && member_truthy(c, object, "_readableState")?
+        && super::truthy_member(c, object, "_readableState")?
         && has_function(c, object, "on")?
         && has_function(c, object, "write")?)
 }
@@ -73,8 +68,8 @@ pub(crate) fn is_node_stream(c: &mut Context<'_>, object: RootId) -> Result<bool
     if !c.truthy_rooted(object)? {
         return Ok(false);
     }
-    Ok(member_truthy(c, object, "_readableState")?
-        || member_truthy(c, object, "_writableState")?
+    Ok(super::truthy_member(c, object, "_readableState")?
+        || super::truthy_member(c, object, "_writableState")?
         || (has_function(c, object, "write")? && has_function(c, object, "on")?)
         || (has_function(c, object, "pipe")? && has_function(c, object, "on")?))
 }
@@ -145,7 +140,7 @@ pub(crate) fn is_destroyed(c: &mut Context<'_>, stream: RootId) -> Result<Tri, R
     let key = intrinsics(c)?.slot(Slot::IsDestroyed);
     let marked = c.get_property_rooted(stream, key)?;
     let state_destroyed = optional(c, state, "destroyed")?;
-    Ok(Some(member_truthy(c, stream, "destroyed")? || c.truthy_rooted(marked)? || c.truthy_rooted(state_destroyed)?))
+    Ok(Some(super::truthy_member(c, stream, "destroyed")? || c.truthy_rooted(marked)? || c.truthy_rooted(state_destroyed)?))
 }
 
 pub(crate) fn is_writable_ended(c: &mut Context<'_>, stream: RootId) -> Result<Tri, RootedError> {
@@ -199,7 +194,7 @@ pub(crate) fn is_readable_ended(c: &mut Context<'_>, stream: RootId) -> Result<T
         return Ok(Some(true));
     }
     let state = get(c, stream, "_readableState")?;
-    if !c.truthy_rooted(state)? || member_truthy(c, state, "errored")? {
+    if !c.truthy_rooted(state)? || super::truthy_member(c, state, "errored")? {
         return Ok(Some(false));
     }
     let ended = get(c, state, "ended")?;
@@ -251,7 +246,7 @@ pub(crate) fn is_readable(c: &mut Context<'_>, stream: RootId) -> Result<Tri, Ro
     }
     Ok(Some(
         is_readable_node_stream(c, stream, false)?
-            && member_truthy(c, stream, "readable")?
+            && super::truthy_member(c, stream, "readable")?
             && is_readable_finished(c, stream, None)? != Some(true),
     ))
 }
@@ -269,7 +264,7 @@ pub(crate) fn is_writable(c: &mut Context<'_>, stream: RootId) -> Result<Tri, Ro
     }
     Ok(Some(
         is_writable_node_stream(c, stream)?
-            && member_truthy(c, stream, "writable")?
+            && super::truthy_member(c, stream, "writable")?
             && is_writable_ended(c, stream)? != Some(true),
     ))
 }
@@ -374,7 +369,7 @@ pub(crate) fn is_server_request(c: &mut Context<'_>, stream: RootId) -> Result<b
 
 /// `isRequest(stream)`: an outgoing client request.
 pub(crate) fn is_request(c: &mut Context<'_>, stream: RootId) -> Result<bool, RootedError> {
-    if is_nullish(c, stream) || !member_truthy(c, stream, "setHeader")? {
+    if is_nullish(c, stream) || !super::truthy_member(c, stream, "setHeader")? {
         return Ok(false);
     }
     has_function(c, stream, "abort")
@@ -389,7 +384,7 @@ pub(crate) fn will_emit_close(c: &mut Context<'_>, stream: RootId) -> Result<Tri
         return Ok(Some(is_server_response(c, stream)?));
     }
     let closed = get(c, state, "closed")?;
-    Ok(Some(member_truthy(c, state, "autoDestroy")? && member_truthy(c, state, "emitClose")? && is_false(c, closed)))
+    Ok(Some(super::truthy_member(c, state, "autoDestroy")? && super::truthy_member(c, state, "emitClose")? && is_false(c, closed)))
 }
 
 /// The first of `candidates` that is not nullish, as `a ?? b ?? ...` reads them.
@@ -416,7 +411,7 @@ pub(crate) fn is_disturbed(c: &mut Context<'_>, stream: RootId) -> Result<bool, 
     if !is_nullish(c, marked) {
         return c.truthy_rooted(marked);
     }
-    Ok(member_truthy(c, stream, "readableDidRead")? || member_truthy(c, stream, "readableAborted")?)
+    Ok(super::truthy_member(c, stream, "readableDidRead")? || super::truthy_member(c, stream, "readableAborted")?)
 }
 
 pub(crate) fn is_errored(c: &mut Context<'_>, stream: RootId) -> Result<bool, RootedError> {
@@ -844,9 +839,9 @@ pub(crate) fn accessor_get(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> O
             let readable = if c.truthy_rooted(r)? {
                 let flag = get(c, r, "readable")?;
                 !c.strict_equal_rooted(flag, no)?
-                    && !member_truthy(c, r, "destroyed")?
-                    && !member_truthy(c, r, "errorEmitted")?
-                    && !member_truthy(c, r, "endEmitted")?
+                    && !super::truthy_member(c, r, "destroyed")?
+                    && !super::truthy_member(c, r, "errorEmitted")?
+                    && !super::truthy_member(c, r, "endEmitted")?
             } else {
                 false
             };
@@ -856,8 +851,8 @@ pub(crate) fn accessor_get(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> O
         Accessor::ReadableAborted => {
             let flag = get(c, r, "readable")?;
             let aborted = !c.strict_equal_rooted(flag, no)?
-                && (member_truthy(c, r, "destroyed")? || member_truthy(c, r, "errored")?)
-                && !member_truthy(c, r, "endEmitted")?;
+                && (super::truthy_member(c, r, "destroyed")? || super::truthy_member(c, r, "errored")?)
+                && !super::truthy_member(c, r, "endEmitted")?;
             Ok(c.boolean(aborted))
         }
         Accessor::ReadableHighWaterMark => get(c, r, "highWaterMark"),

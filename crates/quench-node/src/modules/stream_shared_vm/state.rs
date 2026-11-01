@@ -580,6 +580,11 @@ pub(crate) fn get_buffer(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Out
     call_method(c, buffered, "slice", &[index])
 }
 
+/// How much of a state's buffer a chunk takes: one object, or its length.
+pub(crate) fn chunk_size(c: &mut Context<'_>, state: RootId, chunk: RootId) -> Result<f64, RootedError> {
+    if has(c, state, OBJECT_MODE)? { Ok(1.0) } else { super::number(c, chunk, "length") }
+}
+
 /// A new state of `class` for `stream`.
 pub(crate) fn create(c: &mut Context<'_>, class: Class, options: RootId, stream: RootId, duplex: bool) -> Outcome {
     let constructor = intrinsics(c)?.class(class);

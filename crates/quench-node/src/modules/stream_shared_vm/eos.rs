@@ -27,11 +27,6 @@ fn tri_root(c: &mut Context<'_>, value: Tri) -> RootId {
     }
 }
 
-fn flag(c: &mut Context<'_>, record: RootId, name: &str) -> Result<bool, RootedError> {
-    let value = get(c, record, name)?;
-    c.truthy_rooted(value)
-}
-
 /// `eos(stream[, options], callback)`, the exported `finished`.
 pub(crate) fn finished(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let (stream, mut options, mut callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
@@ -222,7 +217,7 @@ fn eos_web(c: &mut Context<'_>, record: RootId, stream: RootId, signal: RootId) 
 
 pub(crate) fn web_settled(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let [record] = captures(c)?;
-    if !flag(c, record, "aborted")? {
+    if !super::truthy_member(c, record, "aborted")? {
         let values = c.array_rooted(args)?;
         let deliver = closure(c, "streamEosWebDeliver", "", &[record, values])?;
         next_tick(c, deliver, &[])?;
@@ -248,7 +243,7 @@ pub(crate) fn web_abort(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome
 /// The user's callback, called once with `this` the stream: no longer after `cleanup`
 /// unless `even_cleaned` (the abort path calls the callback it held before cleaning up).
 fn invoke(c: &mut Context<'_>, record: RootId, args: &[RootId], even_cleaned: bool) -> Result<(), RootedError> {
-    if flag(c, record, "called")? || (!even_cleaned && flag(c, record, "cleaned")?) {
+    if super::truthy_member(c, record, "called")? || (!even_cleaned && super::truthy_member(c, record, "cleaned")?) {
         return Ok(());
     }
     put_bool(c, record, "called", true)?;
@@ -264,54 +259,49 @@ fn invoke(c: &mut Context<'_>, record: RootId, args: &[RootId], even_cleaned: bo
     Ok(())
 }
 
-fn record(c: &mut Context<'_>) -> Outcome {
-    let [record] = captures(c)?;
-    Ok(record)
-}
-
 /// `readableFinished`/`writableFinished` set, `willEmitClose` dropped for a destroyed
 /// stream; whether the callback still waits for the close event.
-fn finished_half(c: &mut Context<'_>, record: RootId, own: &str, other_live: &str, other_option: &str, other_finished: &str) -> Result<(), RootedError> {
+fn finished_half(c: &mut Context<'_>, record: RootId, own: &str, other: &str, other_finished: &str) -> Result<(), RootedError> {
     put_bool(c, record, own, true)?;
     let stream = get(c, record, "stream")?;
     let destroyed = get(c, stream, "destroyed")?;
     if c.truthy_rooted(destroyed)? {
         put_bool(c, record, "willEmitClose", false)?;
     }
-    let live = get(c, stream, other_live)?;
-    if flag(c, record, "willEmitClose")? && (!c.truthy_rooted(live)? || flag(c, record, other_option)?) {
+    let live = get(c, stream, other)?;
+    if super::truthy_member(c, record, "willEmitClose")? && (!c.truthy_rooted(live)? || super::truthy_member(c, record, other)?) {
         return Ok(());
     }
-    if !flag(c, record, other_option)? || flag(c, record, other_finished)? {
+    if !super::truthy_member(c, record, other)? || super::truthy_member(c, record, other_finished)? {
         invoke(c, record, &[], false)?;
     }
     Ok(())
 }
 
 pub(crate) fn on_legacy_finish(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let stream = get(c, record, "stream")?;
     let writable = get(c, stream, "writable")?;
     if !c.truthy_rooted(writable)? {
-        finished_half(c, record, "writableFinished", "readable", "readable", "readableFinished")?;
+        finished_half(c, record, "writableFinished", "readable", "readableFinished")?;
     }
     Ok(c.undefined())
 }
 
 pub(crate) fn on_finish(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
-    finished_half(c, record, "writableFinished", "readable", "readable", "readableFinished")?;
+    let [record] = captures(c)?;
+    finished_half(c, record, "writableFinished", "readable", "readableFinished")?;
     Ok(c.undefined())
 }
 
 pub(crate) fn on_end(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
-    finished_half(c, record, "readableFinished", "writable", "writable", "writableFinished")?;
+    let [record] = captures(c)?;
+    finished_half(c, record, "readableFinished", "writable", "writableFinished")?;
     Ok(c.undefined())
 }
 
 pub(crate) fn on_error(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let error = arg(c, args, 0);
     invoke(c, record, &[error], false)?;
     Ok(c.undefined())
@@ -328,15 +318,15 @@ fn held_error(c: &mut Context<'_>, stream: RootId) -> Result<Option<RootId>, Roo
 }
 
 pub(crate) fn on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     put_bool(c, record, "closed", true)?;
     let stream = get(c, record, "stream")?;
     if let Some(error) = held_error(c, stream)? {
         invoke(c, record, &[error], false)?;
         return Ok(c.undefined());
     }
-    if flag(c, record, "readable")?
-        && !flag(c, record, "readableFinished")?
+    if super::truthy_member(c, record, "readable")?
+        && !super::truthy_member(c, record, "readableFinished")?
         && is_readable_node_stream(c, stream, true)?
         && utils::is_readable_finished(c, stream, Some(false))? != Some(true)
     {
@@ -344,8 +334,8 @@ pub(crate) fn on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome 
         invoke(c, record, &[error], false)?;
         return Ok(c.undefined());
     }
-    if flag(c, record, "writable")?
-        && !flag(c, record, "writableFinished")?
+    if super::truthy_member(c, record, "writable")?
+        && !super::truthy_member(c, record, "writableFinished")?
         && utils::is_writable_finished(c, stream, Some(false))? != Some(true)
     {
         let error = errors::create(c, StreamError::PrematureClose)?;
@@ -357,7 +347,7 @@ pub(crate) fn on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome 
 }
 
 pub(crate) fn on_closed(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     put_bool(c, record, "closed", true)?;
     let stream = get(c, record, "stream")?;
     match held_error(c, stream)? {
@@ -368,7 +358,7 @@ pub(crate) fn on_closed(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome
 }
 
 pub(crate) fn on_request(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     let stream = get(c, record, "stream")?;
     let request = get(c, stream, "req")?;
     let onfinish = get(c, record, "onfinish")?;
@@ -377,7 +367,7 @@ pub(crate) fn on_request(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcom
 }
 
 pub(crate) fn cleanup(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    let record = record(c)?;
+    let [record] = captures(c)?;
     cleanup_now(c, record)?;
     Ok(c.undefined())
 }
