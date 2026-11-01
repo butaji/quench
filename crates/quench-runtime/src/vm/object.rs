@@ -1455,7 +1455,7 @@ impl<H: Host> Vm<H> {
     /// The own data field the holderless field cache entry `cache` proves for `receiver`;
     /// `None` where its shape differs.
     #[inline(always)]
-    fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
+    pub(super) fn own_field_entry_hit(&self, cache: FieldCache, receiver: &Object) -> Option<Value> {
         // The exact shape matches only outside dictionary storage (`Object::exact_shape`).
         if cache.receiver != receiver.exact_shape() {
             return None;

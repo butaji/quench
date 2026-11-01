@@ -1793,6 +1793,21 @@ pub(super) struct LaneNativeCall {
     frames: usize,
 }
 
+/// A lane's immutable record-range binding and its owning Host's resume operation.
+/// Every context starts with this prefix, so nested runs can resume a different Host safely.
+#[repr(C)]
+struct LaneBinding {
+    resume: unsafe fn(*mut ()),
+    object_base: *const Object,
+}
+
+unsafe fn resume_lane_binding<H: Host>(context: *mut ()) {
+    let cx = context.cast::<LaneContext<H>>();
+    // SAFETY: the prefix's callback was installed for this context's Host.
+    let base = unsafe { vm(cx) }.heap.object_record_base().unwrap_or(std::ptr::null());
+    unsafe { (*cx).binding.object_base = base };
+}
+
 /// Lane state that handlers read rarely; the hot state travels in handler
 /// arguments so it stays in machine registers across dispatches. Its fields keep their
 /// declared order: a plain call saves and restores `this`, `env` and `capture` together
@@ -1800,6 +1815,7 @@ pub(super) struct LaneNativeCall {
 /// come last.
 #[repr(C)]
 struct LaneContext<H: Host> {
+    binding: LaneBinding,
     vm: *mut Vm<H>,
     /// The executing program, which every inline call stays within.
     code: *const ResidualProgram,
@@ -4794,11 +4810,54 @@ script_handler! {
     /// read goes through `lane_get_field_miss`, which may move the record to a fitting
     /// handler.
     fn lane_get_field_own<THIS: bool>(cx, r, ip, i, view) {
-        // The record's own hint first (`LaneInstruction::field_hint`), which reads no entry.
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).record_field_entry_hit(i.field_hint(), object))
-        else {
-            sibling!(lane_get_field_own_refresh::<H, THIS>, r, ip, Carried::script(cx))
+        if unsafe { (*cx).binding.object_base.is_null() } {
+            sibling!(lane_get_field_own_refresh::<H, THIS, false>, r, ip, Carried::script(cx))
+        }
+        requicken::<H>(ip, lane_get_field_own_bound::<H, THIS>);
+        sibling!(lane_get_field_own_bound::<H, THIS>, r, ip, Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// The record range is fixed for the owning heap's lifetime; only this value's type
+    /// and shape vary. Each resolved record borrow ends before the next instruction.
+    fn lane_get_field_own_bound<THIS: bool>(cx, r, ip, i, view) {
+        let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
+            let record = object.direct_object_index()?;
+            // SAFETY: binding preceded handler installation; the rooted direct Value names
+            // a live record of this range. Resumption binds an initially empty outer context.
+            #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
+            let (base, machine) = {
+                const {
+                    assert!(std::mem::offset_of!(LaneContext<H>, vm)
+                        == std::mem::offset_of!(LaneContext<H>, binding)
+                            + std::mem::offset_of!(LaneBinding, object_base)
+                            + std::mem::size_of::<*const Object>());
+                }
+                let base: *const Object;
+                let machine: *const Vm<H>;
+                // SAFETY: the asserted adjacent pointer fields belong to this live context.
+                // Loading both together starts the independent heap lookup before the shape
+                // branch, instead of delaying the VM load until after that branch.
+                unsafe {
+                    std::arch::asm!(
+                        "ldp {base}, {machine}, [{source}, #{offset}]",
+                        base = out(reg) base,
+                        machine = out(reg) machine,
+                        source = in(reg) std::ptr::addr_of!((*cx).binding),
+                        offset = const std::mem::offset_of!(LaneBinding, object_base),
+                        options(pure, readonly, nostack, preserves_flags),
+                    );
+                }
+                (base, machine)
+            };
+            #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
+            let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
+            let receiver = unsafe { &*base.add(record as usize) };
+            unsafe { &*machine }.own_field_entry_hit(i.field_hint(), receiver)
+        });
+        let Some(value) = value else {
+            sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4809,7 +4868,7 @@ script_handler! {
     /// `lane_get_field_own` past its record's hint: the site's primary own entry, whose hit
     /// becomes the hint; any other read goes through `lane_get_field_miss`.
     #[inline(never)]
-    fn lane_get_field_own_refresh<THIS: bool>(cx, r, ip, i, view) {
+    fn lane_get_field_own_refresh<THIS: bool, BOUND: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -4818,6 +4877,11 @@ script_handler! {
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
+        if !BOUND {
+            // SAFETY: a successful direct-object lookup proves the range is reserved.
+            unsafe { (*cx).binding.object_base = vm.heap.object_record_base().unwrap_unchecked() };
+            requicken::<H>(ip, lane_get_field_own_bound::<H, THIS>);
+        }
         // The hit proved the entry an own one of the receiver's shape.
         set_field_hint(ip, vm.field_cache_entry(i.c));
         r.set(i.a, value);
@@ -5091,12 +5155,12 @@ script_handler! {
             requicken::<H>(ip, handler);
             sibling!(handler, r, ip, Carried::script(cx))
         }
-        let own = single_base_handler(
-            i.b,
-            lane_get_field_own::<H, true>,
-            lane_get_field_own::<H, false>,
-            lane_get_field_miss::<H>,
-        );
+        let (this, register): (Handler, Handler) = if unsafe { (*cx).binding.object_base.is_null() } {
+            (lane_get_field_own::<H, true>, lane_get_field_own::<H, false>)
+        } else {
+            (lane_get_field_own_bound::<H, true>, lane_get_field_own_bound::<H, false>)
+        };
+        let own = single_base_handler(i.b, this, register, lane_get_field_miss::<H>);
         requicken::<H>(ip, own);
         sibling!(own, r, ip, Carried::script(cx))
     }
@@ -15362,6 +15426,8 @@ impl FieldHit {
         let handler = record.handler;
         if handler == lane_get_field_own::<H, true> as *const ()
             || handler == lane_get_field_own::<H, false> as *const ()
+            || handler == lane_get_field_own_bound::<H, true> as *const ()
+            || handler == lane_get_field_own_bound::<H, false> as *const ()
         {
             Some(Self::Own(record.c))
         } else if handler == lane_get_field_holder::<H, true> as *const ()
@@ -19223,6 +19289,10 @@ impl<H: Host> Vm<H> {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         let mut context = LaneContext {
+            binding: LaneBinding {
+                object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()),
+                resume: resume_lane_binding::<H>,
+            },
             vm: self,
             code,
             program,
@@ -19289,6 +19359,14 @@ impl<H: Host> Vm<H> {
         }
         self.materialize_lane_activations(cx);
         LANE_CONTEXT.with(|current| current.set(outer));
+        if !outer.is_null() {
+            // SAFETY: every active context has this repr(C) prefix. Its callback owns the
+            // actual Host type, which may differ from this nested run's Host.
+            let binding = unsafe { &*outer.cast::<LaneBinding>() };
+            if binding.object_base.is_null() {
+                unsafe { (binding.resume)(outer) };
+            }
+        }
         // An enclosing run of this VM keeps a raised floor raised.
         // SAFETY: as above.
         let floor = unsafe { &*floor_cell };
