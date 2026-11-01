@@ -498,16 +498,31 @@ unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u
 /// `registers` has room for `fill_room::<BLOCK>(count)` values, none of them live.
 #[inline(always)]
 unsafe fn fill_window<const BLOCK: usize>(registers: *mut Value, count: usize, initial: Value) {
+    #[inline(always)]
+    unsafe fn write_block<const BLOCK: usize>(registers: *mut Value, initial: Value) {
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+        {
+            use std::arch::aarch64::{uint64x2_t, vdupq_n_u64, vst1q_u64};
+            const VALUES_PER_VECTOR: usize = std::mem::size_of::<uint64x2_t>() / std::mem::size_of::<Value>();
+            const { assert!(BLOCK % VALUES_PER_VECTOR == 0); }
+            // SAFETY: the caller reserves the entire block; NEON stores need no alignment.
+            // Direct stores avoid materializing a repeated-value array on the native stack.
+            unsafe {
+                let pattern = vdupq_n_u64(initial.to_bits());
+                for vector in 0..BLOCK / VALUES_PER_VECTOR {
+                    vst1q_u64(registers.add(vector * VALUES_PER_VECTOR).cast(), pattern);
+                }
+            }
+        }
+        #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+        // SAFETY: the caller reserves the entire block.
+        unsafe { registers.cast::<[Value; BLOCK]>().write_unaligned([initial; BLOCK]) };
+    }
     // SAFETY: the room holds at least one block.
-    unsafe { registers.cast::<[Value; BLOCK]>().write_unaligned([initial; BLOCK]) };
+    unsafe { write_block::<BLOCK>(registers, initial) };
     for block in 1..count.div_ceil(BLOCK) {
         // SAFETY: the block ends within the room the caller provides.
-        unsafe {
-            registers
-                .add(block * BLOCK)
-                .cast::<[Value; BLOCK]>()
-                .write_unaligned([initial; BLOCK]);
-        }
+        unsafe { write_block::<BLOCK>(registers.add(block * BLOCK), initial) };
     }
 }
 
@@ -19579,5 +19594,32 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             return ip_next;
         }
         ip = ip_next;
+    }
+}
+
+#[cfg(test)]
+mod window_fill_tests {
+    use super::{ACTIVATION_FILL_BLOCK, SCRIPT_FILL_BLOCK, Value, fill_room, fill_window};
+
+    #[test]
+    fn lane_fill_writes_only_reserved_values() {
+        fn check<const BLOCK: usize>() {
+            for initial in [Value::UNDEFINED, Value::DELETED, Value::integer(-37)] {
+                for count in 0..=2 * BLOCK + 1 {
+                    let room = fill_room::<BLOCK>(count);
+                    let guard = Value::TRUE;
+                    let mut storage = vec![guard; room + 2];
+                    // SAFETY: the guarded middle has exactly the required spare room.
+                    // The offset also exercises pointers without vector alignment.
+                    unsafe { fill_window::<BLOCK>(storage.as_mut_ptr().add(1), count, initial) };
+                    assert_eq!(storage[0], guard, "prefix: block={BLOCK}, count={count}");
+                    assert_eq!(storage[room + 1], guard, "suffix: block={BLOCK}, count={count}");
+                    assert!(storage[1..=room].iter().all(|value| *value == initial),
+                        "initial value: block={BLOCK}, count={count}");
+                }
+            }
+        }
+        check::<ACTIVATION_FILL_BLOCK>();
+        check::<SCRIPT_FILL_BLOCK>();
     }
 }
