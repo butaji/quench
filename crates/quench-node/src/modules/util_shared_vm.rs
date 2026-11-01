@@ -220,7 +220,7 @@ pub(crate) fn argument_value_error_units(
     reason: &str,
 ) -> Result<RootedError, RootedError> {
     let inspected = super::console_format_shared_vm::inspect(context, value, Default::default())?;
-    let inspected = context.string(&inspected);
+    let inspected = context.string_rooted(&inspected);
     argument_value_error_inspected_units(context, name, reason, inspected)
 }
 

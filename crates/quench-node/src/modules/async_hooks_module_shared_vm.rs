@@ -1,97 +1,17 @@
 //! The `async_hooks` module's classes over the shared async context state
 //! (`async_hooks_shared_vm`, `async_hook_registry_shared_vm`): `AsyncLocalStorage`,
 //! `AsyncResource`, `createHook`'s `AsyncHook`, and the execution context queries.
-use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, put, require_new};
+use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, require_new};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-/// A class member: (name, operation, length).
-type Method = (&'static str, &'static str, f64);
-
-const STORAGE_METHODS: [Method; 5] = [
-    ("disable", "asyncLocalStorageDisable", 0.0),
-    ("enterWith", "asyncLocalStorageEnterWith", 1.0),
-    ("run", "asyncLocalStorageRun", 2.0),
-    ("exit", "asyncLocalStorageExit", 1.0),
-    ("getStore", "asyncLocalStorageGetStore", 0.0),
-];
-const STORAGE_STATICS: [Method; 2] =
-    [("bind", "asyncLocalStorageBind", 1.0), ("snapshot", "asyncLocalStorageSnapshot", 0.0)];
-const RESOURCE_METHODS: [Method; 5] = [
-    ("runInAsyncScope", "asyncResourceRunInAsyncScope", 1.0),
-    ("emitDestroy", "asyncResourceDestroy", 0.0),
-    ("asyncId", "asyncResourceAsyncId", 0.0),
-    ("triggerAsyncId", "asyncResourceTriggerAsyncId", 0.0),
-    ("bind", "asyncResourceBind", 1.0),
-];
-const RESOURCE_STATICS: [Method; 1] = [("bind", "asyncResourceStaticBind", 1.0)];
-const HOOK_METHODS: [Method; 2] = [("enable", "asyncHookEnableMethod", 0.0), ("disable", "asyncHookDisableMethod", 0.0)];
-/// The module's functions, after `AsyncLocalStorage`.
-const FUNCTIONS: [Method; 4] = [
-    ("createHook", "asyncCreateHook", 1.0),
-    ("executionAsyncId", "asyncExecutionId", 0.0),
-    ("triggerAsyncId", "asyncTriggerId", 0.0),
-    ("executionAsyncResource", "asyncExecutionResource", 0.0),
-];
 /// The hook callbacks `AsyncHook` reads, in `initialize_hook`'s argument order.
 const HOOK_CALLBACKS: [&str; 6] = ["init", "before", "after", "destroy", "promiseResolve", "trackPromises"];
 /// `AsyncResource.bind`'s type for an anonymous function.
 const ANONYMOUS_BOUND_TYPE: &str = "bound-anonymous-fn";
 const SNAPSHOT_TYPE: &str = "AsyncLocalStorage.snapshot";
-
-fn define_methods(c: &mut Context<'_>, holder: RootId, methods: &[Method], data: RootId) -> Result<(), RootedError> {
-    for &(name, operation, length) in methods {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
-        let length = c.number(length);
-        c.define_named_data_property_rooted(function, "length", length, false, false, true)?;
-        c.define_named_data_property_rooted(holder, name, function, true, false, true)?;
-    }
-    Ok(())
-}
-
-/// A class as a declaration makes it: non-enumerable methods and a read-only `prototype`.
-fn class(c: &mut Context<'_>, name: &str, constructor: &str, data: RootId, methods: &[Method], statics: &[Method]) -> Result<RootId, RootedError> {
-    let class = c.host_constructor_named_with_data(crate::host::shared_vm::operation(constructor), name, data)?;
-    let prototype = get(c, class, "prototype")?;
-    define_methods(c, prototype, methods, data)?;
-    define_methods(c, class, statics, data)?;
-    c.define_named_data_property_rooted(class, "prototype", prototype, false, false, false)?;
-    Ok(class)
-}
-
-/// The module's exports, in Node's order; the classes are kept in the registry's data.
-pub(crate) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let api = super::async_hook_registry_shared_vm::initialize(c)?;
-    let module = c.object_rooted()?;
-    let storage = class(c, "AsyncLocalStorage", "asyncLocalStorageConstructor", api, &STORAGE_METHODS, &STORAGE_STATICS)?;
-    put(c, module, "AsyncLocalStorage", storage)?;
-    let hook = class(c, "AsyncHook", "asyncHookConstructor", api, &HOOK_METHODS, &[])?;
-    put(c, api, "hookClass", hook)?;
-    for &(name, operation, _) in &FUNCTIONS {
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, api)?;
-        put(c, module, name, function)?;
-    }
-    let providers = c.null_object_rooted()?;
-    for (code, name) in super::native_async_wrap::PROVIDER_TYPES.iter().enumerate() {
-        let code = c.number(code as f64);
-        put(c, providers, name, code)?;
-    }
-    let global = c.global_root()?;
-    let object = get(c, global, "Object")?;
-    let freeze = get(c, object, "freeze")?;
-    c.call_rooted(freeze, object, &[providers])?;
-    put(c, module, "asyncWrapProviders", providers)?;
-    let resource = class(c, "AsyncResource", "asyncResourceConstructor", api, &RESOURCE_METHODS, &RESOURCE_STATICS)?;
-    put(c, module, "AsyncResource", resource)?;
-    put(c, api, "resourceClass", resource)?;
-    let registry = get(c, global, "FinalizationRegistry")?;
-    let collected = c.host_function(crate::host::shared_vm::operation("asyncResourceCollected"))?;
-    let finalizer = c.construct_rooted(registry, registry, &[collected])?;
-    put(c, api, "resourceFinalizer", finalizer)?;
-    Ok(module)
-}
 
 /// `new AsyncLocalStorage()`: a storage with its own store slot.
 pub(crate) fn storage_constructor(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
