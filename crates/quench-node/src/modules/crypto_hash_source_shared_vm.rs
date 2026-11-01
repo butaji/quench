@@ -401,9 +401,8 @@ pub(crate) fn hmac(
     {
         buffer_source(c, key, "key", Some(encoding))?
     } else {
-        let undefined = c.undefined();
-        let material = super::crypto_key_shared_vm::secret_material(c, undefined, &[key])?;
-        buffer_source(c, material, "key", Some(encoding))?
+        let material = super::crypto_node::keys::prepare_secret_key(c, key, encoding)?;
+        super::buffer_shared_vm::from_bytes(c, &material)?
     };
     let native = get(c, data, NATIVE_HMAC)?;
     let handle = c.construct_rooted(native, native, &[])?;

@@ -45,6 +45,17 @@
       observe('hmac '+algorithm+' '+String(key), () => createHmac(algorithm, key).update('é水🦄').digest('hex'));
     }
   }
+  observe('hmac KeyObject', () => createHmac('sha256', api.createSecretKey(new Uint8Array([0, 255, 128]))).update('abc').digest('hex'));
+  observe('hmac CryptoKey', () => {
+    const previous = process.noDeprecation;
+    process.noDeprecation = true;
+    try {
+      const key = api.createSecretKey(new Uint8Array([0, 255, 128])).toCryptoKey({ name: 'HMAC', hash: 'SHA-256' }, true, ['sign']);
+      return createHmac('sha256', key).update('abc').digest('hex');
+    } finally {
+      process.noDeprecation = previous;
+    }
+  });
   observe('hmac callable', () => Hmac('sha256', 'secret').update('abc').digest('hex'));
   observe('shared methods', () => [Hash.prototype.update === Hmac.prototype.update, Hash.prototype._transform === Hmac.prototype._transform]);
   observe('constructor metadata', () => [api.Hash.name, api.Hash.length, api.Hmac.name, api.Hmac.length, createHash.name, createHash.length, createHmac.name, createHmac.length]);
