@@ -6746,6 +6746,10 @@ pub(super) struct LaneMethod {
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
     _direct: Vec<Box<DirectCallee>>,
+    /// Whether every call it makes is inlined or direct: under a direct caller's native
+    /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
+    /// a body is called directly.
+    closed: bool,
 }
 
 impl LaneMethod {
@@ -6759,6 +6763,11 @@ impl LaneMethod {
     /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.amortizes
+    }
+
+    /// Whether a direct caller may call it (`LaneMethod::closed`).
+    pub(super) fn calls_only_natively(&self) -> bool {
+        self.closed
     }
 }
 
@@ -6960,8 +6969,10 @@ impl<H: Host> Vm<H> {
         // A body that names a callee's body retires with it (`DirectCallee::method`).
         let names_shapes = !fields.is_empty() || !direct.is_empty();
         let scratch_width = unit.frames.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
+        let closed = unit.instructions.iter().enumerate()
+            .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
         let _direct = direct.into_iter().map(|(_, callee)| callee).collect();
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes, _direct })
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes, _direct, closed })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -7038,15 +7049,16 @@ impl<H: Host> Vm<H> {
 
     /// The native frames the last run left inside, outermost first, which the lane now
     /// materializes (`ShadowFrame`); none once taken.
-    pub(super) fn take_shadow_frames() -> smallvec::SmallVec<[ShadowFrame; 4]> {
+    pub(super) fn take_shadow_frames() -> &'static [ShadowFrame] {
         let frame = lane_frame();
-        // SAFETY: no lane body runs while the lane reads the frame.
+        // SAFETY: no lane body runs while the lane reads the frame, and the frames read stay
+        // as they are until the next run, which the lane starts only after materializing them.
         unsafe {
             let base = (*frame).shadow.as_mut_ptr();
             let top = (*frame).dispatch.shadow_top as *mut ShadowFrame;
             let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
             (*frame).dispatch.shadow_top = base.addr();
-            (&(*frame).shadow)[..count].iter().copied().collect()
+            std::slice::from_raw_parts(base, count)
         }
     }
 

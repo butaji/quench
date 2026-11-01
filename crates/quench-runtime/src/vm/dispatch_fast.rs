@@ -13990,7 +13990,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
                 && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
                 .then_some(())?;
             // SAFETY: a resolved target's view outlives its program.
-            let method = unsafe { &*target.view }.lane_body()?;
+            let method = unsafe { &*target.view }.lane_body().filter(|method| method.calls_only_natively())?;
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
             let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
                 .and_then(crate::heap::EnvironmentSlots::native_dense_view)
@@ -14186,7 +14186,7 @@ fn lane_body_left<H: Host>(
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
     let frames = Vm::<H>::take_shadow_frames();
-    let (r, own, method) = match lane_materialize_frames(cx, &frames) {
+    let (r, own, method) = match lane_materialize_frames(cx, frames) {
         // SAFETY: the materialization made the innermost frame the running activation.
         Some((own, method)) => (unsafe { (*cx).registers }, own, method),
         None => (r, own, method),
