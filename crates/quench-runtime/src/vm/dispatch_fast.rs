@@ -205,7 +205,8 @@ impl LoopTier {
 /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
 /// which run briefly never pay the compilation.
 pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
-/// Native runs that may leave at a general-path instruction before the site stops entering
+/// Native runs in a row (no run leaving through the loop's own exit between them) that may leave at
+/// a general-path instruction before the site stops entering
 /// native code: a loop whose values keep leaving the subset is the interpreter's.
 const LOOP_TIER_MAX_EXITS: u32 = 1000;
 /// Entries a site's guards may decline in a row before it stops trying: a field whose cache
@@ -584,7 +585,8 @@ impl LaneView {
             .count()
     }
 
-    /// The address range its records span (`lane_exits::register_view`, `lane_header_site`).
+    /// The address range its records span (`lane_exits::register_view`).
+    #[cfg(feature = "profile-lane-exits")]
     pub(super) fn record_range(&self) -> (usize, usize) {
         let start = self.records().addr();
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
@@ -636,9 +638,8 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
     // lane runs on the view's thread, and no reference to the handler field is live. A
     // header record a loop site holds keeps `lane_loop_header`, and the site the handler.
     unsafe {
-        if (*ip).handler == lane_loop_header::<H> as Handler as *const ()
-            && let Some(site) = lane_header_site::<H>(lane_context::<H>(), ip)
-        {
+        if (*ip).handler == lane_loop_header::<H> as Handler as *const () {
+            let site = lane_header_site(ip);
             (*site).header_handler.set(handler as *const ());
             return;
         }
@@ -6922,27 +6923,17 @@ fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
     }
 }
 
-/// The site whose header record is at `ip` (`LoopSite::hookable`), in the view that holds
-/// the record: the running activation's, else another of the program's.
-unsafe fn lane_header_site<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<*const LoopSite> {
-    // SAFETY: the context's VM and views are live while the lane runs.
-    let (machine, views) = unsafe { (vm(cx), &*(*cx).views) };
-    let function = machine
-        .lane_stack
-        .activations
-        .last()
-        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-    let holds = |view: &&LaneView| {
-        let (start, end) = view.record_range();
-        (start..end).contains(&ip.addr())
-    };
-    let view = views
-        .get(function as usize)
-        .and_then(super::program_store::derived_lane_view)
-        .filter(holds)
-        .or_else(|| views.iter().filter_map(super::program_store::derived_lane_view).find(holds))?;
-    // SAFETY: a record of the view; a held header's `call_link` names its site.
-    view.loops.get(usize::from(unsafe { (*ip).call_link.get() })).map(std::ptr::from_ref)
+/// The site whose header record is at `ip` (`LoopSite::hookable`): the header's `call_link`
+/// is the distance, in records, to the site's backward jump, whose operand is the site
+/// (`install_loop_sites`). A held header's jump still holds it: retiring the site gives the
+/// header its own handler back first (`lane_loop_retire`).
+///
+/// # Safety
+/// `ip` is a held header record of a live view.
+#[inline(always)]
+unsafe fn lane_header_site(ip: Ip) -> *const LoopSite {
+    // SAFETY: the jump lies `call_link` records past its header in the same view.
+    unsafe { (*ip.add(usize::from((*ip).call_link.get()))).loop_site() }
 }
 
 script_handler! {
@@ -6951,7 +6942,7 @@ script_handler! {
     /// runs the record's own handler.
     fn lane_loop_header<>(cx, r, ip, i, view) {
         // SAFETY: a record runs this handler only while a site holds it.
-        let site = unsafe { &*lane_header_site::<H>(cx, ip).expect("a held header names its site") };
+        let site = unsafe { &*lane_header_site(ip) };
         if !below_floor()
             && site.exits.get() < LOOP_TIER_MAX_EXITS
             && site.declines.get() < LOOP_TIER_MAX_DECLINES
@@ -7038,13 +7029,9 @@ fn lane_loop_run<H: Host>(
             .map(|(index, field)| {
                 (native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index))
                     .then(|| {
-                        let receiver = match field.receiver {
-                            super::compiled::FieldReceiver::Register(register) => Some(r.get(register)),
-                            _ => None,
-                        };
-                        machine.native_field_load_descriptor(field.cache_site, receiver)
+                        machine.native_field_load_descriptors(field.cache_site)
                     })
-                    .flatten()
+                    .unwrap_or_default()
             })
             .collect::<Vec<_>>();
         let heap = &machine.heap;
@@ -7058,12 +7045,14 @@ fn lane_loop_run<H: Host>(
                 array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
             })
         };
+        let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
         // An inlined callee's register is no register of the running activation: it holds
         // nothing at entry.
         let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
         let observation = super::compiled::Observation {
             register: Some(&|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED }),
             int32_elements: &int32_elements,
+            only_int32: &only_int32,
             captures: &captures,
             fields: &fields,
             native_field_loads: &native_field_loads,
@@ -7228,7 +7217,12 @@ fn lane_loop_run<H: Host>(
             }
             LoopContinuation::Jump
         }
-        LoopOutcome::Resume(pc) => LoopContinuation::Resume(pc),
+        // A run that leaves the loop through its own exit did the loop's work natively: the
+        // exits counted against the site are the ones in a row since such a run.
+        LoopOutcome::Resume(pc) => {
+            site.exits.set(0);
+            LoopContinuation::Resume(pc)
+        }
         LoopOutcome::Exit(pc) => {
             site.exits.set(site.exits.get() + 1);
             LoopContinuation::Exit(pc)
@@ -7262,6 +7256,30 @@ fn lane_loop_entry<H: Host>(
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         for slot in &region.captures {
+            // The activation's `this`, for reads of `this` the region stores (`THIS_CAPTURE`).
+            if *slot == super::compiled::THIS_CAPTURE {
+                entry.push_capture(unsafe { lane_held_this(cx) });
+                continue;
+            }
+            // An inlined callee's capture reads its own environment (`Inlining::callee_captures`).
+            if slot & super::compiled::CALLEE_CAPTURE != 0 {
+                let inlining = region.inlining.as_deref()?;
+                let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE))?;
+                let callee = inlining.frames.get(frame)?.callee;
+                let vm = unsafe { vm(cx) };
+                // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
+                let env = unsafe { &*vm.script_call_entry(callee)? }.env;
+                // A top-level binding the global object projects is its property, which the
+                // region keeps only while it stores no field (as the caller's own captures).
+                let value = vm.environment_capture(env, callee_slot).or_else(|| {
+                    (!region.writes_fields())
+                        .then(|| vm.environment_capture_env(env, false, 0)
+                            .and_then(|env| vm.plain_projected_root_binding(env, callee_slot)))
+                        .flatten()
+                })?;
+                entry.push_capture(value);
+                continue;
+            }
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
             let value = (!slots.is_null())
@@ -7271,7 +7289,7 @@ fn lane_loop_entry<H: Host>(
                 .or_else(|| {
                     // A projected global var aliases its global object's property. Native
                     // field stores could change it after entry, invalidating this snapshot.
-                    region.field_store_sites.is_empty()
+                    (!region.writes_fields())
                         .then(|| lane_projected_capture(cx, 0, *slot))
                         .flatten()
                 })?;
@@ -7279,14 +7297,23 @@ fn lane_loop_entry<H: Host>(
         }
     }
     let vm = unsafe { vm(cx) };
-    // No guest call or allocation occurs in a native run. Field writes replace guarded
-    // own slots, and element stores change no shape slot. Immutable fields keep their
-    // entry values; admitted same-receiver Number writes update SSA field cells. Other
-    // possible aliases are rejected by region admission. Any miss, accessor, private
-    // name or non-Number declines before native effects. Nested receivers follow the
-    // earlier field's value.
-    for field in &region.fields {
-        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index))?;
+    // These regions cannot run calls or field writes, and their element stores define or
+    // replace own data elements, which changes no shape slot. Thus a hit on an ordinary
+    // data field stays valid for the whole native run. Any miss, accessor, private name, or
+    // non-Number exits before native code can alter a register. A field read through
+    // another's value follows it.
+    for (index, field) in region.fields.iter().enumerate() {
+        // A field native code reads at its instruction (`LoopRegion::is_dynamic_field`) takes
+        // its entry value only to seed its representation: a receiver it does not answer for
+        // now (a null child, another shape), or a value its Number representation does not
+        // hold, seeds the representation's own placeholder.
+        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index))
+            .filter(|value| field.tagged || !region.is_dynamic_field(index) || value.as_number().is_some())
+            .or_else(|| {
+                (region.is_dynamic_field(index)
+                    && vm.field_cache_entry(field.cache_site).receiver != super::NO_FIELD_RECEIVER)
+                    .then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
+            })?;
         entry.push_field(value, field.tagged)?;
     }
     for array in &region.arrays {
@@ -7322,10 +7349,17 @@ fn lane_loop_entry<H: Host>(
     // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
     // stores remain Numbers; a store-only field may also receive a rooted entry value.
     for field in &region.field_store_sites {
-        let object = r.get(field.receiver);
+        let object = match field.receiver {
+            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
+            super::compiled::FieldReceiver::Register(register) => r.get(register),
+            super::compiled::FieldReceiver::Field(_) => return None,
+        };
         let pointer = unsafe {
             vm.cached_field_store_pointer(code, object, field.atom, field.cache_site)
         }?;
+        // A store may write a heap value: the receiver is logged in the generational
+        // barrier now, and nothing collects before the run ends.
+        vm.heap.object_store_mut(object, object)?;
         entry.push_field_store(pointer);
     }
     if region.reads_heap_natively() {
@@ -7371,7 +7405,9 @@ fn lane_region_field<H: Host>(
     }
     match vm.cached_field_hit(code, receiver, field.cache_site) {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
-        _ => None,
+        // A site of several shapes answers from its polymorphic entries, own or of the
+        // immediate prototype, as the lane's polymorphic read does (`lane_get_field_polymorphic`).
+        _ => vm.polymorphic_field_hit(code, receiver, field.cache_site),
     }
 }
 
@@ -13647,6 +13683,7 @@ script_handler! {
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         if let Some(own) = own
             && let Some(method) = own.lane_body()
+            && lane_inlined_calls_activate(cx, method)
         {
             // SAFETY: the activation just set the context to its own receiver.
             let this = unsafe { (*cx).this };
@@ -13655,7 +13692,13 @@ script_handler! {
             let captures = capture_reads(unsafe { (*cx).capture });
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*cx).code };
-            let pc = vm.run_lane_method(method, program, code, r.0, receiver, captures);
+            let pc = match vm.run_lane_method(method, program, code, r.0, receiver, captures) {
+                super::compiled::LaneExit::At(pc) => pc,
+                super::compiled::LaneExit::Inlined { frame, pc } => {
+                    let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, &method.inlined[frame], pc);
+                    next!(cx, registers, resume, carried)
+                }
+            };
             // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
             let resume = unsafe { base.add(pc) };
             let mut carried = Carried::script(cx);
@@ -13726,19 +13769,95 @@ fn lane_tier_enter<H: Host>(
     // The general baseline runs only from a VM frame (`Vm::js_tier_frame_entry`), so a
     // function the general tier holds gains nothing from frameless claims either.
     if let Some(own) = own
-        && (vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
+        && (vm.programs.js_jit_lane_methods_enabled()
+            || vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
     {
         // A declined function may still run natively on its lane activations: the
         // prologue keeps the start once that body compiles. Frame entries keep whatever
         // tier holds the function.
         if vm.programs.js_jit_lane_methods_enabled()
-            && own.specialize_lane_body(|| vm.compile_lane_method(code, function))
+            && own.specialize_lane_body(|| {
+                let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
+                vm.compile_lane_method(code, function, &targets)
+            })
         {
             return None;
         }
         own.release_from_tier();
     }
     None
+}
+
+/// Per PC of `body`, the script target its call record's inline cache links (`call_link`),
+/// where a plain call of it binds an ordinary `this` and activates in place: what a lane
+/// body inlines (`lane_unit::unit`).
+fn lane_call_targets<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::CallTarget>> {
+    body.code
+        .iter()
+        .enumerate()
+        .map(|(pc, packed)| {
+            (decoded_instruction(body, *packed).op() == Op::Call).then_some(())?;
+            // SAFETY: the view holds a record per PC; reading its link changes nothing.
+            let record = unsafe { &*view.records.get(pc)?.get() };
+            let target = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
+            (target.generation == vm.lane_stack.generation
+                && target.program == vm.active_program
+                && target.entry == CallEntry::Activates
+                && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
+            .then_some(super::compiled::CallTarget { callee: target.callee, function: target.function })
+        })
+        .collect()
+}
+
+/// Whether the lane can make the activation of every call `method` inlines, should the body
+/// leave inside it (`lane_body_inlined_activation`): each callee still resolves to the
+/// target it was inlined as, activating in place in this program, with room on the stack.
+fn lane_inlined_calls_activate<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod) -> bool {
+    let vm = unsafe { vm(cx) };
+    method.inlined.iter().all(|call| {
+        vm.script_call_entry(call.target.callee).is_some_and(|target| {
+            // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
+            let target = unsafe { &*target };
+            target.function == call.target.function
+                && target.entry == CallEntry::Activates
+                && target.program == unsafe { (*cx).program }
+                && unsafe { (*cx).script_calls }
+                && !vm.with_scope_entered
+                && lane_activation_room(vm, target)
+        })
+    })
+}
+
+/// The activation a lane body that left inside inlined `call`, at its callee's PC `pc`,
+/// continues in: the one the call's record makes (`lane_push_activation`), holding the
+/// registers the body wrote to its scratch window. The body's guards proved the receiver
+/// a direct object, which the call binds as `this`.
+#[inline(never)]
+fn lane_body_inlined_activation<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    base: Ip,
+    call: &super::compiled::InlinedCall,
+    pc: u32,
+) -> (Registers, Ip, Carried) {
+    let vm = unsafe { vm(cx) };
+    let target = vm.script_call_entry(call.target.callee).expect("the entry checked the inlined call");
+    // SAFETY: as `Vm::script_call_entry`; the record is the call's in the running view.
+    let (target, record) = unsafe { (&*target, base.add(call.call as usize)) };
+    let this = lane_call_this(vm, target, r.get(call.receiver)).expect("a direct-object receiver binds itself");
+    let (registers, _) = lane_push_activation::<H, false, false>(cx, r, record, target, call.window, this, false);
+    Vm::<H>::lane_scratch(usize::from(call.registers), |register, value| registers.set(register, value));
+    // SAFETY: the callee's view holds a record for each of its function's PCs.
+    // Activation's start may be its tier prologue; origin PCs address its records.
+    let resume = unsafe { (*cx).base.add(pc as usize) };
+    let mut carried = Carried::script(cx);
+    // SAFETY: a resolved target's view outlives the lane run.
+    if let Some(&register) = unsafe { &*target.view }.accumulator_registers.get(pc as usize)
+        && register != NO_ACCUMULATOR
+    {
+        carried.acc = Slot::of(registers.get(register));
+    }
+    (registers, resume, carried)
 }
 
 /// Whether activating `target` leaves the running program. Every activation tests it, so an
@@ -18093,17 +18212,18 @@ fn install_loop_sites<'live, H: Host>(
         .collect();
     let mut sites = sites;
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
-    for (_, site) in &mut sites {
+    for (pc, site) in &mut sites {
+        // The header names its site by the distance to the site's jump (`lane_header_site`).
         site.hookable &= headers.iter().filter(|header| **header == site.header).count() == 1
-            && u16::try_from(headers.len()).is_ok_and(|count| count < NO_CALL_LINK);
+            && u16::try_from(*pc - site.header as usize).is_ok_and(|distance| distance < NO_CALL_LINK);
     }
     let pcs: Vec<usize> = sites.iter().map(|(pc, _)| *pc).collect();
     let sites: Box<[LoopSite]> = sites.into_iter().map(|(_, site)| site).collect();
-    for (index, (pc, site)) in pcs.into_iter().zip(sites.iter()).enumerate() {
+    for (pc, site) in pcs.into_iter().zip(sites.iter()) {
         records[pc].handler = lane_loop_jump::<H> as Handler as *const ();
         records[pc].operand = LaneOperand { site };
         if site.hookable {
-            records[site.header as usize].call_link.set(index as u16);
+            records[site.header as usize].call_link.set((pc - site.header as usize) as u16);
         }
     }
     (sites, rejections)

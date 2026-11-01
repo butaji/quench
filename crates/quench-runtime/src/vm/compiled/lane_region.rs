@@ -20,7 +20,7 @@
 use super::*;
 use crate::bytecode::FieldLayout;
 use crate::specialize::{BindingTime, Fact, Projection, Proof, Representation, Type};
-use super::object_slots::{CheckedObject, PackedAccess};
+use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
@@ -91,7 +91,7 @@ pub(super) struct LaneRegion {
 struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
-    function: &'a Function,
+    unit: &'a super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &'a [Vec<NativeFieldLoad>],
     context: ir::Value,
@@ -366,7 +366,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn operand_supported(&self, operand: Operand) -> bool {
         match operand.kind() {
-            Some(OperandKind::Register) => operand.register_index().is_some_and(|r| r < self.function.registers),
+            Some(OperandKind::Register) => operand.register_index().is_some_and(|r| r < self.unit.registers),
             Some(OperandKind::Constant) => self
                 .program
                 .constants
@@ -380,13 +380,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
 /// after a jump.
-fn leaders(function: &Function) -> Vec<bool> {
-    let mut leaders = vec![false; function.code.len()];
+fn leaders(instructions: &[WideInstruction]) -> Vec<bool> {
+    let mut leaders = vec![false; instructions.len()];
     if let Some(first) = leaders.first_mut() {
         *first = true;
     }
-    for (pc, packed) in function.code.iter().enumerate() {
-        let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+    for (pc, instruction) in instructions.iter().enumerate() {
         if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
             if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < leaders.len()) {
                 leaders[target] = true;
@@ -399,14 +398,17 @@ fn leaders(function: &Function) -> Vec<bool> {
     leaders
 }
 
+/// Specializes `unit` (`lane_unit::unit`), whose PCs `fields` gives the folded receiver
+/// fields of.
 pub(super) fn compile(
     program: &ResidualProgram,
     function_id: u32,
+    unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &[Vec<NativeFieldLoad>],
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, helpers, fields, &*isa)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
@@ -416,13 +418,14 @@ pub(super) fn compile(
 fn lower(
     program: &ResidualProgram,
     function_id: u32,
+    unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &[Vec<NativeFieldLoad>],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
     if fields.iter().flatten().any(|field| !field.valid()) { return None; }
-    if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
+    if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
@@ -440,8 +443,10 @@ fn lower(
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     );
-    let count = usize::from(function.registers);
-    let live = program.register_root_masks(function_id);
+    let count = usize::from(unit.registers);
+    // Original masks address the caller's PCs. Inlined units conservatively
+    // retain caller/callee state until a shared remapped mask is available.
+    let live = if unit.frames.is_empty() { program.register_root_masks(function_id) } else { None };
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
         int: (0..count).map(|_| builder.declare_var(types::I32)).collect(),
@@ -451,7 +456,8 @@ fn lower(
     let float_zero = builder.ins().f64const(0.0);
     let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
     for register in 0..count {
-        let bits = if live.is_none_or(|live| live.is_live(0, register as Register)) {
+        let bits = if register < usize::from(unit.caller_registers)
+            && live.is_none_or(|live| live.is_live(0, register as Register)) {
             builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
         } else {
             undefined
@@ -460,12 +466,12 @@ fn lower(
         builder.def_var(registers.int[register], zero);
         builder.def_var(registers.float[register], float_zero);
     }
-    let leaders = leaders(function);
+    let leaders = leaders(&unit.instructions);
     let blocks: Vec<_> = leaders.iter().map(|leader| leader.then(|| builder.create_block())).collect();
     let mut lowering = Lowering {
         builder,
         program,
-        function,
+        unit,
         helpers,
         fields,
         context,
@@ -483,11 +489,7 @@ fn lower(
         live,
         valid: true,
     };
-    let instructions: Vec<_> = function
-        .code
-        .iter()
-        .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
-        .collect();
+    let instructions = unit.instructions.clone();
     for instruction in &instructions {
         lowering.written.extend(writes(*instruction).into_iter().filter(|r| usize::from(*r) < count));
     }
@@ -556,16 +558,29 @@ fn lower(
         lowering.builder.switch_to_block(block);
         lowering.exit(&mut leaving, pc);
     }
-    // The exit blocks: write back every register the function writes, then leave at the PC.
+    // The exit blocks: write back every caller register the unit writes, and an inlined
+    // callee's registers to the scratch window it is made from, then leave at the origin.
     let exits: Vec<_> = lowering.exits.iter().map(|(pc, block)| (*pc, *block)).collect();
     for (pc, block) in exits {
         lowering.builder.switch_to_block(block);
-        for register in lowering.written.clone() {
+        for register in lowering.written.clone().into_iter().filter(|register| *register < unit.caller_registers) {
             if !lowering.is_live(pc as usize, register) { continue; }
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
         }
-        let pc_value = lowering.builder.ins().iconst(types::I64, i64::from(pc));
+        let word = match unit.origins.get(pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
+            super::lane_unit::Origin::Caller(pc) => u64::from(pc),
+            super::lane_unit::Origin::Inlined { frame, pc } => {
+                let inlined = unit.frames[frame];
+                let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
+                for register in 0..inlined.registers {
+                    let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)]);
+                    lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register));
+                }
+                LaneExit::Inlined { frame, pc }.word()
+            }
+        };
+        let pc_value = lowering.builder.ins().iconst(types::I64, word as i64);
         lowering.builder.ins().store(MemFlagsData::trusted(), pc_value, lowering.result, 0);
         let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
         lowering.builder.ins().return_(&[status]);
@@ -662,7 +677,10 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
-            Op::Nop if plain => Some(true),
+            Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
+                Some(frame) => Some(self.inline_call(state, pc, frame)),
+                None => Some(true),
+            },
             Op::LoadConst if plain => {
                 let value = self.program.constants.get(instruction.constant_index()).and_then(super::facts::immediate);
                 value.map(|value| {
@@ -682,29 +700,7 @@ impl Lowering<'_, '_> {
                 })
             }
             Op::Move if plain => {
-                let (destination, source) = (instruction.result_register(), instruction.register_b());
-                let fact = state.values[usize::from(source)];
-                let variable = match fact.value.representation {
-                    Representation::Tagged => self.registers.tagged[usize::from(source)],
-                    Representation::Int32 => self.registers.int[usize::from(source)],
-                    Representation::Float64 => self.registers.float[usize::from(source)],
-                };
-                let value = self.builder.use_var(variable);
-                let tagged = (fact.tagged_current && fact.value.representation != Representation::Tagged)
-                    .then(|| self.builder.use_var(self.registers.tagged[usize::from(source)]));
-                let shape = state.shapes.get(&source).copied();
-                let receiver = state.receivers.contains(&source);
-                let layouts: Vec<_> = state.layouts.iter().filter_map(|((owner, shape), projection)|
-                    (*owner == Some(source)).then_some((*shape, *projection))).collect();
-                self.define(state, destination, value, fact);
-                if let Some(bits) = tagged {
-                    self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
-                }
-                if let Some(shape) = shape { state.shapes.insert(destination, shape); }
-                for (shape, projection) in layouts {
-                    state.layouts.insert((Some(destination), shape), projection);
-                }
-                if receiver { state.receivers.insert(destination); }
+                self.copy(state, instruction.result_register(), instruction.register_b());
                 Some(true)
             }
             Op::LoadThis if plain && !instruction.writes_current_this() => {
@@ -848,6 +844,58 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// `source`'s value into `destination`, with every fact proved of it.
+    fn copy(&mut self, state: &mut State, destination: Register, source: Register) {
+        let fact = state.values[usize::from(source)];
+        let variable = match fact.value.representation {
+            Representation::Tagged => self.registers.tagged[usize::from(source)],
+            Representation::Int32 => self.registers.int[usize::from(source)],
+            Representation::Float64 => self.registers.float[usize::from(source)],
+        };
+        let value = self.builder.use_var(variable);
+        let tagged = (fact.tagged_current && fact.value.representation != Representation::Tagged)
+            .then(|| self.builder.use_var(self.registers.tagged[usize::from(source)]));
+        let shape = state.shapes.get(&source).copied();
+        let receiver = state.receivers.contains(&source);
+        let layouts: Vec<_> = state.layouts.iter().filter_map(|((owner, shape), projection)|
+            (*owner == Some(source)).then_some((*shape, *projection))).collect();
+        self.define(state, destination, value, fact);
+        if let Some(bits) = tagged { self.builder.def_var(self.registers.tagged[usize::from(destination)], bits); }
+        if let Some(shape) = shape { state.shapes.insert(destination, shape); }
+        for (shape, projection) in layouts { state.layouts.insert((Some(destination), shape), projection); }
+        if receiver { state.receivers.insert(destination); }
+    }
+
+    /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
+    /// the call's cache linked and its receiver a direct object, which a plain call binds as
+    /// `this`; anything else leaves at the call, before its effects. The callee's parameters
+    /// take the call's arguments and its other registers `undefined`, as its activation
+    /// would (`lane_push_passed`).
+    fn inline_call(&mut self, state: &mut State, pc: usize, frame: usize) -> bool {
+        let inlined = self.unit.frames[frame];
+        let exit = self.guard_exit(state, pc as u32);
+        let callee = self.tagged(state, inlined.callee_register);
+        let same = self.ins().icmp_imm_u(IntCC::Equal, callee, inlined.target.callee.to_bits() as i64);
+        emit_js_guard(&mut self.builder, same, exit);
+        let receiver = self.tagged(state, inlined.receiver);
+        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        emit_js_guard(&mut self.builder, object, exit);
+        for register in 0..inlined.registers {
+            let destination = inlined.base + register;
+            let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+            self.set_tagged(state, destination, undefined);
+        }
+        let callee = self.program.function(inlined.target.function as usize);
+        for argument in 0..inlined.arguments.min(callee.params) {
+            if let Some(register) = callee.parameter_registers.map(|base| base + argument)
+                .or_else(|| callee.promoted_register(argument)) {
+                self.copy(state, inlined.base + register, inlined.window + argument);
+            }
+        }
+        true
+    }
+
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         let exit = self.guard_exit(state, pc);
         let context = self.context;
@@ -883,7 +931,7 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let shapes = self.fields.get(pc).cloned().unwrap_or_default();
         let register = base.register_index();
-        if register.is_some_and(|register| register >= self.function.registers) {
+        if register.is_some_and(|register| register >= self.unit.registers) {
             return None;
         }
         let receiver = base == crate::bytecode::FieldBase::THIS
@@ -968,26 +1016,11 @@ impl Lowering<'_, '_> {
     /// The record address, exact shape and inline-storage bits of the direct object in
     /// `register`, proved once per block (`State::shapes`).
     fn object_record(&mut self, state: &mut State, register: Register, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         if let Some(known) = state.shapes.get(&register).copied() { return known; }
         let bits = self.tagged(state, register);
-        let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let is_object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-        emit_js_guard(&mut self.builder, is_object, exit);
-        let record_id = self.ins().ireduce(types::I32, bits);
-        let in_range = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
-        emit_js_guard(&mut self.builder, in_range, exit);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-        emit_js_guard(&mut self.builder, present, exit);
-        let record_id = self.ins().uextend(types::I64, record_id);
-        let offset = self.ins().imul_imm_u(record_id, layout.record_size as i64);
-        let object = self.ins().iadd(records, offset);
-        // The exact shape carries the dictionary bit, so a dictionary never matches.
-        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.auxiliary_offset as i32);
-        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.meta_offset as i32);
-        let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        let projection = (object, shape, inline);
+        let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
+        let projection = (header.record, header.shape, header.inline);
         state.shapes.insert(register, projection);
         state.values[usize::from(register)] = RegisterFact::definition(
             Type::language(crate::ValueType::Object), Representation::Tagged);
@@ -1006,11 +1039,15 @@ impl Lowering<'_, '_> {
 
     fn set_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_a();
-        if source >= self.function.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
+        if source >= self.unit.registers || instruction.writes_current_this() || instruction.returns_from_frame() {
             return None;
         }
-        let register = matches!(instruction.op(), Op::SetField | Op::SetFieldStrict).then(|| instruction.register_b());
-        if register.is_some_and(|register| register >= self.function.registers) { return None; }
+        let register = if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
+            Some(instruction.register_b())
+        } else if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc) {
+            Some(self.unit.frames[*frame].receiver)
+        } else { None };
+        if register.is_some_and(|register| register >= self.unit.registers) { return None; }
         let receiver = register.is_none() || register.is_some_and(|register| state.receivers.contains(&register));
         let owner = if receiver { None } else { register };
         let exit = self.guard_exit(state, pc as u32);
@@ -1213,8 +1250,9 @@ mod tests {
             } else { Vec::new() }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            LaneHelpers { field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1235,8 +1273,9 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            LaneHelpers { field_get: 0, field_set: 0 }, &[], &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0 }, &[], &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

@@ -7,6 +7,35 @@
 use super::*;
 use crate::heap::PlainPropertyStorage;
 
+#[derive(Clone, Copy)]
+pub(super) struct ObjectHeader {
+    pub(super) record: ir::Value,
+    pub(super) shape: ir::Value,
+    pub(super) inline: ir::Value,
+}
+
+impl ObjectHeader {
+    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+        records: ir::Value, miss: ir::Block) -> Self {
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        emit_js_guard(builder, object, miss);
+        let id = builder.ins().ireduce(types::I32, bits);
+        let inside = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, id, layout.record_capacity as i64);
+        emit_js_guard(builder, inside, miss);
+        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+        emit_js_guard(builder, present, miss);
+        let id = builder.ins().uextend(types::I64, id);
+        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
+        let record = builder.ins().iadd(records, offset);
+        let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
+        let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        Self { record, shape, inline }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFieldLoad {
     pub(crate) shape: u32,

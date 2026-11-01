@@ -9,8 +9,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
-pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod cell;
+mod dependencies;
+pub(crate) use dependencies::{
+    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, ProofKind,
+};
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
@@ -524,8 +528,8 @@ use mark_bits;
 /// The objects marked as prototypes (`Heap::prototypes`).
 #[derive(Debug)]
 enum PrototypeRegistry {
-    /// Each one, weakly.
-    Known(Vec<Value>),
+    /// Each one, weakly, with its subject in the dependency table (`Dependencies::watch`).
+    Known(Vec<(Value, u32)>),
     /// Some were marked where no registry saw it.
     Unknown,
 }
@@ -631,6 +635,8 @@ pub(crate) struct Heap {
     /// `prototype_layout_epoch` only when one of them died, since only a dead prototype's
     /// record can be reused under a proof that names it (`retire_dead_prototypes`).
     prototypes: PrototypeRegistry,
+    /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
+    dependencies: dependencies::Dependencies,
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -1089,20 +1095,50 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
+        let Some(unwatched) = self.prototype_object_mut(prototype).map(|object| object.watched_subject().is_none()) else {
+            return;
+        };
+        // A prototype marked without a subject (newly, or in a restored heap, whose
+        // prototypes watch nothing) takes one, which its extras keep.
+        let watch = unwatched.then(|| self.dependencies.watch());
+        let subject = watch.as_ref().and_then(dependencies::Watch::subject);
+        let object = self.prototype_object_mut(prototype).expect("the prototype just read");
+        object.mark_as_prototype();
+        if let Some(watch) = watch {
+            object.watch_as(watch);
+        }
+        if let (Some(subject), PrototypeRegistry::Known(prototypes)) = (subject, &mut self.prototypes) {
+            prototypes.push((prototype, subject));
+        }
+        self.marked_prototypes.rotate_right(1);
+        self.marked_prototypes[0] = Some(prototype);
+    }
+
+    /// The object `mark_prototype` marks: a record's, or a cell's.
+    fn prototype_object_mut(&mut self, prototype: Value) -> Option<&mut Object> {
         // A flag, not an edge: no write barrier for record prototypes.
-        let object = match prototype.direct_object_index() {
+        match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
             None => self.object_mut(prototype),
-        };
-        if let Some(object) = object {
-            let first = !object.was_used_as_prototype();
-            object.mark_as_prototype();
-            if first && let PrototypeRegistry::Known(prototypes) = &mut self.prototypes {
-                prototypes.push(prototype);
-            }
-            self.marked_prototypes.rotate_right(1);
-            self.marked_prototypes[0] = Some(prototype);
+        }
+    }
+
+    /// The proofs that rely on prototypes' layouts (`dependencies`).
+    #[inline(always)]
+    pub(crate) fn dependencies(&self) -> &dependencies::Dependencies {
+        &self.dependencies
+    }
+
+    #[inline(always)]
+    pub(crate) fn dependencies_mut(&mut self) -> &mut dependencies::Dependencies {
+        &mut self.dependencies
+    }
+
+    /// Retires the proofs that read `array`'s elements, when it is a watched prototype.
+    fn note_prototype_elements(&self, array: Value) {
+        if let Some(object) = self.object(array) {
+            object.note_prototype_elements_change();
         }
     }
 
@@ -1955,11 +1991,22 @@ impl Heap {
         let died = match std::mem::take(&mut self.prototypes) {
             PrototypeRegistry::Unknown => {
                 self.prototypes = PrototypeRegistry::Unknown;
+                self.dependencies.retire_all();
                 true
             }
             PrototypeRegistry::Known(mut prototypes) => {
                 let before = prototypes.len();
-                prototypes.retain(|prototype| self.is_live(*prototype));
+                let mut died_subjects = Vec::new();
+                prototypes.retain(|&(prototype, subject)| {
+                    let live = self.is_live(prototype);
+                    if !live {
+                        died_subjects.push(subject);
+                    }
+                    live
+                });
+                for subject in died_subjects {
+                    self.dependencies.release(subject);
+                }
                 let died = prototypes.len() != before;
                 self.prototypes = PrototypeRegistry::Known(prototypes);
                 died
@@ -3249,6 +3296,7 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
+        self.note_prototype_elements(array);
         self.write_barrier(array);
         let arrays = self
             .sparse_arrays
@@ -3269,6 +3317,7 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
+        self.note_prototype_elements(array);
         let Some(elements) = self.array_elements(array) else {
             return;
         };
@@ -3305,7 +3354,7 @@ impl Heap {
             elements.resize(length, Value::DELETED);
             for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
                 if index < length && (index >= dense_length || elements[index].is_deleted()) {
-                    elements[index] = value;
+                    elements.set(index, value);
                 }
             }
         });

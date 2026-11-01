@@ -78,7 +78,7 @@ fn minor_collection_traces_remembered_edges(heap: &mut Heap) {
 
     let child = heap.alloc(Cell::Error("dense child".into()));
     if let Some(elements) = heap.array_elements_mut(owner) {
-        elements.make_mut()[0] = child;
+        elements.make_mut().set(0, child);
     }
     let sparse_child = heap.alloc(Cell::Error("sparse child".into()));
     let sparse_index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
@@ -92,7 +92,7 @@ fn minor_collection_traces_remembered_edges(heap: &mut Heap) {
     assert!(heap.get(garbage).is_none());
 
     if let Some(elements) = heap.array_elements_mut(owner) {
-        elements.make_mut()[0] = Value::UNDEFINED;
+        elements.make_mut().set(0, Value::UNDEFINED);
     }
     heap.collect([owner, sparse]);
     assert!(heap.get(child).is_none());
@@ -307,7 +307,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
     let child = heap.alloc(Cell::Object(plain_object()));
     heap.object_mut(owner).unwrap().set_inline_property(0, child);
     let element = heap.alloc(Cell::Object(plain_object()));
-    heap.array_elements_mut(array).unwrap().make_mut()[0] = element;
+    heap.array_elements_mut(array).unwrap().make_mut().set(0, element);
     let garbage = heap.alloc(Cell::Object(plain_object()));
     // The barrier logged both owners, so they are young until the minor traces them.
     assert!(!heap.is_old(owner) && !heap.is_old(array));
@@ -761,7 +761,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     let first_root = heap.root(first);
     {
         let elements = heap.array_elements_mut(first).unwrap();
-        elements.make_mut()[1] = second_child;
+        elements.make_mut().set(1, second_child);
     }
     assert_eq!(heap.collect([]), Vec::new());
     assert!(heap.is_live(first));
@@ -1292,7 +1292,7 @@ fn promoted_array_records_remember_their_young_string_elements() {
             })
         },
         |heap| heap.alloc_string("young element".into()),
-        |heap, owner, child| heap.array_elements_mut(owner).unwrap().make_mut()[0] = child,
+        |heap, owner, child| heap.array_elements_mut(owner).unwrap().make_mut().set(0, child),
     );
 }
 

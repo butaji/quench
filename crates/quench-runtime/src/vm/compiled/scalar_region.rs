@@ -85,6 +85,7 @@ pub(crate) fn lower_regions(
     let observation = Observation {
         register: None,
         int32_elements: &no_int32_elements,
+        only_int32: &no_int32_elements,
         captures: &[],
         fields: &[],
         native_field_loads: &[],

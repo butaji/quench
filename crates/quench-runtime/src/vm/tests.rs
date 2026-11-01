@@ -2023,7 +2023,7 @@ fn record_receivers_cache_virtual_names_and_inherited_fields_like_ordinary_cells
         "a prototype-held `size` read on a record receiver filled a holder entry"
     );
     assert!(
-        !vm.inherited_field_caches.is_empty(),
+        vm.heap.dependencies().inherited_count() > 0,
         "a field two prototypes above a record receiver filled the inherited cache"
     );
 }
@@ -13035,6 +13035,67 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
+    // A loop walks a list, storing a field of each node it reaches and reading the same name
+    // through the node it moved to (V8-v7 Splay's `splay_` rotations): each store goes through
+    // the cached store at its instruction and each read sees the current slot; a node of
+    // another shape leaves at the store with nothing written.
+    let source = r#"
+      function Node(v) { this.v = v; this.next = null; this.seen = 0; }
+      function walk(head) {
+        var node = head, total = 0;
+        while (node) {
+          node.seen = node.v * 2 + 1;
+          total = total + node.seen;
+          node = node.next;
+        }
+        return total;
+      }
+      var head = null;
+      for (var i = 0; i < 64; i++) { var n = new Node(i); n.next = head; head = n; }
+      var odd = { v: 5, next: null, other: 1, seen: 0 };
+      var sum = 0;
+      for (var r = 0; r < 400; r++) {
+        if (r === 300) { odd.next = head; head = odd; }
+        sum = (sum + walk(head)) | 0;
+      }
+      print(sum + " " + head.seen + " " + odd.seen);
+    "#;
+    let program = Engine::specialize(source, "osr-dynamic-store.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    let expected = interpreted.borrow().clone();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot walk lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native walk under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
     // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
     // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
@@ -13912,7 +13973,13 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
         print(run(globalThis));
         print(captured);
     "#;
-    let program = Engine::specialize(source, "osr-capture-global-alias.js").unwrap();
+    for dynamic in [false, true] {
+    let source = if dynamic {
+        source.replace("function run(object)", "function run(object, other)")
+            .replace("object.captured = index;", "let target = (index & 1) ? object : other; target.captured = index;")
+            .replace("run(globalThis)", "run(globalThis, globalThis)")
+    } else { source.to_owned() };
+    let program = Engine::specialize(&source, "osr-capture-global-alias.js").unwrap();
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     assert_eq!(interpreted.borrow().as_slice(), ["4495502", "2999"]);
@@ -13921,6 +13988,7 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    }
 }
 
 #[test]
@@ -14297,6 +14365,107 @@ print(total + " " + w.arr.slice(35, 50).join(","));
             assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
         }
     }
+}
+
+#[test]
+fn inherited_field_proofs_retire_when_a_prototype_on_the_chain_changes() {
+    // An inherited read proved through `B.prototype` to `A.prototype` (`Dependencies::
+    // prove_inherited`) must see a property `B.prototype` gains, and a new prototype it
+    // takes, each of which retires the proof held across the warm loop.
+    let source = r#"
+(function () {
+function A() {} A.prototype.m = function () { return 1; };
+function C() {} C.prototype.m = function () { return 5; };
+function B() {} B.prototype = Object.create(A.prototype);
+var b = new B(), s = 0;
+for (var q = 0; q < 3000; q++) s += b.m();
+B.prototype.m = function () { return 3; };
+for (var q = 0; q < 3000; q++) s += b.m();
+delete B.prototype.m;
+Object.setPrototypeOf(B.prototype, C.prototype);
+for (var q = 0; q < 3000; q++) s += b.m();
+print(s);
+})();
+"#;
+    let program = Engine::specialize(source, "inherited-field-proofs.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["27000"], "{mode:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn index_free_chain_proof_retires_when_a_prototype_gains_an_index() {
+    // The proof that no prototype holds an array index (`Heap::dependencies`) is held across
+    // warm native stores; an index setter, and then an element, on `Array.prototype` each
+    // retire it, so the stores after each change take the prototype's index into account.
+    let source = r#"
+(function () {
+var log = 0;
+function fill(a, n) { for (var i = 0; i < n; i++) a[i] = i; return a; }
+for (var q = 0; q < 2000; q++) fill([], 40);
+Object.defineProperty(Array.prototype, 5, { set: function (v) { log++; }, configurable: true });
+var a = fill([], 40);
+var hole = 5 in a;
+delete Array.prototype[5];
+for (var q = 0; q < 2000; q++) fill([], 40);
+Array.prototype[7] = "p";
+var b = []; b.length = 9;
+var inherited = b[7];
+delete Array.prototype[7];
+print(log + " " + hole + " " + a.length + " " + inherited + " " + fill([], 40)[7]);
+})();
+"#;
+    let program = Engine::specialize(source, "index-free-chain-proof.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["1 true 40 p 7"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_bounded_entries_prove_products_and_widen_beyond_their_bound() {
+    // `xh` is an `i32` the loop never writes, a factor of products with 14-bit values: a
+    // bound checked at entry proves them exact. A later call's `xh` beyond that bound must
+    // still give the exact (non-`i32`) products, through the widened recompilation.
+    let source = r#"
+(function () {
+function mix(x, a, n) {
+  var xh = x >> 4, s = 0;
+  for (var i = 0; i < n; i++) { var l = a[i] & 0x3fff; s = s + xh * l; }
+  return s;
+}
+var a = []; for (var k = 0; k < 64; k++) a.push((k * 2654435761) & 0xfffffff);
+var t = 0;
+for (var q = 0; q < 3000; q++) t = (t + mix(q & 0xfff, a, 64)) % 1000000007;
+var big = mix(0x7fffffff, a, 64);
+print(t + " " + big + " " + (big > 2147483647));
+})();
+"#;
+    let program = Engine::specialize(source, "osr-bounded-entries.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+    assert!(interpreted_output.borrow()[0].ends_with(" true"), "{:?}", interpreted_output.borrow());
 }
 
 #[test]
@@ -20998,6 +21167,66 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
     }
 }
 
+#[test]
+fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
+    // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
+    // body. A string total makes `add` leave inside it, a double makes its int path
+    // leave, and swapping `add` makes the call's guard leave at the call itself. The callee
+    // reads no capture: its environment is not its caller's.
+    let source = r#"(function () {
+      function Counter(n) { this.n = n; this.total = 0; this.calls = 0; }
+      Counter.prototype.add = function (k) {
+        this.calls = this.calls + 1;
+        this.total = this.total + k;
+        if (this.total > 1000) { this.total = this.total - 1000; }
+        return this.total;
+      };
+      Counter.prototype.step = function (k) {
+        const t = this.add(k);
+        return t + this.n;
+      };
+      const COUNTERS = 6, ROUNDS = 4000, REPLACE_AT = 3000;
+      const counters = [];
+      for (let i = 0; i < COUNTERS; i++) counters.push(new Counter(i));
+      let sum = 0;
+      for (let round = 0; round < ROUNDS; round++) {
+        for (const c of counters) sum = (sum + c.step(round & 31)) % 1000003;
+        if (round === 1500) counters[2].total = "x";
+        if (round === 1501) counters[2].total = 0;
+        if (round === 2200) counters[3].total = 0.25;
+        if (round === 2201) counters[3].total = 0;
+        if (round === REPLACE_AT) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
+      }
+      let calls = 0;
+      for (const c of counters) calls += c.calls;
+      if (calls !== COUNTERS * (REPLACE_AT + 1)) throw Error('repeated or lost inlined store');
+      globalThis.answer = sum + calls;
+      globalThis.totals = counters.map(c => c.total).join(',');
+    })();"#;
+    let program = Engine::specialize(source, "lane-inline.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let before = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        let answer = vm.own_property(global, atom).map(Value::to_bits);
+        let atom = vm.intern_atom("totals");
+        let totals = vm.own_property(global, atom).and_then(|value| vm.heap.string(value))
+            .map(ToString::to_string);
+        answers.push((answer, totals));
+        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+            let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(after > before, "the storing callee runs inlined in its caller's lane body");
+        }
+    }
+    assert!(answers[0].0.is_some() && answers[0].1.is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
 /// Lane bodies (`compiled/lane_region.rs`) run declined call-free methods on their lane
 /// activations' registers and leave at exact PCs: at unsupported records, at failed guards
 /// and at records that read the carried accumulator. Every result must equal the interpreter's.
@@ -21095,13 +21324,13 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         let instructions: Vec<_> = body.instructions().collect();
         let store_pc = instructions.iter().position(|instruction|
             matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)).unwrap();
-        let method = vm.compile_lane_method(&program, id as u32).expect("warmed lane method");
+        let method = vm.compile_lane_method(&program, id as u32, &[]).expect("warmed lane method");
         let atom = vm.intern_atom(object_name);
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         registers[0] = Value::number(0.5);
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), receiver, std::ptr::null());
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
         assert_eq!(pc, store_pc, "{name}: decline before changing the native entry's storage facts");
         let value_atom = vm.intern_atom("value");
         assert_eq!(vm.own_property(receiver, value_atom), Some(Value::integer(0)));
@@ -21113,7 +21342,7 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         registers.fill(Value::UNDEFINED);
         registers[0] = Value::number(2.5);
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), receiver, std::ptr::null());
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
         let instruction = instructions[pc];
         assert_eq!(instruction.op(), Op::Return);
         assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
@@ -21143,7 +21372,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32).expect("typed lane method");
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("typed lane method");
             let atom = vm.intern_atom(name);
             let function = vm.own_property(vm.realm.globals, atom).unwrap();
             for input in inputs {
@@ -21153,7 +21382,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
                     registers[..arguments.len()].copy_from_slice(&arguments);
                     let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
                     let instruction = instructions[pc];
                     assert_eq!(instruction.op(), Op::Return, "{name}({input}, {count}) exited at {pc}");
                     let actual = registers[usize::from(instruction.register_a())];
@@ -21167,7 +21396,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
             registers[0] = Value::number(0.5);
             registers[1] = counting;
             let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
             assert_eq!(pc, 0, "a non-Number bound leaves before any coercion");
             let atom = vm.intern_atom("countCoercions");
             assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
@@ -21182,7 +21411,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                 registers[0] = input;
                 registers[1] = Value::integer(1);
                 let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
                 assert!(pc < instructions.len() && instructions[pc].op() != Op::Return,
                     "{input_name} must leave before numeric effects");
                 assert_eq!(registers[0].to_bits(), input.to_bits(), "recover the original input");
@@ -21231,7 +21460,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let body = program.function(id);
         let instructions: Vec<_> = body.instructions().collect();
-        let method = vm.compile_lane_method(&program, id as u32).expect("nullish lane method");
+        let method = vm.compile_lane_method(&program, id as u32, &[]).expect("nullish lane method");
         let atom = vm.intern_atom(name);
         let function = vm.own_property(vm.realm.globals, atom).unwrap();
         for value_name in ["nullValue", "undefinedValue", "zeroValue", "nanValue", "booleanValue",
@@ -21242,7 +21471,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
             let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
             registers[0] = value;
             let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
             let instruction = instructions[pc];
             if name.starts_with("strict") || value.is_record() || value.heap_reference().is_none() {
                 assert_eq!(instruction.op(), Op::Return, "{name}({value_name}) exited at {pc}: {instructions:?}");
@@ -21267,12 +21496,12 @@ fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "exposed")).unwrap();
     let body = program.function(id);
-    let method = vm.compile_lane_method(&program, id as u32).expect("native prefix");
+    let method = vm.compile_lane_method(&program, id as u32, &[]).expect("native prefix");
     let parameter = usize::from(body.promoted_register(0).expect("promoted parameter"));
     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
     registers[parameter] = Value::integer(111);
     let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
     assert!(pc < body.code.len());
     assert_eq!(registers[parameter], Value::integer(123),
         "f.arguments observes a current parameter even when bytecode no longer reads it");
@@ -21306,7 +21535,7 @@ fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32).expect("own-slot native artifact");
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("own-slot native artifact");
             let function = global(&mut vm, name);
             let run = |vm: &mut Vm<TestHost>, receiver, arguments: &[Value]| {
                 let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -21316,7 +21545,7 @@ fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
                     registers[usize::from(register)] = value;
                 }
                 let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-                    &program, registers.as_mut_ptr(), receiver, std::ptr::null());
+                    &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
                 (pc, registers)
             };
             if name != "update" {
@@ -21402,10 +21631,10 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                     registers[usize::from(register)] = value;
                 }
                 let pc = vm.run_lane_method(method, super::program_store::ProgramId::MAIN,
-                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
                 (pc, registers)
             };
-            let method = vm.compile_lane_method(&program, id as u32)
+            let method = vm.compile_lane_method(&program, id as u32, &[])
                 .unwrap_or_else(|| panic!("native {name}: {instructions:?}"));
             for object_name in ["packed", "arena"] {
                 let object = global(&mut vm, object_name);
@@ -21436,7 +21665,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             vm.collect_now(&program);
             let object = global(&mut vm, "arena");
             vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
-            let method = vm.compile_lane_method(&program, id as u32).unwrap();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
             let marked = |vm: &Vm<TestHost>, object: Value| {
                 let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
                 let id = object.direct_object_index().unwrap() as usize;
@@ -21481,7 +21710,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
         let body = program.function(id);
-        let method = vm.compile_lane_method(&program, id as u32).unwrap();
+        let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
         let replacement = global(&mut vm, "replacement");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         for (index, value) in [object, replacement].into_iter().enumerate() {
@@ -21490,7 +21719,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             registers[usize::from(register)] = value;
         }
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
         assert_eq!(body.instructions().nth(pc).unwrap().op(), Op::SetField);
         assert_eq!(vm.own_property(object, left), Some(original), "method invalidation happens before the write");
         let write = global(&mut vm, "write");
@@ -21512,7 +21741,7 @@ fn native_chain_append_completes_without_a_store_handoff() {
     let body = program.function(id);
     let instructions: Vec<_> = body.instructions().collect();
     assert!(instructions.iter().any(|instruction| instruction.op() == Op::SetField));
-    let method = vm.compile_lane_method(&program, id as u32).unwrap();
+    let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
     let left = vm.intern_atom("left");
     for (head_name, item_name) in [("head", "item"), ("arenaHead", "arenaItem")] {
         let atom = vm.intern_atom(head_name);
@@ -21524,7 +21753,7 @@ fn native_chain_append_completes_without_a_store_handoff() {
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
         registers[usize::from(parameter)] = head;
         let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
-            &program, registers.as_mut_ptr(), item, std::ptr::null());
+            &program, registers.as_mut_ptr(), item, std::ptr::null()).caller_pc().expect("caller exit");
         assert_eq!(instructions[pc].op(), Op::Return, "append leaves at {pc}: {instructions:?}");
         assert_eq!(registers[usize::from(instructions[pc].register_a())], head);
         assert_eq!(vm.own_property(tail, left), Some(item));
