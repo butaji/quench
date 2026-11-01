@@ -12,8 +12,21 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
 
-pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
-    quench_runtime::host_functions![
+// Operation identities must remain available without retaining callback addresses.
+// Both projections preserve declaration order and platform-specific entries.
+macro_rules! node_bindings {
+    ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+        const OPERATION_NAMES: &[&str] = &[$($(#[$attribute])* $name),*];
+
+        pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
+            quench_runtime::host_functions![
+                $($(#[$attribute])* $scope $name ($length) => $callback),*
+            ]
+        }
+    };
+}
+
+node_bindings! {
         method "workerConstruct" (1) => crate::modules::worker_threads_shared_vm::construct,
         method "workerSetEnvironmentData" (2) => crate::modules::worker_threads_shared_vm::set_environment_data,
         method "workerGetEnvironmentData" (1) => crate::modules::worker_threads_shared_vm::get_environment_data,
@@ -1103,7 +1116,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "traceCategories" (0) => crate::modules::trace_shared_vm::categories,
         method "traceEnabled" (0) => crate::modules::trace_shared_vm::enabled,
         method "traceGetEnabledCategories" (0) => crate::modules::trace_shared_vm::get_enabled_categories,
-    ]
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing
@@ -1138,20 +1150,20 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
     /// for every binding, was 50 KiB of every process's heap at start-up (massif, V8-v7
     /// Richards, 2026-10-22); a binary search costs about eleven comparisons of short names.
     static INDEX: std::sync::OnceLock<Box<[u16]>> = std::sync::OnceLock::new();
-    let bindings = bindings();
+    let names = OPERATION_NAMES;
     let index = INDEX.get_or_init(|| {
-        let mut index: Box<[u16]> = (0..bindings.len())
+        let mut index: Box<[u16]> = (0..names.len())
             .map(|position| u16::try_from(position).expect("Node binding index fits u16"))
             .collect();
         // Stable, so a repeated name resolves to its first registration.
-        index.sort_by_key(|&position| bindings[usize::from(position)].name);
+        index.sort_by_key(|&position| names[usize::from(position)]);
         index
     });
-    let first = index.partition_point(|&position| bindings[usize::from(position)].name < name);
+    let first = index.partition_point(|&position| names[usize::from(position)] < name);
     let position = index
         .get(first)
         .copied()
-        .filter(|&position| bindings[usize::from(position)].name == name)
+        .filter(|&position| names[usize::from(position)] == name)
         .expect("registered Node operation");
     HostFunctionId(u32::from(position))
 }
@@ -1506,7 +1518,7 @@ impl quench_runtime::Host for NodeHost {
     /// frame, only argument values and host state, and enters guest code, if at all, through
     /// the runtime's calls (`Host::host_function_runs_beside_activations`).
     fn host_function_runs_beside_activations(&self, index: usize) -> bool {
-        bindings().get(index).is_some_and(|binding| BESIDE_ACTIVATIONS.contains(&binding.name))
+        OPERATION_NAMES.get(index).is_some_and(|name| BESIDE_ACTIVATIONS.contains(name))
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
@@ -1958,8 +1970,11 @@ mod tests {
     #[test]
     fn operation_names_are_unique() {
         let mut names = std::collections::HashSet::new();
-        for binding in super::bindings() {
+        assert_eq!(super::OPERATION_NAMES.len(), super::bindings().len());
+        for (index, binding) in super::bindings().iter().enumerate() {
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+            assert_eq!(super::OPERATION_NAMES[index], binding.name);
+            assert_eq!(super::operation(binding.name).0 as usize, index);
         }
     }
 }
