@@ -2635,13 +2635,13 @@ fn drain_checkpoint(
             continue;
         }
         let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
-        let http_progress = crate::modules::http_shared_vm::poll(runtime, program, &shared_state)?;
+        let transport_progress = crate::modules::net_shared_vm::transport_poll::poll(runtime, program, &shared_state)?;
         // Each turn of the loop is a collection safepoint, once its network writes have gone
         // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
         // due collection would otherwise wait for guest code that loops. Nothing runs here,
         // and every value is a root.
         runtime.collect_if_due(program).map_err(|error| error.to_string())?;
-        if http_progress || udp_progress {
+        if transport_progress || udp_progress {
             continue;
         }
         if crate::modules::napi::poll(runtime, program)? {
@@ -2905,7 +2905,7 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
-        || crate::modules::http_shared_vm::has_work(shared_state)
+        || crate::modules::net_shared_vm::has_work(&shared_state.borrow().tcp)
         || crate::modules::napi::has_work()
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
@@ -3864,7 +3864,7 @@ fn cleanup_environment(
     state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) {
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(state, "RunCleanup");
-    crate::modules::http_shared_vm::cleanup(runtime, state);
+    crate::modules::net_shared_vm::transport_poll::cleanup(runtime, state);
     super::fs_watch_shared_vm::cleanup(runtime);
     super::fs_stat_watch_shared_vm::cleanup(runtime);
 }

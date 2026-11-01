@@ -294,17 +294,21 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
     ])
 }
 
-fn construct_without_new(c: &mut Context<'_>, class: &str, args: &[RootId]) -> Result<Option<RootId>, RootedError> {
+/// A call without `new` constructs, unless it initializes an instance (`Socket.call(this)`).
+fn construct_without_new(c: &mut Context<'_>, this: RootId, class: &str, args: &[RootId]) -> Result<Option<RootId>, RootedError> {
     if c.new_target_rooted().is_some() {
         return Ok(None);
     }
     let class = operation(c, class)?;
+    if c.is_object_rooted(this)? && c.instance_of_rooted(this, class)? {
+        return Ok(None);
+    }
     c.construct_rooted(class, class, args).map(Some)
 }
 
 /// `new net.Socket(options)`.
 pub(crate) fn socket_construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    if let Some(socket) = construct_without_new(c, "Socket", args)? {
+    if let Some(socket) = construct_without_new(c, this, "Socket", args)? {
         return Ok(socket);
     }
     let given = arg(c, args, 0);
@@ -759,7 +763,7 @@ pub(crate) fn socket_reset(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> O
 
 /// `new net.Server(options, connectionListener)`.
 pub(crate) fn server_construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    if let Some(server) = construct_without_new(c, "Server", args)? {
+    if let Some(server) = construct_without_new(c, this, "Server", args)? {
         return Ok(server);
     }
     let options = arg(c, args, 0);
