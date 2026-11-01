@@ -1463,6 +1463,7 @@ fn emit_js_dense_array_get(
 enum JsFieldReceiver {
     Register(i32),
     FixedThis,
+    Value(ir::Value),
 }
 
 fn js_field_receiver(base: FieldBase, register_offset: &impl Fn(u16) -> Option<i32>) -> Option<JsFieldReceiver> {
@@ -1497,6 +1498,7 @@ fn emit_js_cached_field_slot(
         JsFieldReceiver::Register(offset) =>
             builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
         JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
+        JsFieldReceiver::Value(value) => value,
     };
     let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
     let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
@@ -1740,19 +1742,19 @@ fn emit_js_own_field_set(
     arguments: ir::Value,
     payload: ir::Value,
     receiver: JsFieldReceiver,
-    value_offset: i32,
+    value: ir::Value,
     atom: Atom,
     site: u16,
+    result_destination: Option<i32>,
     next: ir::Block,
+    fallback: ir::Block,
     exact: &JsExactFallback,
 ) {
     use crate::value::ValueLayout;
 
-    let fallback = builder.create_block();
     let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
     let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
     emit_js_guard(builder, specialized, fallback);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
     let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
     let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
     // The atom's bit among the names method caches hold (`Vm::method_caches_may_name`).
@@ -1827,6 +1829,9 @@ fn emit_js_own_field_set(
     builder.seal_block(write);
     builder.switch_to_block(write);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+    if let Some(destination) = result_destination {
+        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+    }
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
 }
@@ -2141,6 +2146,41 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
+        // A fused field chain and `this` sink makes no guest effects until the
+        // cached data reads and the own store have all passed their guards.
+        if instruction.op() == Op::GetField
+            && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER
+            && instruction.writes_current_this()
+            && !instruction.returns_from_frame()
+            && let Some(next) = next
+            && let Some(FieldLookup::Site(site)) = instruction.field_lookup()
+            && let Some(site) = program.field_sites.get(site)
+            && let Some((sink_atom, sink_cache)) = site.sink
+            && let Some(receiver) = js_field_receiver(site.base, &register_offset)
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let fallback = builder.create_block();
+            let (address, _) = emit_js_cached_field_slot(
+                &mut builder, arguments, payload, receiver, site.first.1, true, fallback,
+            );
+            let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            if let Some((_, cache)) = site.second {
+                let (address, _) = emit_js_cached_field_slot(
+                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback,
+                );
+                value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            }
+            let exact = JsExactFallback {
+                context, callout, callout_signature, result_pointer,
+                stopped_block, continue_block, pc,
+            };
+            emit_js_own_field_set(
+                &mut builder, arguments, payload, JsFieldReceiver::FixedThis, value,
+                sink_atom, sink_cache, Some(destination), next, fallback, &exact,
+            );
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
         if instruction.op() == Op::GetField
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
@@ -2200,6 +2240,8 @@ pub(super) fn lower_js_general_dispatch(
             && let Some(next) = next
             && let Some(value_offset) = register_offset(instruction.register_a())
         {
+            let fallback = builder.create_block();
+            let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
             let exact = JsExactFallback {
                 context,
                 callout,
@@ -2214,10 +2256,12 @@ pub(super) fn lower_js_general_dispatch(
                 arguments,
                 payload,
                 receiver,
-                value_offset,
+                value,
                 instruction.atom_index(),
                 instruction.cache_site_index(),
+                None,
                 next,
+                fallback,
                 &exact,
             );
             general_dispatch_native_pcs[pc] = 1;

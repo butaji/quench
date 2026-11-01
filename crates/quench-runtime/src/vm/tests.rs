@@ -16102,6 +16102,54 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_fused_field_copy_preserves_effects_and_collection() {
+    let source = r#"
+      function copy() { this.out = this.holder.value; return this.out; }
+      function install(owner, n) { owner.holder.value = { n }; owner.copy(); }
+      const holder = { a: 1, b: 2, value: 7 };
+      const target = { a: 1, b: 2, c: 3, holder, out: 0, copy };
+      for (let i = 0; i < 64; i++) if (target.copy() !== 7) throw Error('field copy');
+      $262.gc();
+      install(target, 8);
+      install(target, 9);
+      $262.gc();
+      if (target.out.n !== 9) throw Error('field copy barrier');
+      let reads = 0;
+      Object.defineProperty(holder, 'value', { get() { reads++; return 10; }, configurable: true });
+      if (target.copy() !== 10 || reads !== 1) throw Error('getter fallback');
+      Object.defineProperty(holder, 'value', { value: 11, writable: true, configurable: true });
+      let writes = 0;
+      Object.defineProperty(target, 'out', { set(value) { writes += value; }, configurable: true });
+      target.copy();
+      if (writes !== 11) throw Error('setter fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-copy.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "copy")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("copy should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField && instruction.writes_current_this()).then_some(pc)
+    }).expect("fused field copy");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback() {
     let source = r#"
       function receiver() { 'use strict'; const value = this; if (value === null) return 1; return value; }
