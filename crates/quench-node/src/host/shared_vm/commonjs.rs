@@ -435,14 +435,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(install_performance_global)?;
     #[cfg(quench_openssl_provider)]
     context.scoped(crate::modules::crypto_node::install_global)?;
-    if node_primordials_source(context).is_some() {
-        // Node 24 exposes these well-known disposal symbols before its
-        // primordial snapshot is built. The runtime may not provide them yet,
-        // so seed stable symbols for Node's internal modules first.
-        let seed_disposal_symbols = crate::host::removed_javascript("node:bootstrap/disposal-symbols.js")?;
-        let undefined = context.undefined();
-        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // Builtins built after this point see the intrinsics as they are now, whatever a
@@ -2935,7 +2927,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             node_library_module(context, "repl.js", "repl.js")
         }
         BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
-        BuiltinModule::Sea => crate::host::removed_javascript("node:sea.js"),
+        BuiltinModule::Sea => crate::modules::sea_shared_vm::module(context),
         BuiltinModule::Process
         | BuiltinModule::Assert
         | BuiltinModule::AssertStrict
