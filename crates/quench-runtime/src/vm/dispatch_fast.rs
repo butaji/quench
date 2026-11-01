@@ -7154,10 +7154,13 @@ fn lane_loop_entry<H: Host>(
     for (index, field) in region.fields.iter().enumerate() {
         // A field native code reads at its instruction (`LoopRegion::is_dynamic_field`) takes
         // its entry value only to seed its representation: a receiver it does not answer for
-        // now (a null child, another shape) seeds the representation's own placeholder.
-        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index)).or_else(|| {
-            region.is_dynamic_field(index).then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
-        })?;
+        // now (a null child, another shape), or a value its Number representation does not
+        // hold, seeds the representation's own placeholder.
+        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index))
+            .filter(|value| field.tagged || !region.is_dynamic_field(index) || value.as_number().is_some())
+            .or_else(|| {
+                region.is_dynamic_field(index).then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
+            })?;
         entry.push_field(value, field.tagged)?;
     }
     for array in &region.arrays {
