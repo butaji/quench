@@ -3780,7 +3780,7 @@ const JS_LEAF_STACK_RESERVE: usize = 16 * 1024;
 /// The state every compiled function receives. Field offsets are the ABI
 /// compiled code loads from.
 #[repr(C)]
-struct CallContext {
+pub(super) struct CallContext {
     stack_limit: usize,
     interrupt: *const std::sync::atomic::AtomicBool,
     table: *const usize,
@@ -3862,9 +3862,9 @@ impl CallContext {
         interrupt: *const std::sync::atomic::AtomicBool,
         poll_page: Option<(usize, usize)>,
     ) -> Self {
-        Self {
-            stack_limit: native_stack_limit(),
-            interrupt,
+        let mut context = Self {
+            stack_limit: 0,
+            interrupt: std::ptr::null(),
             table: std::ptr::null(),
             vm: std::ptr::null_mut(),
             env: Value::NULL,
@@ -3885,8 +3885,8 @@ impl CallContext {
             call_reference_diagnostic: 0,
             reference_call_sites: std::ptr::null(),
             reference_call_site_count: 0,
-            poll_start: poll_page.map_or(0, |(start, _)| start),
-            poll_end: poll_page.map_or(0, |(start, bytes)| start + bytes),
+            poll_start: 0,
+            poll_end: 0,
             reference_epoch: std::ptr::null(),
             reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
@@ -3897,10 +3897,23 @@ impl CallContext {
             emscripten_memcpy_leaf_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
-            adapter_payload,
+            adapter_payload: std::ptr::null_mut(),
             js_constants: std::ptr::null(),
             js_constant_count: 0,
-        }
+        };
+        context.bind_native_adapter(adapter_payload, interrupt, poll_page);
+        context
+    }
+
+    fn bind_native_adapter(
+        &mut self, payload: *mut (), interrupt: *const std::sync::atomic::AtomicBool,
+        poll_page: Option<(usize, usize)>,
+    ) {
+        self.stack_limit = native_stack_limit();
+        self.interrupt = interrupt;
+        self.adapter_payload = payload;
+        self.poll_start = poll_page.map_or(0, |(start, _)| start);
+        self.poll_end = poll_page.map_or(0, |(start, bytes)| start + bytes);
     }
 
     /// The context of code that reads only the interrupt state: the flag, and the VM's
@@ -6321,7 +6334,14 @@ fn run_js_native_entry<H: Host>(
     interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
     native_pcs: &[u8],
 ) -> Option<(u32, u64)> {
-    let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
+    // Taking the idle slot leaves reentrant calls no access to this live context.
+    let mut context = match unsafe { (*vm).js_native_context.take() } {
+        Some(mut context) => {
+            context.bind_native_adapter(payload, interrupt, poll_page);
+            context
+        }
+        None => Box::new(CallContext::native_adapter(payload, interrupt, poll_page)),
+    };
     context.vm = vm.cast();
     context.program = program;
     // Linked entries import their fixed semantic operations directly.
@@ -6356,7 +6376,14 @@ fn run_js_native_entry<H: Host>(
             entry,
         )
     };
-    match context.raised.take() {
+    let raised = context.raised.take();
+    // Idle JS adapters own no guest roots or raised completions. Nested
+    // entries may already have returned a reusable context; retain only one.
+    let idle = unsafe { &mut (*vm).js_native_context };
+    if idle.is_none() {
+        *idle = Some(context);
+    }
+    match raised {
         Some(Raised::Panic(panic)) => std::panic::resume_unwind(panic),
         Some(Raised::Error(_)) => return None,
         None => {}
@@ -15756,6 +15783,34 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_entry_panic_transport_does_not_poison_the_next_entry() {
+        unsafe extern "C" fn report_panic(
+            context: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64,
+        ) -> u32 {
+            // Model a panic already caught by the semantic callback's FFI boundary.
+            unsafe { (*context).raised = Some(Raised::Panic(Box::new("native panic"))) };
+            u32::try_from(RAISED_STATUS).unwrap()
+        }
+        let mut vm = semantic_vm("throw 7;");
+        let mut dispatch = JsStepDispatch::new(&mut vm, ProgramId::MAIN, 0, 0, false);
+        let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_js_native_entry(report_panic, &mut vm, ProgramId::MAIN,
+                (&mut dispatch as *mut JsStepDispatch).cast(), interrupt, None, &[])
+        })).unwrap_err();
+        assert_eq!(panic.downcast_ref::<&str>(), Some(&"native panic"));
+
+        let (_memory, entry, _operands) = live_native_graph(&vm);
+        let mut dispatch = JsStepDispatch::new(&mut vm, ProgramId::MAIN, 0, 0, false);
+        let (status, _) = run_js_native_entry(entry, &mut vm, ProgramId::MAIN,
+            (&mut dispatch as *mut JsStepDispatch).cast(), interrupt, None, &[]).unwrap();
+        assert_eq!(status, NATIVE_JS_STOPPED);
+        let Err(error) = dispatch.outcome.unwrap().result else { panic!("expected guest throw") };
+        assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_semantic_graph_runs_root_branches_and_loops() {
         let mut vm = semantic_vm("globalThis.count = 0; while (globalThis.count < 4) { globalThis.count++; } throw globalThis.count;");
         let (_memory, entry, _operands) = live_native_graph(&vm);
@@ -16295,13 +16350,17 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn linked_native_callbacks_collect_and_preserve_object_identity() {
-        let (native, counts, _) = linked_test_program(
-            "const keep = {id: 7}; const values = [keep, keep].map(x => { $262.gc(); return x; }); if (values[0] !== keep || values[1] !== keep) throw 'identity changed'; throw values[0].id;", false,
-        );
-        let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
-        let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected throw") };
-        assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
-        assert!(counts.iter().all(|count| count.get() > 0));
+        for typescript in [false, true] {
+            let (native, counts, _) = linked_test_program(
+                "const keep = {id: 7}; const marker = {}; function callback(x) { $262.gc(); if (x === marker) throw marker; return x; } function outer() { for (let n = 0; n < 16; n++) { try { [marker].map(callback); throw 'missing callback throw'; } catch (error) { if (error !== marker) throw error; } const values = [keep, keep].map(callback); if (values[0] !== keep || values[1] !== keep) throw 'identity changed'; } return keep.id; } throw outer();",
+                typescript,
+            );
+            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
+            assert!(counts.iter().all(|count| count.get() > 0));
+        }
     }
 
     #[cfg(feature = "aot")]
