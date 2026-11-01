@@ -6415,7 +6415,14 @@ impl<H: Host> Vm<H> {
         let region = lane_region::compile(program, function, helpers, &receiver_fields);
         self.host.after_native_compilation();
         let region = region?;
-        if region.native == 0 {
+        // Until calls stay native (TOD-1219), a body that calls leaves at every call and pays
+        // its entry again in each callee's return; such a body runs cheaper in the lane.
+        let calls = program.function_get(function as usize).is_some_and(|body| {
+            body.code.iter().any(|packed| {
+                super::dispatch_fast::decoded_instruction(body, *packed).op().control_flow_layout() == ControlFlowLayout::Call
+            })
+        });
+        if region.native == 0 || calls {
             return None;
         }
         let code = CodeMemory::new(&region.code)?;

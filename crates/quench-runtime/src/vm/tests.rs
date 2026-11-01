@@ -20279,9 +20279,9 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
     }
 }
 
-/// Lane bodies (`GeneralDispatchMode::Lane`) run declined methods on their lane activations'
-/// registers and leave at exact PCs: at calls, at unsupported records, at failed guards and
-/// at records that read the carried accumulator. Every result must equal the interpreter's.
+/// Lane bodies (`compiled/lane_region.rs`) run declined call-free methods on their lane
+/// activations' registers and leave at exact PCs: at unsupported records, at failed guards
+/// and at records that read the carried accumulator. Every result must equal the interpreter's.
 #[test]
 fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     let source = r#"(function () {
@@ -20294,8 +20294,8 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
         if ((this.state & HELD) != 0 || this.state == SUSPENDED) { this.sum = this.sum - 1; }
         if (this.count < LIMIT) { this.state = this.state | HELD; return this.sum + this.count; }
         this.count = 0;
-        const released = this.release();
-        this.sum = (this.sum + released + this.id) & 65535;
+        this.state = this.state & ~HELD;
+        this.sum = (this.sum + this.state + this.id) & 65535;
         return this.sum;
       };
       Task.prototype.walk = function (k) {
