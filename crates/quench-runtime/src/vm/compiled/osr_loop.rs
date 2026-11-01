@@ -2383,6 +2383,8 @@ pub(crate) struct Observation<'a> {
 pub(crate) struct NativeFieldLoad {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
+    pub(crate) storage_len: usize,
+    pub(crate) storage: Option<crate::heap::PlainPropertyStorage>,
 }
 
 /// How native code holds the values the entry record carries, by their record order.
@@ -3879,6 +3881,22 @@ enum NodeProof {
     InvalidConversion,
 }
 
+/// A checked receiver projection. Specialized forms prove storage and the full
+/// slot range; Generic retains checks at each load. The region cannot change
+/// object layouts or collect, and a new receiver SSA value needs its own proof.
+#[derive(Clone, Copy)]
+enum NativeObjectSlots {
+    Packed(ir::Value),
+    Arena(ir::Value),
+    Generic { payload: ir::Value, inline: ir::Value, base: ir::Value, length: ir::Value },
+}
+
+#[derive(Clone, Copy)]
+struct CheckedObject {
+    slots: NativeObjectSlots,
+    storage_len: usize,
+}
+
 struct Lowering<'a, 'b> {
     /// The shared native body: the builder, each register's views, which hold each web's value
     /// in its representation (`view_type`), and the interrupt check.
@@ -3957,6 +3975,10 @@ struct Lowering<'a, 'b> {
         (NumberArithmetic, ArithmeticProjection, ir::Value, ir::Value),
         (ir::Value, ir::Block),
     >,
+    /// Layout proofs, reused only in their dominating chain for the same SSA
+    /// receiver and logical shape. Admitted stores cannot change a packed
+    /// payload; arena values are loaded afresh through the proved base.
+    objects: std::collections::HashMap<(ir::Value, u32), (CheckedObject, ir::Block)>,
     /// The elements read so far, by array register, key and representation, with the chain
     /// reading them and the element stores lowered before: the same read later in that
     /// chain, with no store between, is that value, its guards having passed.
@@ -4223,6 +4245,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             handoff,
             chains: std::collections::HashMap::new(),
             exact: std::collections::BTreeMap::new(),
+            objects: std::collections::HashMap::new(),
             element_reads: std::collections::HashMap::new(),
             element_stores: 0,
             bounded_reads: std::collections::BTreeMap::new(),
@@ -4929,6 +4952,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.append_block_param(join, types::F64);
         self.body.builder.ins().brif(unordered, nan_block, &[], join, &[ir::BlockArg::Value(double)]);
         self.body.builder.switch_to_block(nan_block);
+        self.body.builder.seal_block(nan_block);
         let bits = self.body.builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), double);
         // A tag field within the tag range marks a non-double.
         let field = self.body.builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
@@ -4939,10 +4963,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
             .icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
         self.body.builder.ins().brif(tagged, tagged_block, &[], join, &[ir::BlockArg::Value(double)]);
         self.body.builder.switch_to_block(tagged_block);
+        self.body.builder.seal_block(tagged_block);
         let int_field = (ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT) as i64;
         let is_int = self.body.builder.ins().icmp_imm_u(IntCC::Equal, field, int_field);
         self.body.builder.ins().brif(is_int, integer_block, &[], otherwise, &[]);
         self.body.builder.switch_to_block(integer_block);
+        self.body.builder.seal_block(integer_block);
         let integer = self.body.builder.ins().ireduce(types::I32, bits);
         let number = self.body.builder.ins().fcvt_from_sint(types::F64, integer);
         self.body.builder.ins().jump(join, &[ir::BlockArg::Value(number)]);
@@ -5322,7 +5348,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             return None;
         }
         if let Some(load) = self.observation.native_field_loads.get(index).and_then(|load| *load) {
-            return Some(self.native_dynamic_field(pc, index, receiver.value, load));
+            return self.native_dynamic_field(pc, index, receiver.value, load);
         }
         let site = self.body.builder.ins().iconst(types::I64, i64::from(field.cache_site));
         let (callout, context, result) = self.callout_operands();
@@ -5354,167 +5380,138 @@ impl<'a, 'b> Lowering<'a, 'b> {
         Some(Typed { value, representation })
     }
 
-    /// Loads a direct-object own-data slot from the current receiver. Every receiver/layout
-    /// mismatch exits before GetField, so the lane retains complete accessor/proxy semantics.
-    fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, load: NativeFieldLoad) -> Typed {
+    /// Establish an object's header proof once for this SSA value and chain.
+    /// Specialized views also prove the complete slot range; generic views keep
+    /// the existing per-load storage/range checks. Packed payloads stay immutable
+    /// because this tier admits stores only to existing flat slots.
+    fn checked_object(&mut self, pc: u32, receiver: ir::Value, load: NativeFieldLoad) -> Option<CheckedObject> {
+        use crate::heap::PlainPropertyStorage;
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        if usize::from(load.slot) >= load.storage_len
+            || (load.storage == Some(PlainPropertyStorage::PackedInline)
+                && load.storage_len > layout.inline_property_count) { return None; }
+        let receiver = self.body.builder.func.dfg.resolve_aliases(receiver);
+        let chain = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
+        let key = (receiver, load.shape);
+        if let Some((object, proved)) = self.objects.get(&key).copied()
+            && proved == chain && usize::from(load.slot) < object.storage_len {
+            return Some(object);
+        }
         let heap_base = self.region.native_heap_word();
         let object_base = self.word(heap_base);
-        let properties_base = self.word(heap_base + 1);
-        let properties_len = self.word(heap_base + 2);
-
         let family = self.body.builder.ins().band_imm_u(receiver, ValueLayout::HEAP_FAMILY_MASK as i64);
-        let bad_family = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let bad_family = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
         self.guard(pc, bad_family);
         let record_id = self.body.builder.ins().ireduce(types::I32, receiver);
-        let record_out_of_range = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, record_id, layout.record_capacity as i64);
-        self.guard(pc, record_out_of_range);
-
-        let object_base_missing = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::Equal, object_base, 0);
-        self.guard(pc, object_base_missing);
-        let properties_base_missing = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::Equal, properties_base, 0);
-        self.guard(pc, properties_base_missing);
-
-        let record_offset = self
-            .body
-            .builder
-            .ins()
-            .uextend(self.pointer, record_id);
-        let record_offset = self
-            .body
-            .builder
-            .ins()
-            .imul_imm_u(record_offset, layout.record_size as i64);
-        let object = self.body.builder.ins().iadd(object_base, record_offset);
-        let meta = self
-            .body
-            .builder
-            .ins()
-            .load(types::I32, flags(), object, layout.meta_offset as i32);
-        let auxiliary = self
-            .body
-            .builder
-            .ins()
-            .load(types::I32, flags(), object, layout.auxiliary_offset as i32);
-        let wrong_shape = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, auxiliary, i64::from(load.shape));
+        let out_of_range = self.body.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, record_id, layout.record_capacity as i64);
+        self.guard(pc, out_of_range);
+        let missing = self.body.builder.ins().icmp_imm_u(IntCC::Equal, object_base, 0);
+        self.guard(pc, missing);
+        let offset = self.body.builder.ins().uextend(self.pointer, record_id);
+        let offset = self.body.builder.ins().imul_imm_u(offset, layout.record_size as i64);
+        let object = self.body.builder.ins().iadd(object_base, offset);
+        let auxiliary = self.body.builder.ins().load(types::I32, flags(), object, layout.auxiliary_offset as i32);
+        let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, auxiliary, i64::from(load.shape));
         self.guard(pc, wrong_shape);
+        let meta = self.body.builder.ins().load(types::I32, flags(), object, layout.meta_offset as i32);
+        let payload = self.body.builder.ins().load(types::I64, flags(), object, layout.payload_offset as i32);
+        let extras = self.body.builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
+        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, extras, layout.extras_tag as i64);
+        self.guard(pc, extras);
+        let inline = self.body.builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        let slots = match load.storage {
+            Some(PlainPropertyStorage::PackedInline) => {
+                let wrong_storage = self.body.builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+                self.guard(pc, wrong_storage);
+                NativeObjectSlots::Packed(payload)
+            }
+            storage => {
+                let base = self.word(heap_base + 1);
+                let length = self.word(heap_base + 2);
+                let missing = self.body.builder.ins().icmp_imm_u(IntCC::Equal, base, 0);
+                self.guard(pc, missing);
+                if storage == Some(PlainPropertyStorage::Arena) {
+                    let wrong_storage = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, inline, 0);
+                    self.guard(pc, wrong_storage);
+                    let start = self.body.builder.ins().ireduce(types::I32, payload);
+                    let start = self.body.builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
+                    let start = self.body.builder.ins().uextend(types::I64, start);
+                    let end = self.body.builder.ins().iadd_imm_u(start, load.storage_len as i64);
+                    let out_of_bounds = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThan, end, length);
+                    self.guard(pc, out_of_bounds);
+                    let offset = self.body.builder.ins().imul_imm_u(start, layout.property_value_size as i64);
+                    NativeObjectSlots::Arena(self.body.builder.ins().iadd(base, offset))
+                } else {
+                    NativeObjectSlots::Generic { payload, inline, base, length }
+                }
+            }
+        };
+        let checked = CheckedObject { slots, storage_len: load.storage_len };
+        self.objects.insert(key, (checked, chain));
+        Some(checked)
+    }
 
-        let payload = self
-            .body
-            .builder
-            .ins()
-            .load(types::I64, flags(), object, layout.payload_offset as i32);
-        let extras_tag = self
-            .body
-            .builder
-            .ins()
-            .band_imm_u(payload, layout.extras_tag_mask as i64);
-        let has_extras = self
-            .body
-            .builder
-            .ins()
-            .icmp_imm_u(IntCC::Equal, extras_tag, layout.extras_tag as i64);
-        self.guard(pc, has_extras);
-        let inline = self
-            .body
-            .builder
-            .ins()
-            .band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        let tested = self.body.builder.current_block().expect("lowering inside a block");
-        let head = self.chain(tested);
-        let inline_block = self.body.builder.create_block();
-        let arena_block = self.body.builder.create_block();
+    /// Preserve the receiver proof across the shared packed decoder's branches.
+    fn packed_field_bits(&mut self, payload: ir::Value, slot: u16) -> ir::Value {
+        let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
         let join = self.body.builder.create_block();
         let bits = self.body.builder.append_block_param(join, types::I64);
-        self.body.builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
-
-        // Inline storage: the slot's narrow value in its half of the payload word
-        // (`Object::inline_property`), decoded as `Value::from_narrow` does.
-        self.body.builder.switch_to_block(inline_block);
-        self.body.builder.seal_block(inline_block);
-        self.chains.insert(inline_block, head);
-        if usize::from(load.slot) >= layout.inline_property_count {
-            let exit = self.exit_block(pc);
-            self.body.builder.ins().jump(exit, &[]);
-        } else {
-            let half = self.body.builder.ins().ushr_imm_u(payload, i64::from(load.slot) * i64::from(u32::BITS));
-            let narrow = self.body.builder.ins().ireduce(types::I32, half);
-            let integer = self.body.builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
-            let integer_block = self.body.builder.create_block();
-            let reference_block = self.body.builder.create_block();
-            self.body.builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
-            self.body.builder.switch_to_block(integer_block);
-            self.body.builder.seal_block(integer_block);
-            let value = self.body.builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-            let value = self.body.builder.ins().uextend(types::I64, value);
-            let encoded = self.body.builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
-            self.body.builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-            self.body.builder.switch_to_block(reference_block);
-            self.body.builder.seal_block(reference_block);
-            let code = self.body.builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-            let code = self.body.builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
-            let code = self.body.builder.ins().uextend(types::I64, code);
-            let offset = self.body.builder.ins().ishl_imm_u(code, i64::from(WORD_BYTES.trailing_zeros()));
-            let table = self.body.builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
-            let address = self.body.builder.ins().iadd(table, offset);
-            let upper = self.body.builder.ins().load(types::I64, super::invariant(), address, 0);
-            let lower = self.body.builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
-            let lower = self.body.builder.ins().uextend(types::I64, lower);
-            let encoded = self.body.builder.ins().bor(upper, lower);
-            self.body.builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-        }
-
-        // Arena storage: the slot at the object's storage start.
-        self.body.builder.switch_to_block(arena_block);
-        self.body.builder.seal_block(arena_block);
-        self.chains.insert(arena_block, head);
-        let start = self.body.builder.ins().ireduce(types::I32, payload);
-        let start = self
-            .body
-            .builder
-            .ins()
-            .band_imm_u(start, layout.storage_start_mask as i64);
-        let position = self.body.builder.ins().iadd_imm_u(start, i64::from(load.slot));
-        let position = self.body.builder.ins().uextend(types::I64, position);
-        let out_of_bounds = self
-            .body
-            .builder
-            .ins()
-            .icmp(IntCC::UnsignedGreaterThanOrEqual, position, properties_len);
-        self.guard(pc, out_of_bounds);
-        let value_offset = self
-            .body
-            .builder
-            .ins()
-            .imul_imm_u(position, layout.property_value_size as i64);
-        let value_address = self.body.builder.ins().iadd(properties_base, value_offset);
-        let loaded = self.body.builder.ins().load(types::I64, flags(), value_address, 0);
-        self.body.builder.ins().jump(join, &[ir::BlockArg::Value(loaded)]);
-        // `join`'s predecessors are the storage forms' blocks, which the test's block dominates.
+        super::emit_packed_object_slot_read(&mut self.body.builder, payload, slot, join);
         self.body.builder.switch_to_block(join);
         self.body.builder.seal_block(join);
         self.chains.insert(join, head);
+        bits
+    }
 
+    fn object_field_bits(&mut self, pc: u32, object: CheckedObject, slot: u16) -> ir::Value {
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        match object.slots {
+            NativeObjectSlots::Packed(payload) => self.packed_field_bits(payload, slot),
+            NativeObjectSlots::Arena(base) => self.body.builder.ins().load(types::I64, flags(), base,
+                i32::from(slot) * layout.property_value_size as i32),
+            NativeObjectSlots::Generic { payload, inline, base, length } => {
+                let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
+                let inline_block = self.body.builder.create_block();
+                let arena_block = self.body.builder.create_block();
+                let join = self.body.builder.create_block();
+                let bits = self.body.builder.append_block_param(join, types::I64);
+                self.body.builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
+                self.body.builder.switch_to_block(inline_block);
+                self.body.builder.seal_block(inline_block);
+                self.chains.insert(inline_block, head);
+                if usize::from(slot) >= layout.inline_property_count {
+                    let exit = self.exit_block(pc);
+                    self.body.builder.ins().jump(exit, &[]);
+                } else {
+                    let loaded = self.packed_field_bits(payload, slot);
+                    self.body.builder.ins().jump(join, &[ir::BlockArg::Value(loaded)]);
+                }
+                self.body.builder.switch_to_block(arena_block);
+                self.body.builder.seal_block(arena_block);
+                self.chains.insert(arena_block, head);
+                let start = self.body.builder.ins().ireduce(types::I32, payload);
+                let start = self.body.builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
+                let position = self.body.builder.ins().iadd_imm_u(start, i64::from(slot));
+                let position = self.body.builder.ins().uextend(types::I64, position);
+                let out_of_bounds = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, position, length);
+                self.guard(pc, out_of_bounds);
+                let offset = self.body.builder.ins().imul_imm_u(position, layout.property_value_size as i64);
+                let address = self.body.builder.ins().iadd(base, offset);
+                let loaded = self.body.builder.ins().load(types::I64, flags(), address, 0);
+                self.body.builder.ins().jump(join, &[ir::BlockArg::Value(loaded)]);
+                self.body.builder.switch_to_block(join);
+                self.body.builder.seal_block(join);
+                self.chains.insert(join, head);
+                bits
+            }
+        }
+    }
+
+    /// Load through a checked receiver projection. Arena values are loaded afresh
+    /// when the layout proof is reused, so admitted flat stores stay visible.
+    fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, load: NativeFieldLoad) -> Option<Typed> {
+        let object = self.checked_object(pc, receiver, load)?;
+        let bits = self.object_field_bits(pc, object, load.slot);
         let representation = self.field_facts[index].representation;
         let value = match representation {
             Representation::Tagged => bits,
@@ -5527,7 +5524,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.unbox(bits, representation, otherwise)
             }
         };
-        Typed { value, representation }
+        Some(Typed { value, representation })
     }
 
     /// The value of the web rooted at `web`, which its register's view holds where the web
@@ -6738,6 +6735,49 @@ mod tests {
             native_field_loads: &[], widened: &widened,
         };
         verify_region(region, &observation)
+    }
+
+    #[test]
+    fn native_object_fields_share_one_receiver_layout_proof() {
+        let program = crate::Engine::specialize(
+            "function scan(node) { let sum=0; while(node!==null) { sum+=node.value; node=node.next; } return sum; }",
+            "checked-object-proof.js",
+        ).unwrap();
+        let function = program.function(1);
+        let instructions: Vec<_> = function.instructions().collect();
+        let (backedge, header) = instructions.iter().enumerate().find_map(|(pc, instruction)|
+            (instruction.op() == Op::Jump && (instruction.jump_target() as usize) < pc)
+                .then(|| (pc as u32, instruction.jump_target()))).unwrap();
+        let constants: Vec<_> = program.constants.iter().map(|constant| match constant {
+            crate::bytecode::Constant::Number(value) => Value::number(*value),
+            crate::bytecode::Constant::Null => Value::NULL,
+            _ => Value::UNDEFINED,
+        }).collect();
+        let region = region(function, &instructions, &constants, &program.field_sites,
+            program.shared_register_root_masks(1), header, backedge).unwrap();
+        assert_eq!(region.fields.len(), 2);
+        for storage in [Some(crate::heap::PlainPropertyStorage::Arena),
+            Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
+            let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| Some(NativeFieldLoad {
+                shape: 0, slot: slot as u16, storage_len: region.fields.len(),
+                storage,
+            })).collect();
+            let widened = Default::default();
+            let observation = Observation {
+                register: None, int32_elements: &|_| false, captures: &[], fields: &[],
+                native_field_loads: &loads, widened: &widened,
+            };
+            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            let (native, _) = lower_verified(verify_region(&region, &observation).unwrap(),
+                &observation, &*isa, None, false).unwrap();
+            let shape_loads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+                .filter(|&instruction| {
+                    let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return false };
+                    i32::from(offset) == crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
+                        && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32
+                }).count();
+            assert_eq!(shape_loads, 1, "two fields of one receiver must share the layout proof:\n{native}");
+        }
     }
 
     #[test]

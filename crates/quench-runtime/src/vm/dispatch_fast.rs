@@ -5739,7 +5739,7 @@ script_handler! {
             });
         let stored = match (value, site.sink, unsafe { lane_held_this(cx) }) {
             (Some(value), Some((atom, cache)), this) => {
-                vm.primary_own_field_store_hit::<false>(code, this, atom, value, cache)
+                vm.primary_own_field_store_hit::<false>(code, this, atom, value, cache, crate::heap::PropertyStoreLayout::Preserve)
             }
             _ => false,
         };
@@ -6096,7 +6096,7 @@ script_handler! {
     fn lane_set_object_field_own<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if !unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, r.get(i.b), i.imm(), r.get(i.a), i.c) {
+        if !unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, r.get(i.b), i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::Preserve) {
             sibling!(lane_set_field_logged::<H, false>, r, ip, Carried::script(cx))
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -6113,7 +6113,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let object = if THIS { unsafe { lane_fixed_this(cx) } } else { Some(r.get(i.b)) };
         let stored = object.is_some_and(|object| {
-            unsafe { vm(cx) }.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c)
+            unsafe { vm(cx) }.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::MayWiden)
         });
         if !stored {
             sibling!(lane_set_field_miss::<H, THIS>, r, ip, Carried::script(cx))
@@ -6128,7 +6128,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let this = unsafe { lane_held_this(cx) };
-        let stored = unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, this, i.imm(), r.get(i.a), i.c);
+        let stored = unsafe { vm(cx) }.primary_own_field_store_hit::<false>(code, this, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::Preserve);
         if !stored {
             sibling!(lane_set_field_logged::<H, true>, r, ip, Carried::script(cx))
         }
@@ -7037,12 +7037,14 @@ fn lane_loop_run<H: Host>(
             .enumerate()
             .map(|(index, field)| {
                 (native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index))
-                    .then(|| machine.native_field_load_descriptor(field.cache_site))
-                    .flatten()
-                    .map(|(shape, slot)| super::compiled::NativeFieldLoad {
-                        shape,
-                        slot,
+                    .then(|| {
+                        let receiver = match field.receiver {
+                            super::compiled::FieldReceiver::Register(register) => Some(r.get(register)),
+                            _ => None,
+                        };
+                        machine.native_field_load_descriptor(field.cache_site, receiver)
                     })
+                    .flatten()
             })
             .collect::<Vec<_>>();
         let heap = &machine.heap;

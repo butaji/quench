@@ -1443,10 +1443,17 @@ impl<H: Host> Vm<H> {
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
     /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
-    pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<(u32, u16)> {
+    pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
-        (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
-            .then_some((cache.receiver, cache.slot))
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
+        let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
+        if usize::from(cache.slot) >= storage_len { return None; }
+        let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
+            .filter(|object| object.exact_shape() == cache.receiver)
+            .and_then(Object::plain_property_storage);
+        Some(super::compiled::NativeFieldLoad {
+            shape: cache.receiver, slot: cache.slot, storage_len, storage,
+        })
     }
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
@@ -1457,7 +1464,8 @@ impl<H: Host> Vm<H> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
-            return self.native_field_load_descriptor(site).into_iter().collect();
+            return self.native_field_load_descriptor(site, None)
+                .map(|load| (load.shape, load.slot)).into_iter().collect();
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
@@ -1500,6 +1508,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
         debug_assert!(self.lane_admits(p));
         if self.method_caches_may_name(atom) {
@@ -1507,7 +1516,7 @@ impl<H: Host> Vm<H> {
         }
         let Some(record_id) = object.direct_object_index() else {
             // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
-            return LOGS && self.primary_cell_field_store_hit(object, value, site);
+            return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
         let receiver = self.heap.object_record_by_id(record_id);
         if receiver.is_module_namespace() || receiver.is_arguments_object() {
@@ -1520,7 +1529,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: a matching exact shape proves the cached slot layout outside dictionary
         // storage (`Object::exact_shape`).
-        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value) } {
+        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value, layout) } {
             return false;
         }
         self.profile.field_cache_hit(0, 0);
@@ -1530,11 +1539,11 @@ impl<H: Host> Vm<H> {
     /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
     /// own entry (`Heap::cell_property_set_exact`).
     #[inline(never)]
-    fn primary_cell_field_store_hit(&mut self, object: Value, value: Value, site: u16) -> bool {
+    fn primary_cell_field_store_hit(&mut self, object: Value, value: Value, site: u16, layout: crate::heap::PropertyStoreLayout) -> bool {
         let cache = self.field_cache_entry(site);
         let (shape, slot) = (cache.receiver, cache.slot as usize);
         // SAFETY: a recorded own entry names a non-dictionary shape holding `slot`.
-        cache.holder == NO_FIELD_HOLDER && unsafe { self.heap.cell_property_set_exact(object, shape, slot, value) }
+        cache.holder == NO_FIELD_HOLDER && unsafe { self.heap.cell_property_set_exact(object, shape, slot, value, layout) }
             && {
                 self.profile.field_cache_hit(0, 0);
                 true
@@ -1569,7 +1578,7 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))?;
         // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
         // shape's own data slot.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
             return None;
         }
         self.profile.field_cache_hit(2, 0);
@@ -1592,7 +1601,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
             return false;
         }
         self.profile.field_cache_hit(2, 0);

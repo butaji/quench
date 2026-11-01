@@ -85,6 +85,14 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
 
+/// Whether an existing-slot store may replace its owner's property storage.
+/// Native views require Preserve until their execution ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PropertyStoreLayout {
+    Preserve,
+    MayWiden,
+}
+
 /// The native reader's view of an ordinary object record and its out-of-line property words.
 ///
 /// Generated code may resolve only a current direct-object Value to a live record, must
@@ -3489,6 +3497,7 @@ impl Heap {
         record_id: u32,
         slot: usize,
         value: Value,
+        layout: PropertyStoreLayout,
     ) -> bool {
         // Without `LOGS`, a store the barrier would log is left to the caller, so this one
         // makes no call; the barrier does nothing for any other.
@@ -3503,7 +3512,7 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        store_exact_slot::<LOGS>(data, &mut self.properties, slot, value)
+        store_exact_slot(data, &mut self.properties, slot, value, layout)
     }
 
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
@@ -3513,7 +3522,7 @@ impl Heap {
     /// # Safety
     /// `shape` is a shape outside dictionary storage holding a property at `slot`.
     #[inline(always)]
-    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value) -> bool {
+    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
         let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
             return false;
         };
@@ -3525,7 +3534,9 @@ impl Heap {
         if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
             return false;
         }
-        store_exact_slot::<true>(data, properties, slot, value);
+        if !store_exact_slot(data, properties, slot, value, layout) {
+            return false;
+        }
         if value.heap_index().is_some() {
             self.remember(index);
         }
@@ -4277,10 +4288,10 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
 /// arena values without extras need no other decoding (as `property_get_flat`), and inline
-/// values that cannot take `value` move to the arena, which without `LOGS` is left to the
-/// caller's logged store (`false`, with nothing changed).
+/// values that cannot take `value` move to the arena only under MayWiden.
+/// Preserve declines before changing storage or values.
 #[inline(always)]
-fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value) -> bool {
+fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
@@ -4289,7 +4300,7 @@ fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueA
     }
     if data.properties().has_inline_property_storage() {
         if !data.store_inline_narrow(slot, value) {
-            if !LOGS {
+            if layout == PropertyStoreLayout::Preserve {
                 return false;
             }
             let length = properties.len(data.properties());

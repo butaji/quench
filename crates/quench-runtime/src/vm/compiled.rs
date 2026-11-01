@@ -1935,7 +1935,6 @@ fn emit_object_slot_read(
     slot: u16,
     miss: ir::Block,
 ) -> ir::Value {
-    use crate::value::ValueLayout;
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
     let extras = builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
@@ -1951,29 +1950,7 @@ fn emit_object_slot_read(
     if usize::from(slot) >= layout.inline_property_count {
         builder.ins().jump(miss, &[]);
     } else {
-        let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
-        let narrow = builder.ins().ireduce(types::I32, half);
-        let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
-        let integer_block = builder.create_block();
-        let reference_block = builder.create_block();
-        builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
-        builder.switch_to_block(integer_block);
-        let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-        let value = builder.ins().uextend(types::I64, value);
-        let encoded = builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
-        builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-        builder.switch_to_block(reference_block);
-        let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-        let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
-        let code = builder.ins().uextend(types::I64, code);
-        let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
-        let table = builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
-        let address = builder.ins().iadd(table, offset);
-        let upper = builder.ins().load(types::I64, invariant(), address, 0);
-        let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
-        let lower = builder.ins().uextend(types::I64, lower);
-        let encoded = builder.ins().bor(upper, lower);
-        builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+        emit_packed_object_slot_read(builder, payload, slot, join);
     }
 
     builder.switch_to_block(arena_block);
@@ -1983,6 +1960,43 @@ fn emit_object_slot_read(
 
     builder.switch_to_block(join);
     bits
+}
+
+/// Decode a packed property using the canonical NarrowLayout, transferring
+/// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
+fn emit_packed_object_slot_read(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    slot: u16,
+    join: ir::Block,
+) {
+    use crate::value::ValueLayout;
+    debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
+    let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
+    let narrow = builder.ins().ireduce(types::I32, half);
+    let integer = builder.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
+    let integer_block = builder.create_block();
+    let reference_block = builder.create_block();
+    builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
+    builder.switch_to_block(integer_block);
+    builder.seal_block(integer_block);
+    let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+    let value = builder.ins().uextend(types::I64, value);
+    let encoded = builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
+    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    builder.switch_to_block(reference_block);
+    builder.seal_block(reference_block);
+    let code = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+    let code = builder.ins().band_imm_u(code, i64::from(crate::value::NarrowLayout::CODE_MASK));
+    let code = builder.ins().uextend(types::I64, code);
+    let offset = builder.ins().ishl_imm_u(code, i64::from(std::mem::size_of::<u64>().trailing_zeros()));
+    let table = builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64);
+    let address = builder.ins().iadd(table, offset);
+    let upper = builder.ins().load(types::I64, invariant(), address, 0);
+    let lower = builder.ins().ushr_imm_u(narrow, i64::from(crate::value::NarrowLayout::INDEX_SHIFT));
+    let lower = builder.ins().uextend(types::I64, lower);
+    let encoded = builder.ins().bor(upper, lower);
+    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }
 
 /// The address of arena slot `slot` of an object whose payload word `payload` holds plain
@@ -6732,8 +6746,8 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
     }
 }
 
-/// A lane body's own-field store: the lane's logged store hit, write barrier included
-/// (`Vm::primary_own_field_store_hit`). Zero leaves native code for the full store.
+/// A logged own-field store that preserves every native storage projection.
+/// Migration declines before writing, leaving the full store to the lane.
 unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
     // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
@@ -6743,6 +6757,7 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
         atom as Atom,
         Value::from_bits(value),
         site as u16,
+        crate::heap::PropertyStoreLayout::Preserve,
     ))
 }
 

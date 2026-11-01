@@ -1541,6 +1541,14 @@ impl Default for DisplacedInline {
 const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
 const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 
+/// Storage forms whose complete layout is in the ordinary object's record.
+/// This is an observation until a native receiver guard establishes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlainPropertyStorage {
+    PackedInline,
+    Arena,
+}
+
 /// Layout facts for the generated read-only ordinary-object field path. Keep these derived
 /// from the authoritative storage declarations; native code checks the object and extras
 /// representation bits before using any offset below.
@@ -1957,6 +1965,17 @@ impl Object {
         let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
+    }
+
+    pub(crate) fn plain_property_storage(&self) -> Option<PlainPropertyStorage> {
+        if self.properties().is_dictionary() || self.extras_pointer().is_some() {
+            return None;
+        }
+        Some(if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            PlainPropertyStorage::PackedInline
+        } else {
+            PlainPropertyStorage::Arena
+        })
     }
 
     /// The storage start of an object whose values live in the arena behind extras, as a

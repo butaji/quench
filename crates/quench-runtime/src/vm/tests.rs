@@ -15513,6 +15513,14 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
           let repeated = 0;
           for (let call = 0; call < 300; call++) repeated += sumList(head);
           print(repeated);
+          // One logical shape can have packed, arena and prototype-extras storage.
+          head.value = 0.5;
+          print(sumList(head));
+          head.value = -0;
+          print(1 / head.value);
+          const derived = Object.create(head.next);
+          print(sumList(head));
+          print(Object.getPrototypeOf(derived) === head.next);
 
           let getterCount = 0;
           const getterNode = { next: null };
@@ -15561,7 +15569,7 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
     interpreter.execute(&program).unwrap();
-    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "8", "1", "10", "2", "1", "true"]);
+    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "527.5", "-Infinity", "527", "true", "8", "1", "10", "2", "1", "true"]);
 
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
@@ -21055,4 +21063,59 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     }
     assert!(answers[0].is_some());
     assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_bodies_leave_before_a_store_changes_property_storage() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(r#"
+      function put(value) {
+        this.value = value;
+        return this.value + 1;
+      }
+      function aliasPut(value) {
+        const alias = this;
+        this.value = value;
+        return alias.value + 1;
+      }
+      globalThis.direct = { value: 0 };
+      globalThis.aliased = { value: 0 };
+      for (let i = 0; i < 100; i++) {
+        put.call(direct, 0);
+        aliasPut.call(aliased, 0);
+      }
+    "#, "lane-storage-transition.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    for (name, object_name) in [("put", "direct"), ("aliasPut", "aliased")] {
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let body = program.function(id);
+        let instructions: Vec<_> = body.instructions().collect();
+        let store_pc = instructions.iter().position(|instruction|
+            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)).unwrap();
+        let method = vm.compile_lane_method(&program, id as u32).expect("warmed lane method");
+        let atom = vm.intern_atom(object_name);
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        registers[0] = Value::number(0.5);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null());
+        assert_eq!(pc, store_pc, "{name}: decline before changing the native entry's storage facts");
+        let value_atom = vm.intern_atom("value");
+        assert_eq!(vm.own_property(receiver, value_atom), Some(Value::integer(0)));
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        assert_eq!(vm.call_value(&program, function, receiver, &[Value::number(0.5)]).unwrap(), Value::number(1.5));
+
+        // The same artifact proves the new arena form at its next entry.
+        registers.fill(Value::UNDEFINED);
+        registers[0] = Value::number(2.5);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null());
+        let instruction = instructions[pc];
+        assert_eq!(instruction.op(), Op::Return);
+        assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
+    }
 }
