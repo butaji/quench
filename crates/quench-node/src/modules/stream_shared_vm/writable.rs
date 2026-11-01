@@ -376,7 +376,7 @@ pub(crate) fn on_write(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outco
         put(c, info, "stream", stream)?;
         put(c, info, "state", state)?;
         put_slot(c, state, Slot::AfterWriteTickInfoValue, info)?;
-        tick(c, Tick::AfterWriteTick, &[info])?;
+        tick(c, Tick::AfterWriteBatch, &[info])?;
         change(c, state, AFTER_WRITE_PENDING | AFTER_WRITE_TICK_INFO, 0)?;
     } else {
         settle_sync_write(c, stream, state)?;

@@ -150,33 +150,30 @@ pub(crate) fn eos(c: &mut Context<'_>, stream: RootId, options: RootId, callback
     };
     let readable_flag = c.truthy_rooted(readable)?;
     let writable_flag = c.truthy_rooted(writable)?;
-    if c.truthy_rooted(closed)? {
-        next_tick(c, onclose, &[])?;
+    let settled = if c.truthy_rooted(closed)? {
+        Some("onclose")
     } else if error_emitted(c, writable_state)? || error_emitted(c, readable_state)? {
-        if !will_emit_close {
-            let onclosed = listener(c, "onclosed")?;
-            next_tick(c, onclosed, &[])?;
-        }
-    } else if !readable_flag
-        && (!will_emit_close || utils::is_readable(c, stream)?.is_some_and(|value| value))
-        && (writable_finished == Some(true) || utils::is_writable(c, stream)? == Some(false))
-        && no_pending_callbacks(c, writable_state)?
-    {
-        let onclosed = listener(c, "onclosed")?;
-        next_tick(c, onclosed, &[])?;
-    } else if !writable_flag
-        && (!will_emit_close || utils::is_writable(c, stream)?.is_some_and(|value| value))
-        && (readable_finished == Some(true) || utils::is_readable(c, stream)? == Some(false))
-    {
-        let onclosed = listener(c, "onclosed")?;
-        next_tick(c, onclosed, &[])?;
-    } else if c.truthy_rooted(readable_state)? {
-        let request = get(c, stream, "req")?;
-        let aborted = get(c, stream, "aborted")?;
-        if c.truthy_rooted(request)? && c.truthy_rooted(aborted)? {
-            let onclosed = listener(c, "onclosed")?;
-            next_tick(c, onclosed, &[])?;
-        }
+        (!will_emit_close).then_some("onclosed")
+    } else {
+        let writable_only = !readable_flag
+            && (!will_emit_close || utils::is_readable(c, stream)?.is_some_and(|value| value))
+            && (writable_finished == Some(true) || utils::is_writable(c, stream)? == Some(false))
+            && no_pending_callbacks(c, writable_state)?;
+        let mut readable_only = || -> Result<bool, RootedError> {
+            Ok(!writable_flag
+                && (!will_emit_close || utils::is_writable(c, stream)?.is_some_and(|value| value))
+                && (readable_finished == Some(true) || utils::is_readable(c, stream)? == Some(false)))
+        };
+        let finished = writable_only || readable_only()? || {
+            let request = get(c, stream, "req")?;
+            let aborted = get(c, stream, "aborted")?;
+            c.truthy_rooted(readable_state)? && c.truthy_rooted(request)? && c.truthy_rooted(aborted)?
+        };
+        finished.then_some("onclosed")
+    };
+    if let Some(name) = settled {
+        let settle = listener(c, name)?;
+        next_tick(c, settle, &[])?;
     }
     let cleanup = closure(c, "streamEosCleanup", "cleanup", &[record])?;
     if c.truthy_rooted(signal)? && !c.truthy_rooted(closed)? {

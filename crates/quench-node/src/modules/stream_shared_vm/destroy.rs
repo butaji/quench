@@ -356,6 +356,37 @@ pub(crate) fn construct_if_defined(c: &mut Context<'_>, stream: RootId) -> Resul
     construct(c, stream, callback)
 }
 
+/// How `destroyer` ends a stream-like value, in Node's order of preference.
+enum Destruction {
+    /// An incoming request: detach its socket, then destroy it.
+    ServerRequest,
+    /// An outgoing request (the stream or its `req`): abort it.
+    Abort(RootId),
+    Destroy,
+    Close,
+    /// A bare emitter: emit `error` (when failing) and `close` itself.
+    Emit,
+}
+
+fn destruction(c: &mut Context<'_>, stream: RootId) -> Result<Destruction, RootedError> {
+    if utils::is_server_request(c, stream)? {
+        return Ok(Destruction::ServerRequest);
+    }
+    if utils::is_request(c, stream)? {
+        return Ok(Destruction::Abort(stream));
+    }
+    let request = get(c, stream, "req")?;
+    if utils::is_request(c, request)? {
+        return Ok(Destruction::Abort(request));
+    }
+    let destroy = get(c, stream, "destroy")?;
+    if is_function(c, destroy)? {
+        return Ok(Destruction::Destroy);
+    }
+    let close = get(c, stream, "close")?;
+    Ok(if is_function(c, close)? { Destruction::Close } else { Destruction::Emit })
+}
+
 /// `destroyer(stream, err)`: destroy any stream-like value the way it supports.
 pub(crate) fn destroyer(c: &mut Context<'_>, stream: RootId, error: RootId) -> Result<(), RootedError> {
     if !c.truthy_rooted(stream)? || utils::is_destroyed(c, stream)? == Some(true) {
@@ -365,29 +396,23 @@ pub(crate) fn destroyer(c: &mut Context<'_>, stream: RootId, error: RootId) -> R
     if !c.truthy_rooted(error)? && utils::is_finished(c, stream, None)? != Some(true) {
         error = errors::abort_error(c, None)?;
     }
-    let request = get(c, stream, "req")?;
-    if utils::is_server_request(c, stream)? {
-        let null = c.null();
-        put(c, stream, "socket", null)?;
-        call_method(c, stream, "destroy", &[error])?;
-    } else if utils::is_request(c, stream)? {
-        call_method(c, stream, "abort", &[])?;
-    } else if utils::is_request(c, request)? {
-        call_method(c, request, "abort", &[])?;
-    } else if {
-        let destroy = get(c, stream, "destroy")?;
-        is_function(c, destroy)?
-    } {
-        call_method(c, stream, "destroy", &[error])?;
-    } else if {
-        let close = get(c, stream, "close")?;
-        is_function(c, close)?
-    } {
-        call_method(c, stream, "close", &[])?;
-    } else if c.truthy_rooted(error)? {
-        tick(c, Tick::EmitErrorCloseLegacy, &[stream, error])?;
-    } else {
-        tick(c, Tick::EmitCloseLegacy, &[stream])?;
+    match destruction(c, stream)? {
+        Destruction::ServerRequest => {
+            let null = c.null();
+            put(c, stream, "socket", null)?;
+            call_method(c, stream, "destroy", &[error])?;
+        }
+        Destruction::Abort(request) => {
+            call_method(c, request, "abort", &[])?;
+        }
+        Destruction::Destroy => {
+            call_method(c, stream, "destroy", &[error])?;
+        }
+        Destruction::Close => {
+            call_method(c, stream, "close", &[])?;
+        }
+        Destruction::Emit if c.truthy_rooted(error)? => tick(c, Tick::EmitErrorCloseLegacy, &[stream, error])?,
+        Destruction::Emit => tick(c, Tick::EmitCloseLegacy, &[stream])?,
     }
     let destroyed = get(c, stream, "destroyed")?;
     if !c.truthy_rooted(destroyed)? {
