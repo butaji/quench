@@ -567,6 +567,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let readable = readable::build(c, stream, readable_state)?;
     let writable = writable::build(c, stream, writable_state)?;
     let duplex = duplex::build_duplex(c, readable, writable)?;
+    super::webstreams_shared_vm::adapters::install(c, readable, writable, duplex)?;
     let transform = duplex::build_transform(c, duplex)?;
     let pass_through = duplex::build_pass_through(c, transform)?;
     let duplex_side = duplex::build_duplex_side(c, duplex)?;

@@ -997,6 +997,11 @@ impl<H: Host> Vm<H> {
         self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
+    /// The realm's `%AsyncIteratorPrototype%`.
+    pub(crate) fn embedding_async_iterator_prototype(&self) -> Value {
+        self.async_iterator_proto
+    }
+
     pub(crate) fn embedding_pending_promise(&mut self) -> Result<Value, JsError> {
         self.promise_object()
     }

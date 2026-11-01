@@ -150,6 +150,7 @@ pub(crate) mod url_legacy_shared_vm;
 pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_shared_vm;
 pub(crate) mod webidl_shared_vm;
+pub(crate) mod webstreams_shared_vm;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_comparisons_shared_vm;

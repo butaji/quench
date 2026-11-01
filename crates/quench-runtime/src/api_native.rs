@@ -1785,6 +1785,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// `%AsyncIteratorPrototype%`, the prototype every built-in async iterator inherits.
+    pub fn async_iterator_prototype_rooted(&mut self) -> RootId {
+        let value = self.vm.embedding_async_iterator_prototype();
+        self.scoped_value(value)
+    }
+
     /// Create a plain object whose `[[Prototype]]` is null.
     pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_null_object();

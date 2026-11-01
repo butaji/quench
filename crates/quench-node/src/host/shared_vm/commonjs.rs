@@ -799,25 +799,7 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
 /// The globals each web polyfill defines, in definition order. They are lazy data properties
 /// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
 /// A member materializes writable, so a polyfill defining one read-only says so explicitly.
-pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &[
-    "ReadableStream",
-    "WritableStream",
-    "TransformStream",
-    "CompressionStream",
-    "DecompressionStream",
-    "TextEncoderStream",
-    "TextDecoderStream",
-    "ByteLengthQueuingStrategy",
-    "CountQueuingStrategy",
-    "ReadableStreamDefaultReader",
-    "ReadableStreamBYOBReader",
-    "ReadableStreamBYOBRequest",
-    "ReadableByteStreamController",
-    "ReadableStreamDefaultController",
-    "TransformStreamDefaultController",
-    "WritableStreamDefaultWriter",
-    "WritableStreamDefaultController",
-];
+pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &crate::modules::webstreams_shared_vm::GLOBALS;
 // Blob/File are independent of Fetch. Importing buffer must not recursively
 // load undici while the public Buffer binding is still being initialized.
 pub(crate) const WEB_API_GLOBALS: &[&str] = &[
@@ -861,21 +843,6 @@ fn web_global_enabled(context: &mut Context<'_>, name: &str) -> bool {
         || context.host_mut().shared_state().borrow().cli_options.enabled("--experimental-websocket")
 }
 
-
-pub(super) fn initialize_web_streams(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let module = cached_builtin(context, BuiltinModule::WebStreams)?;
-    let global = context.global_root()?;
-    for name in WEB_STREAM_GLOBALS {
-        let value = get(context, module, name)?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, value, true, false, true)?;
-    }
-    Ok(context.undefined())
-}
 
 /// `process.release`'s key and its members (`process.release.name` is Node's runtime name).
 const PROCESS_RELEASE: &str = "release";
@@ -2406,6 +2373,10 @@ pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Module)
 }
 
+pub(crate) fn zlib_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Zlib)
+}
+
 pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Stream)
 }
@@ -2851,7 +2822,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::StreamPromises => crate::modules::stream_shared_vm::promises(context),
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
         BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
-        BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
+        BuiltinModule::WebStreams => crate::modules::webstreams_shared_vm::module(context),
         BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
