@@ -16,6 +16,7 @@ pub(crate) mod buffer_module;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
+pub(crate) mod child_process_class_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
