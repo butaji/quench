@@ -99,6 +99,9 @@ struct Lowering<'a, 'f> {
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
     direct: &'a BTreeMap<usize, *const DirectCallee>,
+    /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
+    /// callee's identity, which its call guards; null where they are not dense.
+    frame_captures: &'a [(usize, usize)],
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -423,10 +426,11 @@ pub(super) fn compile(
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     direct: &BTreeMap<usize, *const DirectCallee>,
+    frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, direct, loop_entry, &*isa)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, direct, frame_captures, loop_entry, &*isa)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
@@ -440,6 +444,7 @@ fn lower(
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     direct: &BTreeMap<usize, *const DirectCallee>,
+    frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
@@ -487,6 +492,7 @@ fn lower(
         helpers,
         fields,
         direct,
+        frame_captures,
         context,
         payload,
         registers_base,
@@ -762,8 +768,16 @@ impl Lowering<'_, '_> {
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-                let entry = self.entry.as_ref().expect("entry facts");
-                let (values, len) = (self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len));
+                let (values, len) = match self.unit.origins.get(pc).copied() {
+                    Some(super::lane_unit::Origin::Inlined { frame, .. }) => {
+                        let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
+                        (self.ins().iconst(types::I64, values as i64), self.ins().iconst(types::I64, len as i64))
+                    }
+                    _ => {
+                        let entry = self.entry.as_ref().expect("entry facts");
+                        (self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len))
+                    }
+                };
                 let exit = self.guard_exit(state, pc32);
                 let in_bounds = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, len, slot as i64);
                 emit_js_guard(&mut self.builder, in_bounds, exit);
@@ -1554,7 +1568,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &BTreeMap::new(), None, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1577,7 +1591,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), &BTreeMap::new(), None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

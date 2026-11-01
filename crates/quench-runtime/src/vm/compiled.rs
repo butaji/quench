@@ -6925,6 +6925,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         function: u32,
         targets: &dyn Fn(u32, u32) -> Option<CallTarget>,
+        captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
     ) -> Option<LaneMethod> {
@@ -6957,7 +6958,8 @@ impl<H: Host> Vm<H> {
             .collect();
         let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
             direct.iter().map(|(pc, callee)| (*pc, &**callee as *const DirectCallee)).collect();
-        let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites, loop_entry);
+        let frame_captures: Vec<(usize, usize)> = unit.frames.iter().map(|frame| captures(frame.target.callee)).collect();
+        let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites, &frame_captures, loop_entry);
         self.host.after_native_compilation();
         let region = region?;
         if region.native == 0 {

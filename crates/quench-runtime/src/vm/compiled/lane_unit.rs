@@ -93,8 +93,8 @@ const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 768;
 /// How deep calls nest inside a unit.
 const MAX_INLINING_DEPTH: usize = 4;
 
-/// Whether the lane-body lowering runs `instruction` of an inlined callee: no capture (its
-/// environment is the callee's), no fusion but a returning one, which splits into the
+/// Whether the lane-body lowering runs `instruction` of an inlined callee: a capture of its
+/// own environment only, no fusion but a returning one, which splits into the
 /// computation and the return (`osr_loop::inlined_returning`). A call is the plan's to admit:
 /// only one it inlines in turn.
 fn inlinable(instruction: WideInstruction) -> bool {
@@ -103,11 +103,26 @@ fn inlinable(instruction: WideInstruction) -> bool {
         Op::Return => plain,
         Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
         | Op::JumpBinaryFalse => plain,
+        // The callee's own captures, which its frame reads from its environment
+        // (`Lowering::frame_captures`).
+        Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
         Op::GetField => plain && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { .. })),
         Op::SetThisField | Op::SetThisFieldStrict => plain,
-        Op::Call => instruction.result_flags() == 0 && !instruction.direct_eval() && !instruction.parameter_eval(),
+        Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
+}
+
+/// Whether a call keeps its result in its register or returns it: the two a unit inlines.
+fn returns_or_keeps(instruction: WideInstruction) -> bool {
+    matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER)
+}
+
+/// The unit PCs an inlined call takes past its marker and its callee's: in the caller, a
+/// returning call's completion is a `Return` of its register; an inlined callee's returning
+/// call completes the callee itself.
+fn call_length(instruction: WideInstruction, root: bool, callee: &Plan) -> u32 {
+    1 + callee.length(false) + u32::from(root && instruction.returns_from_frame())
 }
 
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
@@ -148,7 +163,7 @@ impl Plan {
             .iter()
             .zip(&self.calls)
             .map(|(instruction, call)| match call {
-                Some(call) => 1 + call.plan.length(false),
+                Some(call) => call_length(*instruction, root, &call.plan),
                 None if root => 1,
                 None => completion_length(*instruction),
             })
@@ -176,7 +191,7 @@ impl Planner<'_, '_> {
     }
 
     fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
-        if instruction.op() != Op::Call || instruction.result_flags() != 0 || instruction.direct_eval()
+        if instruction.op() != Op::Call || !returns_or_keeps(instruction) || instruction.direct_eval()
             || instruction.parameter_eval() || depth >= MAX_INLINING_DEPTH
         {
             return None;
@@ -234,7 +249,7 @@ impl Emitter {
         for (instruction, call) in plan.code.iter().zip(&plan.calls) {
             flat.push(at);
             at += match call {
-                Some(call) => 1 + call.plan.length(false),
+                Some(call) => call_length(*instruction, root, &call.plan),
                 None if root => 1,
                 None => completion_length(*instruction),
             };
@@ -267,8 +282,20 @@ impl Emitter {
                 // that fails leaves at the call itself, before any of its effects.
                 self.unit.instructions.push(WideInstruction::new(Op::Nop, 0, 0, 0, 0));
                 self.unit.origins.push(origin);
-                self.emit(&call.plan, Some(index), callee_base, frame_record.receiver,
-                    register(instruction.result_register()), flat[pc + 1])?;
+                // A returning call's callee completes what makes the call: an inlined callee
+                // completes the call that inlined it, so its result and continuation pass
+                // through; the caller completes with a `Return` of the call's register.
+                let returns = instruction.returns_from_frame();
+                let (call_result, call_continuation) = match (returns, root) {
+                    (true, false) => (result, continuation),
+                    (true, true) => (register(instruction.result_register()), flat[pc + 1] - 1),
+                    (false, _) => (register(instruction.result_register()), flat[pc + 1]),
+                };
+                self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
+                if returns && root {
+                    self.unit.instructions.push(WideInstruction::new(Op::Return, instruction.result_register(), 0, 0, 0));
+                    self.unit.origins.push(origin);
+                }
                 continue;
             }
             if root {

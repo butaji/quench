@@ -7076,7 +7076,7 @@ fn lane_loop_body_or_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &Loo
             let code = unsafe { &*(*cx).code };
             own.specialize_lane_body_now(lane_body_entry::<H>, || {
                 let direct = code.function_get(site.function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-                vm.compile_lane_method(code, site.function, &|function, pc| lane_unit_target(cx, function, pc), direct, Some(site.header))
+                vm.compile_lane_method(code, site.function, &|function, pc| lane_unit_target(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, Some(site.header))
             });
             own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
         });
@@ -13965,7 +13965,7 @@ fn lane_tier_enter<H: Host>(
     {
         if !own.specialize_lane_body(lane_body_entry::<H>, || {
             let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-            vm.compile_lane_method(code, function, &|function, pc| lane_unit_target(cx, function, pc), direct, None)
+            vm.compile_lane_method(code, function, &|function, pc| lane_unit_target(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, None)
                 .filter(super::compiled::LaneMethod::amortizes_entry)
         }) {
             own.release_from_tier();
@@ -14006,6 +14006,16 @@ fn lane_site_target<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Option<sup
         && target.entry == CallEntry::Activates
         && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
     .then_some(super::compiled::CallTarget { callee: target.callee, function: target.function })
+}
+
+/// The dense capture slots of `callee`'s environment (`EnvironmentSlots::native_dense_view`),
+/// as values and count, or none: what an inlined frame of it reads its captures from.
+fn lane_callee_captures<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> (usize, usize) {
+    unsafe { vm(cx) }.script_call_entry(callee)
+        // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
+        .and_then(|target| unsafe { capture_reads((*target).capture).as_ref() })
+        .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+        .map_or((0, 0), |(values, len)| (values.addr(), len))
 }
 
 /// `lane_site_target` of any function of the running program, by its view.
