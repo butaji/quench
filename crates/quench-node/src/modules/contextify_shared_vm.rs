@@ -269,7 +269,9 @@ pub(crate) fn create_cached_data(c: &mut Context<'_>, receiver: RootId, _: &[Roo
 }
 
 /// `ContextifyScript.prototype.runInContext(contextifiedObject, timeout, displayErrors,
-/// breakOnSigint, breakOnFirstLine)`: a null context is the main context.
+/// breakOnSigint, breakOnFirstLine)`: a null context is the main context. The timeout and
+/// SIGINT break are accepted but not enforced: the runtime's only interrupt terminates its
+/// owner for good, which a timed-out script must survive.
 pub(crate) fn run_in_context(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (script, _) = registered_script(c, receiver)?;
     let sandbox = argument(c, args, 0);
