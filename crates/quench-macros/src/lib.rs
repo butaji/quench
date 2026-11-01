@@ -90,6 +90,7 @@ fn derive_native_exports(
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
         /// The header contains the ABI marker, boolean-region count and captured-store count.
+        /// Nonempty plan tables are preceded by a function-indexed lookup array.
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 3;
 

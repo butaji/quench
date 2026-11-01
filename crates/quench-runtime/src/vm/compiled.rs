@@ -13676,7 +13676,7 @@ impl<H: Host> Vm<H> {
         frame: usize,
         instruction: WideInstruction,
     ) -> Option<Value> {
-        use super::native_program::NativeBooleanRegion;
+        use super::native_program::{NativeBooleanRegion, NativeGuardedCall};
         use super::js_compiled::JsJitFieldReceiver;
         if instruction.op() != Op::Call || instruction.direct_eval()
             || instruction.result_flags() != 0 || instruction.call_window().count != 0
@@ -13694,16 +13694,18 @@ impl<H: Host> Vm<H> {
         receiver.direct_object_index()?;
         let (target_program, function, env) = self.same_realm_user_target(callee)?;
         if target_program != program_id { return None; }
-        if let Some(store) = code.captured_store(function) {
-            let _guard = crate::stack::GuestCallGuard::enter().ok()?;
-            if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
-                return None;
+        let region = match code.guarded_call(function)? {
+            NativeGuardedCall::CapturedStore(store) => {
+                let _guard = crate::stack::GuestCallGuard::enter().ok()?;
+                if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                    return None;
+                }
+                self.captured_number_field_store(program, receiver, TierCaptures::Environment(env),
+                    store.capture_slot, store.atom, store.cache_site, store.update())?;
+                return Some(Value::UNDEFINED);
             }
-            self.captured_number_field_store(program, receiver, TierCaptures::Environment(env),
-                store.capture_slot, store.atom, store.cache_site, store.update())?;
-            return Some(Value::UNDEFINED);
-        }
-        let region = code.boolean_region(function)?;
+            NativeGuardedCall::Boolean(region) => region,
+        };
         let captures = region.capture_slots[..usize::from(region.capture_count)]
             .iter().map(|slot| (0, *slot));
         let fields = region.field_sites[..usize::from(region.field_count)].iter()

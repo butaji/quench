@@ -67,5 +67,37 @@ Object.setPrototypeOf(inherited, make(6, 7));
 record(() => calc(inherited));
 root.child = null;
 record(() => nested(root));
+function makeState(mask, expected) {
+  return {
+    value: 0, pad: 0, tail: 0,
+    check() { return (this.value & mask) !== 0 || this.value == expected; },
+    mark() { this.value = this.value | mask; },
+    assign() { this.value = expected; },
+    change(nextMask, nextExpected) { mask = nextMask; expected = nextExpected; }
+  };
+}
+const state = makeState(2, 7), another = makeState(4, 9);
+for (let i = 0; i < 40; i++) {
+  state.value = 0; state.mark();
+  if (!state.check()) throw Error('warm guarded calls');
+  another.assign();
+  if (another.value !== 9) throw Error('closure-specific store');
+  if (!another.check()) throw Error('closure-specific guarded calls');
+}
+record(() => state.check());
+state.assign(); output.push(String(state.value));
+state.change('2', 7); state.value = '1'; state.mark();
+output.push(String(state.value));
+record(() => state.check());
+const identity = {valueOf() { events.push('guarded-coerce'); return 2; }};
+state.change(2, identity); state.assign();
+output.push(String(state.value === identity));
+record(() => state.check());
+Object.defineProperty(state, 'value', {
+  get() { events.push('guarded-get'); return 0; },
+  set(value) { events.push('guarded-set:' + value); }
+});
+state.change(2, 7);
+record(() => state.check()); state.mark(); state.assign();
 output.push(events.join(','));
 console.log(JSON.stringify(output));
