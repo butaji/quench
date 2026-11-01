@@ -66,7 +66,7 @@ pub(super) struct RegExpIntrinsics {
 /// Where RegExps of one shape, whose prototype is the realm's `%RegExp.prototype%`, find
 /// their `exec` under one `prototype_layout_epoch`: no own `exec`, and the prototype's in a
 /// data slot. The prototype was marked when the proof was made, so a change to its layout
-/// advances the epoch; every collection advances it too, so a proof never names a reused
+/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered
 /// shape. The slot's value may change in place, so each use reads it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegExpExecProof {

@@ -5,8 +5,9 @@
 //! `prototype_layout_epoch`, where the walk from a receiver of one shape found `key`: an own
 //! data slot, a data slot of a prototype, or nowhere. Every prototype the walk passed was
 //! marked a prototype when the proof was made, so any later change to one advances the epoch
-//! and retires it; every collection advances it too, so a proof never names a reused record,
-//! shape or symbol. The receiver's own layout is its shape, which the proof names.
+//! and retires it; a collection that frees a prototype, and shape compaction, advance it
+//! too, so a proof never names a reused prototype record or shape. A key the shape holds
+//! keeps its symbol alive. The receiver's own layout is its shape, which the proof names.
 
 use super::Value;
 use super::property_key::PropertyKey;

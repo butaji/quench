@@ -4,8 +4,8 @@ use crate::heap::PrivateBrand;
 
 /// Where constructors of one shape hold their own `@@species` getter
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
-/// the slot and that the slot holds the getter itself, and every collection advances the
-/// epoch, so a proof never names a reused shape. The getter may change in place, so each use
+/// the slot and that the slot holds the getter itself, and shape compaction advances the
+/// epoch, so a proof never names a renumbered shape. The getter may change in place, so each use
 /// reads the slot.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct SpeciesSlotProof {

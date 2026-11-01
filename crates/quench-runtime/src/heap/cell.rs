@@ -14,8 +14,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod snapshot;
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
-/// changed: its shape, prototype or integrity changes, and at every collection, after which a
-/// dead prototype's record may be reused. A cache that proved a prototype chain under one value
+/// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
+/// record may then be reused (`Heap::retire_dead_prototypes`); or shape compaction renumbers
+/// the shapes proofs name. A cache that proved a prototype chain under one value
 /// proves it again while the value holds (`FieldAddCache::proved_epoch`). One counter for the
 /// process: a change another heap made only sends caches back to the walk that re-proves them.
 static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);

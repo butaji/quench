@@ -29,8 +29,8 @@ impl From<JsError> for IteratorHelperFailure {
 /// iteration calls (`Vm::array_iteration_intact`) under one `prototype_layout_epoch`: no own
 /// `@@iterator`, that method in a data slot of `Array.prototype` and `next` in a data slot of
 /// `%ArrayIteratorPrototype%`. Both prototypes were marked when the proof was made, so a
-/// change to either's layout advances the epoch; every collection advances it too, so a proof
-/// never names a reused shape. The slots' values may change in place, so each use reads them.
+/// change to either's layout advances the epoch; shape compaction advances it too, so a proof
+/// never names a renumbered shape. The slots' values may change in place, so each use reads them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArrayIterationProof {
     shape: u32,
