@@ -303,7 +303,7 @@ pub(crate) enum FieldLayout {
 }
 
 #[cfg(feature = "aot")]
-pub(crate) use crate::specialize::BindingTime;
+pub(crate) use crate::typed_ir::BindingTime;
 
 impl FieldLayout {
     pub(crate) const fn is_register_field(self) -> bool {

@@ -1,4 +1,6 @@
-//! Semantic facts retained by the shared region IR before machine lowering.
+//! The typed IR's facts: semantic types, machine representations, binding times and
+//! proofs, shared by every native lowering (lane bodies, OSR regions, the AOT residual).
+//! One authority for each; `vm::specialize` holds the Futamura projections that use them.
 //!
 //! A representation is not a JavaScript type, and a profile observation is not
 //! a proof. A region may specialize an observed representation only by keeping

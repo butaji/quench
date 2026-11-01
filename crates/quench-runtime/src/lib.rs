@@ -14,7 +14,7 @@ mod module_identity;
 mod number_to_string;
 mod profile;
 mod snapshot;
-mod specialize;
+mod typed_ir;
 pub(crate) use quench_stack as stack;
 mod unicode;
 mod value;

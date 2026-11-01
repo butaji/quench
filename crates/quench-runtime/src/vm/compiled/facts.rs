@@ -7,12 +7,13 @@
 //! side of a jump is not proved again on the other.
 //!
 //! Entry guards discharge input requirements. Lowering conforms each edge to its target's
-//! semantic type and machine view; an incompatible join declines publication. Constants,
-//! definitions and joins use the same Type lattice as the shared OSR/AOT region compiler.
+//! semantic type and machine view: an edge proves what its state lacks with one guard, and
+//! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
+//! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Constant, ControlFlowLayout, Op, Operand, OperandKind, Register, WideInstruction};
 use crate::value::Value;
-use crate::specialize::Type;
+use crate::typed_ir::Type;
 
 /// The registers' types on entry to each block leader; `None` at a PC that leads no block or
 /// that no path from the entry reaches.
