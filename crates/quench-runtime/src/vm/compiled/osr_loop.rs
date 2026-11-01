@@ -1503,31 +1503,6 @@ fn number_comparison(instruction: WideInstruction) -> Option<super::super::opera
         .flatten()
 }
 
-/// Boolean-producing values only. This does not admit arbitrary tagged/heap
-/// truthiness, nor infer a Boolean from a field read or a call's return value.
-fn boolean_registers(instructions: &[WideInstruction], constants: &[Value]) -> std::collections::BTreeSet<Register> {
-    let mut definitions = std::collections::BTreeMap::<Register, Vec<WideInstruction>>::new();
-    for instruction in instructions {
-        if let Some(register) = instruction.defined_register() {
-            definitions.entry(register).or_default().push(*instruction);
-        }
-    }
-    let mut booleans = std::collections::BTreeSet::new();
-    loop {
-        let before = booleans.len();
-        for (register, definitions) in &definitions {
-            if definitions.iter().all(|instruction| {
-                number_comparison(*instruction).is_some()
-                    || (instruction.op() == Op::LoadConst
-                        && constants.get(instruction.constant_index()).is_some_and(|value| value.as_bool().is_some()))
-                    || (instruction.op() == Op::Move && booleans.contains(&instruction.register_b()))
-            }) {
-                booleans.insert(*register);
-            }
-        }
-        if booleans.len() == before { return booleans; }
-    }
-}
 
 /// A unary operator a region lowers on a Number.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1556,7 +1531,6 @@ enum Role {
 struct Admission<'a> {
     constants: &'a [Value],
     roles: std::collections::BTreeMap<Register, Role>,
-    booleans: std::collections::BTreeSet<Register>,
     captures: Vec<u16>,
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<usize, f64>,
@@ -1938,7 +1912,6 @@ fn admit_register_roles(
     let mut admission = Admission {
         constants,
         roles: std::collections::BTreeMap::new(),
-        booleans: boolean_registers(&instructions, constants),
         captures: Vec::new(),
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
@@ -2360,7 +2333,9 @@ fn admit(
         }
         Op::JumpFalse | Op::JumpTrue => {
             let register = instruction.register_a();
-            if tagged.contains(&register) && admission.booleans.contains(&register) {
+            // A tagged value's truthiness is decided natively where the value alone decides it
+            // (`Lowering::tagged_truthiness`); any other value exits.
+            if tagged.contains(&register) {
                 admission.tagged(register)?;
             } else {
                 admission.number(register)?;
@@ -5436,6 +5411,42 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.guard(pc, beyond);
     }
 
+    /// ToBoolean of tagged `bits` where the value alone decides it (`Value::truthiness`): a
+    /// Number by its value, an object or array record true, any other immediate true unless
+    /// it is `null`, `undefined`, the hole or `false`. Any other heap value (a string, or a
+    /// function that may be the IsHTMLDDA object) exits at `pc`.
+    fn tagged_truthiness(&mut self, pc: u32, bits: ir::Value) -> ir::Value {
+        let builder = &mut self.body.builder;
+        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+        let heap = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
+        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+        let record = builder.ins().bor(object, array);
+        let not_record = builder.ins().icmp_imm_u(IntCC::Equal, record, 0);
+        let undecided = builder.ins().band(heap, not_record);
+        self.guard(pc, undecided);
+        let builder = &mut self.body.builder;
+        let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
+        let payload = builder.ins().ireduce(types::I32, bits);
+        let integer_truthy = builder.ins().icmp_imm_u(IntCC::NotEqual, payload, 0);
+        let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
+        let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+        let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+        let mut falsy = builder.ins().iconst(types::I8, 0);
+        for value in [Value::NULL, Value::UNDEFINED, Value::DELETED, Value::FALSE] {
+            let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, value.to_bits() as i64);
+            falsy = builder.ins().bor(falsy, equal);
+        }
+        let immediate_truthy = builder.ins().icmp_imm_u(IntCC::Equal, falsy, 0);
+        let double = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+        let double_truthy = super::emit_number_truthiness(builder, double);
+        let one = builder.ins().iconst(types::I8, 1);
+        let tagged_truthy = builder.ins().select(integer, integer_truthy, immediate_truthy);
+        let unheaped = builder.ins().select(tagged, tagged_truthy, double_truthy);
+        builder.ins().select(heap, one, unheaped)
+    }
+
     /// A capacity helper may relocate a backing shared by several entry views. Reload
     /// the authoritative entry word across calls; read-only regions keep their old fast path.
     fn array_elements(&mut self, array: ArrayView) -> ir::Value {
@@ -6221,16 +6232,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     Representation::Float64 => {
                         super::emit_number_truthiness(&mut self.body.builder, value.value)
                     }
-                    Representation::Tagged => {
-                        // Admission restricts this to Boolean-producing definitions.
-                        // Keep the runtime guard for a live-in or merged entry value.
-                        let yes = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::TRUE.to_bits() as i64);
-                        let no = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::FALSE.to_bits() as i64);
-                        let valid = self.body.builder.ins().bor(yes, no);
-                        let invalid = self.body.builder.ins().icmp_imm_u(IntCC::Equal, valid, 0);
-                        self.guard(pc, invalid);
-                        yes
-                    }
+                    Representation::Tagged => self.tagged_truthiness(pc, value.value),
                 };
                 let jump_when = instruction.op() == Op::JumpTrue;
                 self.branch(pc, instruction.jump_target(), truthy, jump_when)
@@ -6492,7 +6494,6 @@ mod tests {
         let mut admission = Admission {
             constants: &constants,
             roles: std::collections::BTreeMap::new(),
-            booleans: std::collections::BTreeSet::new(),
             captures: Vec::new(),
             fields: Vec::new(),
             numbers: std::collections::BTreeMap::new(),
@@ -6527,7 +6528,6 @@ mod tests {
         let mut admission = Admission {
             constants: &constants,
             roles: std::collections::BTreeMap::new(),
-            booleans: std::collections::BTreeSet::new(),
             captures: Vec::new(),
             fields: Vec::new(),
             numbers: std::collections::BTreeMap::new(),
