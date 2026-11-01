@@ -150,6 +150,45 @@ fn shape_slot_index_is_derived_from_immutable_shape_keys() {
 }
 
 #[test]
+fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
+    let program = Engine::specialize(
+        "var receiver = { value: 0, a: 1, b: 2 }; function write(value) { receiver.value = value; } write(1);",
+        "numeric-pointer-barrier.js",
+    ).unwrap();
+    program.compile_released();
+    let store = program.functions.iter().flat_map(|function| function.instructions())
+        .find(|instruction| instruction.op() == Op::SetField).unwrap();
+    let atom = store.atom_index();
+    let site = store.cache_site_index();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.execute(&program).unwrap();
+    let receiver_atom = vm.intern_atom("receiver");
+    let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
+    vm.collect_now(&program);
+    let shape = vm.heap.object(receiver).unwrap().shape();
+    let slot = vm.shape_slot(shape, atom).unwrap();
+    vm.record_field_cache(vm.field_cache_index(site), FieldCache {
+        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16,
+    });
+    // SAFETY: the receiver remains rooted by its global binding; no allocation
+    // or collection happens between obtaining this slot and the Number write.
+    let pointer = unsafe { vm.cached_field_store_pointer(&program, receiver, atom, site) }.unwrap();
+    unsafe { pointer.write(Value::integer(7)); }
+    let child = vm.object();
+    let record = receiver.direct_object_index().unwrap();
+    // SAFETY: the same exact own-data shape still proves this initialized slot.
+    assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child) },
+        "a Number pointer store must not consume the owner's reference barrier");
+    // A real reference store still logs its owner, and the collector follows it.
+    assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child) });
+    assert!(!vm.heap.collection_is_full(false));
+    vm.collect_slow(&program, false);
+    assert!(vm.heap.is_live(child));
+    assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));
+}
+
+#[test]
 fn cached_field_reads_follow_in_place_writes() {
     let source = r#"
       var receiver = { value: 1 };

@@ -3335,7 +3335,7 @@ impl Heap {
         object: Value,
         slot: usize,
     ) -> Option<*mut Value> {
-        let vector = self.object_mut(object)?.properties();
+        let vector = self.object(object)?.properties();
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
