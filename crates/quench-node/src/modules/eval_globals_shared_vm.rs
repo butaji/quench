@@ -38,12 +38,7 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
         let reflect = get(c, global, "Reflect")?;
         get(c, reflect, "deleteProperty")
     })?;
-    let vfs = c.host_mut().vfs_enabled();
-    for name in super::module_shared_vm::BUILTIN_MODULES
-        .iter()
-        .copied()
-        .chain(vfs.then_some("node:vfs"))
-    {
+    for name in super::module_shared_vm::BUILTIN_MODULES.iter().copied() {
         if name.starts_with('_') || name.contains('/') {
             continue;
         }

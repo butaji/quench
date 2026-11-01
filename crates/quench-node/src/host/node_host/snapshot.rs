@@ -81,6 +81,9 @@ impl SharedNodeState {
             process_signals,
             stdin,
             process_ipc,
+            node_test: _,
+            cluster: _,
+            repl_resources: _,
             #[cfg(quench_openssl_provider)]
             crypto_hashes,
             #[cfg(quench_openssl_provider)]
