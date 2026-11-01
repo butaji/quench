@@ -686,7 +686,10 @@ impl Inspector {
     }
 
     fn format_raw(&mut self, c: &mut Context<'_>, value: RootId, recurse_times: usize, typed_array: bool) -> Result<String, RootedError> {
-        let constructor = self.constructor_name(c, value, recurse_times)?;
+        let mut proto_props = (self.options.show_hidden && !self.options.depth_exceeded(recurse_times)).then(Vec::new);
+        let constructor = self.constructor_name(c, value, recurse_times, &mut proto_props)?;
+        let proto_props = proto_props.filter(|props| !props.is_empty());
+        let bare = |keys: &Vec<RootId>| keys.is_empty() && proto_props.is_none();
         let tag_key = primordial(c, "toStringTag")?;
         let tag_value = c.get_property_rooted(value, tag_key)?;
         let mut tag = c.string_text(tag_value)?.unwrap_or_default();
@@ -718,7 +721,7 @@ impl Inspector {
                 };
                 keys = c.own_non_index_keys_rooted(value, !self.options.show_hidden)?;
                 braces = (format!("{prefix}["), "]".to_owned());
-                if length == 0 && keys.is_empty() {
+                if length == 0 && bare(&keys) {
                     return Ok(format!("{}]", braces.0));
                 }
                 extras = Extras::Array;
@@ -726,7 +729,7 @@ impl Inspector {
             } else if let Some(BuiltinData::Set(entries)) = brand_data(c, value, BuiltinBrand::Set)? {
                 let prefix = prefix(constructor, &tag, "Set", &format!("({})", entries.len()));
                 keys = self.keys(c, value)?;
-                if entries.is_empty() && keys.is_empty() {
+                if entries.is_empty() && bare(&keys) {
                     return Ok(format!("{prefix}{{}}"));
                 }
                 braces = (format!("{prefix}{{"), "}".to_owned());
@@ -734,7 +737,7 @@ impl Inspector {
             } else if let Some(BuiltinData::Map(entries)) = brand_data(c, value, BuiltinBrand::Map)? {
                 let prefix = prefix(constructor, &tag, "Map", &format!("({})", entries.len()));
                 keys = self.keys(c, value)?;
-                if entries.is_empty() && keys.is_empty() {
+                if entries.is_empty() && bare(&keys) {
                     return Ok(format!("{prefix}{{}}"));
                 }
                 braces = (format!("{prefix}{{"), "}".to_owned());
@@ -766,7 +769,7 @@ impl Inspector {
             keys = self.keys(c, value)?;
             if type_of(c, value) == ValueType::Function {
                 base = function_base(c, value, constructor, &tag)?;
-                if keys.is_empty() {
+                if bare(&keys) {
                     return self.stylize(c, &base, "special");
                 }
             } else if constructor == Some("Object") {
@@ -775,7 +778,7 @@ impl Inspector {
                 } else if !tag.is_empty() {
                     braces.0 = format!("{}{{", prefix(constructor, &tag, "Object", ""));
                 }
-                if keys.is_empty() {
+                if bare(&keys) {
                     return Ok(format!("{}}}", braces.0));
                 }
             } else if c.has_builtin_brand_rooted(value, BuiltinBrand::RegExp)? {
@@ -785,7 +788,7 @@ impl Inspector {
                 if prefix != "RegExp " {
                     base = format!("{prefix}{base}");
                 }
-                if keys.is_empty() || self.options.depth_exceeded(recurse_times) {
+                if bare(&keys) || self.options.depth_exceeded(recurse_times) {
                     return self.stylize(c, &base, "regexp");
                 }
             } else if let Some(BuiltinData::Primitive { brand: BuiltinBrand::Date, value: time }) = brand_data(c, value, BuiltinBrand::Date)? {
@@ -796,12 +799,12 @@ impl Inspector {
                 if prefix != "Date " {
                     base = format!("{prefix}{base}");
                 }
-                if keys.is_empty() {
+                if bare(&keys) {
                     return self.stylize(c, &base, "date");
                 }
             } else if is_error(c, value)? {
                 base = self.format_error(c, value, constructor, &tag, &mut keys)?;
-                if keys.is_empty() {
+                if bare(&keys) {
                     return Ok(base);
                 }
             } else if c.has_builtin_brand_rooted(value, BuiltinBrand::AnyArrayBuffer)? {
@@ -809,7 +812,7 @@ impl Inspector {
                 let prefix = prefix(constructor, &tag, if shared { "SharedArrayBuffer" } else { "ArrayBuffer" }, "");
                 if !typed_array {
                     formatter = Formatter::ArrayBuffer;
-                } else if keys.is_empty() {
+                } else if bare(&keys) {
                     let length = get(c, value, "byteLength")?;
                     let (length, _) = primitive_text(c, length, false)?;
                     let length = self.stylize(c, &length, "number")?;
@@ -836,11 +839,11 @@ impl Inspector {
                 braces.0 = format!("{}{{", prefix(constructor, &tag, "Module", ""));
             } else if c.has_builtin_brand_rooted(value, BuiltinBrand::BoxedPrimitive)? {
                 base = self.boxed_base(c, value, &mut keys, constructor, &tag)?;
-                if keys.is_empty() {
+                if bare(&keys) {
                     return Ok(base);
                 }
             } else {
-                if keys.is_empty() {
+                if bare(&keys) {
                     if let Some(address) = c.external_address_rooted(value) {
                         return self.stylize(c, &format!("[External: {address:x}]"), "special");
                     }
@@ -862,6 +865,7 @@ impl Inspector {
         for &key in &keys {
             output.push(self.format_property(c, value, recurse_times, key, extras)?);
         }
+        output.extend(proto_props.into_iter().flatten());
         if let Some(index) = self.circular_index(c, value)? {
             let reference = self.stylize(c, &format!("<ref *{index}>"), "special")?;
             if self.options.compact != Compact::Single {
@@ -896,7 +900,11 @@ impl Inspector {
 
     /// `getConstructorName`: the first constructor on the chain the value is an instance of,
     /// `None` for a null prototype, or the internal name with its prototype's.
-    fn constructor_name(&mut self, c: &mut Context<'_>, value: RootId, recurse_times: usize) -> Result<Option<String>, RootedError> {
+    /// With `showHidden`, `proto_props` collects the prototype properties
+    /// `addPrototypeProperties` writes.
+    fn constructor_name(
+        &mut self, c: &mut Context<'_>, value: RootId, recurse_times: usize, proto_props: &mut Option<Vec<String>>,
+    ) -> Result<Option<String>, RootedError> {
         let mut object = value;
         let mut first_prototype = None;
         let constructor_key = c.string_rooted("constructor");
@@ -906,6 +914,16 @@ impl Inspector {
                     let name = get(c, constructor, "name")?;
                     let name = c.to_string(name)?;
                     if !name.is_empty() && c.instance_of_rooted(value, constructor).unwrap_or(false) {
+                        let first_is_object = match first_prototype {
+                            Some(first) => c.strict_equal_rooted(first, object)?,
+                            None => false,
+                        };
+                        if let Some(output) = proto_props.as_mut() {
+                            if !first_is_object || !BUILT_IN_OBJECTS.contains(&name.as_str()) {
+                                let start = first_prototype.unwrap_or(value);
+                                self.add_prototype_properties(c, value, start, recurse_times, output)?;
+                            }
+                        }
                         return Ok(Some(name));
                     }
                 }
@@ -929,7 +947,7 @@ impl Inspector {
         if self.options.depth_exceeded(recurse_times) {
             return Ok(Some(format!("{internal} <Complex prototype>")));
         }
-        match self.constructor_name(c, first_prototype, recurse_times + 1)? {
+        match self.constructor_name(c, first_prototype, recurse_times + 1, proto_props)? {
             Some(prototype) => Ok(Some(format!("{internal} <{prototype}>"))),
             None => {
                 let mut options = self.options;
@@ -939,6 +957,64 @@ impl Inspector {
                 Ok(Some(format!("{internal} <{prototype}>")))
             }
         }
+    }
+
+    /// `addPrototypeProperties`: the non-method properties of up to three prototypes above
+    /// `main`, before a built-in one, that `main` does not shadow.
+    fn add_prototype_properties(
+        &mut self, c: &mut Context<'_>, main: RootId, start: RootId, recurse_times: usize, output: &mut Vec<String>,
+    ) -> Result<(), RootedError> {
+        const PROTOTYPE_LAYERS: usize = 3;
+        let constructor_key = c.string_rooted("constructor");
+        let mut object = start;
+        let mut seen_keys: Vec<RootId> = Vec::new();
+        let mut keys: Vec<RootId> = Vec::new();
+        for depth in 0..PROTOTYPE_LAYERS {
+            if depth != 0 || c.strict_equal_rooted(main, object)? {
+                object = c.prototype_rooted(object)?;
+                if type_of(c, object) == ValueType::Null {
+                    return Ok(());
+                }
+                if let Some(constructor) = c.own_property_fields_rooted(object, constructor_key)?.and_then(|fields| fields.value) {
+                    if type_of(c, constructor) == ValueType::Function {
+                        let name = get(c, constructor, "name")?;
+                        if BUILT_IN_OBJECTS.contains(&c.to_string(name)?.as_str()) {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            if depth != 0 {
+                seen_keys.append(&mut keys);
+            }
+            keys = c.own_keys_rooted(object)?;
+            self.seen.push(main);
+            for &key in &keys {
+                if c.string_text(key)?.as_deref() == Some("constructor") || c.own_property_fields_rooted(main, key)?.is_some() {
+                    continue;
+                }
+                let mut shadowed = false;
+                if depth != 0 {
+                    for &seen in &seen_keys {
+                        if c.strict_equal_rooted(seen, key)? {
+                            shadowed = true;
+                            break;
+                        }
+                    }
+                }
+                if shadowed {
+                    continue;
+                }
+                let Some(fields) = c.own_property_fields_rooted(object, key)? else { continue };
+                if fields.value.is_some_and(|value| type_of(c, value) == ValueType::Function) {
+                    continue;
+                }
+                let text = self.format_described(c, recurse_times, key, Extras::Object, fields, main)?;
+                output.push(if self.options.colors { format!("\u{1b}[2m{text}\u{1b}[22m") } else { text });
+            }
+            self.seen.pop();
+        }
+        Ok(())
     }
 
     /// `getKeys`: own enumerable keys and symbols, or every own key with `showHidden`.
@@ -1156,6 +1232,13 @@ impl Inspector {
                 DescriptorFields { value: Some(value), enumerable: Some(false), ..DescriptorFields::default() }
             }
         };
+        self.format_described(c, recurse_times, key, extras, fields, value)
+    }
+
+    /// `formatProperty` with the property's descriptor; getters run on `receiver`.
+    fn format_described(
+        &mut self, c: &mut Context<'_>, recurse_times: usize, key: RootId, extras: Extras, fields: DescriptorFields, receiver: RootId,
+    ) -> Result<String, RootedError> {
         let defined = |c: &Context<'_>, root: Option<RootId>| root.filter(|root| type_of(c, *root) != ValueType::Undefined);
         let mut separator = " ".to_owned();
         let text = if let Some(property) = defined(c, fields.value) {
@@ -1181,7 +1264,7 @@ impl Inspector {
                 Getters::Set => setter.is_some(),
             };
             if invoke {
-                self.format_getter(c, getter, value, label, recurse_times)?
+                self.format_getter(c, getter, receiver, label, recurse_times)?
             } else {
                 self.stylize(c, &format!("[{label}]"), "special")?
             }
@@ -1865,16 +1948,16 @@ fn has_built_in_to_string(c: &mut Context<'_>, value: RootId) -> Result<bool, Ro
         value = target;
     }
     let to_primitive = primordial(c, "toPrimitive")?;
-    let to_primitive = c.get_property_rooted(value, to_primitive)?;
-    if c.is_callable_rooted(to_primitive)? {
-        return Ok(false);
-    }
-    let to_string = get(c, value, "toString")?;
-    if !c.is_callable_rooted(to_string)? {
+    let to_string = c.string_rooted("toString");
+    let primitive_function = c.get_property_rooted(value, to_primitive)?;
+    let string_function = c.get_property_rooted(value, to_string)?;
+    if !c.is_callable_rooted(string_function)? && !c.is_callable_rooted(primitive_function)? {
         return Ok(true);
     }
-    let key = c.string_rooted("toString");
-    if c.own_property_fields_rooted(value, key)?.is_some() {
+    let converts = |c: &mut Context<'_>, holder: RootId| -> Result<bool, RootedError> {
+        Ok(c.own_property_fields_rooted(holder, to_string)?.is_some() || c.own_property_fields_rooted(holder, to_primitive)?.is_some())
+    };
+    if converts(c, value)? {
         return Ok(false);
     }
     let mut pointer = value;
@@ -1883,7 +1966,7 @@ fn has_built_in_to_string(c: &mut Context<'_>, value: RootId) -> Result<bool, Ro
         if type_of(c, pointer) == ValueType::Null {
             return Ok(true);
         }
-        if c.own_property_fields_rooted(pointer, key)?.is_some() {
+        if converts(c, pointer)? {
             break;
         }
     }
@@ -1937,7 +2020,7 @@ pub(crate) fn format_with_options(c: &mut Context<'_>, options: Option<RootId>, 
                             let separator = base(c, options, &mut prepared)?.numeric_separator;
                             primitive_text(c, argument, separator)?.0
                         }
-                        ValueType::Object | ValueType::Function if has_built_in_to_string(c, argument)? => {
+                        ValueType::Object if has_built_in_to_string(c, argument)? => {
                             let mut options = base(c, options, &mut prepared)?;
                             options.depth = Some(0.0);
                             options.colors = false;
