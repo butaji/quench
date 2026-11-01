@@ -49,6 +49,8 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+#[path = "compiled/lane_region.rs"]
+mod lane_region;
 mod wavefront;
 pub(super) use osr_loop::{
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
@@ -1835,6 +1837,7 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum GeneralDispatchMode {
     Frame,
+    #[allow(dead_code)]
     Lane(LaneHelpers),
 }
 
@@ -6684,13 +6687,13 @@ impl<H: Host> Vm<H> {
         };
         let epoch = crate::heap::prototype_layout_epoch();
         let receiver_fields = self.lane_receiver_fields(program, function);
-        let artifact = compile_js_general_dispatch(program, function, false, GeneralDispatchMode::Lane(helpers), &receiver_fields);
+        let region = lane_region::compile(program, function, helpers, &receiver_fields);
         self.host.after_native_compilation();
-        let artifact = artifact.ok()?;
-        if artifact.general_dispatch_native_pcs.first() != Some(&1) {
+        let region = region?;
+        if region.native == 0 {
             return None;
         }
-        let code = CodeMemory::new(&artifact.code)?;
+        let code = CodeMemory::new(&region.code)?;
         if let Some(directory) = native_dump_directory() {
             dump_native_code(directory, function, &code, "lane body: no CLIF retained");
         }
