@@ -13769,7 +13769,11 @@ fn lane_tier_enter<H: Host>(
     // SAFETY: the activation just set the context to its own function's.
     let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
     let receiver = (binds_this && !this.is_deleted()).then_some(this);
-    if let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env) {
+    // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
+    let may_claim = vm.js_tier_may_claim(code, program, function);
+    if may_claim
+        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
+    {
         if let Some(own) = own
             && let Some(direct) = vm.direct_tier_entry(code, program, function)
         {
@@ -13781,7 +13785,8 @@ fn lane_tier_enter<H: Host>(
     // function the general tier holds gains nothing from frameless claims either.
     if let Some(own) = own
         && (vm.programs.js_jit_lane_methods_enabled()
-            || vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
+            || !may_claim
+            || vm.js_tier_holds_for_general(program, function))
     {
         // A declined function may still run natively on its lane activations: the
         // prologue keeps the start once that body compiles. Frame entries keep whatever
