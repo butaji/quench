@@ -618,6 +618,9 @@ impl<H: Host> Vm<H> {
     /// `None` leaves every other receiver to the generic algorithms.
     pub(super) fn dense_array_length(&self, this: Value) -> Option<usize> {
         let object = self.heap.array(this)?;
+        if object.holds_ordinary_elements() {
+            return self.heap.sparse_length(this).is_none().then(|| object.elements().len());
+        }
         if object.has_indexed_descriptors()
             || object.is_frozen()
             || !object.is_extensible()
