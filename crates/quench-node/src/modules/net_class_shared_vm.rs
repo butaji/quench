@@ -87,7 +87,7 @@ const TIMEOUT_TIMER: &str = "_quenchTimeoutTimer";
 const CLOSE_STARTED: &str = "_quenchCloseStarted";
 const CLOSE_SCHEDULED: &str = "_quenchCloseScheduled";
 const CLOSE_EMITTED: &str = "_quenchCloseEmitted";
-/// `options.hints` must be an integer for `dns.lookup`.
+/// The largest IP type-of-service byte.
 const MAX_TYPE_OF_SERVICE: f64 = u8::MAX as f64;
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Outcome {
@@ -240,7 +240,6 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
         ("setNoDelay", operations.set_no_delay),
         ("setKeepAlive", operations.set_keep_alive),
     ] {
-        let function = if name == "_read" { super::net_internal_shared_vm::method(c, function, name)? } else { function };
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
@@ -952,7 +951,7 @@ fn normalize_args(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
             let options = c.object_rooted()?;
             let path_like = c.string_text(first)?.is_some() && {
                 let number = c.to_number(first)?;
-                !(number >= 0.0)
+                number.is_nan() || number < 0.0
             };
             if path_like {
                 put(c, options, "path", first)?;

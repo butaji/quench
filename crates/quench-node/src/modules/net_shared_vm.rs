@@ -1541,7 +1541,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         init_server_options,
         get_connections: operation(context, "netServerGetConnections")?,
         initialize_read: operation(context, "netSocketInitializeRead")?,
-        read: operation(context, "netSocketRead")?,
+        read: {
+            let read = operation(context, "netSocketRead")?;
+            super::net_internal_shared_vm::method(context, read, "_read")?
+        },
         end_stream,
         duplex,
         emitter,

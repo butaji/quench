@@ -566,7 +566,7 @@ fn rules_root(c: &mut Context<'_>, this: RootId) -> Outcome {
 
 fn rules(c: &mut Context<'_>, this: RootId) -> Result<Vec<Rule>, RootedError> {
     let root = rules_root(c, this)?;
-    Ok(c.with_view_bytes_rooted(root, |bytes| bytes.chunks_exact(RULE_RECORD).map(Rule::decode).collect())
+    Ok(c.with_view_bytes_rooted(root, |bytes| bytes.as_chunks::<RULE_RECORD>().0.iter().map(|record| Rule::decode(record)).collect())
         .unwrap_or_default())
 }
 
@@ -659,7 +659,7 @@ pub(crate) fn check(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outco
     };
     let blocked = c
         .with_view_bytes_rooted(root, |bytes| {
-            bytes.chunks_exact(RULE_RECORD).any(|record| Rule::decode(record).applies(address.address))
+            bytes.as_chunks::<RULE_RECORD>().0.iter().any(|record| Rule::decode(record).applies(address.address))
         })
         .unwrap_or(false);
     Ok(c.boolean(blocked))
