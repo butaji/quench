@@ -1115,6 +1115,16 @@ fn emit_js_tagged_truthiness(
     builder.block_params(join)[0]
 }
 
+/// Decode an already-proved Number without repeating its semantic type check.
+fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
+    let tag = builder.ins().band_imm_u(bits, crate::value::ValueLayout::TAG_MASK as i64);
+    let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, crate::value::ValueLayout::INT_TAG as i64);
+    let payload = builder.ins().ireduce(types::I32, bits);
+    let int = builder.ins().fcvt_from_sint(types::F64, payload);
+    let double = builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
+    builder.ins().select(integer, int, double)
+}
+
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
 /// VM fallback for every other value. The representation keeps all tags in
 /// NaN space, with integer Numbers identified by `INT_TAG`.
@@ -2082,6 +2092,69 @@ pub(super) struct LaneHelpers {
     field_set: usize,
 }
 
+#[derive(Clone, Copy)]
+struct NullishComparison {
+    source: Register,
+    expected: Value,
+    strict: bool,
+    negated: bool,
+}
+
+impl NullishComparison {
+    fn known_outcome(self, ty: typed_ir::Type) -> Option<bool> {
+        use typed_ir::Type;
+        let equal = if ty.is_subtype(Type::language(crate::ValueType::Null)) {
+            !self.strict || self.expected == Value::NULL
+        } else if ty.is_subtype(Type::language(crate::ValueType::Undefined)) {
+            !self.strict || self.expected == Value::UNDEFINED
+        } else if ty.is_subtype(Type::NUMBER.join(Type::language(crate::ValueType::Boolean))) {
+            false
+        } else {
+            return None;
+        };
+        Some(if self.negated { equal } else { !equal })
+    }
+}
+
+/// Resolve the constant operand and equality denotation before execution.
+fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
+    register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
+    if instruction.op() != Op::JumpBinaryFalse { return None; }
+    let nullish = |operand: Operand| {
+        let ty = facts::operand_type(constants, operand, &register_type);
+        if ty == typed_ir::Type::language(crate::ValueType::Null) { Some(Value::NULL) }
+        else if ty == typed_ir::Type::language(crate::ValueType::Undefined) { Some(Value::UNDEFINED) }
+        else { None }
+    };
+    let (left, right) = (instruction.operand_b(), instruction.operand_c());
+    let (expected, source) = nullish(left).zip(right.register_index())
+        .or_else(|| nullish(right).zip(left.register_index()))?;
+    let (strict, negated) = super::operations::equality_operator(instruction.binary_operator_field())?;
+    Some(NullishComparison { source, expected, strict, negated })
+}
+
+/// Whether JumpBinaryFalse takes its target, preserving IsHTMLDDA fallback.
+fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
+    comparison: NullishComparison, fallback: ir::Block) -> ir::Value {
+    use crate::value::ValueLayout;
+    let equal = if comparison.strict {
+        builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
+    } else {
+        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+        let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+        let record = builder.ins().bor(object, array);
+        let safe = builder.ins().bor(immediate, record);
+        emit_js_guard(builder, safe, fallback);
+        let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
+        let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
+        builder.ins().bor(null, undefined)
+    };
+    if comparison.negated { equal } else { builder.ins().icmp_imm_u(IntCC::Equal, equal, 0) }
+}
+
 enum JsGeneralBranch {
     ToBoolean {
         source: u16,
@@ -2092,12 +2165,7 @@ enum JsGeneralBranch {
         left: Operand,
         right: Operand,
     },
-    NullishFalse {
-        source: u16,
-        expected: Value,
-        strict: bool,
-        negated: bool,
-    },
+    NullishFalse(NullishComparison),
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -2851,24 +2919,9 @@ pub(super) fn lower_js_general_dispatch(
                 let operator = instruction.binary_operator_field();
                 let left = instruction.operand_b();
                 let right = instruction.operand_c();
-                let nullish = |operand: Operand| {
-                    if operand.kind() != Some(OperandKind::Constant) {
-                        return None;
-                    }
-                    match program.constants.get(usize::from(operand.payload()))? {
-                        crate::bytecode::Constant::Null => Some(Value::NULL),
-                        crate::bytecode::Constant::Undefined => Some(Value::UNDEFINED),
-                        _ => None,
-                    }
-                };
-                let nullish_comparison = nullish(left).zip(right.register_index())
-                    .or_else(|| nullish(right).zip(left.register_index()))
-                    .filter(|(_, source)| register_offset(*source).is_some());
-                let equality = super::operations::equality_operator(operator);
-                if let (Some((expected, source)), Some((strict, negated))) =
-                    (nullish_comparison, equality)
-                {
-                    Some(JsGeneralBranch::NullishFalse { source, expected, strict, negated })
+                if let Some(comparison) = nullish_comparison(&program.constants, instruction, |_| typed_ir::Type::ANY)
+                    .filter(|comparison| register_offset(comparison.source).is_some()) {
+                    Some(JsGeneralBranch::NullishFalse(comparison))
                 } else {
                     (super::operations::NumberRelation::from_operator(operator).is_some()
                         && js_tagged_operand_supported(program, left, &register_offset)
@@ -2940,27 +2993,10 @@ pub(super) fn lower_js_general_dispatch(
                     .expect("prevalidated JavaScript numeric relation");
                     builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
                 }
-                JsGeneralBranch::NullishFalse { source, expected, strict, negated } => {
-                    use crate::value::ValueLayout;
-                    let source = register_offset(source).expect("prevalidated branch register");
+                JsGeneralBranch::NullishFalse(comparison) => {
+                    let source = register_offset(comparison.source).expect("prevalidated branch register");
                     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
-                    let equal = if strict {
-                        builder.ins().icmp_imm_u(IntCC::Equal, value, expected.to_bits() as i64)
-                    } else {
-                        // A non-record heap value may be [[IsHTMLDDA]], which needs the VM.
-                        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-                        let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-                        let family = builder.ins().band_imm_u(value, ValueLayout::HEAP_FAMILY_MASK as i64);
-                        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-                        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
-                        let record = builder.ins().bor(object, array);
-                        let safe = builder.ins().bor(immediate, record);
-                        emit_js_guard(&mut builder, safe, fallback);
-                        let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
-                        let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
-                        builder.ins().bor(null, undefined)
-                    };
-                    if negated { equal } else { builder.ins().icmp_imm_u(IntCC::Equal, equal, 0) }
+                    emit_nullish_branch(&mut builder, value, comparison, fallback)
                 }
             };
             if target <= pc {
@@ -6824,8 +6860,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let code = CodeMemory::new(&region.code)?;
-        if let Some(directory) = native_dump_directory() {
-            dump_native_code(directory, function, &code, "lane body: no CLIF retained");
+        if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
+            dump_native_code(directory, function, &code, clif);
         }
         // SAFETY: the general dispatcher emits the shared native-entry ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };

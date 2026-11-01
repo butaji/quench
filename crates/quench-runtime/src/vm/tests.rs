@@ -21119,3 +21119,164 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
     }
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/typed-lane-numbers.js");
+    let typescript = source
+        .replace("function accumulate(input, count)", "function accumulate(input: number, count: number): number")
+        .replace("function scratch(input)", "function scratch(input: number): number")
+        .replace("function mixed(input, flag)", "function mixed(input: number, flag: boolean): number | boolean")
+        .replace("function preserve(input, flag)", "function preserve(input: number, flag: boolean): number")
+        .replace("function floatingBranch(input)", "function floatingBranch(input: number): number");
+    for program in [Engine::specialize(source, "typed-lane-numbers.js"),
+        Engine::specialize_typescript(&typescript, "typed-lane-numbers.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let inputs = [0.0, -0.0, 0.5, f64::from(i32::MIN), f64::from(i32::MAX),
+            f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        for name in ["accumulate", "scratch", "mixed", "preserve", "floatingBranch"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32).expect("typed lane method");
+            let atom = vm.intern_atom(name);
+            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+            for input in inputs {
+                for count in [0, 1, 7] {
+                    let arguments = [Value::number(input), Value::integer(count)];
+                    let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                    let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                    registers[..arguments.len()].copy_from_slice(&arguments);
+                    let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                    let instruction = instructions[pc];
+                    assert_eq!(instruction.op(), Op::Return, "{name}({input}, {count}) exited at {pc}");
+                    let actual = registers[usize::from(instruction.register_a())];
+                    assert_eq!(actual.to_bits(), expected.to_bits(), "{name}({input}, {count})");
+                }
+            }
+            if name != "accumulate" { continue; }
+            let atom = vm.intern_atom("counting");
+            let counting = vm.own_property(vm.realm.globals, atom).unwrap();
+            let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+            registers[0] = Value::number(0.5);
+            registers[1] = counting;
+            let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+            assert_eq!(pc, 0, "a non-Number bound leaves before any coercion");
+            let atom = vm.intern_atom("countCoercions");
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
+            assert_eq!(vm.call_value(&program, function, Value::UNDEFINED,
+                &[Value::number(0.5), counting]).unwrap(), Value::number(0.890625));
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3)),
+                "loop-bound coercion remains once per JS comparison");
+            for input_name in ["textInput", "bigInput", "coercing"] {
+                let atom = vm.intern_atom(input_name);
+                let input = vm.own_property(vm.realm.globals, atom).unwrap();
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                registers[0] = input;
+                registers[1] = Value::integer(1);
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+                assert!(pc < instructions.len() && instructions[pc].op() != Op::Return,
+                    "{input_name} must leave before numeric effects");
+                assert_eq!(registers[0].to_bits(), input.to_bits(), "recover the original input");
+                let atom = vm.intern_atom("coercions");
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &[input, Value::integer(1)]);
+                if input_name == "bigInput" {
+                    assert!(result.is_err());
+                } else if input_name == "coercing" {
+                    assert_eq!(result.unwrap(), Value::number(3.9375));
+                    assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(1)));
+                } else {
+                    assert!(result.unwrap().as_number().unwrap().is_nan());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(r#"
+      function loose(value) { let result=0; if (value==null) result=1; return result; }
+      function strictNull(value) { let result=0; if (value===null) result=1; return result; }
+      function strictUndefined(value) { let result=0; if (value===(void 0)) result=1; return result; }
+      function reversed(value) { let result=1; if ((void 0)!=value) result=0; return result; }
+      globalThis.nullValue=null;
+      globalThis.undefinedValue=undefined;
+      globalThis.zeroValue=0;
+      globalThis.nanValue=NaN;
+      globalThis.booleanValue=false;
+      globalThis.objectValue={ valueOf() { throw 'must not coerce'; } };
+      globalThis.arrayValue=[];
+      globalThis.stringValue='';
+      globalThis.bigValue=1n;
+      globalThis.functionValue=function(){};
+      globalThis.symbolValue=Symbol('nullish');
+      globalThis.htmlValue=$262.IsHTMLDDA;
+    "#, "typed-lane-nullish.js").unwrap();
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    vm.execute(&program).unwrap();
+    for name in ["loose", "strictNull", "strictUndefined", "reversed"] {
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let body = program.function(id);
+        let instructions: Vec<_> = body.instructions().collect();
+        let method = vm.compile_lane_method(&program, id as u32).expect("nullish lane method");
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        for value_name in ["nullValue", "undefinedValue", "zeroValue", "nanValue", "booleanValue",
+            "objectValue", "arrayValue", "stringValue", "bigValue", "functionValue", "symbolValue", "htmlValue"] {
+            let atom = vm.intern_atom(value_name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let expected = vm.call_value(&program, function, Value::UNDEFINED, &[value]).unwrap();
+            let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+            registers[0] = value;
+            let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+            let instruction = instructions[pc];
+            if name.starts_with("strict") || value.is_record() || value.heap_reference().is_none() {
+                assert_eq!(instruction.op(), Op::Return, "{name}({value_name}) exited at {pc}: {instructions:?}");
+                assert_eq!(registers[usize::from(instruction.register_a())], expected, "{name}({value_name})");
+            } else {
+                assert_eq!(instruction.op(), Op::JumpBinaryFalse, "legacy heap values need IsHTMLDDA recovery");
+                assert_eq!(registers[0].to_bits(), value.to_bits());
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_recovery_preserves_observable_parameter_updates() {
+    let program = Engine::specialize(r#"
+      function exposed(value) { value=123; return globalThis.probe.value; }
+      globalThis.probe={ get value() { return exposed.arguments[0]; } };
+    "#, "typed-lane-reflected-parameter.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "exposed")).unwrap();
+    let body = program.function(id);
+    let method = vm.compile_lane_method(&program, id as u32).expect("native prefix");
+    let parameter = usize::from(body.promoted_register(0).expect("promoted parameter"));
+    let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+    registers[parameter] = Value::integer(111);
+    let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null());
+    assert!(pc < body.code.len());
+    assert_eq!(registers[parameter], Value::integer(123),
+        "f.arguments observes a current parameter even when bytecode no longer reads it");
+    let atom = vm.intern_atom("exposed");
+    let function = vm.own_property(vm.realm.globals, atom).unwrap();
+    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[Value::integer(111)]).unwrap(), Value::integer(123));
+}

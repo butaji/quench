@@ -1276,8 +1276,7 @@ impl LoopRegion {
         };
         // An inlining region's liveness is by its own PCs, from the header.
         let index = if self.inlining.is_some() { (pc - self.header) as usize } else { pc as usize };
-        live.get(index)
-            .is_none_or(|mask| !crate::compile::liveness::register_dead(mask, usize::from(register)))
+        live.is_live(index, register)
     }
 
     /// The PC native code reports for leaving at region PC `pc`: the caller's, or an inlined

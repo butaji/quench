@@ -31,6 +31,11 @@ impl RegisterMasks {
         }
     }
 
+    /// A missing mask or a register outside its width remains conservatively live.
+    pub(crate) fn is_live(&self, pc: usize, register: Register) -> bool {
+        self.get(pc).is_none_or(|mask| !register_dead(mask, usize::from(register)))
+    }
+
     #[cfg(feature = "profile-aggregate")]
     pub(crate) fn len(&self) -> usize {
         match self {
@@ -198,6 +203,16 @@ pub(super) fn transfer(
 /// + 1]]`, which every pass then reads.
 pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, RegisterSet)]) -> Vec<RegisterSet> {
     let length = function.code.len();
+    // Legacy f.arguments can observe promoted parameters without a bytecode read.
+    // Keep them even at terminal/exception PCs; consumers include GC and native recovery.
+    // Without binding-name tables, conservatively retain every promoted parameter
+    // of a function that permits legacy reflection.
+    let observable = if function.has_restricted_legacy_caller_access() {
+        0
+    } else {
+        function.local_registers.iter().filter(|entry| entry.local < function.params)
+            .fold(0, |mask, entry| mask | register_bit(entry.register))
+    };
     let mut starts = Vec::with_capacity(length + 1);
     let mut successors = Vec::with_capacity(length);
     let mut has_backward_successor = false;
@@ -209,7 +224,7 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, 
         });
     }
     starts.push(successors.len());
-    let mut live = vec![0; length + 1];
+    let mut live = vec![observable; length + 1];
     loop {
         let mut changed = false;
         for pc in (0..length).rev() {
@@ -219,7 +234,7 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, 
                     output | live.get(successor).copied().unwrap_or(0)
                 });
             let (read, written) = transfers[pc];
-            let next = read | (output & !written);
+            let next = observable | read | (output & !written);
             if live[pc] != next {
                 live[pc] = next;
                 changed = true;
