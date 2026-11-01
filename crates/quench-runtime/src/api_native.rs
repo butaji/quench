@@ -1033,6 +1033,15 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create and initialize the active realm's mutable global lexical binding `name`, as a
+    /// Script's top-level `let name = value` does: script code then resolves `name` to it
+    /// ahead of the global object's property of that name.
+    pub fn define_global_lexical_rooted(&mut self, name: &str, value: RootId) -> Result<(), RootedError> {
+        self.vm
+            .define_embedding_global_lexical(name, value)
+            .map_err(|error| self.error(error))
+    }
+
     /// Create a realm with fresh ECMAScript intrinsics and return its global object.
     pub fn create_realm_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_realm();

@@ -332,15 +332,15 @@ fn execute_shared_on_worker(
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty =
         matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
-    let alias_eval_crypto = matches!(
+    let eval_crypto = matches!(
         &input,
         SharedInput::Eval {
             source,
             goal: EntryGoal::Node | EntryGoal::CommonJs,
-            print: false,
             ..
-        } if source.contains("crypto")
+        } if crate::modules::eval_globals_shared_vm::binds_crypto(source)
     );
+    let mut eval_print = None;
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
@@ -380,11 +380,10 @@ fn execute_shared_on_worker(
             print: true,
             ..
         } => {
-            let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
+            // The host evaluates the source itself, to log its completion value.
+            eval_print = Some(source);
             (
-                format!(
-                    "const __quenchEvalValue = globalThis[\"\\0quench:evalScript\"]({literal}); if (__quenchEvalValue instanceof Promise) queueMicrotask(() => console.log(__quenchEvalValue)); else console.log(__quenchEvalValue);"
-                ),
+                String::new(),
                 inline_source.compilation_name().to_owned(),
                 SourceKind::Script,
                 None,
@@ -423,16 +422,6 @@ fn execute_shared_on_worker(
             (source, name, kind, commonjs_entry, exec_argv, goal, Some(path))
         }
     };
-    let source = if alias_eval_crypto {
-        // Node's CommonJS eval scope resolves bare `crypto` to the builtin
-        // module while globalThis.crypto remains WebCrypto. Evaluate through
-        // the same scoped alias used by `-p`.
-        let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
-        format!("globalThis[\"\\0quench:evalScript\"]({literal});")
-    } else {
-        source
-    };
-
     let _guest_call_limit =
         guest_call_limit(&exec_argv).map(quench_stack::GuestCallLimitGuard::enter);
 
@@ -442,6 +431,8 @@ fn execute_shared_on_worker(
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;
+        host.eval_print = eval_print.clone();
+        host.eval_crypto = eval_crypto;
         let host = match commonjs_entry.clone() {
             Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
             None => host,
@@ -1661,19 +1652,3 @@ fn read_cli_stdin() -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// CLI print evaluates a Script and prints its language completion, not a wrapped expression.
-pub(crate) fn print_eval_script(
-    context: &mut quench_runtime::NativeContext<'_, NodeHost>,
-    _: quench_runtime::RootId,
-    args: &[quench_runtime::RootId],
-) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-    let source = args
-        .first()
-        .copied()
-        .ok_or_else(|| quench_runtime::RootedError::host("print evaluation source missing"))?;
-    let source = context.string_text(source)?.ok_or_else(|| {
-        quench_runtime::RootedError::host("print evaluation source must be a string")
-    })?;
-    let _ = source;
-    crate::host::removed_javascript("[eval]")
-}

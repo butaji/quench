@@ -22,6 +22,8 @@ impl NodeHost {
             inline_source: _,
             eval_builtin_globals: _,
             eval_source_nonempty: _,
+            eval_print: _,
+            eval_crypto: _,
             initial_node_debug: _,
             net_pending_writes,
             net_pending_ends,

@@ -54,6 +54,10 @@ pub struct NodeHost {
     pub(crate) eval_builtin_globals: bool,
     /// Node's default argument slice uses the normalized, nonempty eval source.
     pub(crate) eval_source_nonempty: bool,
+    /// `--print`'s source, which the host evaluates as the entry (`eval_globals_shared_vm::print`).
+    pub(crate) eval_print: Option<String>,
+    /// Whether CommonJS eval source binds `crypto` to `node:crypto` (`names_crypto`).
+    pub(crate) eval_crypto: bool,
     pub(crate) initial_node_debug: Option<String>,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
     pub(crate) net_pending_ends: Vec<(u64, bool)>,
@@ -499,6 +503,8 @@ impl NodeHost {
             inline_source: InlineSource::default(),
             eval_builtin_globals: false,
             eval_source_nonempty: false,
+            eval_print: None,
+            eval_crypto: false,
             initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
             resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),

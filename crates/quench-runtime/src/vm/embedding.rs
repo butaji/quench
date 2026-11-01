@@ -1255,6 +1255,21 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// Creates and initializes the active realm's mutable global lexical binding `name`, as
+    /// a Script's top-level `let name = value` does; an existing one is a SyntaxError.
+    pub(crate) fn define_embedding_global_lexical(&mut self, name: &str, root: RootId) -> Result<(), JsError> {
+        let program = self.embedding_program()?;
+        let value = self.embedding_value(root)?;
+        let atom = self.intern_atom(name);
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return self
+                .syntax_error_result(&program, "global lexical declaration already exists")
+                .map(drop);
+        }
+        self.realm.bind_global_lexical(atom, value);
+        Ok(())
+    }
+
     pub(crate) fn parse_embedding_json(&mut self, source: &str) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let source = self.heap.alloc_string(source.into());

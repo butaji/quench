@@ -429,9 +429,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let instantiate_wasm = context.host_function(crate::host::shared_vm::operation("esmWasmInstantiate"))?;
     let key = context.string_rooted(super::esm_wasm::INSTANTIATE);
     context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
-    let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
-    let key = context.string_rooted("\0quench:evalScript");
-    context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     context.scoped(install_performance_global)?;
     #[cfg(quench_openssl_provider)]
     context.scoped(crate::modules::crypto_node::install_global)?;
@@ -544,6 +541,14 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         set(context, global, "__filename", label)?;
         let dirname = context.string_rooted(".");
         set(context, global, "__dirname", dirname)?;
+        #[cfg(quench_openssl_provider)]
+        if context.host_mut().eval_crypto {
+            crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
+        }
+        if let Some(source) = context.host_mut().eval_print.take() {
+            let name = context.host_mut().inline_source.compilation_name();
+            crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
+        }
     }
     Ok(())
 }

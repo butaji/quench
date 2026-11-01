@@ -244,7 +244,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
         method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
-        method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
+        method "nodePrintEvalResult" (0) => crate::modules::eval_globals_shared_vm::print_result,
         method "builtinExportValues" (2) => commonjs::builtin_export_values,
         method "esmWasmInstantiate" (6) => esm_wasm::instantiate,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
