@@ -30,6 +30,10 @@ pub(super) enum CodePublication {
     ExecutableMemory,
     #[cfg(feature = "aot")]
     RelocatableObject,
+    /// Copy-and-patch stencils: executable memory whose continuations are
+    /// tail calls, which Cranelift emits only with frame pointers.
+    #[cfg(all(feature = "aot", feature = "jit"))]
+    Stencil,
 }
 
 pub(super) fn target_isa(_opt_level: &str) -> Option<Arc<TargetIsa>> {
@@ -63,9 +67,15 @@ pub(super) fn target_isa_for(
                 CodePublication::ExecutableMemory => "false",
                 #[cfg(feature = "aot")]
                 CodePublication::RelocatableObject => "true",
+                #[cfg(all(feature = "aot", feature = "jit"))]
+                CodePublication::Stencil => "false",
             },
         )
         .ok()?;
+    #[cfg(all(feature = "aot", feature = "jit"))]
+    if publication == CodePublication::Stencil {
+        flags.set("preserve_frame_pointers", "true").ok()?;
+    }
     flags
         .set("enable_verifier", if VERIFY_IR { "true" } else { "false" })
         .ok()?;

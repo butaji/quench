@@ -58,6 +58,7 @@ impl Heap {
         policy: super::MemoryPolicy,
     ) -> SnapshotResult<Self> {
         let mut heap = Self::new();
+        heap.forget_prototypes();
         heap.set_memory_policy(policy);
         let slots = reader.len()?;
         for index in 0..slots {

@@ -973,6 +973,9 @@ pub(crate) struct ProgramStore {
     /// loop-free body still decide whether the tier takes a function
     /// (`general_tier_admits`).
     js_jit_general_dispatch_enabled: bool,
+    /// Whether the lane prologue specializes a declined function into a frameless lane
+    /// body (`Vm::compile_lane_method`).
+    js_jit_lane_methods_enabled: bool,
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
@@ -1018,6 +1021,8 @@ impl Default for ProgramStore {
                 .is_some_and(|value| value == "1")
                 .then(FxHashMap::default),
             js_jit_general_dispatch_enabled: std::env::var_os("QUENCH_JS_JIT_GENERAL_DISPATCH")
+                .is_some_and(|value| value == "1"),
+            js_jit_lane_methods_enabled: std::env::var_os("QUENCH_JS_JIT_LANE_METHODS")
                 .is_some_and(|value| value == "1"),
             js_general_dispatch_work: None,
             js_general_artifact_cache_enabled: std::env::var_os(
@@ -2103,9 +2108,18 @@ impl ProgramStore {
         self.entry(id)?.jit_tiers.js(function)
     }
 
+    #[cfg(test)]
+    pub(super) fn enable_js_lane_methods(&mut self) {
+        self.js_jit_lane_methods_enabled = true;
+    }
+
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn enable_js_general_dispatch(&mut self) {
         self.js_jit_general_dispatch_enabled = true;
+    }
+
+    pub(super) fn js_jit_lane_methods_enabled(&self) -> bool {
+        self.js_jit_lane_methods_enabled
     }
 
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {

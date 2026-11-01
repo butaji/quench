@@ -2,7 +2,7 @@ use super::*;
 
 /// Where `Vm::array_species_is_array_create` found `Array.prototype.constructor` for an array
 /// of `shape`, which has no own `constructor`, under `epoch`. A change to the prototype's layout
-/// advances the epoch; every collection advances it too, so a proof never names a reused shape.
+/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered shape.
 /// The slot's value may change in place, so each use reads it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArraySpeciesProof {

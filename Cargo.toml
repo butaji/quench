@@ -91,6 +91,19 @@ lto = "thin"
 codegen-units = 1
 rpath = false
 
+# Optimized A/B loop for JIT and runtime experiments: full optimization without
+# LTO, incremental, and line tables so callgrind/perf can name the cost. JIT-emitted
+# code is independent of host LTO; relative deltas measured here pick candidates,
+# and only a final candidate is rebuilt and measured under `production`.
+[profile.experiment]
+inherits = "release"
+opt-level = 3
+lto = false
+codegen-units = 16
+incremental = true
+debug = "line-tables-only"
+strip = "none"
+
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
 [profile.native-support]

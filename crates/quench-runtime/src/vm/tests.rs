@@ -20332,3 +20332,70 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
         }
     }
 }
+
+/// Lane bodies (`compiled/lane_region.rs`) run declined call-free methods on their lane
+/// activations' registers and leave at exact PCs: at unsupported records, at failed guards
+/// and at records that read the carried accumulator. Every result must equal the interpreter's.
+#[test]
+fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
+    let source = r#"(function () {
+      const HELD = 4, SUSPENDED = 2, LIMIT = 3, SCALE = 7;
+      function Task(id) { this.id = id; this.state = 0; this.count = 0; this.label = "t" + id; this.next = null; this.sum = 0; }
+      Task.prototype.release = function () { this.state = this.state & ~HELD; return this.state; };
+      Task.prototype.step = function (n) {
+        this.count++;
+        this.sum = this.sum + n * SCALE;
+        if ((this.state & HELD) != 0 || this.state == SUSPENDED) { this.sum = this.sum - 1; }
+        if (this.count < LIMIT) { this.state = this.state | HELD; return this.sum + this.count; }
+        this.count = 0;
+        this.state = this.state & ~HELD;
+        this.sum = (this.sum + this.state + this.id) & 65535;
+        return this.sum;
+      };
+      Task.prototype.walk = function (k) {
+        let n = k;
+        for (let t = this; t !== null; t = t.next) { n += t.id; n = n & 1023; }
+        this.sum = this.sum + n;
+        this.count = this.count + 0;
+        return n + this.state + this.id + this.count;
+      };
+      Task.prototype.spin = function (k) {
+        let a = k, b = 0;
+        for (let i = 0; i < 5; i++) { b = (b + i) | 0; a++; }
+        return a + b + this.id;
+      };
+      let head = null;
+      for (let i = 0; i < 8; i++) { const t = new Task(i); t.next = head; head = t; }
+      let total = 0;
+      for (let round = 0; round < 3000; round++) {
+        for (let t = head; t !== null; t = t.next) {
+          total = (total + t.step(round & 15)) & 1048575;
+          if (round % 50 === 0) total = (total + t.walk(round)) & 1048575;
+          total = (total + t.spin(round % 7 === 0 ? 0.5 : round & 7)) % 1048575;
+          if (round === 1500) t.state = "odd";
+          if (round === 1501) t.state = 0;
+          if (round === 2000) t.sum = 0.5;
+        }
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-bodies.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let before = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        let answer = vm.own_property(global, atom).and_then(Value::as_number);
+        answers.push(answer);
+        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+            let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(after > before, "a declined method runs as a lane body");
+        }
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}

@@ -1507,31 +1507,6 @@ fn number_comparison(instruction: WideInstruction) -> Option<super::super::opera
         .flatten()
 }
 
-/// Boolean-producing values only. This does not admit arbitrary tagged/heap
-/// truthiness, nor infer a Boolean from a field read or a call's return value.
-fn boolean_registers(instructions: &[WideInstruction], constants: &[Value]) -> std::collections::BTreeSet<Register> {
-    let mut definitions = std::collections::BTreeMap::<Register, Vec<WideInstruction>>::new();
-    for instruction in instructions {
-        if let Some(register) = instruction.defined_register() {
-            definitions.entry(register).or_default().push(*instruction);
-        }
-    }
-    let mut booleans = std::collections::BTreeSet::new();
-    loop {
-        let before = booleans.len();
-        for (register, definitions) in &definitions {
-            if definitions.iter().all(|instruction| {
-                number_comparison(*instruction).is_some()
-                    || (instruction.op() == Op::LoadConst
-                        && constants.get(instruction.constant_index()).is_some_and(|value| value.as_bool().is_some()))
-                    || (instruction.op() == Op::Move && booleans.contains(&instruction.register_b()))
-            }) {
-                booleans.insert(*register);
-            }
-        }
-        if booleans.len() == before { return booleans; }
-    }
-}
 
 /// A unary operator a region lowers on a Number.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1560,7 +1535,6 @@ enum Role {
 struct Admission<'a> {
     constants: &'a [Value],
     roles: std::collections::BTreeMap<Register, Role>,
-    booleans: std::collections::BTreeSet<Register>,
     captures: Vec<u16>,
     pub(crate) fields: Vec<FieldUse>,
     numbers: std::collections::BTreeMap<usize, f64>,
@@ -1941,7 +1915,6 @@ fn admit_register_roles(
     let mut admission = Admission {
         constants,
         roles: std::collections::BTreeMap::new(),
-        booleans: boolean_registers(&instructions, constants),
         captures: Vec::new(),
         fields: Vec::new(),
         numbers: std::collections::BTreeMap::new(),
@@ -2363,7 +2336,9 @@ fn admit(
         }
         Op::JumpFalse | Op::JumpTrue => {
             let register = instruction.register_a();
-            if tagged.contains(&register) && admission.booleans.contains(&register) {
+            // A tagged value's truthiness is decided natively where the value alone decides it
+            // (`Lowering::tagged_truthiness`); any other value exits.
+            if tagged.contains(&register) {
                 admission.tagged(register)?;
             } else {
                 admission.number(register)?;
@@ -3643,8 +3618,6 @@ struct Lowering<'a, 'b> {
     region: &'a LoopRegion,
     observation: &'a Observation<'a>,
     pointer: ir::Type,
-    /// Cache-only field probe through the shared native entry context.
-    callout: ir::Value,
     callout_signature: ir::SigRef,
     webs: Webs,
     /// Each web's representation, at its root definition.
@@ -3673,19 +3646,24 @@ struct Lowering<'a, 'b> {
     copy: Option<usize>,
     /// Shared handoff blocks; this tier fills per-PC leaves with its live-state writeback.
     exits: super::RegionExitBlocks,
-    /// The pointers only leaving uses (`Handoff`), stored at entry so that cold leave
-    /// blocks reload them and no loop holds a register for them.
+    /// The pointers only entry, leaving and callouts use (`Handoff`), stored at entry so
+    /// that each use after entry reloads them and no loop holds a register for them.
     handoff: ir::StackSlot,
     registers: ir::Value,
     /// An inlining region's scratch registers (`LoopEntry::scratch`).
     scratch: Option<ir::Value>,
-    entry: ir::Value,
-    /// The result word the outcome is written to.
-    result: ir::Value,
+    /// The entry words' address while `enter` runs; every later read reloads it
+    /// (`Handoff::Entry`).
+    entry: Option<ir::Value>,
     /// Count the region's taken backedges only for the opt-in shared-tier admission path.
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
     arrays: std::collections::BTreeMap<Register, ArrayView>,
+    /// Per entry array word of a region that writes an array, the variable holding the
+    /// backing's element pointer: defined at entry and again past each append's capacity
+    /// helper, which alone may relocate a backing (`Lowering::store_index`), so no other
+    /// access reloads the entry word.
+    elements: std::collections::BTreeMap<usize, cranelift_frontend::Variable>,
     /// The entry values native code reads from memory at each use instead of holding
     /// them (`Resident`).
     resident: Resident,
@@ -3871,10 +3849,12 @@ enum Handoff {
     Registers,
     Scratch,
     Result,
+    Context,
+    Entry,
 }
 
 impl Handoff {
-    const COUNT: u32 = 3;
+    const COUNT: u32 = 5;
 
     fn offset(self) -> i32 {
         self as i32 * WORD_BYTES
@@ -3915,7 +3895,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let &[context, registers, _, entry, result] = builder.block_params(start) else {
             unreachable!("the entry signature has five parameters")
         };
-        let callout = builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
         let handoff = builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
             Handoff::COUNT * WORD_BYTES as u32,
@@ -3923,6 +3902,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         ));
         builder.ins().stack_store(pointer, registers, handoff, Handoff::Registers.offset());
         builder.ins().stack_store(pointer, result, handoff, Handoff::Result.offset());
+        builder.ins().stack_store(pointer, context, handoff, Handoff::Context.offset());
+        builder.ins().stack_store(pointer, entry, handoff, Handoff::Entry.offset());
         let blocks = (region.header..=region.backedge).map(|_| builder.create_block()).collect();
         let straight = straight_pcs(region, &counted);
         let preheaders = counted.iter().map(|_| builder.create_block()).collect();
@@ -3947,7 +3928,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             region,
             observation,
             pointer,
-            callout,
             callout_signature,
             webs,
             representations,
@@ -3973,10 +3953,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             straight,
             registers,
             scratch: None,
-            entry,
-            result,
+            entry: Some(entry),
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
+            elements: std::collections::BTreeMap::new(),
             resident: Resident::default(),
             parking: Parking::default(),
             int32_arrays: std::collections::BTreeSet::new(),
@@ -4383,8 +4363,23 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let array = *self.region.arrays.iter().find(|array| array.register == register).expect("a region array");
         match array.field {
             Some(index) => self.word(ENTRY_CAPTURES + self.region.captures.len() + index),
-            None => self.body.builder.ins().load(types::I64, flags(), self.registers, i32::from(array.register) * WORD_BYTES),
+            None => {
+                let file = match self.entry {
+                    Some(_) => self.registers,
+                    None => self.handed_off(Handoff::Registers),
+                };
+                self.body.builder.ins().load(types::I64, flags(), file, i32::from(array.register) * WORD_BYTES)
+            }
         }
+    }
+
+    /// An entry array's identity, reloaded where a cold path needs it rather than held
+    /// from entry: the region writes no register file word before it leaves.
+    fn entry_array_identity(&mut self, array: ArrayView) -> ir::Value {
+        let arrays_start = ENTRY_CAPTURES + self.region.captures.len() + self.region.fields.len();
+        let base = array.entry_index.expect("an appended array is an entry array");
+        let register = self.region.arrays[(base - arrays_start) / ARRAY_WORDS].register;
+        self.array_identity(register)
     }
 
     fn array(&mut self, register: Register) -> ArrayView {
@@ -4397,9 +4392,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn word(&mut self, index: usize) -> ir::Value {
+        let entry = self.entry_words();
         self.body.builder
             .ins()
-            .load(types::I64, flags(), self.entry, index as i32 * WORD_BYTES)
+            .load(types::I64, flags(), entry, index as i32 * WORD_BYTES)
+    }
+
+    /// The entry words' address: the parameter while `enter` runs, else reloaded.
+    fn entry_words(&mut self) -> ir::Value {
+        match self.entry {
+            Some(entry) => entry,
+            None => self.handed_off(Handoff::Entry),
+        }
+    }
+
+    /// The callout, its context and the result word it writes, reloaded at the call so
+    /// that no loop around it holds a register for them.
+    fn callout_operands(&mut self) -> (ir::Value, ir::Value, ir::Value) {
+        let context = self.handed_off(Handoff::Context);
+        let callout = self.body.builder.ins().load(types::I64, super::invariant(), context, super::CONTEXT_CALLOUT);
+        let result = self.handed_off(Handoff::Result);
+        (callout, context, result)
     }
 
     fn field_store_pointer(&mut self, index: usize) -> ir::Value {
@@ -4469,6 +4482,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             let base = arrays_start + ARRAY_WORDS * index;
             let elements = self.word(base);
+            if self.region.arrays.iter().any(|array| array.written) {
+                let variable = self.body.builder.declare_var(self.pointer);
+                self.body.builder.def_var(variable, elements);
+                self.elements.insert(base, variable);
+            }
             let access = if array.written {
                 ArrayAccess::Written
             } else {
@@ -4552,6 +4570,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         }
         let header = self.target_block(None, self.region.header)?;
         self.body.builder.ins().jump(header, &[]);
+        self.entry = None;
         Some(())
     }
 
@@ -4970,10 +4989,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             return Some(self.native_dynamic_field(pc, index, receiver.value, load));
         }
         let site = self.body.builder.ins().iconst(types::I64, i64::from(field.cache_site));
-        let context = self.body.core.context;
-        let callout = self.callout;
+        let (callout, context, result) = self.callout_operands();
         let signature = self.callout_signature;
-        let result = self.result;
         let call = self.body.builder.ins().call_indirect(
             signature,
             callout,
@@ -5284,16 +5301,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             if self.track_backedges && pc == self.region.backedge && target == self.region.header {
                 let offset = i32::try_from(ENTRY_BACKEDGE_COUNT * std::mem::size_of::<u64>())
                     .expect("OSR entry counter offset fits i32");
-                let count = self
-                    .body
-                    .builder
-                    .ins()
-                    .load(types::I64, flags(), self.entry, offset);
+                let entry = self.entry_words();
+                let count = self.body.builder.ins().load(types::I64, flags(), entry, offset);
                 let count = self.body.builder.ins().iadd_imm_s(count, 1);
-                self.body
-                    .builder
-                    .ins()
-                    .store(flags(), count, self.entry, offset);
+                self.body.builder.ins().store(flags(), count, entry, offset);
             }
         }
         self.unpark(pc, target);
@@ -5428,10 +5439,47 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.guard(pc, beyond);
     }
 
+    /// ToBoolean of tagged `bits` where the value alone decides it (`Value::truthiness`): a
+    /// Number by its value, an object or array record true, any other immediate true unless
+    /// it is `null`, `undefined`, the hole or `false`. Any other heap value (a string, or a
+    /// function that may be the IsHTMLDDA object) exits at `pc`.
+    fn tagged_truthiness(&mut self, pc: u32, bits: ir::Value) -> ir::Value {
+        let builder = &mut self.body.builder;
+        let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+        let heap = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
+        let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+        let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+        let record = builder.ins().bor(object, array);
+        let not_record = builder.ins().icmp_imm_u(IntCC::Equal, record, 0);
+        let undecided = builder.ins().band(heap, not_record);
+        self.guard(pc, undecided);
+        let builder = &mut self.body.builder;
+        let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::INT_TAG as i64);
+        let payload = builder.ins().ireduce(types::I32, bits);
+        let integer_truthy = builder.ins().icmp_imm_u(IntCC::NotEqual, payload, 0);
+        let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
+        let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+        let tagged = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+        let mut falsy = builder.ins().iconst(types::I8, 0);
+        for value in [Value::NULL, Value::UNDEFINED, Value::DELETED, Value::FALSE] {
+            let equal = builder.ins().icmp_imm_u(IntCC::Equal, bits, value.to_bits() as i64);
+            falsy = builder.ins().bor(falsy, equal);
+        }
+        let immediate_truthy = builder.ins().icmp_imm_u(IntCC::Equal, falsy, 0);
+        let double = builder.ins().bitcast(types::F64, ir::MemFlagsData::new(), bits);
+        let double_truthy = super::emit_number_truthiness(builder, double);
+        let one = builder.ins().iconst(types::I8, 1);
+        let tagged_truthy = builder.ins().select(integer, integer_truthy, immediate_truthy);
+        let unheaped = builder.ins().select(tagged, tagged_truthy, double_truthy);
+        builder.ins().select(heap, one, unheaped)
+    }
+
     /// A capacity helper may relocate a backing shared by several entry views. Reload
     /// the authoritative entry word across calls; read-only regions keep their old fast path.
     fn array_elements(&mut self, array: ArrayView) -> ir::Value {
         match array.entry_index {
+            Some(entry_index) if let Some(variable) = self.elements.get(&entry_index) => self.body.builder.use_var(*variable),
             Some(entry_index) if self.region.arrays.iter().any(|array| array.written) => self.word(entry_index),
             _ => array.elements,
         }
@@ -5485,14 +5533,19 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.switch_to_block(grow);
         self.body.builder.seal_block(grow);
         let operation = self.body.builder.ins().iconst(types::I64, super::OSR_RESERVE_ARRAY_APPEND as i64);
-        let context = self.body.core.context;
+        let identity = self.entry_array_identity(array);
+        let (callout, context, result) = self.callout_operands();
         let call = self.body.builder.ins().call_indirect(
-            self.callout_signature, self.callout,
-            &[context, operation, array.identity, self.result],
+            self.callout_signature, callout,
+            &[context, operation, identity, result],
         );
         let status = self.body.builder.inst_results(call)[0];
         let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
         self.guard(pc, miss);
+        for (entry_index, variable) in self.elements.clone() {
+            let elements = self.word(entry_index);
+            self.body.builder.def_var(variable, elements);
+        }
         self.body.builder.ins().jump(ready, &[]);
         self.body.builder.switch_to_block(ready);
         self.body.builder.seal_block(ready);
@@ -5965,10 +6018,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     .ins()
                     .iconst(types::I64, super::OSR_INITIALIZED_LOCAL_READ as i64);
                 let slot = self.body.builder.ins().iconst(types::I64, slot);
-                let context = self.body.core.context;
-                let callout = self.callout;
+                let (callout, context, result) = self.callout_operands();
                 let signature = self.callout_signature;
-                let result = self.result;
                 let call = self.body.builder.ins().call_indirect(
                     signature,
                     callout,
@@ -6004,11 +6055,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let receiver = self.register(base);
                     if receiver.representation != Representation::Tagged { return None; }
                     let key = self.boxed(key);
-                    let result = self.result;
+                    let (callout, context, result) = self.callout_operands();
                     self.body.builder.ins().store(flags(), key, result, 0);
                     let selector = self.body.builder.ins().iconst(types::I64, super::OSR_DENSE_ARRAY_READ as i64);
-                    let context = self.body.core.context;
-                    let call = self.body.builder.ins().call_indirect(self.callout_signature, self.callout,
+                    let call = self.body.builder.ins().call_indirect(self.callout_signature, callout,
                         &[context, selector, receiver.value, result]);
                     let status = self.body.builder.inst_results(call)[0];
                     let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
@@ -6207,16 +6257,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     Representation::Float64 => {
                         super::emit_number_truthiness(&mut self.body.builder, value.value)
                     }
-                    Representation::Tagged => {
-                        // Admission restricts this to Boolean-producing definitions.
-                        // Keep the runtime guard for a live-in or merged entry value.
-                        let yes = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::TRUE.to_bits() as i64);
-                        let no = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::FALSE.to_bits() as i64);
-                        let valid = self.body.builder.ins().bor(yes, no);
-                        let invalid = self.body.builder.ins().icmp_imm_u(IntCC::Equal, valid, 0);
-                        self.guard(pc, invalid);
-                        yes
-                    }
+                    Representation::Tagged => self.tagged_truthiness(pc, value.value),
                 };
                 let jump_when = instruction.op() == Op::JumpTrue;
                 self.branch(pc, instruction.jump_target(), truthy, jump_when)
@@ -6478,7 +6519,6 @@ mod tests {
         let mut admission = Admission {
             constants: &constants,
             roles: std::collections::BTreeMap::new(),
-            booleans: std::collections::BTreeSet::new(),
             captures: Vec::new(),
             fields: Vec::new(),
             numbers: std::collections::BTreeMap::new(),
@@ -6513,7 +6553,6 @@ mod tests {
         let mut admission = Admission {
             constants: &constants,
             roles: std::collections::BTreeMap::new(),
-            booleans: std::collections::BTreeSet::new(),
             captures: Vec::new(),
             fields: Vec::new(),
             numbers: std::collections::BTreeMap::new(),
