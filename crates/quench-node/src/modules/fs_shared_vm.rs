@@ -332,9 +332,9 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
             "lchmod" | "lchmodSync" => c.undefined(),
             "watch" => super::fs_watch_shared_vm::watch_function(c)?,
             "watchFile" | "unwatchFile" => super::fs_stat_watch_shared_vm::function(c, name)?,
-            "Dirent" => classes::root(c, classes::Class::Dirent)?,
-            "Stats" => classes::root(c, classes::Class::DeprecatedStats)?,
-            "Dir" => classes::root(c, classes::Class::Dir)?,
+            "Dirent" => classes::root(c, classes::Root::Dirent)?,
+            "Stats" => classes::root(c, classes::Root::DeprecatedStats)?,
+            "Dir" => classes::root(c, classes::Root::Dir)?,
             "_toUnixTimestamp" => c.host_function_named(crate::host::shared_vm::operation("fsToUnixTimestamp"), "toUnixTimestamp")?,
             "constants" => {
                 let constants = fs_constants(c)?;

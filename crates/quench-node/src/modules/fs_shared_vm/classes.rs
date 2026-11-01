@@ -6,7 +6,7 @@ use quench_runtime::{DescriptorFields, RootId, RootedError};
 
 /// A root `fs` keeps for the VM's lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Class {
+pub(crate) enum Root {
     StatsBase,
     Stats,
     DeprecatedStats,
@@ -27,14 +27,14 @@ pub(crate) enum Class {
     DirState,
 }
 
-impl Class {
+impl Root {
     const COUNT: usize = 13;
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct Roots {
-    values: [RootId; Class::COUNT],
-    prototypes: [RootId; Class::COUNT],
+    values: [RootId; Root::COUNT],
+    prototypes: [RootId; Root::COUNT],
 }
 
 crate::host::startup_snapshot::host_snap_struct!(Roots { values, prototypes });
@@ -56,12 +56,17 @@ fn roots(c: &mut Context<'_>) -> Result<Roots, RootedError> {
 }
 
 /// The root `class` names.
-pub(crate) fn root(c: &mut Context<'_>, class: Class) -> Outcome {
+pub(crate) fn root(c: &mut Context<'_>, class: Root) -> Outcome {
     Ok(roots(c)?.values[class as usize])
 }
 
+/// `class.prototype`.
+pub(crate) fn prototype(c: &mut Context<'_>, class: Root) -> Outcome {
+    Ok(roots(c)?.prototypes[class as usize])
+}
+
 /// A new object whose prototype is `class.prototype`, as `new class()` allocates it.
-pub(crate) fn instance(c: &mut Context<'_>, class: Class) -> Outcome {
+pub(crate) fn instance(c: &mut Context<'_>, class: Root) -> Outcome {
     let prototype = roots(c)?.prototypes[class as usize];
     let object = c.object_rooted()?;
     c.set_prototype_rooted(object, prototype)?;
@@ -128,7 +133,7 @@ pub(crate) fn well_known_symbol(c: &mut Context<'_>, name: &str, fallback: &str)
     crate::modules::stream_shared_vm::call_method(c, symbol, "for", &[key])
 }
 
-fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Class::COUNT]) -> Result<(), RootedError> {
+fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Root::COUNT]) -> Result<(), RootedError> {
     let (base, base_prototype) = constructor(c, "fsStatsBase", "StatsBase", None)?;
     for (name, mode, _) in super::stats::TYPE_PREDICATES {
         let data = c.number(f64::from(mode));
@@ -155,37 +160,36 @@ fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Cl
     let fields = DescriptorFields { value: Some(stats.1), ..DescriptorFields::default() };
     c.define_property_fields_rooted(deprecated, key, fields)?;
     c.set_prototype_rooted(deprecated, stats.0)?;
-    values[Class::StatsBase as usize] = Some((base, base_prototype));
-    values[Class::Stats as usize] = Some(stats);
-    values[Class::BigIntStats as usize] = Some(bigint);
-    values[Class::DeprecatedStats as usize] = Some((deprecated, stats.1));
-    values[Class::StatFs as usize] = Some(constructor(c, "fsStatFsConstruct", "StatFs", None)?);
+    values[Root::StatsBase as usize] = Some((base, base_prototype));
+    values[Root::Stats as usize] = Some(stats);
+    values[Root::BigIntStats as usize] = Some(bigint);
+    values[Root::DeprecatedStats as usize] = Some((deprecated, stats.1));
+    values[Root::StatFs as usize] = Some(constructor(c, "fsStatFsConstruct", "StatFs", None)?);
     Ok(())
 }
 
 fn build(c: &mut Context<'_>) -> Result<Roots, RootedError> {
-    let mut values: [Option<(RootId, RootId)>; Class::COUNT] = [None; Class::COUNT];
+    let mut values: [Option<(RootId, RootId)>; Root::COUNT] = [None; Root::COUNT];
     stats_classes(c, &mut values)?;
     let global = c.global_root()?;
     let date = get(c, global, "Date")?;
     let date_prototype = get(c, date, "prototype")?;
-    values[Class::Date as usize] = Some((date, date_prototype));
+    values[Root::Date as usize] = Some((date, date_prototype));
     let undefined = c.undefined();
     for (class, description) in [
-        (Class::DirentType, "type"),
-        (Class::HandleFd, "kFd"),
-        (Class::HandleClosing, "kClosePromise"),
+        (Root::DirentType, "type"),
+        (Root::HandleFd, "kFd"),
+        (Root::HandleClosing, "kClosePromise"),
     ] {
         values[class as usize] = Some((c.symbol_rooted(Some(description)), undefined));
     }
-    values[Class::DirState as usize] = Some((c.private_symbol_rooted(Some("#state")), undefined));
-    let dirent_type = values[Class::DirentType as usize].map_or(undefined, |(symbol, _)| symbol);
-    values[Class::Dirent as usize] = Some(super::dir::dirent_class(c, dirent_type)?);
-    values[Class::Dir as usize] = Some(super::dir::dir_class(c)?);
+    values[Root::DirState as usize] = Some((c.private_symbol_rooted(Some("#state")), undefined));
+    values[Root::Dirent as usize] = Some(super::dir::dirent_class(c)?);
+    values[Root::Dir as usize] = Some(super::dir::dir_class(c)?);
     let emitter = get(c, global, "__nodeEventEmitter")?;
     let (handle, handle_prototype) = constructor(c, "fsFileHandleConstruct", "FileHandle", Some(emitter))?;
-    values[Class::FileHandle as usize] = Some((handle, handle_prototype));
-    let mut roots = Roots { values: [undefined; Class::COUNT], prototypes: [undefined; Class::COUNT] };
+    values[Root::FileHandle as usize] = Some((handle, handle_prototype));
+    let mut roots = Roots { values: [undefined; Root::COUNT], prototypes: [undefined; Root::COUNT] };
     for (index, entry) in values.into_iter().enumerate() {
         let (value, prototype) = entry.ok_or_else(|| RootedError::host("fs class left unbuilt"))?;
         roots.values[index] = c.retain(value)?;

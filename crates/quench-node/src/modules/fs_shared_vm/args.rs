@@ -21,12 +21,12 @@ pub(crate) struct FsPath {
     pub(crate) shown: String,
 }
 
-/// `getValidatedPath(value, name)`: a string, Buffer or `file:` URL without NUL bytes.
+/// `getValidatedPath(value, name)`: a string, Buffer or `file:` URL without NUL bytes, which
+/// the host opens relative to the working directory.
 pub(crate) fn path(c: &mut Context<'_>, value: RootId, name: &str) -> Result<FsPath, RootedError> {
-    let value = crate::modules::fs_path::validate(c, value, name)?;
-    let io = crate::modules::fs_path::resolve(c, value)?;
-    let shown = crate::modules::fs_path::display(c, value)?;
-    Ok(FsPath { io, shown })
+    let mut path = path_as_given(c, value, name)?;
+    path.io = c.host_mut().shared_state().borrow().cwd.resolve_io_path(&path.io);
+    Ok(path)
 }
 
 /// A validated path kept as given, unresolved: a symbolic link's target.
@@ -39,8 +39,7 @@ pub(crate) fn path_as_given(c: &mut Context<'_>, value: RootId, name: &str) -> R
 
 /// `getValidatedFd(fd)`: an int32 at least zero.
 pub(crate) fn fd(c: &mut Context<'_>, value: RootId) -> Result<i32, RootedError> {
-    let maximum = c.number(MAX_FD);
-    Ok(util::validate_integer(c, value, "fd", 0.0, maximum)? as i32)
+    Ok(integer(c, value, "fd", 0.0, MAX_FD)? as i32)
 }
 
 /// `validateInteger(value, name, minimum, maximum)`.

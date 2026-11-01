@@ -3,7 +3,7 @@
 
 use super::api::Reply;
 use super::args::{self, Encoding, UTF8};
-use super::classes::{self, Class};
+use super::classes::{self, Root};
 use super::failure::{self, Syscall};
 use crate::modules::stream_shared_vm::{arg, get, is_undefined, put, Context, Outcome};
 use quench_runtime::{RootId, RootedError};
@@ -35,7 +35,7 @@ pub(crate) fn resolve_kind(kind: i32, path: &Path) -> i32 {
 
 /// `new Dirent(name, type, parentPath)`.
 pub(crate) fn dirent(c: &mut Context<'_>, name: RootId, kind: i32, parent: &str) -> Outcome {
-    let dirent = classes::instance(c, Class::Dirent)?;
+    let dirent = classes::instance(c, Root::Dirent)?;
     let parent = c.string_rooted(parent);
     let kind = c.number(f64::from(kind));
     initialize_dirent(c, dirent, name, kind, parent)?;
@@ -46,7 +46,7 @@ fn initialize_dirent(c: &mut Context<'_>, dirent: RootId, name: RootId, kind: Ro
     put(c, dirent, "name", name)?;
     put(c, dirent, "parentPath", parent)?;
     put(c, dirent, "path", parent)?;
-    let key = classes::root(c, Class::DirentType)?;
+    let key = classes::root(c, Root::DirentType)?;
     c.set_property_rooted(dirent, key, kind, dirent).map(drop)
 }
 
@@ -62,13 +62,13 @@ pub(crate) fn construct_dirent(c: &mut Context<'_>, this: RootId, args: &[RootId
 /// type the function's data holds.
 pub(crate) fn dirent_is(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     let expected = c.host_function_data()?;
-    let key = classes::root(c, Class::DirentType)?;
+    let key = classes::root(c, Root::DirentType)?;
     let kind = c.get_property_rooted(this, key)?;
     let equal = c.strict_equal_rooted(kind, expected)?;
     Ok(c.boolean(equal))
 }
 
-pub(crate) fn dirent_class(c: &mut Context<'_>, _kind: RootId) -> Result<(RootId, RootId), RootedError> {
+pub(crate) fn dirent_class(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation("fsDirentConstruct"), "Dirent")?;
     let prototype = get(c, constructor, "prototype")?;
     for (name, _, kind) in super::stats::TYPE_PREDICATES {
@@ -142,14 +142,14 @@ pub(crate) fn opendir(c: &mut Context<'_>, args: &[RootId]) -> super::api::Call 
             return Ok(Err(error));
         }
     };
-    let dir = classes::instance(c, Class::Dir)?;
+    let dir = classes::instance(c, Root::Dir)?;
     let state = c.null_object_rooted()?;
     put(c, state, "entries", entries)?;
     let zero = c.number(0.0);
     put(c, state, "index", zero)?;
     let shown = c.string_rooted(&path.shown);
     put(c, state, "path", shown)?;
-    let key = classes::root(c, Class::DirState)?;
+    let key = classes::root(c, Root::DirState)?;
     c.set_property_rooted(dir, key, state, dir)?;
     Ok(Ok(Reply::Value(dir)))
 }
@@ -180,7 +180,7 @@ fn entries(c: &mut Context<'_>, io: &Path, shown: &str, encoding: Encoding) -> O
 
 /// The state of the `Dir` `this` is, or `ERR_INVALID_THIS`.
 fn state(c: &mut Context<'_>, this: RootId) -> Outcome {
-    let key = classes::root(c, Class::DirState)?;
+    let key = classes::root(c, Root::DirState)?;
     let state = if c.is_object_rooted(this)? { c.get_property_rooted(this, key)? } else { c.undefined() };
     if is_undefined(c, state) {
         let error = c.type_error_rooted("Value of \"this\" must be of type Dir")?;

@@ -1,17 +1,29 @@
 //! `fs.Stats`, `BigIntStats` and `StatFs` (`internal/fs/utils.js`): the kernel's integer
 //! fields and nanosecond times are the one record each view projects.
 
-use super::classes::{self, Class};
+use super::classes::{self, Root};
 use crate::modules::stream_shared_vm::{get, Context, Outcome};
 use quench_runtime::{NativeArithmetic, RootId, RootedError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The integer fields every stat view carries, in Node's order (`StatsBase`).
-pub(crate) const BASE_FIELDS: [&str; 10] = ["dev", "mode", "nlink", "uid", "gid", "rdev", "blksize", "ino", "size", "blocks"];
+/// A `Stats`'s own fields, in Node's order: the integer fields every view carries
+/// (`StatsBase`), then each time in milliseconds. A `BigIntStats` adds each in nanoseconds.
+/// Each list is its own static array: a record's shape is keyed by its list.
+const NUMBER_FIELDS: [&str; 14] = [
+    "dev", "mode", "nlink", "uid", "gid", "rdev", "blksize", "ino", "size", "blocks",
+    "atimeMs", "mtimeMs", "ctimeMs", "birthtimeMs",
+];
+const BIGINT_FIELDS: [&str; 18] = [
+    "dev", "mode", "nlink", "uid", "gid", "rdev", "blksize", "ino", "size", "blocks",
+    "atimeMs", "mtimeMs", "ctimeMs", "birthtimeMs", "atimeNs", "mtimeNs", "ctimeNs", "birthtimeNs",
+];
+const BASE_COUNT: usize = 10;
+const NUMBER_COUNT: usize = NUMBER_FIELDS.len();
+pub(crate) const BASE_FIELDS: &[&str] = NUMBER_FIELDS.split_at(BASE_COUNT).0;
+const TIME_MS_FIELDS: &[&str] = NUMBER_FIELDS.split_at(BASE_COUNT).1;
+const TIME_NS_FIELDS: &[&str] = BIGINT_FIELDS.split_at(NUMBER_COUNT).1;
 /// The time fields, each with `<name>Ms` (and `<name>Ns` for BigInt) members.
 pub(crate) const TIME_FIELDS: [&str; 4] = ["atime", "mtime", "ctime", "birthtime"];
-const TIME_MS_FIELDS: [&str; 4] = ["atimeMs", "mtimeMs", "ctimeMs", "birthtimeMs"];
-const TIME_NS_FIELDS: [&str; 4] = ["atimeNs", "mtimeNs", "ctimeNs", "birthtimeNs"];
 /// `StatFs`'s fields, in Node's order.
 pub(crate) const STATFS_FIELDS: [&str; 7] = ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"];
 
@@ -33,7 +45,7 @@ pub(crate) const TYPE_PREDICATES: [(&str, libc::mode_t, i32); 7] = [
 /// A stat result: the kernel's integer fields and its times in nanoseconds.
 #[derive(Clone, Default)]
 pub(crate) struct StatRecord {
-    fields: [i128; BASE_FIELDS.len()],
+    fields: [i128; BASE_COUNT],
     times: [i128; TIME_FIELDS.len()],
 }
 
@@ -83,44 +95,37 @@ fn milliseconds(time: i128) -> f64 {
     seconds * 1e3 + nanoseconds / NANOSECONDS_PER_MILLISECOND as f64
 }
 
-fn define(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true).map(drop)
+/// The object of `class` whose own fields are `names` holding `values`, made at its final
+/// shape.
+fn record(c: &mut Context<'_>, class: Root, names: &'static [&'static str], values: &[RootId]) -> Outcome {
+    let object = c.record_rooted(names, values)?;
+    let prototype = classes::prototype(c, class)?;
+    c.set_prototype_rooted(object, prototype)?;
+    Ok(object)
 }
 
 /// The `Stats` (or `BigIntStats`) object of `record`.
-pub(crate) fn stats(c: &mut Context<'_>, record: &StatRecord, bigint: bool) -> Outcome {
-    let class = if bigint { Class::BigIntStats } else { Class::Stats };
-    let object = classes::instance(c, class)?;
-    for (name, value) in BASE_FIELDS.into_iter().zip(record.fields) {
-        let value = if bigint { c.bigint_rooted(value) } else { c.number(value as f64) };
-        define(c, object, name, value)?;
+pub(crate) fn stats(c: &mut Context<'_>, stat: &StatRecord, bigint: bool) -> Outcome {
+    let mut values = Vec::with_capacity(BIGINT_FIELDS.len());
+    for value in stat.fields {
+        values.push(if bigint { c.bigint_rooted(value) } else { c.number(value as f64) });
     }
-    for (name, time) in TIME_MS_FIELDS.into_iter().zip(record.times) {
-        let value = if bigint {
-            c.bigint_rooted(time.div_euclid(NANOSECONDS_PER_MILLISECOND))
-        } else {
-            c.number(milliseconds(time))
-        };
-        define(c, object, name, value)?;
+    for time in stat.times {
+        values.push(if bigint { c.bigint_rooted(time.div_euclid(NANOSECONDS_PER_MILLISECOND)) } else { c.number(milliseconds(time)) });
     }
-    if bigint {
-        for (name, time) in TIME_NS_FIELDS.into_iter().zip(record.times) {
-            let value = c.bigint_rooted(time);
-            define(c, object, name, value)?;
-        }
+    if !bigint {
+        return record(c, Root::Stats, &NUMBER_FIELDS, &values);
     }
-    Ok(object)
+    for time in stat.times {
+        values.push(c.bigint_rooted(time));
+    }
+    record(c, Root::BigIntStats, &BIGINT_FIELDS, &values)
 }
 
 /// The `StatFs` object of `statfs(2)`'s fields.
-pub(crate) fn statfs(c: &mut Context<'_>, values: [i128; STATFS_FIELDS.len()], bigint: bool) -> Outcome {
-    let object = classes::instance(c, Class::StatFs)?;
-    for (name, value) in STATFS_FIELDS.into_iter().zip(values) {
-        let value = if bigint { c.bigint_rooted(value) } else { c.number(value as f64) };
-        define(c, object, name, value)?;
-    }
-    Ok(object)
+pub(crate) fn statfs(c: &mut Context<'_>, fields: [i128; STATFS_FIELDS.len()], bigint: bool) -> Outcome {
+    let values = fields.map(|value| if bigint { c.bigint_rooted(value) } else { c.number(value as f64) });
+    record(c, Root::StatFs, &STATFS_FIELDS, &values)
 }
 
 /// Assign `values` to `names` of `this` as a constructor does (`this.name = value`).
@@ -134,29 +139,28 @@ fn assign(c: &mut Context<'_>, this: RootId, names: &[&str], args: &[RootId]) ->
 
 /// `function StatsBase(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks)`.
 pub(crate) fn construct_base(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    assign(c, this, &BASE_FIELDS, args)?;
+    assign(c, this, BASE_FIELDS, args)?;
     Ok(c.undefined())
 }
 
 /// `function Stats(...base, atimeMs, mtimeMs, ctimeMs, birthtimeMs)`.
 pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    assign(c, this, &BASE_FIELDS, args)?;
-    assign(c, this, &TIME_MS_FIELDS, args.get(BASE_FIELDS.len()..).unwrap_or_default())?;
+    assign(c, this, &NUMBER_FIELDS, args)?;
     Ok(c.undefined())
 }
 
 /// `fs.Stats`: `deprecate(Stats, 'fs.Stats constructor is deprecated.', 'DEP0180')`.
 pub(crate) fn construct_deprecated(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let deprecated = classes::root(c, Class::DeprecatedStats)?;
+    let deprecated = classes::root(c, Root::DeprecatedStats)?;
     super::emit_deprecation(c, "fs.Stats constructor is deprecated.", "DEP0180", deprecated)?;
     construct(c, this, args)
 }
 
 /// `function BigIntStats(...base, atimeNs, mtimeNs, ctimeNs, birthtimeNs)`.
 pub(crate) fn construct_bigint(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    assign(c, this, &BASE_FIELDS, args)?;
+    assign(c, this, BASE_FIELDS, args)?;
     let divisor = c.bigint_rooted(NANOSECONDS_PER_MILLISECOND);
-    for (index, (ms, ns)) in TIME_MS_FIELDS.into_iter().zip(TIME_NS_FIELDS).enumerate() {
+    for (index, (ms, ns)) in TIME_MS_FIELDS.iter().zip(TIME_NS_FIELDS).enumerate() {
         let time = crate::modules::stream_shared_vm::arg(c, args, BASE_FIELDS.len() + index);
         let milliseconds = c.arithmetic_rooted(NativeArithmetic::Divide, time, divisor)?;
         crate::modules::stream_shared_vm::put(c, this, ms, milliseconds)?;
@@ -218,7 +222,7 @@ pub(crate) fn time_get(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outco
     } else {
         c.to_number(milliseconds)?
     };
-    let date = classes::root(c, Class::Date)?;
+    let date = classes::root(c, Root::Date)?;
     let time = c.number(round_half_up(milliseconds));
     let value = c.construct_rooted(date, date, &[time])?;
     define_time(c, this, name, value)?;

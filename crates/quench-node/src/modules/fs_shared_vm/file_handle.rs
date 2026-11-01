@@ -2,7 +2,7 @@
 //! methods are the promise API over it.
 
 use super::api::{self, Flavor};
-use super::classes::{self, Class};
+use super::classes::{self, Root};
 use super::ops::Op;
 use crate::modules::stream_shared_vm::{arg, call_method, get, put, Context, Outcome};
 use quench_runtime::{RootId, RootedError};
@@ -71,14 +71,14 @@ pub(crate) fn define_prototype(c: &mut Context<'_>, prototype: RootId) -> Result
 
 /// `new FileHandle(fd)`.
 pub(crate) fn create(c: &mut Context<'_>, fd: i32) -> Outcome {
-    let handle = classes::instance(c, Class::FileHandle)?;
+    let handle = classes::instance(c, Root::FileHandle)?;
     let global = c.global_root()?;
     let emitter = get(c, global, "__nodeEventEmitter")?;
     c.call_rooted(emitter, handle, &[])?;
     // `close = () => ...`: a class field, bound to its handle.
     let close = c.host_function_named_with_data(crate::host::shared_vm::operation("fsHandleClose"), "close", handle)?;
     put(c, handle, "close", close)?;
-    let key = classes::root(c, Class::HandleFd)?;
+    let key = classes::root(c, Root::HandleFd)?;
     let fd = c.number(f64::from(fd));
     c.set_property_rooted(handle, key, fd, handle)?;
     Ok(handle)
@@ -96,7 +96,7 @@ pub(crate) fn descriptor_of(c: &mut Context<'_>, value: RootId) -> Result<Option
     if !c.is_object_rooted(value)? {
         return Ok(None);
     }
-    let key = classes::root(c, Class::HandleFd)?;
+    let key = classes::root(c, Root::HandleFd)?;
     let fd = c.get_property_rooted(value, key)?;
     Ok(c.rooted_value(fd).and_then(|value| value.as_number()).map(|fd| fd as i32))
 }
@@ -163,7 +163,7 @@ pub(crate) fn dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcom
 /// the same outcome.
 fn close_handle(c: &mut Context<'_>, this: RootId) -> Outcome {
     let fd = handle_fd(c, this)?;
-    let closing = classes::root(c, Class::HandleClosing)?;
+    let closing = classes::root(c, Root::HandleClosing)?;
     let pending = c.get_property_rooted(this, closing)?;
     if c.is_promise_rooted(pending)? {
         return Ok(pending);
@@ -175,7 +175,7 @@ fn close_handle(c: &mut Context<'_>, this: RootId) -> Outcome {
         return Ok(promise);
     }
     c.set_property_rooted(this, closing, promise, this)?;
-    let key = classes::root(c, Class::HandleFd)?;
+    let key = classes::root(c, Root::HandleFd)?;
     let closed = c.number(CLOSED);
     c.set_property_rooted(this, key, closed, this)?;
     let outcome = crate::modules::stream_shared_vm::attempt(super::ops::close_descriptor(c, fd))?;
@@ -190,7 +190,7 @@ fn close_handle(c: &mut Context<'_>, this: RootId) -> Outcome {
 /// The close `close` queued: settle, forget the pending close, and emit `'close'`.
 pub(crate) fn closed(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let [handle, promise] = crate::modules::stream_shared_vm::captures::<2>(c)?;
-    let closing = classes::root(c, Class::HandleClosing)?;
+    let closing = classes::root(c, Root::HandleClosing)?;
     let undefined = c.undefined();
     c.set_property_rooted(handle, closing, undefined, handle)?;
     let (rejected, value) = (arg(c, args, 0), arg(c, args, 1));

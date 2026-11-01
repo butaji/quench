@@ -115,11 +115,23 @@ pub(crate) fn is_url_operation(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
 /// Whether a string primitive finds an `href` property (its prototype chain is the realm's
 /// `String.prototype` and `Object.prototype`); [[HasProperty]] on them runs no script.
 fn strings_have_href(c: &mut Context<'_>) -> Result<bool, RootedError> {
-    let prototype = c.with_startup_intrinsics(|c| {
-        let global = c.global_root()?;
-        let constructor = get(c, global, "String")?;
-        get(c, constructor, "prototype")
-    })?;
+    // The intrinsic `String.prototype`, read once: every path argument asks.
+    const CACHE_KEY: &str = "\0url:String.prototype";
+    let shared = c.host_mut().shared_state();
+    let cached = shared.borrow().builtin_cache.get(CACHE_KEY).copied();
+    let prototype = match cached {
+        Some(prototype) => prototype,
+        None => {
+            let prototype = c.with_startup_intrinsics(|c| {
+                let global = c.global_root()?;
+                let constructor = get(c, global, "String")?;
+                get(c, constructor, "prototype")
+            })?;
+            let retained = c.retain(prototype)?;
+            shared.borrow_mut().builtin_cache.insert(CACHE_KEY.to_owned(), retained);
+            retained
+        }
+    };
     let key = c.string_rooted("href");
     c.has_property_rooted(prototype, key)
 }
