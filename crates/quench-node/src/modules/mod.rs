@@ -7,6 +7,7 @@ pub(crate) mod assert_shared_vm;
 pub(crate) mod napi;
 pub(crate) mod worker_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
+pub(crate) mod async_hooks_module_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod blob_binding_shared_vm;

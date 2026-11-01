@@ -80,6 +80,8 @@ pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), Rooted
         super::abort_controller_shared_vm::SIGNAL_SLOT,
         super::abort_controller_shared_vm::CONTROLLER_SLOT,
         super::dom_exception_shared_vm::SLOT,
+        super::emitter_async_resource_shared_vm::RESOURCE_SLOT,
+        super::emitter_async_resource_shared_vm::EMITTER_SLOT,
     ] {
         let key = context.private_symbol_rooted(Some(field));
         set(context, data, field, key)?;

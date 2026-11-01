@@ -1,290 +1,161 @@
-//! EventEmitterAsyncResource composes the canonical emitter and async resource.
-
-use super::event_constructor_shared_vm::get;
+//! `events.EventEmitterAsyncResource`: an EventEmitter whose emits run in the scope of its own
+//! `AsyncResource`, an `EventEmitterReferencingAsyncResource` that names it back.
+use super::event_target_shared_vm::{api, argument, attach_slot, get, put, receiver_slot, require_new};
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
+type Context<'a> = NativeContext<'a, NodeHost>;
 
-pub(super) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
-    emitter: RootId,
-) -> Result<(), RootedError> {
-    let state = context.host_mut().shared_state();
-    let api = state
-        .borrow()
-        .event_targets_api
-        .ok_or_else(|| RootedError::host("emitter async configuration missing"))?;
-    let installed = get(context, api, "asyncGetterInstalled")?;
-    if context.truthy_rooted(installed)? {
-        return Ok(());
-    }
-    let getter = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("emitterAsyncConstructor"),
-        "get EventEmitterAsyncResource",
-        api,
+/// The event group's members naming the private slots: an emitter's resource, a resource's
+/// emitter.
+pub(super) const RESOURCE_SLOT: &str = "asyncEmitterResourceSlot";
+pub(super) const EMITTER_SLOT: &str = "asyncResourceEmitterSlot";
+const CLASS: &str = "EventEmitterAsyncResource";
+const REFERENCING_CLASS: &str = "EventEmitterReferencingAsyncResource";
+
+/// `(name, getter operation)` of the class's accessors.
+const ACCESSORS: [(&str, &str); 3] = [
+    ("asyncId", "emitterAsyncId"),
+    ("triggerAsyncId", "emitterAsyncTriggerId"),
+    ("asyncResource", "emitterAsyncResource"),
+];
+
+/// `EventEmitter.EventEmitterAsyncResource`, a getter that builds the class on first use.
+pub(super) fn install(c: &mut Context<'_>, emitter: RootId) -> Result<(), RootedError> {
+    let getter = c.host_function_named(crate::host::shared_vm::operation("emitterAsyncConstructor"), "get EventEmitterAsyncResource")?;
+    let key = c.string_rooted(CLASS);
+    let undefined = c.undefined();
+    c.define_property_fields_rooted(
+        emitter,
+        key,
+        DescriptorFields { get: Some(getter), set: Some(undefined), enumerable: Some(true), configurable: Some(true), ..Default::default() },
     )?;
-    let descriptor = context.null_object_rooted()?;
-    context.assign_named_property_rooted(descriptor, "get", getter)?;
-    let yes = context.boolean(true);
-    context.assign_named_property_rooted(descriptor, "enumerable", yes)?;
-    context.assign_named_property_rooted(descriptor, "configurable", yes)?;
-    let key = context.string_rooted("EventEmitterAsyncResource");
-    context.define_property_descriptor_rooted(emitter, key, descriptor)?;
-    context.assign_named_property_rooted(api, "asyncGetterInstalled", yes)
+    Ok(())
 }
 
-pub(crate) fn constructor(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let api = context.host_function_data()?;
-    let cached = get(context, api, "asyncEmitterClass")?;
-    if context.truthy_rooted(cached)? {
+fn define_accessor(c: &mut Context<'_>, holder: RootId, name: &str, operation: &str) -> Result<(), RootedError> {
+    let getter = c.host_function_named(crate::host::shared_vm::operation(operation), &format!("get {name}"))?;
+    let key = c.string_rooted(name);
+    let undefined = c.undefined();
+    c.define_property_fields_rooted(
+        holder,
+        key,
+        DescriptorFields { get: Some(getter), set: Some(undefined), enumerable: Some(false), configurable: Some(true), ..Default::default() },
+    )?;
+    Ok(())
+}
+
+fn define_method(c: &mut Context<'_>, holder: RootId, name: &str, operation: &str) -> Result<(), RootedError> {
+    let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    c.define_named_data_property_rooted(holder, name, method, true, false, true)?;
+    Ok(())
+}
+
+/// A subclass constructor of `base` with a read-only `prototype`.
+fn subclass(c: &mut Context<'_>, name: &str, operation: &str, base: RootId) -> Result<(RootId, RootId), RootedError> {
+    let class = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
+    c.set_prototype_rooted(class, base)?;
+    let prototype = get(c, class, "prototype")?;
+    let base_prototype = get(c, base, "prototype")?;
+    c.set_prototype_rooted(prototype, base_prototype)?;
+    c.define_named_data_property_rooted(class, "prototype", prototype, false, false, false)?;
+    Ok((class, prototype))
+}
+
+/// The getter: the class, built once.
+pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = api(c)?;
+    let cached = get(c, data, "asyncEmitterClass")?;
+    if c.is_callable_rooted(cached)? {
         return Ok(cached);
     }
-    let primordials = crate::host::shared_vm::commonjs::node_primordials(context)?;
-    let global = context.global_root()?;
-    let weak = if let Some(primordials) = primordials {
-        get(context, primordials, "SafeWeakMap")?
-    } else {
-        get(context, global, "WeakMap")?
-    };
-    let prototype = get(context, weak, "prototype")?;
-    let (unshift, uncurried) = if let Some(primordials) = primordials {
-        (get(context, primordials, "ArrayPrototypeUnshift")?, true)
-    } else {
-        let array = get(context, global, "Array")?;
-        let prototype = get(context, array, "prototype")?;
-        (get(context, prototype, "unshift")?, false)
-    };
-    context.assign_named_property_rooted(api, "asyncUnshift", unshift)?;
-    let flag = context.boolean(uncurried);
-    context.assign_named_property_rooted(api, "asyncUnshiftUncurried", flag)?;
-    for name in ["get", "set", "has"] {
-        let method = get(context, prototype, name)?;
-        context.assign_named_property_rooted(api, &format!("asyncWeak{name}"), method)?;
+    let hooks = super::async_hooks_shared_vm::module(c)?;
+    let resource = get(c, hooks, "AsyncResource")?;
+    let (referencing, prototype) = subclass(c, REFERENCING_CLASS, "emitterAsyncReferencingConstructor", resource)?;
+    define_accessor(c, prototype, "eventEmitter", "emitterAsyncEventEmitter")?;
+    put(c, data, "asyncReferencingClass", referencing)?;
+    let emitter = get(c, data, "emitter")?;
+    let (class, prototype) = subclass(c, CLASS, "emitterAsyncResourceConstructor", emitter)?;
+    define_method(c, prototype, "emit", "emitterAsyncEmit")?;
+    define_method(c, prototype, "emitDestroy", "emitterAsyncDestroy")?;
+    for (name, operation) in ACCESSORS {
+        define_accessor(c, prototype, name, operation)?;
     }
-    for name in ["asyncEmitterResources", "asyncResourceEmitters"] {
-        let map = context.construct_rooted(weak, weak, &[])?;
-        context.assign_named_property_rooted(api, name, map)?;
-    }
-    let async_module = super::async_hooks_shared_vm::module(context)?;
-    let resource = get(context, async_module, "AsyncResource")?;
-    let emitter = get(context, api, "emitterCtor")?;
-    let operations = [
-        "emitterAsyncPrepare",
-        "emitterAsyncInit",
-        "emitterAsyncEmit",
-        "emitterAsyncDestroy",
-        "emitterAsyncGet",
-        "emitterAsyncLink",
-        "emitterAsyncOwner",
-    ]
-    .map(|name| context.host_function_with_data(crate::host::shared_vm::operation(name), api))
-    .into_iter()
-    .collect::<Result<Vec<_>, _>>()?;
-    let factory = crate::host::removed_javascript("node:events/async-resource-class.js")?;
-    let undefined = context.undefined();
-    let mut arguments = vec![emitter, resource];
-    arguments.extend(operations);
-    let class = context.call_rooted(factory, undefined, &arguments)?;
-    context.assign_named_property_rooted(api, "asyncEmitterClass", class)?;
-    let prototype = get(context, class, "prototype")?;
-    context.assign_named_property_rooted(api, "asyncEmitterHome", prototype)?;
+    put(c, data, "asyncEmitterClass", class)?;
     Ok(class)
 }
 
-fn brand_resource(
-    context: &mut NativeContext<'_, NodeHost>,
-    api: RootId,
-    target: RootId,
-    table: &str,
-    field: &str,
-) -> Result<RootId, RootedError> {
-    let map = get(context, api, table)?;
-    let has = get(context, api, "asyncWeakhas")?;
-    let present = context.call_rooted(has, map, &[target])?;
-    if !context.truthy_rooted(present)? {
-        let error = context.type_error_rooted(&format!(
-            "Cannot read private member #{field} from an object whose class did not declare it"
-        ))?;
-        return Err(context.throw(error));
-    }
-    let getter = get(context, api, "asyncWeakget")?;
-    context.call_rooted(getter, map, &[target])
-}
-
-pub(crate) fn prepare(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let options = args.first().copied().unwrap_or(undefined);
-    let target = args.get(1).copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    let (options, name) = if context.string_text(options)?.is_some() {
-        (undefined, options)
+/// `new EventEmitterAsyncResource(options)`: a string names the resource; otherwise
+/// `options.name` does (required of the class itself), else the subclass's name.
+pub(crate) fn initialize(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    require_new(c, CLASS)?;
+    let options = argument(c, args, 0);
+    let (options, name) = if c.string_text(options)?.is_some() {
+        (c.undefined(), options)
     } else {
-        let nullish = context
-            .rooted_value(options)
-            .is_some_and(|v| v.is_null() || v.is_undefined());
-        let class = get(context, api, "asyncEmitterClass")?;
-        if context.strict_equal_rooted(target, class)? {
-            let name = if nullish {
-                undefined
-            } else {
-                get(context, options, "name")?
-            };
-            if context.string_text(name)?.is_none() {
-                return Err(super::util_shared_vm::argument_type_error(
-                    context,
-                    name,
-                    "options.name",
-                    "string",
-                )?);
-            }
+        let name = if super::event_target_shared_vm::is_nullish(c, options) { c.undefined() } else { get(c, options, "name")? };
+        let data = api(c)?;
+        let class = get(c, data, "asyncEmitterClass")?;
+        let target = c.new_target_rooted().unwrap_or(class);
+        if c.strict_equal_rooted(target, class)? && c.string_text(name)?.is_none() {
+            return Err(super::util_shared_vm::argument_type_error(c, name, "options.name", "string")?);
         }
-        let name = if nullish {
-            undefined
-        } else {
-            get(context, options, "name")?
-        };
-        let name = if context.truthy_rooted(name)? {
-            name
-        } else {
-            get(context, target, "name")?
-        };
+        let name = if c.truthy_rooted(name)? { name } else { get(c, target, "name")? };
         (options, name)
     };
-    let setup = context.null_object_rooted()?;
-    context.assign_named_property_rooted(setup, "options", options)?;
-    context.assign_named_property_rooted(setup, "name", name)?;
-    Ok(setup)
+    let data = api(c)?;
+    let emitter = get(c, data, "emitter")?;
+    c.call_rooted(emitter, receiver, &[options])?;
+    let referencing = get(c, data, "asyncReferencingClass")?;
+    let resource = c.construct_rooted(referencing, referencing, &[receiver, name, options])?;
+    attach_slot(c, receiver, RESOURCE_SLOT, resource)?;
+    Ok(c.undefined())
 }
 
-pub(crate) fn initialize(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let emitter = args.first().copied().unwrap_or(undefined);
-    let constructor = args.get(1).copied().unwrap_or(undefined);
-    let setup = args.get(2).copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    let name = get(context, setup, "name")?;
-    let options = get(context, setup, "options")?;
-    let resource = context.construct_rooted(constructor, constructor, &[emitter, name, options])?;
-    let map = get(context, api, "asyncEmitterResources")?;
-    let setter = get(context, api, "asyncWeakset")?;
-    context.call_rooted(setter, map, &[emitter, resource])?;
-    Ok(undefined)
+/// `new EventEmitterReferencingAsyncResource(emitter, type, options)`.
+pub(crate) fn initialize_referencing(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let emitter = argument(c, args, 0);
+    super::async_hooks_module_shared_vm::resource_constructor(c, receiver, args.get(1..).unwrap_or_default())?;
+    attach_slot(c, receiver, EMITTER_SLOT, emitter)?;
+    Ok(c.undefined())
 }
 
-pub(crate) fn link(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let resource = args.first().copied().unwrap_or(undefined);
-    let emitter = args.get(1).copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    let map = get(context, api, "asyncResourceEmitters")?;
-    let setter = get(context, api, "asyncWeakset")?;
-    context.call_rooted(setter, map, &[resource, emitter])?;
-    Ok(undefined)
-}
-pub(crate) fn owner(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let resource = args.first().copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    brand_resource(
-        context,
-        api,
-        resource,
-        "asyncResourceEmitters",
-        "eventEmitter",
-    )
+fn resource(c: &mut Context<'_>, receiver: RootId) -> Result<RootId, RootedError> {
+    receiver_slot(c, receiver, RESOURCE_SLOT, CLASS)
 }
 
-pub(crate) fn emit(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let emitter = args.first().copied().unwrap_or(undefined);
-    let event = args.get(1).copied().unwrap_or(undefined);
-    let values = args.get(2).copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    let resource = brand_resource(
-        context,
-        api,
-        emitter,
-        "asyncEmitterResources",
-        "asyncResource",
-    )?;
-    let home = get(context, api, "asyncEmitterHome")?;
-    let parent = context.prototype_rooted(home)?;
-    let super_emit = get(context, parent, "emit")?;
-    let unshift = get(context, api, "asyncUnshift")?;
-    let uncurried = get(context, api, "asyncUnshiftUncurried")?;
-    let mut prefix = vec![super_emit, emitter, event];
-    if context.truthy_rooted(uncurried)? {
-        prefix.insert(0, values);
-        context.call_rooted(unshift, undefined, &prefix)?;
-    } else {
-        context.call_rooted(unshift, values, &prefix)?;
-    }
-    let arguments = context.array_like_values_rooted(values)?;
-    let method = get(context, resource, "runInAsyncScope")?;
-    context.call_rooted(method, resource, &arguments)
+/// `emit(event, ...args)`: `EventEmitter.prototype.emit` in the resource's scope.
+pub(crate) fn emit(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = resource(c, receiver)?;
+    let data = api(c)?;
+    let emitter = get(c, data, "emitter")?;
+    let prototype = get(c, emitter, "prototype")?;
+    let super_emit = get(c, prototype, "emit")?;
+    let mut call = vec![super_emit, receiver];
+    call.extend_from_slice(args);
+    super::async_hooks_module_shared_vm::run_in_async_scope(c, resource, &call)
 }
-pub(crate) fn destroy(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let emitter = args.first().copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    let resource = brand_resource(
-        context,
-        api,
-        emitter,
-        "asyncEmitterResources",
-        "asyncResource",
-    )?;
-    let method = get(context, resource, "emitDestroy")?;
-    context.call_rooted(method, resource, &[])?;
-    Ok(undefined)
+
+pub(crate) fn destroy(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = resource(c, receiver)?;
+    super::async_hooks_module_shared_vm::resource_destroy(c, resource, &[])?;
+    Ok(c.undefined())
 }
-pub(crate) fn get_value(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let emitter = args.first().copied().unwrap_or(undefined);
-    let field = args.get(1).copied().unwrap_or(undefined);
-    let api = context.host_function_data()?;
-    let resource = brand_resource(
-        context,
-        api,
-        emitter,
-        "asyncEmitterResources",
-        "asyncResource",
-    )?;
-    if context.string_text(field)?.as_deref() == Some("asyncResource") {
-        return Ok(resource);
-    }
-    let method = context.get_property_rooted(resource, field)?;
-    context.call_rooted(method, resource, &[])
+
+pub(crate) fn async_id(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = resource(c, receiver)?;
+    super::async_hooks_module_shared_vm::resource_async_id(c, resource, &[])
+}
+
+pub(crate) fn trigger_async_id(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = resource(c, receiver)?;
+    super::async_hooks_module_shared_vm::resource_trigger_async_id(c, resource, &[])
+}
+
+pub(crate) fn async_resource(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    resource(c, receiver)
+}
+
+pub(crate) fn event_emitter(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    receiver_slot(c, receiver, EMITTER_SLOT, REFERENCING_CLASS)
 }
