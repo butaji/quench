@@ -1258,6 +1258,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "messageEvent" (0) => crate::modules::message_event_shared_vm::member,
         method "streamConsumers" (0) => crate::modules::web_stream_consumers_shared_vm::member,
         method "broadcastChannel" (0) => crate::modules::broadcast_channel_shared_vm::member,
+        method "webSocket" (0) => crate::modules::websocket_shared_vm::member,
+        method "webSocketInitialize" (0) => crate::modules::websocket_shared_vm::initialize_global,
         method "webBroadcastChannelInitialize" (0) => crate::modules::broadcast_channel_shared_vm::initialize_global,
         method "assertCall" (0) => crate::modules::assert_shared_vm::call,
         method "assertAssertionError" (1) => crate::modules::assert_shared_vm::error_constructor,

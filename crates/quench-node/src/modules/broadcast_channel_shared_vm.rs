@@ -277,10 +277,8 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             if web::flag(c, state, CLOSED)? {
                 return Ok(c.undefined());
             }
-            let class = crate::modules::message_event_shared_vm::class(c)?;
-            let kind = c.string_rooted(MESSAGE);
             let init = literal(c, &[("data", data)])?;
-            let event = c.construct_rooted(class, class, &[kind, init])?;
+            let event = crate::modules::message_event_shared_vm::create(c, crate::modules::message_event_shared_vm::Event::Message, MESSAGE, init)?;
             let dispatch = get(c, channel, "dispatchEvent")?;
             c.call_rooted(dispatch, channel, &[event])?;
             Ok(c.undefined())

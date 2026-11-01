@@ -44,7 +44,6 @@ pub(crate) mod crypto_digest;
 pub(crate) mod crypto_digest_error;
 pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
-#[cfg(not(quench_openssl_provider))]
 pub(crate) mod crypto_sha1;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_node;
@@ -154,6 +153,7 @@ pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_shared_vm;
 pub(crate) mod webidl_shared_vm;
 pub(crate) mod webstreams_shared_vm;
+pub(crate) mod websocket_shared_vm;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_comparisons_shared_vm;

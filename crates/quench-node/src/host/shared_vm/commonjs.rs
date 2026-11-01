@@ -819,6 +819,7 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
         ("webApisInitialize", WEB_API_GLOBALS),
         ("webFetchInitialize", FETCH_API_GLOBALS),
         ("webBroadcastChannelInitialize", &["BroadcastChannel"]),
+        ("webSocketInitialize", &["WebSocket"]),
     ] {
         let names: Vec<&str> = names.iter().copied().filter(|name| web_global_enabled(context, name)).collect();
         let initializer = context.host_function(super::operation(operation))?;

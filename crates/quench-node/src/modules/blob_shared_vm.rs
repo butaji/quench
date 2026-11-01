@@ -437,10 +437,9 @@ fn file_state(c: &mut Context<'_>, this: RootId) -> Outcome {
     }
 }
 
-/// A fresh `blob:nodedata:` id: an RFC 4122 version 4 UUID.
-fn random_uuid() -> String {
-    let mut bytes = [0u8; UUID_BYTES];
-    let filled = std::fs::File::open("/dev/urandom").and_then(|mut source| std::io::Read::read_exact(&mut source, &mut bytes));
+/// Fills `bytes` from the system's random source, or the hasher's random keys without one.
+pub(crate) fn fill_random(bytes: &mut [u8]) {
+    let filled = std::fs::File::open("/dev/urandom").and_then(|mut source| std::io::Read::read_exact(&mut source, bytes));
     if filled.is_err() {
         use std::hash::{BuildHasher, Hasher};
         for chunk in bytes.chunks_mut(std::mem::size_of::<u64>()) {
@@ -449,6 +448,12 @@ fn random_uuid() -> String {
             chunk.copy_from_slice(&hasher.finish().to_le_bytes()[..chunk.len()]);
         }
     }
+}
+
+/// A fresh `blob:nodedata:` id: an RFC 4122 version 4 UUID.
+fn random_uuid() -> String {
+    let mut bytes = [0u8; UUID_BYTES];
+    fill_random(&mut bytes);
     bytes[UUID_VERSION_BYTE] = (bytes[UUID_VERSION_BYTE] & UUID_VERSION_MASK) | UUID_VERSION_4;
     bytes[UUID_VARIANT_BYTE] = (bytes[UUID_VARIANT_BYTE] & UUID_VARIANT_MASK) | UUID_VARIANT_RFC4122;
     let mut text = String::with_capacity(UUID_BYTES * 2 + UUID_GROUP_ENDS.len());
