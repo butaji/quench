@@ -6601,7 +6601,12 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                     }),
                 );
             }
-            dispatch.refresh_heap_bases(vm);
+            // Only regions that inline field reads use these bases. A single
+            // operation's residual never reads them, so the call-threaded
+            // specializer leaves them unrefreshed (docs/v2/specialization.md rule 4).
+            if !SINGLE_OPERATION {
+                dispatch.refresh_heap_bases(vm);
+            }
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
