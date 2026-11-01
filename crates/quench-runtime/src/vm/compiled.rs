@@ -2158,13 +2158,30 @@ pub(super) enum JsGeneralCallout {
     Relocatable(u32),
 }
 
+/// A relocatable typed region and its guarded entry inputs. JIT general
+/// dispatch supplies no static regions; its hot region publisher owns entry.
+#[cfg_attr(not(feature = "aot"), allow(dead_code))]
+pub(super) struct StaticRegionEntry<'a> {
+    pub(super) range: std::ops::Range<usize>,
+    pub(super) target: StaticRegionTarget,
+    pub(super) fields: &'a [FieldUse],
+}
+
+#[cfg_attr(not(feature = "aot"), allow(dead_code))]
+#[derive(Clone, Copy)]
+pub(super) enum StaticRegionTarget {
+    Symbol(u32),
+    #[cfg(test)]
+    Address(usize),
+}
+
 pub(super) fn lower_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
     unresolved_names_are_global: bool,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     callout_kind: JsGeneralCallout,
-    _scalar_regions: &[(std::ops::Range<usize>, u32)],
+    _scalar_regions: &[StaticRegionEntry<'_>],
 ) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
@@ -2229,8 +2246,8 @@ pub(super) fn lower_js_general_dispatch(
     #[cfg(feature = "aot")]
     let entries = {
         let mut entries = entries;
-        for (range, _) in _scalar_regions {
-            entries.to_mut()[range.start] = builder.create_block();
+        for entry in _scalar_regions {
+            entries.to_mut()[entry.range.start] = builder.create_block();
         }
         entries
     };
@@ -3345,8 +3362,8 @@ pub(super) fn lower_js_general_dispatch(
         );
     }
     #[cfg(feature = "aot")]
-    for (range, symbol) in _scalar_regions {
-        scalar_region::emit_entry(&mut builder, isa, range.clone(), *symbol,
+    for entry in _scalar_regions {
+        scalar_region::emit_entry(&mut builder, isa, entry,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc);
     }
     builder.switch_to_block(continue_block);
@@ -16503,7 +16520,7 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
-    fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
+    pub(super) fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
         -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>)
     {
         let sites = super::super::specialize::instruction_sites(super::super::specialize::Division::Offline, program.function(function_id as usize));

@@ -300,8 +300,13 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                     program, function_id, false, &*isa,
                     super::compiled::JsGeneralCallout::Relocatable(fallback),
                     &scalar_regions.iter().enumerate().map(|(offset, region)| {
-                        (region.range.clone(), u32::try_from(scalar_base + scalar_definitions.len() + offset)
-                            .expect("native scalar symbol index"))
+                        super::compiled::StaticRegionEntry {
+                            range: region.range.clone(),
+                            target: super::compiled::StaticRegionTarget::Symbol(
+                                u32::try_from(scalar_base + scalar_definitions.len() + offset)
+                                    .expect("native scalar symbol index")),
+                            fields: &region.fields,
+                        }
                     }).collect::<Vec<_>>(),
                 ) {
                     Ok((native, _)) => {

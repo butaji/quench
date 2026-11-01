@@ -425,6 +425,51 @@ fn compile_command_builds_source_independent_framework_js_and_ts() {
 }
 
 #[test]
+#[ignore = "explicit source-deleted typed field region qualification"]
+fn compile_command_preserves_typed_field_regions() {
+    use std::{fs, process::Command};
+    let source = include_str!("../../quench-runtime/tests/fixtures/aot-field-regions.js");
+    let directory = std::env::temp_dir().join(format!("quench-typed-fields-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let oracle_source = directory.join("oracle.cjs");
+    fs::write(&oracle_source, source).unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+        .arg(&oracle_source).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    fs::remove_file(oracle_source).unwrap();
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    for extension in ["cjs", "cts"] {
+        let sources = directory.join(format!("sources-{extension}"));
+        fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        let guest = if extension == "cts" {
+            source.replace("function calc(o)", "function calc(o: {left:number,right:number}): number")
+        } else { source.to_owned() };
+        fs::write(&entry, guest).unwrap();
+        let binary = directory.join(format!("fields-{extension}"));
+        let report = directory.join(format!("fields-{extension}.json"));
+        let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+            .arg("compile").arg(&entry).arg("-o").arg(&binary)
+            .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk)
+            .arg("--report").arg(&report).output().unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        fs::remove_dir_all(sources).unwrap();
+        let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+        assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, oracle.stdout, "{extension}");
+        assert_eq!(native.stderr, oracle.stderr, "{extension}");
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(report["execution_mode"], "native_only");
+        for capability in ["source_compilation", "js_source_frontend", "bytecode_interpreter", "jit"] {
+            assert_eq!(report[capability], false, "{capability}");
+        }
+        assert_reduced_payload(&report, &binary);
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 #[ignore = "explicit default production framework compile/link qualification"]
 fn production_compile_command_builds_source_independent_framework_js_and_ts() {
     qualify_compile_command_frameworks("production", None);
