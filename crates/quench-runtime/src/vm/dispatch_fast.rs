@@ -5436,6 +5436,21 @@ fn lane_activate_getter<H: Host>(
         };
         return lane_activate_keeping::<H, false>(cx, r, ip, &target, no_arguments, this, false, None);
     }
+    // A getter that makes closures, of this program or another, runs as the environment
+    // activation its plain call makes (`lane_activate_environment`), with no arguments, as
+    // Zod's `get error() { ... issues.map((iss) => ...) }` does.
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    let environment = vm
+        .script_call_entry(getter)
+        .or_else(|| vm.cross_call_entry(getter))
+        .map(|target| unsafe { *target })
+        .filter(|target| target.entry == CallEntry::Environment && !lane_constructing(vm, getter));
+    if let Some(target) = environment {
+        let Some(this) = lane_call_this(vm, &target, base) else {
+            return Err(exit(ip));
+        };
+        return lane_activate_environment(cx, r, ip, &target, &[], this);
+    }
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let Some(target) = vm
         .cross_call_entry(getter)

@@ -515,6 +515,33 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn getters_that_make_closures_run_as_environment_activations() {
+    // A getter whose body makes closures runs as an environment activation of its read
+    // (`lane_activate_getter`), as its plain call would: its closures see its captures and
+    // locals, a closure it returns outlives it, and a throw leaves through the read.
+    let source = r#"
+const out = [];
+const make = (items, tag) => { let error; return {
+  get error() { if (!error) error = items.map((x) => tag + x).filter((s) => s.length > 1); return error; },
+  set error(e) { error = e; },
+  get later() { const k = tag; return () => k + items.length; },
+}; };
+for (let round = 0; round < 3; round++) {
+  const r = make([1, 2, 3], "t" + round);
+  out.push(r.error.join(), r.error.length, r.later(), r.error === r.error);
+  r.error = ["x"]; out.push(r.error.join());
+}
+class Holder { constructor(v) { this.v = v; } get doubled() { const f = (n) => n * 2; return [this.v].map(f)[0]; } }
+const hs = [new Holder(2), new Holder(5)];
+for (let i = 0; i < 3; i++) out.push(hs[i & 1].doubled);
+const thrower = { get bad() { const f = () => { throw new Error("from getter"); }; return f(); } };
+try { thrower.bad; } catch (e) { out.push(e.message); }
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["t01,t02,t03|3|t03|true|x|t11,t12,t13|3|t13|true|x|t21,t22,t23|3|t23|true|x|4|10|4|from getter".to_string()]);
+}
+
+#[test]
 fn accessor_pairs_live_in_their_slots() {
     // An accessor with a getter and a setter keeps them in its slot as one pair cell
     // (`SLOT_ACCESSOR_PAIR`), so objects that each define their own pair share a shape; its
