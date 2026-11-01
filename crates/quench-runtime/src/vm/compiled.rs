@@ -1462,11 +1462,25 @@ fn emit_js_dense_array_get(
 /// neither a module namespace nor an arguments object. The entry, the record and the arena
 /// are read on every execution, so a cache refill, a receiver change or arena movement is
 /// seen; any failed proof branches to `fallback`.
+#[derive(Clone, Copy)]
+enum JsFieldReceiver {
+    Register(i32),
+    FixedThis,
+}
+
+fn js_field_receiver(base: FieldBase, register_offset: &impl Fn(u16) -> Option<i32>) -> Option<JsFieldReceiver> {
+    if base == FieldBase::THIS {
+        Some(JsFieldReceiver::FixedThis)
+    } else {
+        base.register_index().and_then(register_offset).map(JsFieldReceiver::Register)
+    }
+}
+
 fn emit_js_own_field_slot(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    receiver: JsFieldReceiver,
     site: u16,
     fallback: ir::Block,
 ) -> ir::Value {
@@ -1474,7 +1488,16 @@ fn emit_js_own_field_slot(
     use crate::value::ValueLayout;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
-    let base = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, base_offset);
+    let base = match receiver {
+        JsFieldReceiver::Register(offset) =>
+            builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+        JsFieldReceiver::FixedThis => {
+            let slot = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
+            let initialized = builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
+            emit_js_guard(builder, initialized, fallback);
+            builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0)
+        }
+    };
     let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
     let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
     emit_js_guard(builder, is_object, fallback);
@@ -1534,8 +1557,7 @@ fn emit_js_own_field_slot(
     let inline = builder.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
     let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
     emit_js_guard(builder, arena_storage, fallback);
-    // Plain storage: the payload word is the arena start alone, its upper half zero, which
-    // an extras word never is (`Object::plain_storage_start`).
+    // Plain storage has the arena start alone in the payload's lower half.
     let storage = builder.ins().load(
         types::I64,
         MemFlagsData::trusted(),
@@ -1545,7 +1567,6 @@ fn emit_js_own_field_slot(
     let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
     let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
     emit_js_guard(builder, plain, fallback);
-
     let slot = entry_word(builder, CACHE.slot_offset, CACHE.slot_complement);
     let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
     let slot = builder.ins().uextend(types::I64, slot);
@@ -1599,14 +1620,14 @@ fn emit_js_own_field_get(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    receiver: JsFieldReceiver,
     site: u16,
     destination_offset: i32,
     next: ir::Block,
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let address = emit_js_own_field_slot(builder, arguments, payload, receiver, site, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
@@ -1620,13 +1641,13 @@ fn emit_js_own_field_return(
     builder: &mut RegionCore<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    receiver: JsFieldReceiver,
     site: u16,
     result_pointer: ir::Value,
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let address = emit_js_own_field_slot(builder, arguments, payload, receiver, site, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     let returns = builder.create_block();
     let interrupted = builder.interrupt_requested();
@@ -1692,7 +1713,7 @@ fn emit_js_own_field_set(
     builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
-    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let address = emit_js_own_field_slot(builder, arguments, payload, JsFieldReceiver::Register(base_offset), site, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -1722,8 +1743,51 @@ pub(super) fn compile_js_general_dispatch(
     function_id: u32,
     unresolved_names_are_global: bool,
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
+    let isa = super::jit_backend::target_isa("speed")
+        .ok_or("target-isa-unavailable")?;
+    let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
+        program, function_id, unresolved_names_are_global, &*isa,
+        JsGeneralCallout::Dynamic,
+    )?;
+    let function = program.function_get(function_id as usize).ok_or("missing-function")?;
+    let code = compile_native_function(
+        native,
+        &*isa,
+        super::js_compiled::MAX_CODE_BYTES,
+        |code| Some(code.to_vec()),
+    )
+    .map_err(NativeCompileRejection::reason)?;
+    Ok(super::js_compiled::JsJitArtifact {
+        code,
+        params: usize::from(function.params),
+        requires_signed_int32_arguments: false,
+        result: super::js_compiled::JsJitResultKind::GeneralDispatch,
+        field_argument: None,
+        numeric_field_inputs: Vec::new(),
+        capture_arguments: Vec::new(),
+        general_dispatch_native_pcs,
+    })
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum JsGeneralCallout {
+    Dynamic,
+    #[cfg(feature = "aot")]
+    Relocatable(u32),
+}
+
+pub(super) fn lower_js_general_dispatch(
+    program: &ResidualProgram,
+    function_id: u32,
+    unresolved_names_are_global: bool,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    callout_kind: JsGeneralCallout,
+) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
+    }
+    if isa.pointer_type() != types::I64 {
+        return Err("general-dispatch-requires-64-bit-pointers");
     }
     let function = program
         .function_get(function_id as usize)
@@ -1735,8 +1799,6 @@ pub(super) fn compile_js_general_dispatch(
         return Err("bytecode-candidate-rejected");
     }
 
-    let isa = super::jit_backend::target_isa("speed")
-        .ok_or("target-isa-unavailable")?;
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
     let name = UserFuncName::user(0x5155_454e, function_id);
     let mut native = ir::Function::with_name_signature(name, signature);
@@ -1759,9 +1821,24 @@ pub(super) fn compile_js_general_dispatch(
     let continue_pc = builder.append_block_param(continue_block, types::I64);
     let invalid_pc = builder.create_block();
     let invalid_pc_value = builder.append_block_param(invalid_pc, types::I64);
-    let callout = builder
-        .ins()
-        .load(types::I64, invariant(), context, CONTEXT_CALLOUT);
+    let callout = match callout_kind {
+        JsGeneralCallout::Dynamic => builder
+            .ins()
+            .load(types::I64, invariant(), context, CONTEXT_CALLOUT),
+        #[cfg(feature = "aot")]
+        JsGeneralCallout::Relocatable(symbol) => {
+            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+                super::native_object::NATIVE_FUNCTION_NAMESPACE, symbol,
+            ));
+            let address = builder.create_global_value(ir::GlobalValueData::Symbol {
+                name: ir::ExternalName::user(name),
+                offset: ir::immediates::Imm64::new(0),
+                colocated: false,
+                tls: false,
+            });
+            builder.ins().symbol_value(isa.pointer_type(), address)
+        }
+    };
     let blocks: Vec<_> = (0..instruction_count)
         .map(|_| builder.create_block())
         .collect();
@@ -1816,6 +1893,25 @@ pub(super) fn compile_js_general_dispatch(
     };
     for (pc, block) in blocks.iter().copied().enumerate() {
         builder.switch_to_block(block);
+        #[cfg(feature = "aot")]
+        if matches!(callout_kind, JsGeneralCallout::Relocatable(_)) {
+            let stop_pc = builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                payload,
+                std::mem::offset_of!(JsStepDispatch, stop_pc) as i32,
+            );
+            let at_stop = builder.ins().icmp_imm_u(IntCC::Equal, stop_pc, pc as i64);
+            let stop = builder.create_block();
+            let fast = builder.create_block();
+            builder.ins().brif(at_stop, stop, &[], fast, &[]);
+            builder.switch_to_block(stop);
+            emit_js_step_fallback(
+                &mut builder, context, callout, callout_signature, result_pointer,
+                stopped_block, continue_block, pc,
+            );
+            builder.switch_to_block(fast);
+        }
         let packed = function.code[pc];
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
         let next = blocks.get(pc + 1).copied();
@@ -1934,7 +2030,7 @@ pub(super) fn compile_js_general_dispatch(
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
             && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
-            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(receiver) = js_field_receiver(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
             let exact = JsExactFallback {
@@ -1946,7 +2042,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_get(&mut builder, arguments, payload, base_offset, cache_site, destination_offset, next, &exact);
+            emit_js_own_field_get(&mut builder, arguments, payload, receiver, cache_site, destination_offset, next, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -1959,7 +2055,7 @@ pub(super) fn compile_js_general_dispatch(
             && !instruction.writes_current_this()
             && instruction.numeric_local_target().is_none()
             && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
-            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(receiver) = js_field_receiver(base, &register_offset)
         {
             let exact = JsExactFallback {
                 context,
@@ -1970,7 +2066,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_return(&mut builder, arguments, payload, base_offset, cache_site, result_pointer, &exact);
+            emit_js_own_field_return(&mut builder, arguments, payload, receiver, cache_site, result_pointer, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -2700,6 +2796,15 @@ pub(super) fn compile_js_general_dispatch(
         );
     }
     builder.switch_to_block(continue_block);
+    let select_block = builder.create_block();
+    let in_range = builder.ins().icmp_imm_u(
+        IntCC::UnsignedLessThan, continue_pc, instruction_count as i64,
+    );
+    builder.ins().brif(
+        in_range, select_block, &[], invalid_pc,
+        &[ir::BlockArg::Value(continue_pc)],
+    );
+    builder.switch_to_block(select_block);
     let selector = builder.ins().ireduce(types::I32, continue_pc);
     let cases: Vec<_> = blocks
         .iter()
@@ -2716,23 +2821,7 @@ pub(super) fn compile_js_general_dispatch(
     builder.seal_block(continue_block);
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
-    let code = compile_native_function(
-        native,
-        &*isa,
-        super::js_compiled::MAX_CODE_BYTES,
-        |code| Some(code.to_vec()),
-    )
-    .map_err(NativeCompileRejection::reason)?;
-    Ok(super::js_compiled::JsJitArtifact {
-        code,
-        params: usize::from(function.params),
-        requires_signed_int32_arguments: false,
-        result: super::js_compiled::JsJitResultKind::GeneralDispatch,
-        field_argument: None,
-        numeric_field_inputs: Vec::new(),
-        capture_arguments: Vec::new(),
-        general_dispatch_native_pcs,
-    })
+    Ok((native, general_dispatch_native_pcs))
 }
 
 /// Canonical, owner-free description of the inputs that affect GeneralDispatch
@@ -5913,13 +6002,17 @@ struct JsStepDispatch {
     allow_inline_calls: bool,
     start_pc: usize,
     #[cfg(feature = "native-execution")]
-    stop_pc: Option<usize>,
+    stop_pc: usize,
     native_registers: *mut Value,
     register_count: usize,
     native_locals: *mut Value,
     local_count: usize,
     native_pcs: *const u8,
     native_pc_count: usize,
+    /// Canonical receiver slot when `this` has already been initialized. Callouts
+    /// may move frames or initialize a derived constructor, so refresh this before
+    /// returning to generated code. Direct field reads do not cross a safepoint.
+    fixed_this_slot: *const Value,
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
@@ -5999,12 +6092,12 @@ impl JsStepDispatch {
         let mut dispatch = Self {
             program_id, frame, allow_inline_calls, start_pc,
             #[cfg(feature = "native-execution")]
-            stop_pc: None,
+            stop_pc: JS_NO_STOP_PC,
             native_registers: activation.registers.as_mut_ptr(),
             register_count: activation.registers.len(),
             native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
-            native_pcs: std::ptr::null(), native_pc_count: 0,
+            native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
@@ -6020,6 +6113,9 @@ impl JsStepDispatch {
     /// Reads the heap bases generated code uses again, after anything that may have grown,
     /// compacted or replaced them.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.fixed_this_slot = vm.frames.get(self.frame)
+            .filter(|frame| frame.fixed_this)
+            .map_or(std::ptr::null(), |frame| &frame.this as *const Value);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         let (values, len) = vm.heap.native_property_values();
@@ -6101,6 +6197,57 @@ pub(super) fn native_js_operation_signature(
 
 pub(super) const NATIVE_JS_STOPPED: u32 = 1;
 pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
+#[cfg(feature = "native-execution")]
+const JS_NO_STOP_PC: usize = usize::MAX;
+
+#[cfg(feature = "profile-native-ops")]
+fn native_field_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
+    if instruction.op() != Op::GetField {
+        return "other";
+    }
+    if vm.frames[frame].function == 0 {
+        return "root";
+    }
+    if instruction.writes_current_this() || instruction.numeric_local_target().is_some()
+        || !(instruction.result_flags() == 0
+            || (instruction.returns_from_frame() && instruction.result_flags() == RETURN_REGISTER))
+    {
+        return "result-flags";
+    }
+    let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else {
+        return "nested";
+    };
+    let receiver = if base == FieldBase::THIS {
+        if !vm.frames[frame].fixed_this { return "uninitialized-this"; }
+        vm.frames[frame].this
+    } else if let Some(register) = base.register_index() {
+        let Some(value) = vm.frames[frame].registers.get(usize::from(register)) else { return "invalid-register"; };
+        *value
+    } else {
+        return "unsupported-base";
+    };
+    if receiver.direct_object_index().is_none() {
+        return "non-direct-object";
+    }
+    let Some(object) = vm.heap.object(receiver) else { return "missing-object"; };
+    if object.inline_properties().is_some() {
+        "inline-storage"
+    } else if object.plain_storage_start().is_none() {
+        "extras-storage"
+    } else {
+        if vm.active_program != vm.frames[frame].program {
+            return "inactive-program";
+        }
+        let cache = vm.field_cache_entry(cache_site);
+        if cache.holder != NO_FIELD_HOLDER {
+            "prototype-holder"
+        } else if cache.receiver != object.exact_shape() {
+            "own-shape-miss"
+        } else {
+            "own-shape-match"
+        }
+    }
+}
 
 #[cfg(feature = "aot")]
 pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
@@ -6131,6 +6278,8 @@ pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>
     arguments: *const u64,
     result: *mut u64,
 ) -> i64 {
+    #[cfg(feature = "profile-native-ops")]
+    super::native_op_profile::record(OPCODE);
     // Resolve the complete semantic descriptor before emitting this helper.
     let operation = const {
         match Op::from_index(OPCODE) {
@@ -6173,7 +6322,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
             .function_get(vm.frames[dispatch.frame].function as usize)
             .ok_or_else(|| JsError::validation("native JS function is missing".into()))?;
         #[cfg(feature = "native-execution")]
-        if SINGLE_OPERATION && dispatch.stop_pc == Some(pc) {
+        if SINGLE_OPERATION && dispatch.stop_pc == pc {
             let frame = &mut vm.frames[dispatch.frame];
             frame.pc = pc;
             frame.pc_is_resume = true;
@@ -6195,6 +6344,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
             if arguments.is_null() {
                 return Err(JsError::validation("native semantic operands are missing".into()));
             }
+            #[cfg(feature = "profile-native-ops")]
+            super::native_op_profile::record_site(
+                dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
+                body.name.or(body.inferred_name)
+                    .and_then(|atom| program.atoms.get(atom as usize)),
+                || native_field_fallback_kind(vm, dispatch.frame, source_instruction),
+            );
             // SAFETY: linked code supplies resolved operands under the entry's
             // ABI contract; the source opcode check precedes all guest effects.
             unsafe { &*arguments.cast::<super::native_operands::NativeJsOperands>() }
@@ -6407,7 +6563,25 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let step = if SINGLE_OPERATION {
+            let capture = if current_instruction.op() == Op::LoadCapture {
+                vm.cached_direct_capture(
+                    dispatch.frame,
+                    current_instruction.capture_depth(),
+                    current_instruction.capture_slot(),
+                )
+            } else {
+                None
+            };
+            let step = if let Some(value) = capture {
+                let destination = vm.frames[dispatch.frame]
+                    .registers
+                    .get_mut(usize::from(current_instruction.result_register()))
+                    .ok_or_else(|| JsError::validation(
+                        "native JS capture result register is invalid".into(),
+                    ))?;
+                *destination = value;
+                Ok(super::StepResult::Continue)
+            } else if SINGLE_OPERATION {
                 (operation.as_ref().expect("validated semantic operation").execute)(
                     vm, &program, dispatch.frame, current_instruction, &mut next,
                     dispatch.allow_inline_calls,
@@ -6430,32 +6604,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                         &mut next,
                         dispatch.allow_inline_calls,
                     ),
-                }
-            } else if current_instruction.op() == Op::LoadCapture {
-                if let Some(value) = vm.cached_direct_capture(
-                    dispatch.frame,
-                    current_instruction.capture_depth(),
-                    current_instruction.capture_slot(),
-                ) {
-                    let destination = vm.frames[dispatch.frame]
-                        .registers
-                        .get_mut(usize::from(current_instruction.result_register()))
-                        .ok_or_else(|| {
-                            JsError::validation(
-                                "native JS capture result register is invalid".into(),
-                            )
-                        })?;
-                    *destination = value;
-                    Ok(super::StepResult::Continue)
-                } else {
-                    (Vm::<H>::resolve_step_operation(current_instruction.op()))(
-                        vm,
-                        &program,
-                        dispatch.frame,
-                        current_instruction,
-                        &mut next,
-                        dispatch.allow_inline_calls,
-                    )
                 }
             } else {
                 (Vm::<H>::resolve_step_operation(current_instruction.op()))(
@@ -14888,11 +15036,15 @@ impl<H: Host> Vm<H> {
         let failure = |message: String| JsNativeStep {
             instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
         };
+        let Some(instruction_count) = self.programs.get(program)
+            .and_then(|program| program.function_get(function as usize).map(|function| function.code.len())) else {
+            return Some(failure("linked native function metadata is missing".into()));
+        };
         let Some(entry) = code.entries().get(function as usize).copied() else {
             return Some(failure("linked native function is missing".into()));
         };
         let mut dispatch = JsStepDispatch::new(self, program, frame, start_pc, allow_inline_calls);
-        dispatch.stop_pc = stop_pc;
+        dispatch.stop_pc = stop_pc.unwrap_or(JS_NO_STOP_PC);
         self.frames[frame].pc = start_pc;
         self.frames[frame].pc_is_resume = false;
         // SAFETY: NativeJsProgram's constructor binds this function to H and the
@@ -14905,6 +15057,16 @@ impl<H: Host> Vm<H> {
         match exited {
             Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
                 failure("linked native function stopped without a transition".into()))),
+            Some((status, word)) if status.checked_sub(JS_GENERAL_RETURN_STATUS_BASE)
+                .and_then(|pc| usize::try_from(pc).ok())
+                .is_some_and(|pc| pc < instruction_count) => {
+                let pc = (status - JS_GENERAL_RETURN_STATUS_BASE) as usize;
+                Some(JsNativeStep {
+                    instruction_pc: pc,
+                    next_pc: pc + 1,
+                    result: Ok(StepResult::Return(Value::from_bits(word))),
+                })
+            }
             Some((status, word)) => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
             None => Some(failure("linked native entry failed".into())),
         }
@@ -15549,6 +15711,19 @@ mod tests {
         let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
         let Err(error) = vm.execute_native_program(&native, true) else { panic!("expected throw") };
         assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
+        assert!(counts.iter().all(|count| count.get() > 0));
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_native_capture_cache_preserves_tdz_mutation_and_collection() {
+        let (native, counts, _) = linked_test_program(
+            "function outer() { const read = () => value; let caught = false; try { read(); } catch (e) { caught = e instanceof ReferenceError; } if (!caught) throw 'tdz'; let value = {n: 1}; if (read() !== value) throw 'identity'; $262.gc(); value = {n: 2}; return read().n; } throw outer();",
+            false,
+        );
+        let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(2.0)));
         assert!(counts.iter().all(|count| count.get() > 0));
     }
 

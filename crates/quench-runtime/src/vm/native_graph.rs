@@ -34,13 +34,22 @@ impl Default for NativeJsCodegenOptions {
 }
 
 impl NativeJsCodegenOptions {
+    fn region_count(self, function: &Function) -> usize {
+        let count = function.code.len();
+        let width = self.region_instruction_budget.get();
+        if count > width { count.div_ceil(width) } else { 0 }
+    }
+
     pub(super) fn regions(self, function: &Function) -> Option<Vec<Range<usize>>> {
         let count = function.code.len();
         let width = self.region_instruction_budget.get();
-        (count > width).then(|| {
-            (0..count)
-                .step_by(width)
-                .map(|start| start..start.saturating_add(width).min(count))
+        let regions = self.region_count(function);
+        (regions != 0).then(|| {
+            (0..regions)
+                .map(|index| {
+                    let start = index * width;
+                    start..start.saturating_add(width).min(count)
+                })
                 .collect()
         })
     }
@@ -112,8 +121,17 @@ pub fn lower_native_js_module_with_options(
     }
     let first_definition =
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
+    let region_count = (0..program.function_count())
+        .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id))))
+        .ok_or("native region count overflow")?;
+    let fallback_base = (first_definition as usize)
+        .checked_add(program.function_count())
+        .and_then(|base| base.checked_add(region_count))
+        .ok_or("native fallback symbol count overflow")?;
     let mut data = Vec::with_capacity(program.function_count());
     let mut region_definitions = Vec::new();
+    let mut fallback_definitions = Vec::new();
+    let mut fallback_tables = Vec::new();
     for id in 0..program.function_count() {
         let body = program.function(id);
         let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
@@ -189,7 +207,28 @@ pub fn lower_native_js_module_with_options(
                 },
             )?
         } else {
-            lower_object_body(body, function_id, &*isa, &operations, None)?
+            let fallback = fallback_base.checked_add(fallback_definitions.len())
+                .and_then(|index| u32::try_from(index).ok())
+                .ok_or("native fallback symbol count exceeds u32")?;
+            match super::compiled::lower_js_general_dispatch(
+                program, function_id, false, &*isa,
+                super::compiled::JsGeneralCallout::Relocatable(fallback),
+            ) {
+                Ok((native, _)) => {
+                    let table = program.function_count().checked_add(fallback_tables.len())
+                        .and_then(|index| u32::try_from(index).ok())
+                        .ok_or("native fallback table count exceeds u32")?;
+                    fallback_tables.push(object_fallback_table(
+                        body, &format!("{namespace}_function_{id}_fallback_table"), &*isa, &operations,
+                    )?);
+                    fallback_definitions.push(NativeFunction::Definition {
+                        name: format!("{namespace}_function_{id}_fallback"),
+                        function: lower_object_fallback(body, function_id, table, &*isa)?,
+                    });
+                    native
+                }
+                Err(_) => lower_object_body(body, function_id, &*isa, &operations, None)?,
+            }
         };
         data.push(NativeData {
             name: format!("{namespace}_operands_{id}"),
@@ -204,6 +243,8 @@ pub fn lower_native_js_module_with_options(
         });
     }
     functions.extend(region_definitions);
+    functions.extend(fallback_definitions);
+    data.extend(fallback_tables);
     u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let pointer_bytes = usize::from(isa.pointer_bytes());
     let words = program
@@ -249,54 +290,140 @@ fn lower_object_body(
     operations: &[Option<u32>],
     region: Option<Range<usize>>,
 ) -> Result<ir::Function, String> {
-    let mut entries = vec![None; Op::COUNT];
-    let mut operand_base = None;
+    let mut object = ObjectOperations::new(function_id, isa, operations);
     lower_body(
         body,
         function_id,
         isa,
         region,
-        |builder, op, pc, context, result| {
-            let entry = *entries[op as usize].get_or_insert_with(|| {
-                let signature =
-                    builder.import_signature(super::compiled::native_js_operation_signature(isa));
-                let name = builder
-                    .func
-                    .declare_imported_user_function(ir::UserExternalName::new(
-                        NATIVE_FUNCTION_NAMESPACE,
-                        operations[op as usize].expect("collected operation"),
-                    ));
-                builder.import_function(ir::ExtFuncData {
-                    name: ir::ExternalName::user(name),
-                    signature,
-                    colocated: false,
-                    patchable: false,
-                })
-            });
-            let base = *operand_base.get_or_insert_with(|| {
-                let name = builder
-                    .func
-                    .declare_imported_user_function(ir::UserExternalName::new(
-                        NATIVE_DATA_NAMESPACE,
-                        function_id,
-                    ));
-                builder.create_global_value(ir::GlobalValueData::Symbol {
-                    name: ir::ExternalName::user(name),
-                    offset: ir::immediates::Imm64::new(0),
-                    colocated: false,
-                    tls: false,
-                })
-            });
-            let address = builder.ins().symbol_value(isa.pointer_type(), base);
-            // lower_body bounds the instruction count; operand offsets are host-addressable.
-            let offset = i64::try_from(pc * std::mem::size_of::<NativeJsOperands>())
-                .expect("host addressable operand offset");
-            let address = builder.ins().iadd_imm_s(address, offset);
-            let pc = builder.ins().iconst(types::I64, pc as i64);
-            let call = builder.ins().call(entry, &[context, pc, address, result]);
-            builder.inst_results(call)[0]
-        },
+        |builder, op, pc, context, result| object.emit(builder, op, pc, context, result),
     )
+}
+
+struct ObjectOperations<'a> {
+    function_id: u32,
+    isa: &'a dyn TargetIsa,
+    operations: &'a [Option<u32>],
+    entries: Vec<Option<ir::FuncRef>>,
+    operand_base: Option<ir::GlobalValue>,
+}
+
+impl<'a> ObjectOperations<'a> {
+    fn new(function_id: u32, isa: &'a dyn TargetIsa, operations: &'a [Option<u32>]) -> Self {
+        Self {
+            function_id,
+            isa,
+            operations,
+            entries: vec![None; Op::COUNT],
+            operand_base: None,
+        }
+    }
+
+    fn emit(
+        &mut self, builder: &mut FunctionBuilder<'_>, op: Op, pc: usize,
+        context: ir::Value, result: ir::Value,
+    ) -> ir::Value {
+        let entry = *self.entries[op as usize].get_or_insert_with(|| {
+            let signature = builder.import_signature(
+                super::compiled::native_js_operation_signature(self.isa),
+            );
+            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+                NATIVE_FUNCTION_NAMESPACE,
+                self.operations[op as usize].expect("collected operation"),
+            ));
+            builder.import_function(ir::ExtFuncData {
+                name: ir::ExternalName::user(name), signature, colocated: false, patchable: false,
+            })
+        });
+        let base = *self.operand_base.get_or_insert_with(|| {
+            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+                NATIVE_DATA_NAMESPACE, self.function_id,
+            ));
+            builder.create_global_value(ir::GlobalValueData::Symbol {
+                name: ir::ExternalName::user(name),
+                offset: ir::immediates::Imm64::new(0),
+                colocated: false,
+                tls: false,
+            })
+        });
+        let address = builder.ins().symbol_value(self.isa.pointer_type(), base);
+        // Both callers bound the instruction count, so this offset is host-addressable.
+        let offset = i64::try_from(pc * std::mem::size_of::<NativeJsOperands>())
+            .expect("host addressable operand offset");
+        let address = builder.ins().iadd_imm_s(address, offset);
+        let pc = builder.ins().iconst(types::I64, pc as i64);
+        let call = builder.ins().call(entry, &[context, pc, address, result]);
+        builder.inst_results(call)[0]
+    }
+}
+
+fn object_fallback_table(
+    function: &Function, name: &str, isa: &dyn TargetIsa, operations: &[Option<u32>],
+) -> Result<NativeData, String> {
+    let pointer_bytes = usize::from(isa.pointer_bytes());
+    let size = function.code.len().checked_mul(pointer_bytes).ok_or("native fallback table size overflow")?;
+    let mut addresses = Vec::with_capacity(function.code.len());
+    for (pc, packed) in function.code.iter().copied().enumerate() {
+        let op = super::dispatch_fast::decoded_instruction(function, packed).op();
+        addresses.push(NativeFunctionAddress {
+            offset: u32::try_from(pc * pointer_bytes).map_err(|_| "native fallback table offset exceeds u32")?,
+            function: operations[op as usize].expect("collected operation"),
+        });
+    }
+    Ok(NativeData {
+        name: name.into(), bytes: vec![0; size], alignment: pointer_bytes as u64,
+        writable: false, function_addresses: addresses,
+    })
+}
+
+/// One exact semantic operation for a guarded native path's fallback.
+fn lower_object_fallback(
+    function: &Function, function_id: u32, table: u32, isa: &dyn TargetIsa,
+) -> Result<ir::Function, String> {
+    let count = u32::try_from(function.code.len()).map_err(|_| "native instruction count exceeds u32")?;
+    let mut native = ir::Function::with_name_signature(
+        ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, function_id),
+        super::compiled::native_js_operation_signature(isa),
+    );
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let params = builder.block_params(entry).to_vec();
+    let pc = params[1];
+    let valid_pc = builder.create_block();
+    let invalid = builder.create_block();
+    let valid = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, i64::from(count));
+    builder.ins().brif(valid, valid_pc, &[], invalid, &[]);
+    builder.switch_to_block(valid_pc);
+    let symbol = |builder: &mut FunctionBuilder<'_>, index| {
+        let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+            NATIVE_DATA_NAMESPACE, index,
+        ));
+        let value = builder.create_global_value(ir::GlobalValueData::Symbol {
+            name: ir::ExternalName::user(name), offset: ir::immediates::Imm64::new(0),
+            colocated: false, tls: false,
+        });
+        builder.ins().symbol_value(isa.pointer_type(), value)
+    };
+    let table_base = symbol(&mut builder, table);
+    let table_offset = builder.ins().imul_imm_u(pc, i64::from(isa.pointer_bytes()));
+    let entry_address = builder.ins().iadd(table_base, table_offset);
+    let entry = builder.ins().load(isa.pointer_type(), MemFlagsData::trusted(), entry_address, 0);
+    let operands_base = symbol(&mut builder, function_id);
+    let operands_offset = builder.ins().imul_imm_u(pc, std::mem::size_of::<NativeJsOperands>() as i64);
+    let operands = builder.ins().iadd(operands_base, operands_offset);
+    let signature = builder.import_signature(super::compiled::native_js_operation_signature(isa));
+    let call = builder.ins().call_indirect(signature, entry, &[params[0], pc, operands, params[3]]);
+    let status = builder.inst_results(call)[0];
+    builder.ins().return_(&[status]);
+    builder.switch_to_block(invalid);
+    let status = builder.ins().iconst(types::I64, i64::from(super::compiled::NATIVE_JS_STOPPED));
+    builder.ins().return_(&[status]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    Ok(native)
 }
 
 /// Bindings choose linker symbols or live JIT addresses; the graph and semantic
@@ -551,8 +678,9 @@ mod tests {
                 NativeFunction::Definition { name, .. } => Some(name.as_str()),
                 NativeFunction::Import { .. } => None,
             }).collect();
-            assert_eq!(definitions.len(), program.function_count());
+            assert!(definitions.len() >= program.function_count());
             assert!(definitions.contains(&"graph_function_0"), "root must execute natively");
+            assert!(definitions.iter().any(|name| name.ends_with("_fallback")), "eligible functions use shared guarded lowering");
             let object = super::super::native_object::emit_native_module("graph", module.functions, module.data)
                 .expect("all function and operand relocations resolve");
             assert!(!object.is_empty());

@@ -8,6 +8,8 @@ pub(crate) mod native_graph;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
 mod compiled;
+#[cfg(feature = "profile-native-ops")]
+mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
 mod shape_transitions;

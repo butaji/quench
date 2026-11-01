@@ -15787,7 +15787,14 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
       if (readField(first) !== 11) throw Error('live value');
 
       const small = { value: 30 };
-      if (readField(small) !== 30) throw Error('inline storage fallback');
+      if (readField(small) !== 30) throw Error('inline storage');
+      const reference = { marker: 1 };
+      for (const value of [-7, 0, 17, true, false, null, undefined, reference, 'text']) {
+        const inline = { value };
+        if (readField(inline) !== value) throw Error('inline value');
+      }
+      small.value = 1.5;
+      if (readField(small) !== 1.5) throw Error('inline to wide storage');
 
       const inherited = Object.create({ value: 40 });
       if (readField(inherited) !== 40) throw Error('prototype holder fallback');
@@ -16031,6 +16038,48 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
         .collect::<Vec<_>>();
     assert_eq!(returning_reads.len(), 1, "readX returns its field read");
     assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function readThis() { const value = this.x; if (value === null) return null; return value; }
+      const plain = { a: 1, b: 2, c: 3, x: 5 };
+      plain.read = readThis;
+      for (let index = 0; index < 64; index++) {
+        if (plain.read() !== 5) throw Error('own field');
+      }
+      Object.defineProperty(plain, 'x', { get() { return 9; } });
+      if (plain.read() !== 9) throw Error('accessor');
+      if (readThis.call(Object.create({x: 7})) !== 7) throw Error('prototype');
+      let threw = false;
+      try { readThis.call(null); } catch (error) { threw = error instanceof TypeError; }
+      if (threw) throw Error('sloppy this conversion');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-field.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "readThis")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("readThis should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField).then_some(pc)
+    }).expect("field read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
 }
 
 #[test]
