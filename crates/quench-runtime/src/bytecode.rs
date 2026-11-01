@@ -906,6 +906,7 @@ opcodes!(
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCallee => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1784,8 +1785,8 @@ pub(crate) struct CallPlan {
     pub(crate) registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
-    /// it makes, with no `arguments`, self binding, handler, binding site, environment clone,
-    /// dynamic scope access or superinstruction, whose every local access is a plain or
+    /// it makes and the iteration copies of its environment, with no `arguments`, self
+    /// binding, binding site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
@@ -2348,6 +2349,15 @@ impl Function {
     /// reads. A non-suspending async body reaching none runs as an ordinary one would
     /// (`CallPlan::settles_in_loop`), its promise held by its call.
     fn body_binding_reads(&self, tables: &impl FactTables) -> bool {
+        self.body_binding_reads_beside_clones(tables)
+            || self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
+    }
+
+    /// `body_binding_reads` but for the iteration copies of its environment (`CloneEnv`),
+    /// which share the implicit bindings the environment holds rather than read them: an
+    /// environment activation's window keeps those its closures may observe in the
+    /// environment it makes (`window_environment`), which a copy shares as a frame's does.
+    fn body_binding_reads_beside_clones(&self, tables: &impl FactTables) -> bool {
         self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
@@ -2372,7 +2382,6 @@ impl Function {
                             | Op::StoreName
                             | Op::StoreResolvedName
                             | Op::StoreVarBinding
-                            | Op::CloneEnv
                             | Op::InitializeThis
                             | Op::SuperCallCheck
                     )
@@ -2584,11 +2593,13 @@ impl Function {
                 && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
                 && !self.has_dynamic_scope_access()
-                && !self.activation_binding_reads(tables)
+                // `in_loop` leaves out the other kinds `activation_binding_reads` names.
+                && !self.body_binding_reads_beside_clones(tables)
                 && self.instructions().all(|instruction| {
                     let op = instruction.op();
+                    // An iteration's `CloneEnv` copies the window's environment, once a closure
+                    // made one (`lane_clone_window_env`).
                     op.immediate_role() != ImmediateRole::SuperinstructionIndex
-                        && op != Op::CloneEnv
                         && (instruction.addressed_local_slots().next().is_none()
                             || matches!(
                                 op,

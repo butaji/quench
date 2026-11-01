@@ -2686,7 +2686,8 @@ script_handler! {
     /// environment, else the frame's environment replaced by its copy (a `for (let ...)`
     /// iteration's, which a closure in the body captures), after which the run's capture
     /// caches name the old environment and are dropped. An activation's environment is its
-    /// window's, so its clone takes the general path.
+    /// window's, which an environment view's records copy (`lane_clone_window_env`); any
+    /// other activation's clone takes the general path.
     fn lane_clone_env<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !vm.lane_stack.activations.is_empty() {
@@ -2713,6 +2714,58 @@ script_handler! {
                 (*cx).outer = NO_OUTER_WALK;
                 (*cx).frame_storage = NO_FRAME_STORAGE;
             }
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `CloneEnv` of a function an environment activation may run: in a frame's run, as
+    /// `lane_clone_env`; in an environment activation, nothing to copy while its window has
+    /// made no environment (no closure captured its bindings yet: they all live among the
+    /// window's locals), else the window's environment replaced by its iteration copy, as a
+    /// frame's (`Vm::iteration_environment`). Closures made earlier keep the old environment,
+    /// whose function-level slots the copy shares.
+    fn lane_clone_window_env<>(cx, r, ip, i, view) {
+        if unsafe { (*cx).env }.is_deleted() {
+            sibling!(lane_clone_env::<H>, r, ip, Carried::script(cx))
+        }
+        let (_, registers) = environment_window_fields(i);
+        // SAFETY: the running environment activation's window starts at `registers`.
+        let entries = unsafe { r.0.add(usize::from(registers)) };
+        let source = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
+        if source.is_deleted() {
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
+        let vm = unsafe { vm(cx) };
+        let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
+            return exit(ip);
+        };
+        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+        // running function's view.
+        let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+        let body = code.function(function as usize);
+        let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
+        else {
+            return exit(ip);
+        };
+        // It checks the environment before it allocates the copy, so an error leaves the
+        // activation for the general path to raise it from.
+        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, &plan.reset)
+        else {
+            return exit(ip);
+        };
+        note_allocation(vm);
+        let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(environment) else {
+            unreachable!("an iteration copy is an environment");
+        };
+        let storage = std::ptr::from_ref(slots);
+        // SAFETY: as above; the copy's slot storage never moves while it lives.
+        unsafe {
+            entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
+            entries
+                .add(usize::from(WINDOW_SLOTS))
+                .write(std::mem::transmute::<u64, Value>(storage as u64));
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -3451,6 +3504,21 @@ script_handler! {
 }
 
 script_handler! {
+    /// `LoadCallee`: the function the innermost script activation runs, or the frame's when
+    /// none does, as its activation filled its self binding (`Vm::initialize_frame_locals`).
+    fn lane_load_callee<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = match vm.lane_stack.activations.last() {
+            Some(Activation { kind: ActivationKind::Script(script), .. }) => script.callee,
+            Some(_) => return exit(ip),
+            None => vm.frames[unsafe { (*cx).frame }].context.callee().unwrap_or(Value::UNDEFINED),
+        };
+        r.set(i.a, callee);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
     /// `LoadThis` of the frame's `this` (`lane_this`).
     #[inline(never)]
     fn lane_load_frame_this<>(cx, r, ip, i, view) {
@@ -3676,10 +3744,10 @@ lane_handler! {
         let key = vm.canonical_index_key(key);
         let Some(value) = vm
             .dense_array_element(base, key)
-            .or_else(|| vm.absent_array_element(base, key))
-            .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
+            .or_else(|| vm.absent_array_element(base, key))
+            .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
@@ -3768,12 +3836,58 @@ fn lane_get_index_beside_activations<H: Host>(
 #[inline(never)]
 fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
     let key = vm.canonical_index_key(key);
+    // A typed array answers every index read itself, never its prototype chain, and a string
+    // every index inside its length, so their reads come before the ordinary array probes,
+    // which would only decline them.
     vm.dense_array_element(base, key)
+        .or_else(|| lane_typed_array_element(ip, vm, base, key))
+        .or_else(|| lane_string_index_element(ip, vm, base, key))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
-        .or_else(|| vm.plain_typed_element(base, key))
-        .or_else(|| lane_string_element(vm, base, key))
         .or_else(|| vm.keyed_array_length(base, key))
+}
+
+/// A string's unit at an index inside its length (`lane_string_element`): the site then
+/// tries it first (`lane_get_index_string`).
+fn lane_string_index_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    let value = lane_string_element(vm, base, key)?;
+    requicken::<H>(ip, lane_get_index_string::<H>);
+    Some(value)
+}
+
+script_handler! {
+    /// `lane_get_index_registers` at a site that read a string: its unit at an index inside
+    /// its length is the whole read; any other read takes the generic order.
+    fn lane_get_index_string<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = lane_string_element(vm, r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_registers::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// A typed array's element at an index key (`Vm::plain_typed_element`), which no dense array
+/// read before it serves: the site then tries it first (`lane_get_index_typed`), as a typed
+/// store's site does (`lane_typed_array_store`).
+fn lane_typed_array_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    let value = vm.plain_typed_element(base, key)?;
+    requicken::<H>(ip, lane_get_index_typed::<H>);
+    Some(value)
+}
+
+script_handler! {
+    /// `lane_get_index_registers` at a site that read a typed array: a non-BigInt typed
+    /// array's element at an integer index, or `undefined` past its end, is the whole read;
+    /// any other read takes the generic order (`lane_get_index_registers`).
+    fn lane_get_index_typed<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_registers::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
 }
 
 script_handler! {
@@ -11059,6 +11173,8 @@ script_handler! {
         let target = unsafe { &*target };
         // A callee that needs a frame takes it as `lane_frame_call` pushes one.
         if !target.entry.activates_across() && target.entry != CallEntry::Environment {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -16298,6 +16414,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
+        Op::LoadCallee => Some(lane_load_callee::<H>),
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
@@ -18463,7 +18580,8 @@ fn specialize_environment_window<H: Host>(
     let registers = function.registers;
     // The handlers derivation gives these records alone: a record any other pass gave a
     // handler, such as one carrying an accumulator to the next, keeps the function's.
-    let plain: [Handler; 11] = [
+    let plain: [Handler; 12] = [
+        lane_clone_env::<H>,
         lane_load_local::<H>,
         lane_load_local_plain::<H>,
         lane_load_frame_local::<H, true>,
@@ -18481,6 +18599,7 @@ fn specialize_environment_window<H: Host>(
         let op = instruction.op();
         let own = match op {
             Op::MakeClosure => instruction.imm(),
+            Op::CloneEnv => 0,
             Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
             | Op::StoreEnvLocal | Op::InitializeTdz => instruction.local_slot() as u32,
             _ => continue,
@@ -18490,9 +18609,10 @@ fn specialize_environment_window<H: Host>(
         {
             return None;
         }
-        let environment = op != Op::MakeClosure && function.local_slot_uses_environment(own as usize);
+        let environment = !matches!(op, Op::MakeClosure | Op::CloneEnv) && function.local_slot_uses_environment(own as usize);
         let handler: Handler = match (op, environment) {
             (Op::MakeClosure, _) => lane_make_window_closure::<H>,
+            (Op::CloneEnv, _) => lane_clone_window_env::<H>,
             (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
             (Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
             (Op::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,

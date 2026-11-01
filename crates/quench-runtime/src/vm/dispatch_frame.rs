@@ -1225,7 +1225,25 @@ impl<H: Host> Vm<H> {
         if !self.frames[frame].captured {
             return Ok(());
         }
-        let source = self.frames[frame].env;
+        let (source, program, function) = (self.frames[frame].env, self.frames[frame].program, self.frames[frame].function);
+        self.frames[frame].env = self.iteration_environment(source, program, function, fresh, reset)?;
+        Ok(())
+    }
+
+    /// The copy of `source`, the captured environment of an activation of `function` of
+    /// `program`, that a `CloneEnv` of a loop iteration makes: its `fresh` slots own their
+    /// current values, its `reset` slots own `undefined`, and every other slot stays shared
+    /// with the binding's owner, so closures of earlier iterations and the activation keep
+    /// seeing one binding (`EnvironmentSlots::iteration_copy`). A frame's and an environment
+    /// activation's window's clones (`lane_clone_window_env`) are this one copy.
+    pub(super) fn iteration_environment(
+        &mut self,
+        source: Value,
+        program: ProgramId,
+        function: u32,
+        fresh: &[u16],
+        reset: &[u16],
+    ) -> Result<Value, JsError> {
         let slots = self
             .heap
             .clone_environment_slots(source, fresh, reset)
@@ -1234,7 +1252,6 @@ impl<H: Host> Vm<H> {
         // `new.target` and any a direct eval declares. A function whose names all resolve
         // statically has no direct eval, so an activation holding none now never will, and
         // its copies keep an unboxed scope of their own.
-        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
         let never_binds_dynamically = self
             .heap
             .environment_bindings(source)
@@ -1277,9 +1294,7 @@ impl<H: Host> Vm<H> {
                 with_objects: scope.with_objects().into(),
             }),
         };
-        let env = self.heap.alloc(environment);
-        self.frames[frame].env = env;
-        Ok(())
+        Ok(self.heap.alloc(environment))
     }
 
     pub(super) fn activate_frame(&mut self, frame: &mut Frame) {

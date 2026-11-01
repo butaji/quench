@@ -15,6 +15,53 @@ use crate::bytecode::{
     Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
 };
 
+/// Forgets `function`'s own name binding slot (`Function::self_binding_slot`) when nothing
+/// can read it: its body reads the name as `LoadCallee`, no instruction or handler names the
+/// slot, no closure's environment can hold it, and no direct eval or `with` resolves names
+/// through the frame. Its activation then has no slot to fill with the callee, and a body
+/// that addresses no other local runs without a frame (`CallPlan::registers_only`), as
+/// Node's `Buffer.from` (`function from(value, ...)`) and Zod's `parse: function _parse()`.
+pub(super) fn drop_unread_self_binding<'a>(
+    function: &mut Function,
+    superinstructions: &[Superinstruction],
+    atom_name: impl Fn(usize) -> Option<&'a str>,
+) {
+    let Some(slot) = function.self_binding_slot else {
+        return;
+    };
+    if function.is_generator
+        || function.is_async
+        || !function.plain_local_context_is_safe()
+        || function.contains_with_statement(|atom| atom_name(atom) == Some(WITH_ENTER_BINDING))
+    {
+        return;
+    }
+    let captured = match &function.selective_capture_slots {
+        Some(captured) => captured.binary_search(&slot).is_ok(),
+        // Without a selective layout a closure or environment access may reach any slot.
+        None => function.instructions().any(|instruction| {
+            matches!(instruction.op(), Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::CloneEnv)
+        }),
+    };
+    let named = function.instructions().any(|instruction| {
+        if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
+            return superinstructions[instruction.superinstruction_index()]
+                .code
+                .iter()
+                .any(|member| member.is_wide() || member.as_wide().addressed_local_slots().any(|addressed| addressed == slot));
+        }
+        instruction.addressed_local_slots().any(|addressed| addressed == slot)
+    }) || function.handlers.iter().any(|handler| {
+        matches!(handler.slot, Some(ThrownValueSlot::Local(local)) if local == slot) || handler.return_slot == Some(slot)
+    }) || function.environment_clones.iter().any(|plan| plan.fresh.contains(&slot) || plan.reset.contains(&slot))
+        || function.binding_sites.iter().any(|site| {
+            site.bindings.iter().any(|binding| matches!(binding.location, EvalBindingLocation::Local(local) if local == slot))
+        });
+    if !captured && !named {
+        function.self_binding_slot = None;
+    }
+}
+
 /// `plain_slots` are `function`'s plain local slots (`Function::plain_local_slots`);
 /// `undefined_constant` is the program's constant index of `undefined`.
 pub(super) fn promote<'a>(
@@ -148,12 +195,33 @@ pub(super) fn promote<'a>(
         }
     }
     // New registers follow the existing ones while liveness still covers the function and
-    // operands can name them.
+    // operands can name them. A function whose registers already outnumber what liveness
+    // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain
+    // bounds it: React SSR's `pushStartInstance` (188 registers) keeps its switch and
+    // iteration slots in registers and runs without a frame.
+    let uncovered = function.registers >= ROOT_MAP_REGISTERS;
+    // A slot no instruction or handler names (a local compilation already promoted) needs no
+    // register: nothing reads or writes it, and each register costs every activation a fill.
+    let mut accessed = vec![false; eligible.len()];
+    let mut access = |slot: usize| {
+        if let Some(accessed) = accessed.get_mut(slot) {
+            *accessed = true;
+        }
+    };
+    for instruction in function.instructions() {
+        instruction.addressed_local_slots().for_each(|slot| access(usize::from(slot)));
+    }
+    for handler in &function.handlers {
+        if let Some(ThrownValueSlot::Local(slot)) = handler.slot {
+            access(usize::from(slot));
+        }
+    }
     let mut next = function.registers;
     let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
     for (slot, register) in registers.iter_mut().enumerate() {
         if eligible[slot]
-            && next < ROOT_MAP_REGISTERS
+            && accessed[slot]
+            && (uncovered || next < ROOT_MAP_REGISTERS)
             && next <= Operand::PAYLOAD_MASK
             && next <= REGISTER_MASK
         {
