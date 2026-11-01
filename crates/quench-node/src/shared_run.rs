@@ -332,15 +332,15 @@ fn execute_shared_on_worker(
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty =
         matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
-    let alias_eval_crypto = matches!(
+    let eval_crypto = matches!(
         &input,
         SharedInput::Eval {
             source,
             goal: EntryGoal::Node | EntryGoal::CommonJs,
-            print: false,
             ..
-        } if source.contains("crypto")
+        } if crate::modules::eval_globals_shared_vm::binds_crypto(source)
     );
+    let mut eval_print = None;
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
@@ -380,11 +380,10 @@ fn execute_shared_on_worker(
             print: true,
             ..
         } => {
-            let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
+            // The host evaluates the source itself, to log its completion value.
+            eval_print = Some(source);
             (
-                format!(
-                    "const __quenchEvalValue = globalThis[\"\\0quench:evalScript\"]({literal}); if (__quenchEvalValue instanceof Promise) queueMicrotask(() => console.log(__quenchEvalValue)); else console.log(__quenchEvalValue);"
-                ),
+                String::new(),
                 inline_source.compilation_name().to_owned(),
                 SourceKind::Script,
                 None,
@@ -423,16 +422,6 @@ fn execute_shared_on_worker(
             (source, name, kind, commonjs_entry, exec_argv, goal, Some(path))
         }
     };
-    let source = if alias_eval_crypto {
-        // Node's CommonJS eval scope resolves bare `crypto` to the builtin
-        // module while globalThis.crypto remains WebCrypto. Evaluate through
-        // the same scoped alias used by `-p`.
-        let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
-        format!("globalThis[\"\\0quench:evalScript\"]({literal});")
-    } else {
-        source
-    };
-
     let _guest_call_limit =
         guest_call_limit(&exec_argv).map(quench_stack::GuestCallLimitGuard::enter);
 
@@ -442,6 +431,8 @@ fn execute_shared_on_worker(
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;
+        host.eval_print = eval_print.clone();
+        host.eval_crypto = eval_crypto;
         let host = match commonjs_entry.clone() {
             Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
             None => host,
@@ -670,7 +661,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         return Ok(status);
     }
     if args.iter().any(|argument| argument == "--bench") {
-        return run_shared_bench_cli(&args);
+        // Node's benchmark runner has no Rust implementation.
+        return Ok(cli_usage_error("--bench is not supported"));
     }
     if args.iter().any(|argument| argument == "--test") {
         return run_shared_test_cli(&args);
@@ -957,26 +949,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         },
         exec_argv,
     });
-    let input = if interactive {
-        match input {
-            SharedInput::Eval {
-                source,
-                print,
-                goal,
-                exec_argv,
-            } => SharedInput::Eval {
-                source: format!(
-                    "globalThis.console.log(`Welcome to Node.js ${{process.version}}.\\nType \".help\" for more information.`);\n;globalThis.process.getBuiltinModule('repl').start({{ useGlobal: true }});\n{source}"
-                ),
-                print,
-                goal,
-                exec_argv,
-            },
-            input => input,
-        }
-    } else {
-        input
-    };
+    // `-i` keeps `--interactive` in execArgv; the host starts the REPL before the entry
+    // (`repl::start_interactive`).
     if has_check {
         return check_cli_source(&input);
     }
@@ -1020,70 +994,8 @@ complete -o filenames -o nospace -o bashdefault -F _node_complete node node_g
     );
 }
 
-/// Enter Node's own benchmark coordinator with the normal shared host. The
-/// coordinator owns glob expansion, child isolation, reporters, and lifecycle;
-/// this boundary only separates startup flags from its file patterns.
-fn run_shared_bench_cli(args: &[String]) -> Result<ExitCode, String> {
-    let bench_index = args
-        .iter()
-        .position(|argument| argument == "--bench")
-        .expect("benchmark mode was checked by caller");
-    let mut exec_argv = Vec::new();
-    let mut patterns = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        let argument = &args[index];
-        if argument == "--" {
-            // Node's CLI treats arguments after `--` as entry files even in
-            // benchmark mode. runFile() uses this form to protect paths that
-            // start with a dash, so preserve those patterns for the runner.
-            patterns.extend(args[index + 1..].iter().cloned());
-            break;
-        }
-        if argument.starts_with('-') {
-            exec_argv.push(argument.clone());
-            if takes_cli_value(argument) {
-                if let Some(value) = args.get(index + 1) {
-                    exec_argv.push(value.clone());
-                    index += 1;
-                }
-            }
-        } else if index > bench_index {
-            patterns.push(argument.clone());
-        }
-        index += 1;
-    }
-
-    let node_library_root = std::env::var_os(NODE_LIBRARY_ROOT_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("node")))
-                .unwrap_or_else(|| PathBuf::from("node"))
-        });
-    let node_library_root = if node_library_root.is_absolute() {
-        node_library_root
-    } else {
-        std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .join(node_library_root)
-    };
-    let runner = node_library_root.join("lib/internal/main/bench_runner.js");
-    let executable = executable_path().map_err(|error| error.to_string())?;
-    let mut argv = vec![executable.to_string_lossy().into_owned()];
-    argv.extend(patterns);
-    let input = SharedInput::File {
-        path: runner,
-        exec_argv,
-        goal: EntryGoal::CommonJs,
-    };
-    execute_shared(input, argv).map(SharedCompletion::exit_code)
-}
-
-/// Enter Node's test coordinator with the normal shared host. The coordinator
-/// owns test discovery, process isolation, reporters, and lifecycle; this
-/// boundary separates startup/test options from file patterns.
+/// Enter the test coordinator (`test_runner::cli`), separating startup/test options from
+/// file patterns.
 fn run_shared_test_cli(args: &[String]) -> Result<ExitCode, String> {
     let test_index = args
         .iter()
@@ -1116,31 +1028,8 @@ fn run_shared_test_cli(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    let node_library_root = std::env::var_os(NODE_LIBRARY_ROOT_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("node")))
-                .unwrap_or_else(|| PathBuf::from("node"))
-        });
-    let node_library_root = if node_library_root.is_absolute() {
-        node_library_root
-    } else {
-        std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .join(node_library_root)
-    };
-    let runner = node_library_root.join("lib/internal/main/test_runner.js");
-    let executable = executable_path().map_err(|error| error.to_string())?;
-    let mut argv = vec![executable.to_string_lossy().into_owned()];
-    argv.extend(patterns);
-    let input = SharedInput::File {
-        path: runner,
-        exec_argv,
-        goal: EntryGoal::CommonJs,
-    };
-    execute_shared(input, argv).map(SharedCompletion::exit_code)
+    let reporter = cli_option_value(&exec_argv, "--test-reporter");
+    Ok(crate::modules::test_runner::cli::run(&patterns, &exec_argv, reporter))
 }
 
 fn takes_cli_value(argument: &str) -> bool {
@@ -1661,19 +1550,3 @@ fn read_cli_stdin() -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// CLI print evaluates a Script and prints its language completion, not a wrapped expression.
-pub(crate) fn print_eval_script(
-    context: &mut quench_runtime::NativeContext<'_, NodeHost>,
-    _: quench_runtime::RootId,
-    args: &[quench_runtime::RootId],
-) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-    let source = args
-        .first()
-        .copied()
-        .ok_or_else(|| quench_runtime::RootedError::host("print evaluation source missing"))?;
-    let source = context.string_text(source)?.ok_or_else(|| {
-        quench_runtime::RootedError::host("print evaluation source must be a string")
-    })?;
-    let _ = source;
-    crate::host::removed_javascript("[eval]")
-}

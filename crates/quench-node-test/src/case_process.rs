@@ -257,7 +257,6 @@ fn observe_case_with_environment(
     if skip_flag_check {
         if let Some(project) = parallel_checkout_root(&fixture) {
             command.current_dir(project);
-            command.env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, project);
         }
         // The official Node test runner sets this after applying fixture Env.
         command.env("NODE_SKIP_FLAG_CHECK", "true");

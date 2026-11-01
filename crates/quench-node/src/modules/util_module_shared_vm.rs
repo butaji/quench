@@ -1019,38 +1019,55 @@ pub(crate) fn transferable_abort_controller(c: &mut Context<'_>, _: RootId, _: &
     c.construct_rooted(class, class, &[])
 }
 
-/// `util.aborted(signal, resource)`: a promise that settles once `signal` aborts.
+/// `util.aborted(signal, resource)` (lib/internal/abort_controller.js, an async function):
+/// a promise that resolves with the `abort` event once `signal` aborts, at once if it has;
+/// an invalid argument rejects it.
 pub(crate) fn aborted(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let signal = argument(c, args, 0);
-    let resource = argument(c, args, 1);
-    let global = c.global_root()?;
-    let class = get(c, global, "AbortSignal")?;
-    if !c.is_object_rooted(signal)? || !c.instance_of_rooted(signal, class)? {
-        return Err(super::util_shared_vm::argument_type_error(c, signal, "signal", "AbortSignal")?);
-    }
-    if !c.is_object_rooted(resource)? {
-        return Err(super::util_shared_vm::argument_type_error_with_expected(c, resource, "resource", "an object")?);
-    }
     let promise = c.pending_promise_rooted()?;
-    let is_aborted = get(c, signal, "aborted")?;
-    if c.truthy_rooted(is_aborted)? {
-        let undefined = c.undefined();
-        c.resolve_promise_rooted(promise, undefined)?;
-        return Ok(promise);
+    if let Err(error) = settle_aborted(c, promise, args) {
+        let Some(exception) = error.exception else {
+            return Err(error);
+        };
+        c.reject_promise_rooted(promise, exception)?;
     }
-    let resolve = c.host_function_with_data(operation("utilAbortedResolve"), promise)?;
-    let options = c.object_rooted()?;
-    let yes = c.boolean(true);
-    put(c, options, "once", yes)?;
-    let add = get(c, signal, "addEventListener")?;
-    let kind = c.string_rooted("abort");
-    c.call_rooted(add, signal, &[kind, resolve, options])?;
     Ok(promise)
 }
 
-pub(crate) fn aborted_resolve(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+fn settle_aborted(c: &mut Context<'_>, promise: RootId, args: &[RootId]) -> Result<(), RootedError> {
+    let signal = argument(c, args, 0);
+    let resource = argument(c, args, 1);
+    if c.rooted_value(signal).is_some_and(|value| value.is_undefined()) {
+        return Err(super::util_shared_vm::argument_type_error(c, signal, "signal", "AbortSignal")?);
+    }
+    super::util_shared_vm::validate_abort_signal(c, signal, "signal")?;
+    // `validateObject(resource, 'resource', kValidateObjectAllowObjects)`: arrays and
+    // functions pass.
+    if !c.is_object_rooted(resource)? && !c.is_callable_rooted(resource)? {
+        return Err(super::util_shared_vm::argument_type_error(c, resource, "resource", "Object")?);
+    }
+    let is_aborted = get(c, signal, "aborted")?;
+    if c.truthy_rooted(is_aborted)? {
+        let undefined = c.undefined();
+        return c.resolve_promise_rooted(promise, undefined).map(drop);
+    }
+    let resolve = c.host_function_with_data(operation("utilAbortedResolve"), promise)?;
+    let api = c
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
+    // `{ once: true, [kResistStopPropagation]: true }`.
+    let options = get(c, api, "abortListenerOptions")?;
+    let add = get(c, signal, "addEventListener")?;
+    let kind = c.string_rooted("abort");
+    c.call_rooted(add, signal, &[kind, resolve, options])?;
+    Ok(())
+}
+
+pub(crate) fn aborted_resolve(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let promise = c.host_function_data()?;
-    let undefined = c.undefined();
-    c.resolve_promise_rooted(promise, undefined)?;
-    Ok(undefined)
+    let event = argument(c, args, 0);
+    c.resolve_promise_rooted(promise, event)?;
+    Ok(c.undefined())
 }

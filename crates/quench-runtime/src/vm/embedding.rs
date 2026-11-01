@@ -990,6 +990,11 @@ impl<H: Host> Vm<H> {
         self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
+    /// The realm's `%AsyncIteratorPrototype%`.
+    pub(crate) fn embedding_async_iterator_prototype(&self) -> Value {
+        self.async_iterator_proto
+    }
+
     pub(crate) fn embedding_pending_promise(&mut self) -> Result<Value, JsError> {
         self.promise_object()
     }
@@ -1246,6 +1251,21 @@ impl<H: Host> Vm<H> {
         let result = self.eval_host_script(&program, source, name);
         self.direct_eval = previous;
         result
+    }
+
+    /// Creates and initializes the active realm's mutable global lexical binding `name`, as
+    /// a Script's top-level `let name = value` does; an existing one is a SyntaxError.
+    pub(crate) fn define_embedding_global_lexical(&mut self, name: &str, root: RootId) -> Result<(), JsError> {
+        let program = self.embedding_program()?;
+        let value = self.embedding_value(root)?;
+        let atom = self.intern_atom(name);
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return self
+                .syntax_error_result(&program, "global lexical declaration already exists")
+                .map(drop);
+        }
+        self.realm.bind_global_lexical(atom, value);
+        Ok(())
     }
 
     pub(crate) fn parse_embedding_json(&mut self, source: &str) -> Result<Value, JsError> {

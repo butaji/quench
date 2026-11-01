@@ -124,6 +124,8 @@ pub(crate) struct WorkerContext {
     pub(crate) thread_id: u64,
     pub(crate) parent: Option<Arc<Endpoint>>,
     pub(crate) data: Option<Message>,
+    /// The parent's `setEnvironmentData` map when the worker was made.
+    pub(crate) environment: Option<Message>,
     pub(crate) control: Arc<WorkerControl>,
     /// The worker's `process.env` snapshot (its parent's, or `options.env`).
     pub(crate) env: Vec<(String, String)>,
@@ -138,6 +140,7 @@ pub(crate) struct Launch {
     pub(crate) exec_argv: Vec<String>,
     pub(crate) env: Vec<(String, String)>,
     pub(crate) data: Message,
+    pub(crate) environment: Message,
     pub(crate) parent: Arc<Endpoint>,
 }
 
@@ -170,7 +173,7 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
             libc::pthread_sigmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut());
         }
     }
-    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, parent } = launch;
+    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, environment, parent } = launch;
     let (input, entry) = if is_eval {
         let input = SharedInput::Eval { source: filename, goal: EntryGoal::CommonJs, exec_argv, print: false };
         (input, EVAL_ENTRY_NAME.to_owned())
@@ -180,7 +183,14 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
     };
     let mut process_argv = vec![exec_path, entry];
     process_argv.extend(argv);
-    let context = WorkerContext { thread_id, parent: Some(parent), data: Some(data), control: control.clone(), env };
+    let context = WorkerContext {
+        thread_id,
+        parent: Some(parent),
+        data: Some(data),
+        environment: Some(environment),
+        control: control.clone(),
+        env,
+    };
     let outcome = crate::shared_run::execute_worker(input, process_argv, context);
     control.finish(outcome);
 }

@@ -935,15 +935,13 @@ fn define_lazy_export(
 
 /// Globals Node's bootstrap defines lazily from its library, each `(property, module,
 /// export, enumerable)`: `defineLazyProperties(globalThis, 'buffer', ['atob', 'btoa'])`
-/// and `exposeLazyInterfaces` for the URL and Blob interfaces. The `__node*` names are
+/// and `exposeLazyInterfaces` for the URL interfaces. The `__node*` names are
 /// the host's own aliases of the original interfaces.
 const LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
     ("atob", "buffer", "atob", true),
     ("btoa", "buffer", "btoa", true),
     ("URL", "internal/url", "URL", false),
     ("URLSearchParams", "internal/url", "URLSearchParams", false),
-    ("Blob", "internal/blob", "Blob", false),
-    ("File", "internal/file", "File", false),
     ("__nodeURL", "internal/url", "URL", false),
     ("__nodeURLSearchParams", "internal/url", "URLSearchParams", false),
 ];

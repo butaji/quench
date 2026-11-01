@@ -230,28 +230,61 @@ pub(crate) fn path(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
 }
 
 pub(crate) fn read_sync(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
-    let state = open_state(c, this)?;
+    let state = idle_state(c, this)?;
     next_entry(c, state)
 }
 
 /// `dir.read()`: a promise; `dir.read(callback)`: `callback(null, entry)` on a later tick.
+/// The read stays in flight until delivery, and synchronous work meanwhile is refused.
 pub(crate) fn read(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let state = open_state(c, this)?;
-    if args.is_empty() || is_undefined(c, args[0]) {
+    // A settlement reads `(rejected, value)` and a callback `(error, entry)`: both take `null` first.
+    let (deliver, result) = if args.is_empty() || is_undefined(c, args[0]) {
         let promise = c.pending_promise_rooted()?;
-        let entry = next_entry(c, state)?;
-        super::api::settle_later(c, promise, Ok(entry))?;
-        return Ok(promise);
-    }
-    let callback = args::function(c, args[0], "callback")?;
+        (c.host_function_with_data(crate::host::shared_vm::operation("fsSettle"), promise)?, promise)
+    } else {
+        (args::function(c, args[0], "callback")?, c.undefined())
+    };
+    adjust_in_flight(c, state, 1.0)?;
+    let delivery = crate::modules::stream_shared_vm::closure(c, "fsDirDeliverRead", "", &[state, deliver])?;
+    super::streams::complete(c, delivery, &[])?;
+    Ok(result)
+}
+
+/// The delivery of one in-flight `dir.read`: the next entry, as a settlement or a callback.
+pub(crate) fn deliver_read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
+    let [state, deliver] = crate::modules::stream_shared_vm::captures::<2>(c)?;
+    adjust_in_flight(c, state, -1.0)?;
     let entry = next_entry(c, state)?;
-    let null = c.null();
-    crate::modules::stream_shared_vm::next_tick(c, callback, &[null, entry])?;
-    Ok(c.undefined())
+    let ok = c.null();
+    let undefined = c.undefined();
+    c.call_rooted(deliver, undefined, &[ok, entry])
+}
+
+fn adjust_in_flight(c: &mut Context<'_>, state: RootId, delta: f64) -> Result<(), RootedError> {
+    let count = get(c, state, "inFlight")?;
+    let count = if is_undefined(c, count) { 0.0 } else { c.to_number(count)? };
+    let count = c.number(count + delta);
+    put(c, state, "inFlight", count)
+}
+
+/// The open state of `this` for synchronous work, refused while an async read is in flight.
+fn idle_state(c: &mut Context<'_>, this: RootId) -> Outcome {
+    let state = open_state(c, this)?;
+    let count = get(c, state, "inFlight")?;
+    if !is_undefined(c, count) && c.to_number(count)? > 0.0 {
+        return Err(failure::plain(
+            c,
+            "ERR_DIR_CONCURRENT_OPERATION",
+            "Cannot do synchronous work on directory handle with concurrent asynchronous operations",
+            false,
+        ));
+    }
+    Ok(state)
 }
 
 pub(crate) fn close_sync(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
-    let state = open_state(c, this)?;
+    let state = idle_state(c, this)?;
     close_state(c, state)?;
     Ok(c.undefined())
 }

@@ -13,6 +13,8 @@ pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_public;
 pub(crate) mod async_hooks_state;
 pub(crate) mod blob_binding_shared_vm;
+pub(crate) mod blob_shared_vm;
+pub(crate) mod broadcast_channel_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_module;
@@ -43,7 +45,6 @@ pub(crate) mod crypto_digest;
 pub(crate) mod crypto_digest_error;
 pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
-#[cfg(not(quench_openssl_provider))]
 pub(crate) mod crypto_sha1;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_node;
@@ -63,6 +64,7 @@ pub(crate) mod event_target_shared_vm;
 pub(crate) mod events_once_shared_vm;
 pub(crate) mod events_shared_vm;
 pub(crate) mod fetch_shared_vm;
+pub(crate) mod message_event_shared_vm;
 pub(crate) mod fs_directory_shared_vm;
 pub(crate) mod fs_error_codes;
 pub(crate) mod fs_error_details;
@@ -115,6 +117,8 @@ pub(crate) mod process_execve_shared_vm;
 pub(crate) mod process_memory_shared_vm;
 #[cfg(unix)]
 pub(crate) mod process_metrics_shared_vm;
+pub(crate) mod process_lazy_shared_vm;
+pub(crate) mod process_permission_shared_vm;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_warning_shared_vm;
 mod process_exception_route;
@@ -130,9 +134,14 @@ pub(crate) mod punycode_shared_vm;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod string_decoder_codec;
 pub(crate) mod readline_shared_vm;
+pub(crate) mod bootstrap_realm_shared_vm;
+pub(crate) mod sea_shared_vm;
+pub(crate) mod source_map_shared_vm;
 pub(crate) mod stream_shared_vm;
 pub(crate) mod string_decoder_shared_vm;
-pub(crate) mod test_shared_vm;
+pub(crate) mod test_runner;
+pub(crate) mod cluster;
+pub(crate) mod repl;
 pub(crate) mod text_decoder_codec;
 #[cfg(quench_icu)]
 pub(crate) mod text_decoder_icu;
@@ -148,6 +157,8 @@ pub(crate) mod url_legacy_shared_vm;
 pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_shared_vm;
 pub(crate) mod webidl_shared_vm;
+pub(crate) mod webstreams_shared_vm;
+pub(crate) mod websocket_shared_vm;
 pub(crate) mod util_callbackify_shared_vm;
 pub(crate) mod util_env;
 pub(crate) mod util_comparisons_shared_vm;
@@ -204,7 +215,6 @@ pub(crate) mod stream_binding;
 pub(crate) mod deep_equal_shared_vm;
 pub(crate) mod dom_exception_shared_vm;
 
-pub(crate) mod util_aborted_source_shared_vm;
 
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_digest_cache;

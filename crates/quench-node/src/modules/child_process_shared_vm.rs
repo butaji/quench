@@ -1714,7 +1714,7 @@ fn unreaped_exit_status(_: u32) -> Option<std::process::ExitStatus> {
     None
 }
 
-fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
+pub(crate) fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
     use std::os::unix::process::ExitStatusExt;
     let signal = status.signal()?;
     #[cfg(target_os = "linux")]
@@ -1735,7 +1735,7 @@ fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
 }
 
 #[cfg(not(unix))]
-fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> {
+pub(crate) fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> {
     None
 }
 

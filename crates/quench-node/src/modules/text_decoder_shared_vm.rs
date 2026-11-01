@@ -42,8 +42,19 @@ pub(crate) fn initialize(
     Ok(context.undefined())
 }
 
-/// The private slot holding a TextDecoder's `[encoding, fatal, ignoreBOM]`.
+/// The private slot holding a TextDecoder's `[encoding, fatal, ignoreBOM, pending, bomSeen]`:
+/// a streaming decode's undecoded tail bytes and whether its output has begun.
 const DECODER_SLOT: &str = "\0slot:TextDecoder";
+const PENDING: &str = "3";
+const BOM_SEEN: &str = "4";
+
+/// Ends a stream: no bytes pending and the next output may start with a BOM.
+fn reset_stream(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), RootedError> {
+    let empty = context.uint8_array_from_rooted(Vec::new())?;
+    context.assign_named_property_rooted(state, PENDING, empty)?;
+    let no = context.boolean(false);
+    context.assign_named_property_rooted(state, BOM_SEEN, no)
+}
 
 fn accessor(context: &mut NativeContext<'_, NodeHost>, prototype: RootId, name: &str, operation: quench_runtime::HostFunctionId) -> Result<(), RootedError> {
     let getter = context.host_function_named(operation, &format!("get {name}"))?;
@@ -122,6 +133,7 @@ pub(crate) fn decoder_constructor(context: &mut NativeContext<'_, NodeHost>, thi
     let fatal = context.boolean(fatal);
     let ignore_bom = context.boolean(ignore_bom);
     let state = context.array_rooted(&[encoding, fatal, ignore_bom])?;
+    reset_stream(context, state)?;
     super::private_slots::write(context, this, DECODER_SLOT, state)?;
     Ok(missing)
 }
@@ -162,11 +174,52 @@ pub(crate) fn decoder_decode(context: &mut NativeContext<'_, NodeHost>, this: Ro
         super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_ARG_TYPE")?;
         return Err(context.throw(error));
     };
-    let encoding = context.get_named_property_rooted(state, "0")?;
+    let options = argument(context, args, 1);
+    let stream = if context.is_object_rooted(options)? {
+        let stream = context.get_named_property_rooted(options, "stream")?;
+        context.truthy_rooted(stream)?
+    } else {
+        false
+    };
+    let encoding_root = context.get_named_property_rooted(state, "0")?;
+    let encoding = context.string_text(encoding_root)?.unwrap_or_default();
     let fatal = context.get_named_property_rooted(state, "1")?;
+    let fatal = context.truthy_rooted(fatal)?;
     let ignore_bom = context.get_named_property_rooted(state, "2")?;
-    let missing = context.undefined();
-    decode(context, missing, &[input, encoding, fatal, ignore_bom])
+    let ignore_bom = context.truthy_rooted(ignore_bom)?;
+    let pending = context.get_named_property_rooted(state, PENDING)?;
+    let mut bytes = context.view_bytes_rooted(pending).unwrap_or_default();
+    bytes.extend(context.view_bytes_rooted(input).unwrap_or_default());
+    let complete = if stream { bytes.len() - crate::modules::text_decoder_codec::incomplete_tail(&encoding, &bytes) } else { bytes.len() };
+    let tail = bytes.split_off(complete);
+    let bom_seen = context.get_named_property_rooted(state, BOM_SEEN)?;
+    let bom_seen = context.truthy_rooted(bom_seen)?;
+    let Ok(text) = crate::modules::text_decoder_codec::decode_bytes(&encoding, &bytes, fatal) else {
+        reset_stream(context, state)?;
+        return Err(invalid_encoded_data(context, &encoding)?);
+    };
+    let strips_bom = !ignore_bom && !bom_seen && matches!(encoding.as_str(), "utf-8" | "utf-16le" | "utf-16be");
+    let text = if strips_bom { text.strip_prefix('\u{feff}').unwrap_or(&text) } else { &text };
+    let result = context.string_rooted(text);
+    if stream {
+        let tail = context.uint8_array_from_rooted(tail)?;
+        context.assign_named_property_rooted(state, PENDING, tail)?;
+        let seen = context.boolean(bom_seen || !bytes.is_empty());
+        context.assign_named_property_rooted(state, BOM_SEEN, seen)?;
+    } else {
+        reset_stream(context, state)?;
+    }
+    Ok(result)
+}
+
+/// `ERR_ENCODING_INVALID_ENCODED_DATA` for `encoding`.
+fn invalid_encoded_data(context: &mut NativeContext<'_, NodeHost>, encoding: &str) -> Result<RootedError, RootedError> {
+    // Node shares the ISO-8859-8 decoder with its logical-order alias,
+    // including that decoder's canonical name in fatal diagnostics.
+    let failure_encoding = if encoding == "iso-8859-8-i" { "iso-8859-8" } else { encoding };
+    let error = context.type_error_rooted(&format!("The encoded data was not valid for encoding {failure_encoding}"))?;
+    super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_ENCODING_INVALID_ENCODED_DATA")?;
+    Ok(context.throw(error))
 }
 
 
@@ -222,25 +275,8 @@ pub(crate) fn decode(
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let Some(text) =
-        crate::modules::text_decoder_codec::decode_bytes(&encoding, &bytes, fatal).ok()
-    else {
-        // Node shares the ISO-8859-8 decoder with its logical-order alias,
-        // including that decoder's canonical name in fatal diagnostics.
-        let failure_encoding = if encoding == "iso-8859-8-i" {
-            "iso-8859-8"
-        } else {
-            &encoding
-        };
-        let error = context.type_error_rooted(&format!(
-            "The encoded data was not valid for encoding {failure_encoding}"
-        ))?;
-        super::node_errors_shared_vm::decorate_type_error(
-            context,
-            error,
-            "ERR_ENCODING_INVALID_ENCODED_DATA",
-        )?;
-        return Err(context.throw(error));
+    let Ok(text) = crate::modules::text_decoder_codec::decode_bytes(&encoding, &bytes, fatal) else {
+        return Err(invalid_encoded_data(context, &encoding)?);
     };
     let ignore_bom = args
         .get(3)

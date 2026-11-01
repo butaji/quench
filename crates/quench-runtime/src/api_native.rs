@@ -1058,6 +1058,15 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create and initialize the active realm's mutable global lexical binding `name`, as a
+    /// Script's top-level `let name = value` does: script code then resolves `name` to it
+    /// ahead of the global object's property of that name.
+    pub fn define_global_lexical_rooted(&mut self, name: &str, value: RootId) -> Result<(), RootedError> {
+        self.vm
+            .define_embedding_global_lexical(name, value)
+            .map_err(|error| self.error(error))
+    }
+
     /// Create a realm with fresh ECMAScript intrinsics and return its global object.
     pub fn create_realm_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_realm();
@@ -1808,6 +1817,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn record_rooted(&mut self, names: &'static [&'static str], values: &[RootId]) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_record(names, values);
         self.completion(result)
+    }
+
+    /// `%AsyncIteratorPrototype%`, the prototype every built-in async iterator inherits.
+    pub fn async_iterator_prototype_rooted(&mut self) -> RootId {
+        let value = self.vm.embedding_async_iterator_prototype();
+        self.scoped_value(value)
     }
 
     /// Create a plain object whose `[[Prototype]]` is null.

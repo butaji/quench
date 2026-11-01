@@ -54,6 +54,10 @@ pub struct NodeHost {
     pub(crate) eval_builtin_globals: bool,
     /// Node's default argument slice uses the normalized, nonempty eval source.
     pub(crate) eval_source_nonempty: bool,
+    /// `--print`'s source, which the host evaluates as the entry (`eval_globals_shared_vm::print`).
+    pub(crate) eval_print: Option<String>,
+    /// Whether CommonJS eval source binds `crypto` to `node:crypto` (`names_crypto`).
+    pub(crate) eval_crypto: bool,
     pub(crate) initial_node_debug: Option<String>,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
     pub(crate) net_pending_ends: Vec<(u64, bool)>,
@@ -135,6 +139,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
+    pub(crate) node_test: crate::modules::test_runner::State,
+    pub(crate) cluster: crate::modules::cluster::State,
+    /// REPL inputs evaluated so far: each is the resource `REPL<n>`.
+    pub(crate) repl_resources: u32,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
@@ -174,13 +182,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
-    /// Per-worker process.env snapshot, when Worker({ env }) supplied one.
-    pub(crate) process_env_override: Option<std::collections::HashMap<String, String>>,
     /// Whether this isolate participates in worker_threads.SHARE_ENV.
     pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
     initial_pending_deprecation: bool,
-    pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
@@ -381,6 +386,9 @@ impl SharedNodeState {
             process_signals: crate::modules::process_signals_state::SignalState::default(),
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
+            node_test: crate::modules::test_runner::State::default(),
+            cluster: crate::modules::cluster::State::default(),
+            repl_resources: 0,
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
@@ -412,12 +420,10 @@ impl SharedNodeState {
             exec_argv: Vec::new(),
             cli_options: Default::default(),
             report_config: Default::default(),
-            process_env_override: None,
             process_env_shared: false,
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
                 == Ok("1"),
-            fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),
@@ -499,6 +505,8 @@ impl NodeHost {
             inline_source: InlineSource::default(),
             eval_builtin_globals: false,
             eval_source_nonempty: false,
+            eval_print: None,
+            eval_crypto: false,
             initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
             resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),
@@ -511,14 +519,6 @@ impl NodeHost {
     /// Select Node's Script/Module parse goal from its filename and package type.
     pub fn source_kind(path: &std::path::Path) -> Result<quench_runtime::SourceKind, String> {
         super::shared_vm::source_kind(path)
-    }
-
-    /// The last VFS CLI switch owns feature availability for this logical process.
-    pub(crate) fn vfs_enabled(&self) -> bool {
-        self.shared_state
-            .borrow()
-            .cli_options
-            .enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.

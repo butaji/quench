@@ -22,6 +22,8 @@ impl NodeHost {
             inline_source: _,
             eval_builtin_globals: _,
             eval_source_nonempty: _,
+            eval_print: _,
+            eval_crypto: _,
             initial_node_debug: _,
             net_pending_writes,
             net_pending_ends,
@@ -79,6 +81,9 @@ impl SharedNodeState {
             process_signals,
             stdin,
             process_ipc,
+            node_test: _,
+            cluster: _,
+            repl_resources: _,
             #[cfg(quench_openssl_provider)]
             crypto_hashes,
             #[cfg(quench_openssl_provider)]
@@ -94,7 +99,6 @@ impl SharedNodeState {
             unhandled_rejection_mode: _,
             output: _,
             stdout_output: _,
-            process_env_override: _,
             process_env_shared: _,
             module_require_trace_active: _,
             net_auto_select_family_attempt_timeout,
@@ -111,7 +115,6 @@ impl SharedNodeState {
             report_config: _,
             initial_node_options: _,
             initial_pending_deprecation: _,
-            fetch,
             diagnostics,
             http,
             tcp,
@@ -201,7 +204,6 @@ impl SharedNodeState {
         stream_intrinsics.write(writer)?;
         stream_high_water_marks.write(writer)?;
         timer_duration_warnings.write(writer)?;
-        fetch.write_snapshot(writer)?;
         diagnostics.write(writer)?;
         http.write_snapshot(writer)?;
         tcp.write_snapshot(writer)?;
@@ -275,7 +277,6 @@ impl SharedNodeState {
         self.stream_intrinsics = HostSnap::read(reader)?;
         self.stream_high_water_marks = HostSnap::read(reader)?;
         self.timer_duration_warnings = HostSnap::read(reader)?;
-        self.fetch.read_snapshot(reader)?;
         self.diagnostics = HostSnap::read(reader)?;
         self.http.read_snapshot(reader)?;
         self.tcp.read_snapshot(reader)?;

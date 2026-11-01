@@ -716,9 +716,7 @@ pub(crate) fn send(
         }
         // Buffer writes always attempt a synchronous write first.
         Serialization::Advanced => {
-            let undefined = context.undefined();
-            let buffer = super::buffer_shared_vm::constructor(context, undefined, &[])?;
-            (super::ipc_serdes_shared_vm::serialize(context, message, buffer)?, true)
+            (super::ipc_serdes_shared_vm::serialize(context, message)?, true)
         }
     };
     // Node closes a sent handle once its frame is written unless `options.keepOpen`.
@@ -1151,22 +1149,13 @@ pub(crate) fn destroy_transferred_public_socket(
     // which owned it. Drop the HTTP bookkeeping alongside the native handle so
     // the source Socket does not retain a parser, response, or timeout after
     // the transfer has completed.
-    let timers = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "net.js",
-        "internal/timers.js",
-    )?;
-    let timeout_key = context.string_rooted("kTimeout");
-    let timeout_symbol = context.get_property_rooted(timers, timeout_key)?;
-    let timeout = context.get_property_rooted(socket, timeout_symbol)?;
-    let global = context.global_root()?;
-    let clear_timeout_key = context.string_rooted("clearTimeout");
-    let clear_timeout = context.get_property_rooted(global, clear_timeout_key)?;
-    if context.is_callable_rooted(clear_timeout)? {
-        context.call_rooted(clear_timeout, global, &[timeout])?;
+    let key = context.string_rooted("setTimeout");
+    let set_timeout = context.get_property_rooted(socket, key)?;
+    if context.is_callable_rooted(set_timeout)? {
+        let disabled = context.number(0.0);
+        context.call_rooted(set_timeout, socket, &[disabled])?;
     }
     let null = context.null();
-    context.set_property_rooted(socket, timeout_symbol, null, socket)?;
     for name in ["parser", "_httpMessage"] {
         let key = context.string_rooted(name);
         context.set_property_rooted(socket, key, null, socket)?;
