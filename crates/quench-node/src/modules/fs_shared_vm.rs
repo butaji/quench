@@ -432,9 +432,14 @@ pub(crate) fn to_unix_timestamp(c: &mut Context<'_>, _: RootId, args: &[RootId])
     Ok(c.number(time))
 }
 
-/// `process.emitWarning(message, 'DeprecationWarning', code, deprecated)`, unless
-/// `--no-deprecation` silences it.
+/// `process.emitWarning(message, 'DeprecationWarning', code, deprecated)` the first time
+/// `code` is deprecated, unless `--no-deprecation` silences it.
 pub(crate) fn emit_deprecation(c: &mut Context<'_>, message: &str, code: &str, deprecated: RootId) -> Result<(), RootedError> {
+    let shared = c.host_mut().shared_state();
+    if shared.borrow().fs_classes.deprecations.iter().any(|warned| warned == code) {
+        return Ok(());
+    }
+    shared.borrow_mut().fs_classes.deprecations.push(code.to_owned());
     let global = c.global_root()?;
     let process = get(c, global, "process")?;
     let silenced = get(c, process, "noDeprecation")?;

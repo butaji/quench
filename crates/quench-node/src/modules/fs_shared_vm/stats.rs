@@ -147,12 +147,8 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> O
 
 /// `fs.Stats`: `deprecate(Stats, 'fs.Stats constructor is deprecated.', 'DEP0180')`.
 pub(crate) fn construct_deprecated(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let shared = c.host_mut().shared_state();
-    if !shared.borrow().fs_classes.stats_warning_emitted {
-        shared.borrow_mut().fs_classes.stats_warning_emitted = true;
-        let deprecated = classes::root(c, Class::DeprecatedStats)?;
-        super::emit_deprecation(c, "fs.Stats constructor is deprecated.", "DEP0180", deprecated)?;
-    }
+    let deprecated = classes::root(c, Class::DeprecatedStats)?;
+    super::emit_deprecation(c, "fs.Stats constructor is deprecated.", "DEP0180", deprecated)?;
     construct(c, this, args)
 }
 
@@ -216,7 +212,12 @@ fn define_time(c: &mut Context<'_>, this: RootId, name: &str, value: RootId) -> 
 pub(crate) fn time_get(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     let name = time_field(c)?;
     let milliseconds = get(c, this, &format!("{name}Ms"))?;
-    let milliseconds = c.to_number(milliseconds)?;
+    // `Number(value)`: a BigInt converts by its digits, which `ToNumber` refuses.
+    let milliseconds = if matches!(c.value_type_rooted(milliseconds), Some(quench_runtime::ValueType::BigInt)) {
+        c.to_string(milliseconds)?.parse().unwrap_or(f64::NAN)
+    } else {
+        c.to_number(milliseconds)?
+    };
     let date = classes::root(c, Class::Date)?;
     let time = c.number(round_half_up(milliseconds));
     let value = c.construct_rooted(date, date, &[time])?;

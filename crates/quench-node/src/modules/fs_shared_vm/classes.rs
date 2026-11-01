@@ -42,10 +42,11 @@ crate::host::startup_snapshot::host_snap_struct!(Roots { values, prototypes });
 #[derive(Default)]
 pub(crate) struct State {
     roots: Option<Roots>,
-    pub(crate) stats_warning_emitted: bool,
+    /// The deprecation codes `fs` has warned about: each warns once per process.
+    pub(crate) deprecations: Vec<String>,
 }
 
-crate::host::startup_snapshot::host_snap_state!(State { roots, stats_warning_emitted });
+crate::host::startup_snapshot::host_snap_state!(State { roots, deprecations });
 
 fn roots(c: &mut Context<'_>) -> Result<Roots, RootedError> {
     if let Some(roots) = c.host_mut().shared_state().borrow().fs_classes.roots {

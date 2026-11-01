@@ -10,48 +10,62 @@ use quench_runtime::{RootId, RootedError};
 /// The descriptor of a closed handle.
 const CLOSED: f64 = -1.0;
 
-/// `FileHandle.prototype`'s promise methods: name, length, operation and the system call a
-/// closed handle's error names (`fsCall`'s `fn.name`).
-const METHODS: [(&str, usize, Op, &str); 14] = [
-    ("appendFile", 2, Op::AppendFile, "writeFileHandle"),
-    ("chmod", 1, Op::Fchmod, "fchmod"),
-    ("chown", 2, Op::Fchown, "fchown"),
-    ("datasync", 0, Op::Fdatasync, "fdatasync"),
-    ("sync", 0, Op::Fsync, "fsync"),
-    ("read", 4, Op::Read, "read"),
-    ("readv", 2, Op::Readv, "readv"),
-    ("readFile", 1, Op::ReadFile, "readFileHandle"),
-    ("stat", 1, Op::Fstat, "fstat"),
-    ("truncate", 0, Op::Ftruncate, "ftruncate"),
-    ("utimes", 2, Op::Futimes, "futimes"),
-    ("write", 4, Op::Write, "write"),
-    ("writev", 2, Op::Writev, "writev"),
-    ("writeFile", 2, Op::WriteFile, "writeFileHandle"),
-];
+/// A member of `FileHandle.prototype`, in Node's order.
+enum Member {
+    /// A promise method: name, length, operation and the system call a closed handle's
+    /// error names (`fsCall`'s `fn.name`).
+    Promise(&'static str, usize, Op, &'static str),
+    /// Another method: name and operation.
+    Method(&'static str, &'static str),
+    /// `get fd()`.
+    Fd,
+}
 
-/// The members besides the promise methods: key, operation and function name.
-const OTHER_METHODS: [(&str, &str); 5] = [
-    ("getAsyncId", "fsHandleAsyncId"),
-    ("close", "fsHandleClose"),
-    ("readLines", "fsHandleReadLines"),
-    ("createReadStream", "fsHandleCreateReadStream"),
-    ("createWriteStream", "fsHandleCreateWriteStream"),
+const PROTOTYPE: [Member; 20] = [
+    Member::Method("getAsyncId", "fsHandleAsyncId"),
+    Member::Fd,
+    Member::Promise("appendFile", 2, Op::AppendFile, "writeFileHandle"),
+    Member::Promise("chmod", 1, Op::Fchmod, "fchmod"),
+    Member::Promise("chown", 2, Op::Fchown, "fchown"),
+    Member::Promise("datasync", 0, Op::Fdatasync, "fdatasync"),
+    Member::Promise("sync", 0, Op::Fsync, "fsync"),
+    Member::Promise("read", 4, Op::Read, "read"),
+    Member::Promise("readv", 2, Op::Readv, "readv"),
+    Member::Promise("readFile", 1, Op::ReadFile, "readFileHandle"),
+    Member::Method("readLines", "fsHandleReadLines"),
+    Member::Promise("stat", 1, Op::Fstat, "fstat"),
+    Member::Promise("truncate", 0, Op::Ftruncate, "ftruncate"),
+    Member::Promise("utimes", 2, Op::Futimes, "futimes"),
+    Member::Promise("write", 4, Op::Write, "write"),
+    Member::Promise("writev", 2, Op::Writev, "writev"),
+    Member::Promise("writeFile", 2, Op::WriteFile, "writeFileHandle"),
+    Member::Method("createReadStream", "fsHandleCreateReadStream"),
+    Member::Method("createWriteStream", "fsHandleCreateWriteStream"),
+    Member::Method("[nodejs.asyncDispose]", "fsHandleDispose"),
 ];
 
 pub(crate) fn define_prototype(c: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
-    let getter = c.host_function_named(crate::host::shared_vm::operation("fsHandleFd"), "get fd")?;
-    classes::accessor(c, prototype, "fd", getter, None, false)?;
-    for (name, length, op, _) in METHODS {
-        let function = api::function(c, op, Flavor::Handle, name, length)?;
-        let key = c.string_rooted(name);
-        c.define_data_property_rooted(prototype, key, function, true, false, true)?;
+    for member in PROTOTYPE {
+        match member {
+            Member::Promise(name, length, op, _) => {
+                let function = api::function(c, op, Flavor::Handle, name, length)?;
+                let key = c.string_rooted(name);
+                c.define_data_property_rooted(prototype, key, function, true, false, true)?;
+            }
+            Member::Method(name, operation) => {
+                let key = if name.starts_with('[') {
+                    classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?
+                } else {
+                    c.string_rooted(name)
+                };
+                classes::method(c, prototype, key, operation, name, None)?;
+            }
+            Member::Fd => {
+                let getter = c.host_function_named(crate::host::shared_vm::operation("fsHandleFd"), "get fd")?;
+                classes::accessor(c, prototype, "fd", getter, None, false)?;
+            }
+        }
     }
-    for (name, operation) in OTHER_METHODS {
-        let key = c.string_rooted(name);
-        classes::method(c, prototype, key, operation, name, None)?;
-    }
-    let dispose = classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
-    classes::method(c, prototype, dispose, "fsHandleClose", "[nodejs.asyncDispose]", None)?;
     Ok(())
 }
 
@@ -61,6 +75,9 @@ pub(crate) fn create(c: &mut Context<'_>, fd: i32) -> Outcome {
     let global = c.global_root()?;
     let emitter = get(c, global, "__nodeEventEmitter")?;
     c.call_rooted(emitter, handle, &[])?;
+    // `close = () => ...`: a class field, bound to its handle.
+    let close = c.host_function_named_with_data(crate::host::shared_vm::operation("fsHandleClose"), "close", handle)?;
+    put(c, handle, "close", close)?;
     let key = classes::root(c, Class::HandleFd)?;
     let fd = c.number(f64::from(fd));
     c.set_property_rooted(handle, key, fd, handle)?;
@@ -110,7 +127,13 @@ pub(crate) fn call(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     let (op, _) = api::decode(c)?;
     let fd = handle_fd(c, this)?;
     if f64::from(fd) == CLOSED {
-        let syscall = METHODS.iter().find(|(_, _, candidate, _)| *candidate == op).map_or("", |(_, _, _, syscall)| syscall);
+        let syscall = PROTOTYPE
+            .iter()
+            .find_map(|member| match member {
+                Member::Promise(_, _, candidate, syscall) if *candidate == op => Some(*syscall),
+                _ => None,
+            })
+            .unwrap_or_default();
         let error = c.error_rooted("file closed")?;
         let code = c.string_rooted("EBADF");
         put(c, error, "code", code)?;
@@ -125,9 +148,20 @@ pub(crate) fn call(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     api::run(c, op, Flavor::Handle, &forwarded)
 }
 
-/// `filehandle.close()`: closes the descriptor once; a closing or closed handle's close
-/// resolves with the same outcome.
-pub(crate) fn close(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
+/// `filehandle.close()`, bound to the handle its data holds.
+pub(crate) fn close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
+    let handle = c.host_function_data()?;
+    close_handle(c, handle)
+}
+
+/// `filehandle[Symbol.asyncDispose]()`: `this.close()`.
+pub(crate) fn dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
+    call_method(c, this, "close", &[])
+}
+
+/// Close the handle's descriptor once; a closing or closed handle's close resolves with
+/// the same outcome.
+fn close_handle(c: &mut Context<'_>, this: RootId) -> Outcome {
     let fd = handle_fd(c, this)?;
     let closing = classes::root(c, Class::HandleClosing)?;
     let pending = c.get_property_rooted(this, closing)?;
@@ -228,7 +262,7 @@ pub(crate) fn stream_operations(c: &mut Context<'_>, handle: RootId) -> Outcome 
 pub(crate) fn stream_close(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let [handle] = crate::modules::stream_shared_vm::captures::<1>(c)?;
     let callback = arg(c, args, 1);
-    let closing = close(c, handle, &[])?;
+    let closing = close_handle(c, handle)?;
     let done = crate::modules::stream_shared_vm::closure(c, "fsHandleStreamClosed", "", &[callback])?;
     let failed = crate::modules::stream_shared_vm::closure(c, "fsHandleStreamClosed", "", &[callback])?;
     call_method(c, closing, "then", &[done, failed])?;

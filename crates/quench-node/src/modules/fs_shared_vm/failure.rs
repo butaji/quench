@@ -153,10 +153,10 @@ pub(crate) fn out_of_range(c: &mut Context<'_>, name: &str, requirement: &str, v
 pub(crate) fn aborted(c: &mut Context<'_>, signal: RootId) -> RootedError {
     let built = (|| -> Result<RootedError, RootedError> {
         let error = c.error_rooted("The operation was aborted")?;
-        let name = c.string_rooted("AbortError");
-        put(c, error, "name", name)?;
         let code = c.string_rooted("ABORT_ERR");
         put(c, error, "code", code)?;
+        let name = c.string_rooted("AbortError");
+        put(c, error, "name", name)?;
         let cause = c.get_named_property_rooted(signal, "reason")?;
         let key = c.string_rooted("cause");
         c.define_data_property_rooted(error, key, cause, true, false, true)?;

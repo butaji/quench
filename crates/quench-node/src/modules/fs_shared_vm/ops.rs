@@ -494,7 +494,14 @@ fn mkdir(c: &mut Context<'_>, args: &[RootId]) -> Call {
 
 fn rmdir(c: &mut Context<'_>, args: &[RootId]) -> Call {
     let path = args::path(c, args[0], "path")?;
-    let result = std::fs::remove_dir(&path.io);
+    let recursive = if c.is_object_rooted(args[1])? { get(c, args[1], "recursive")? } else { c.undefined() };
+    let result = if c.truthy_rooted(recursive)? {
+        let undefined = c.undefined();
+        super::emit_deprecation(c, "In future versions of Node.js, fs.rmdir(path, { recursive: true }) will be removed. Use fs.rm(path, { recursive: true }) instead", "DEP0147", undefined)?;
+        remove_tree(&path.io)
+    } else {
+        std::fs::remove_dir(&path.io)
+    };
     Ok(completed(c, result, Syscall::at("rmdir", &path.shown)))
 }
 
@@ -508,9 +515,8 @@ fn rm_options(c: &mut Context<'_>, options: RootId) -> Result<RmOptions, RootedE
     if is_undefined(c, options) {
         return Ok(RmOptions { force: false, recursive: false });
     }
-    args::nullable_object(c, options, "options")?;
-    if is_nullish(c, options) {
-        return Ok(RmOptions { force: false, recursive: false });
+    if is_nullish(c, options) || !c.is_object_rooted(options)? || c.is_array_rooted(options)? {
+        return Err(crate::modules::util_shared_vm::argument_type_error(c, options, "options", "Object")?);
     }
     let force = args::boolean_option(c, options, "force", false)?;
     let recursive = args::boolean_option(c, options, "recursive", false)?;
@@ -637,13 +643,20 @@ fn readlink(c: &mut Context<'_>, args: &[RootId]) -> Call {
     })
 }
 
-/// The first prefix of `path` whose `lstat` fails, as `realpathSync`'s walk finds it.
-fn failing_prefix(path: &Path) -> Option<(PathBuf, io::Error)> {
+/// Where `realpathSync`'s walk of the absolute `path` fails: the first prefix whose `lstat`
+/// fails, or whose link `stat` cannot follow.
+fn failing_prefix(path: &Path) -> Option<(&'static str, PathBuf, io::Error)> {
     let mut prefix = PathBuf::new();
     for component in path.components() {
         prefix.push(component);
-        if let Err(error) = std::fs::symlink_metadata(&prefix) {
-            return Some((prefix, error));
+        match std::fs::symlink_metadata(&prefix) {
+            Err(error) => return Some(("lstat", prefix, error)),
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                if let Err(error) = std::fs::metadata(&prefix) {
+                    return Some(("stat", prefix, error));
+                }
+            }
+            Ok(_) => {}
         }
     }
     None
@@ -655,10 +668,15 @@ fn realpath(c: &mut Context<'_>, args: &[RootId], native: bool) -> Call {
     let encoding = args::encoding(c, options, UTF8)?;
     Ok(match std::fs::canonicalize(&path.io) {
         Ok(resolved) => encoding.project(c, resolved.as_os_str().as_bytes().to_vec()).map(Reply::Value),
-        Err(error) if !native => match failing_prefix(&path.io) {
-            Some((prefix, error)) => Err(failure::system(c, &error, Syscall::at("lstat", &prefix.to_string_lossy()))),
-            None => Err(failure::system(c, &error, Syscall::at("lstat", &path.io.to_string_lossy()))),
-        },
+        Err(error) if !native => {
+            let cwd = c.host_mut().shared_state().borrow().cwd.clone();
+            let cwd = cwd.current_path().map_err(|error| RootedError::host(error.to_string()))?;
+            let absolute = crate::modules::path_algorithms::posix::resolve_strings(&[path.shown.clone()], &cwd.to_string_lossy());
+            match failing_prefix(Path::new(&absolute)) {
+                Some((syscall, prefix, error)) => Err(failure::system(c, &error, Syscall::at(syscall, &prefix.to_string_lossy()))),
+                None => Err(failure::system(c, &error, Syscall::at("lstat", &absolute))),
+            }
+        }
         Err(error) => Err(failure::system(c, &error, Syscall::at("realpath", &path.shown))),
     })
 }
@@ -675,6 +693,8 @@ fn length_argument(c: &mut Context<'_>, value: RootId) -> Result<u64, RootedErro
 fn truncate(c: &mut Context<'_>, args: &[RootId]) -> Call {
     let first = args[0];
     if c.rooted_value(first).is_some_and(|value| value.as_number().is_some()) {
+        let undefined = c.undefined();
+        super::emit_deprecation(c, "Using fs.truncate with a file descriptor is deprecated. Please use fs.ftruncate with a file descriptor instead.", "DEP0081", undefined)?;
         return ftruncate(c, args);
     }
     let path = args::path(c, first, "path")?;
@@ -1014,7 +1034,11 @@ fn too_large(c: &mut Context<'_>, size: u64) -> RootedError {
 
 pub(crate) fn read_whole(c: &mut Context<'_>, file: &FileArgument, flags: i32) -> Result<Vec<u8>, RootedError> {
     match file {
-        FileArgument::Descriptor(fd) => read_to_end(c, *fd),
+        FileArgument::Descriptor(fd) => {
+            let metadata = with_descriptor(c, *fd, |file| file.metadata());
+            failure::check(c, metadata, Syscall::bare("fstat"))?;
+            read_to_end(c, *fd)
+        }
         FileArgument::Path(path) => {
             let fd = open_descriptor(c, path, flags, DEFAULT_FILE_MODE)?;
             let size = with_descriptor(c, fd, |file| file.metadata()).map_or(0, |metadata| metadata.len());

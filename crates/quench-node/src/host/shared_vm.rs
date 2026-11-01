@@ -1262,6 +1262,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsHandleFd" (0) => crate::modules::fs_shared_vm::file_handle::fd,
         method "fsHandleAsyncId" (0) => crate::modules::fs_shared_vm::file_handle::async_id,
         method "fsHandleClose" (0) => crate::modules::fs_shared_vm::file_handle::close,
+        method "fsHandleDispose" (0) => crate::modules::fs_shared_vm::file_handle::dispose,
         method "fsHandleClosed" (2) => crate::modules::fs_shared_vm::file_handle::closed,
         method "fsHandleReadLines" (0) => crate::modules::fs_shared_vm::file_handle::read_lines,
         method "fsHandleCreateReadStream" (0) => crate::modules::fs_shared_vm::file_handle::create_read_stream,
