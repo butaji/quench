@@ -149,6 +149,10 @@ pub trait Host {
     /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
+    /// Weak targets have been cleared and VM cleanup has finished. Release native resources
+    /// owned by collected values before execution resumes, without running guest code.
+    fn after_collection(_context: &mut crate::CollectionContext<'_, Self>) where Self: Sized {}
+
     /// A compiled host program kept across runs: the bytes `keep_compiled_program` was given
     /// for compiling `parts` (the program's text, in order) under `name` in this build. The
     /// runtime decodes them under its own atoms and compiles when they do not decode. A

@@ -724,6 +724,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHashNew" (0) => crate::modules::crypto_hash_shared_vm::create_hash,
         #[cfg(quench_openssl_provider)]
+        method "cryptoHashBinding" (0) => crate::modules::crypto_hash_shared_vm::binding,
+        #[cfg(quench_openssl_provider)]
         method "cryptoNativeHmacNew" (0) => crate::modules::crypto_hash_shared_vm::create_hmac,
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHmacInit" (0) => crate::modules::crypto_hash_shared_vm::init_hmac,
@@ -1270,6 +1272,13 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_at_collection(policy.returns_pages_at_collections());
         quench_alloc::release_empty_pages();
         crate::host::resident_pages::note_collection();
+    }
+
+    fn after_collection(context: &mut quench_runtime::CollectionContext<'_, Self>) {
+        #[cfg(quench_openssl_provider)]
+        crate::modules::crypto_hash_shared_vm::prune(context);
+        #[cfg(not(quench_openssl_provider))]
+        let _ = context;
     }
 
     /// The pages the program touched leave the resident set before the code generator's join

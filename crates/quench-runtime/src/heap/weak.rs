@@ -2,6 +2,13 @@ use super::root::WeakHandle;
 use super::*;
 
 impl Heap {
+    pub(crate) fn weak_reference_value(&self, reference: RootId) -> Option<Value> {
+        match self.get(self.root_value(reference)?)? {
+            Cell::WeakRef { target: Some(target), .. } => self.weak_value(*target),
+            _ => None,
+        }
+    }
+
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
         value.heap_index()?;
         self.is_live(value).then_some(WeakHandle { value })

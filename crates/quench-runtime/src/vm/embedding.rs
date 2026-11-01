@@ -78,14 +78,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_host_weak_value(&self, reference: RootId) -> Option<Value> {
-        let value = self.heap.root_value(reference)?;
-        match self.heap.get(value)? {
-            Cell::WeakRef {
-                target: Some(target),
-                ..
-            } => self.heap.weak_value(*target),
-            _ => None,
-        }
+        self.heap.weak_reference_value(reference)
     }
 
     pub(crate) fn embedding_push_native_stack_frame(&mut self, name: &str) {

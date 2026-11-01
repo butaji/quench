@@ -50,7 +50,13 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     }
     super::super::crypto_secret_job_shared_vm::install(context, binding)?;
     #[cfg(quench_openssl_provider)]
-    super::super::crypto_hash_shared_vm::install(context, binding)?;
+    {
+        let hashes = super::super::crypto_hash_shared_vm::binding(context, binding, &[])?;
+        for name in ["Hash", "Hmac", "oneShotDigest"] {
+            let function = get(context, hashes, name)?;
+            set(context, binding, name, function)?;
+        }
+    }
     #[cfg(quench_openssl_provider)]
     super::super::crypto_signature_shared_vm::install(context, binding)?;
     #[cfg(quench_openssl_provider)]
