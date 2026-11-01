@@ -65,11 +65,18 @@ fn output_length(c: &mut Context<'_>, options: RootId) -> Result<RootId, RootedE
         return Ok(c.undefined());
     }
     let length = get(c, options, "outputLength")?;
+    checked_output_length(c, length, "options.outputLength")
+}
+fn checked_output_length(
+    c: &mut Context<'_>,
+    length: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
     if undefined(c, length) {
         return Ok(length);
     }
     let maximum = c.number(f64::from(u32::MAX));
-    match super::util_shared_vm::validate_integer(c, length, "options.outputLength", 0.0, maximum) {
+    match super::util_shared_vm::validate_integer(c, length, name, 0.0, maximum) {
         Ok(value) => Ok(c.number(value + 0.0)),
         Err(error) => {
             if let Some(exception) = error.exception {
@@ -136,25 +143,33 @@ fn initialize_instance(
     let key = get(c, data, STATE)?;
     c.assign_property_rooted(receiver, key, state)?;
     if let Some(algorithm) = implicit_length {
-        let name = c
-            .string_text(algorithm)?
-            .expect("a new hash validated its algorithm");
-        let name = name.to_lowercase().replacen('-', "", 1);
-        if matches!(name.as_str(), "shake128" | "shake256") {
-            let warned = get(c, data, SHAKE_WARNED)?;
-            if !c.truthy_rooted(warned)? {
-                let yes = c.boolean(true);
-                put(c, data, SHAKE_WARNED, yes)?;
-                let message = c.string_rooted("Creating SHAKE128/256 digests without an explicit options.outputLength is deprecated.");
-                let code = c.string_rooted("DEP0198");
-                let undefined = c.undefined();
-                super::util_deprecate_shared_vm::emit(c, message, code, undefined)?;
-            }
-        }
+        warn_implicit_length(c, data, algorithm)?;
     }
     let lazy = get(c, data, LAZY_TRANSFORM)?;
     c.call_rooted(lazy, receiver, &[options])?;
     Ok(receiver)
+}
+fn warn_implicit_length(
+    c: &mut Context<'_>,
+    data: RootId,
+    algorithm: RootId,
+) -> Result<(), RootedError> {
+    let name = c
+        .string_text(algorithm)?
+        .expect("a new hash validated its algorithm");
+    let name = name.to_lowercase().replacen('-', "", 1);
+    if matches!(name.as_str(), "shake128" | "shake256") {
+        let warned = get(c, data, SHAKE_WARNED)?;
+        if !c.truthy_rooted(warned)? {
+            let yes = c.boolean(true);
+            put(c, data, SHAKE_WARNED, yes)?;
+            let message = c.string_rooted("Creating SHAKE128/256 digests without an explicit options.outputLength is deprecated.");
+            let code = c.string_rooted("DEP0198");
+            let undefined = c.undefined();
+            super::util_module_shared_vm::emit_deprecation(c, message, code, undefined)?;
+        }
+    }
+    Ok(())
 }
 
 /// Builds this policy with the caller's canonical Transform constructor.
@@ -165,6 +180,8 @@ pub(crate) fn install(
 ) -> Result<(), RootedError> {
     let data = c.null_object_rooted()?;
     let native = super::crypto_hash_shared_vm::binding(c, public, &[])?;
+    let one_shot = get(c, native, "oneShotDigest")?;
+    put(c, data, "oneShotDigest", one_shot)?;
     for (name, export) in [(NATIVE_HASH, HASH), (NATIVE_HMAC, HMAC)] {
         let value = get(c, native, export)?;
         put(c, data, name, value)?;
@@ -181,6 +198,9 @@ pub(crate) fn install(
     put(c, data, LAZY_TRANSFORM, lazy)?;
     let lazy_prototype = get(c, lazy, "prototype")?;
     let operation = crate::host::shared_vm::operation;
+    let one_shot =
+        c.host_function_named_with_data(operation("cryptoPublicOneShot"), "hash", data)?;
+    put(c, public, "hash", one_shot)?;
     for (name, callback) in [(HASH, "cryptoPublicHash"), (HMAC, "cryptoPublicHmac")] {
         let constructor = c.host_constructor_named_with_data(operation(callback), name, data)?;
         let prototype = get(c, constructor, "prototype")?;
@@ -192,7 +212,10 @@ pub(crate) fn install(
         } else {
             ("crypto.Hmac constructor is deprecated.", "DEP0181")
         };
-        let exported = super::util_deprecate_shared_vm::wrap(c, constructor, message, code)?;
+        let message = c.string_rooted(message);
+        let code = c.string_rooted(code);
+        let exported =
+            super::util_module_shared_vm::deprecated_wrapper(c, constructor, message, code)?;
         put(c, public, name, exported)?;
     }
     let hash = get(c, data, HASH)?;
@@ -239,17 +262,6 @@ pub(crate) fn install(
     Ok(())
 }
 
-#[cfg(test)]
-pub(crate) fn install_binding(
-    c: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let public = arg(c, args, 0);
-    let transform = arg(c, args, 1);
-    install(c, public, transform)?;
-    Ok(public)
-}
 pub(crate) fn create_hash(
     c: &mut Context<'_>,
     _: RootId,
@@ -329,7 +341,7 @@ fn buffer_source(
             Some(encoding) if !nullish(c, encoding) => c.to_string(encoding)?,
             _ => "utf8".to_owned(),
         };
-        let normalized = if encoding == "buffer" {
+        let normalized = if encoding == "buffer" || encoding.is_empty() {
             Some("utf8")
         } else {
             super::buffer_codec::canonical_encoding(&encoding)
@@ -565,66 +577,96 @@ pub(crate) fn hmac_flush(
     flush::<true>(c, this, args)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quench_runtime::{Engine, ExecutionMode, Runtime, Value};
-
-    #[test]
-    fn public_hash_policy_matches_node_without_stream_demand() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/crypto_hash_public_oracle.js"
-        );
-        let oracle = std::process::Command::new("node")
-            .args(["-e", "const fs=require('node:fs'),vm=require('node:vm'); console.log(vm.runInThisContext(fs.readFileSync(process.argv[1],'utf8'))(require('node:crypto')));", path])
-            .env_remove("NODE_OPTIONS").output().unwrap();
-        assert!(
-            oracle.status.success(),
-            "{}",
-            String::from_utf8_lossy(&oracle.stderr)
-        );
-        let expected = String::from_utf8(oracle.stdout).unwrap();
-        let source = std::fs::read_to_string(path).unwrap();
-        let program =
-            Engine::specialize(&format!("globalThis.exerciseHash = {source};"), path).unwrap();
-        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
-            let mut runtime = Runtime::new(NodeHost::new(vec!["quench-node".into()]));
-            runtime.set_execution_mode(mode);
-            runtime.execute(&program).unwrap();
-            let global = runtime.global_root().unwrap();
-            let exercise = runtime
-                .get_named_property_rooted(global, "exerciseHash")
-                .unwrap();
-            // This unit isolates digest policy. Stream state is never requested; production
-            // installation supplies stream.Transform, and its full integration remains separate.
-            let parent = runtime.get_named_property_rooted(global, "Object").unwrap();
-            let module = runtime.object_rooted().unwrap();
-            let install = runtime
-                .host_function(crate::host::shared_vm::operation("cryptoHashPublicInstall"))
-                .unwrap();
-            let undefined = runtime.root(Value::UNDEFINED);
-            runtime
-                .call_rooted(install, undefined, &[module, parent])
-                .unwrap();
-            let result = runtime.call_rooted(exercise, undefined, &[module]).unwrap();
-            let actual = runtime.string_text_rooted(result).unwrap().unwrap();
-            assert_eq!(
-                actual.lines().count(),
-                expected.lines().count(),
-                "mode={mode:?}"
-            );
-            let mut differences = Vec::new();
-            for (actual, expected) in actual.lines().zip(expected.lines()) {
-                if actual != expected {
-                    differences.push(format!("expected {expected}\nactual   {actual}"));
-                }
-            }
-            assert!(
-                differences.is_empty(),
-                "mode={mode:?}\n{}",
-                differences.join("\n")
-            );
-        }
+/// `crypto.hash`: validation and normalization precede the shared native one-shot digest.
+pub(crate) fn one_shot(
+    c: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let algorithm = arg(c, args, 0);
+    validate_string(c, algorithm, "algorithm")?;
+    let input = arg(c, args, 1);
+    if c.value_type_rooted(input) != Some(ValueType::String)
+        && !c.has_builtin_brand_rooted(input, BuiltinBrand::ArrayBufferView)?
+    {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            c,
+            input,
+            "input",
+            "of type string or an instance of Buffer, TypedArray, or DataView",
+        )?);
     }
+    let options = arg(c, args, 2);
+    let missing = c.undefined();
+    let (mut encoding, mut length, mut function_name, mut customization) =
+        (missing, missing, missing, missing);
+    if c.value_type_rooted(options) == Some(ValueType::String) {
+        encoding = options;
+    } else if !undefined(c, options) {
+        if c.value_type_rooted(options) != Some(ValueType::Object)
+            || nullish(c, options)
+            || c.is_array_rooted(options)?
+        {
+            let error =
+                super::util_shared_vm::argument_type_error(c, options, "options", "Object")?;
+            if let Some(exception) = error.exception {
+                super::node_errors_shared_vm::hide_type_error(
+                    c,
+                    exception,
+                    "ERR_INVALID_ARG_TYPE",
+                )?;
+            }
+            return Err(error);
+        }
+        length = get(c, options, "outputLength")?;
+        encoding = get(c, options, "outputEncoding")?;
+        let value = get(c, options, "functionName")?;
+        function_name = parameter(c, value, "options.functionName")?;
+        let value = get(c, options, "customization")?;
+        customization = parameter(c, value, "options.customization")?;
+    }
+    if nullish(c, encoding) {
+        encoding = c.string_rooted("hex");
+    }
+    validate_string(c, encoding, "outputEncoding")?;
+    let name = c.string_text(encoding)?.expect("validated encoding");
+    let normalized = if name.is_empty() {
+        Some("utf8")
+    } else if name.eq_ignore_ascii_case("buffer") {
+        Some("buffer")
+    } else {
+        super::buffer_codec::canonical_encoding(&name)
+    };
+    let normalized = match normalized {
+        Some(value) => c.string_rooted(value),
+        None => {
+            return Err(super::util_shared_vm::argument_value_error(
+                c,
+                encoding,
+                "outputEncoding",
+                "is invalid",
+            )?)
+        }
+    };
+    length = checked_output_length(c, length, "outputLength")?;
+    if undefined(c, length) {
+        warn_implicit_length(c, data, algorithm)?;
+    }
+    let native = get(c, data, "oneShotDigest")?;
+    c.call_rooted(
+        native,
+        missing,
+        &[
+            algorithm,
+            missing,
+            missing,
+            input,
+            normalized,
+            missing,
+            length,
+            function_name,
+            customization,
+        ],
+    )
 }

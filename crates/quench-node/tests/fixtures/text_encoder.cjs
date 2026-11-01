@@ -2,6 +2,7 @@
 
 // Run under Node and Quench and compare the complete output, including error order.
 const Encoder = TextEncoder;
+const util = require('node:util');
 const encoder = new Encoder();
 const observations = [];
 const observe = (name, run) => {
@@ -99,6 +100,6 @@ observe("custom-new-target", () => {
 observe("negative-inspect", () => Encoder.prototype[Symbol.for("nodejs.util.inspect.custom")].call({}, -1) instanceof Object);
 observe("global-replacement", () => {
   globalThis.TextEncoder = null;
-  return [encoder.encoding, Array.from(encoder.encode("still works"))];
+  return [encoder.encoding, Array.from(encoder.encode("still works")), util.TextEncoder === Encoder];
 });
 console.log(observations.map(observation => JSON.stringify(observation)).join("\n"));

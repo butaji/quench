@@ -9,6 +9,31 @@
   const Hash = createHash('sha256').constructor;
   const Hmac = createHmac('sha256', 'key').constructor;
   const hex = value => typeof value === 'string' ? value : Array.from(value);
+  observe('one-shot metadata', () => [api.hash.name, api.hash.length]);
+  for (const algorithm of ['sha256', 'sha512', 'sha1', 'md5']) {
+    for (const options of [undefined, 'hex', 'base64', 'base64url', 'buffer', 'UTF8', '', {outputEncoding:null}]) {
+      observe('one-shot '+algorithm+' '+String(options), () => hex(api.hash(algorithm,'é水🦄',options)));
+    }
+  }
+  for (const options of [null, true, 2, [], 'bogus', {outputEncoding:3}, {outputLength:-1}, {outputLength:8}]) {
+    observe('one-shot invalid '+JSON.stringify(options), () => hex(api.hash('sha256','abc',options)));
+  }
+  for (const input of [undefined, null, false, 3, {}, new ArrayBuffer(1)]) {
+    observe('one-shot invalid input '+String(input), () => api.hash('sha256',input));
+  }
+  for (const length of [0, 8, 32]) {
+    observe('one-shot shake '+length, () => api.hash('shake128','abc',{outputLength:length}));
+  }
+  observe('one-shot option getter order', () => {
+    const events=[];
+    const result=api.hash('sha256','abc',{
+      get outputLength(){events.push('length');return undefined;},
+      get outputEncoding(){events.push('encoding');return 'hex';},
+      get functionName(){events.push('function');return undefined;},
+      get customization(){events.push('customization');return undefined;}
+    });
+    return [events,result];
+  });
   for (const algorithm of ['sha256', 'sha512', 'sha1', 'md5']) {
     observe('hash '+algorithm, () => createHash(algorithm).update('é水🦄').update(new Uint8Array([0, 255, 128])).digest('hex'));
     observe('constructor '+algorithm, () => Hash(algorithm).update('abc').digest('base64'));
@@ -34,6 +59,18 @@
     });
   });
   observe('options retained', () => { const opts = {}; return new Hash('sha256', opts)._options === opts; });
+  observe('lazy stream state', () => {
+    const h=createHash('sha256',{highWaterMark:7});
+    const before=[Object.hasOwn(h,'_readableState'),Object.hasOwn(h,'_writableState')];
+    const writable=h._writableState;
+    return [before,Object.hasOwn(h,'_readableState'),Object.hasOwn(h,'_writableState'),writable.decodeStrings,h.readableHighWaterMark,h.writableHighWaterMark];
+  });
+  observe('stream writes', () => {
+    const h=createHash('sha256'); const values=[];
+    h.on('data',value=>values.push(value.toString('hex')));
+    h.write('ab'); h.end('c');
+    return values;
+  });
   observe('update receiver', () => { const h = new Hash('sha256'); return h.update('a') === h; });
   observe('subclass', () => { class Custom extends Hash {} const h = new Custom('sha256'); return [h instanceof Custom, h instanceof Hash, h.update('x').digest('hex')]; });
   for (const encoding of [undefined, 'hex', 'base64', 'base64url', 'latin1', 'buffer', 'bogus', false, 0, null]) {
@@ -116,6 +153,7 @@
       events.push([m instanceof api.Hmac,m instanceof Hmac,m.update('abc').digest('hex')]);
     }
     for(let i=0;i<2;i++) events.push(createHash('shake128').update('abc').digest('hex'));
+    events.push(api.hash('shake256','abc'));
     return events;
   });
   return out.map(item => JSON.stringify(item)).join('\n');

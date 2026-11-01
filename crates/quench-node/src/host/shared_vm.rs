@@ -593,8 +593,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterAsyncOwner" (1) => crate::modules::emitter_async_resource_shared_vm::owner,
         method "nodeErrorToString" (0) => crate::modules::node_errors_shared_vm::to_string,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
-        #[cfg(quench_openssl_provider)]
-        method "utilDeprecatedCall" (0) => crate::modules::util_deprecate_shared_vm::call,
         method "styleText" (2) => crate::modules::util_style_shared_vm::style_text,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
@@ -980,10 +978,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoHashBinding" (0) => crate::modules::crypto_hash_shared_vm::binding,
         #[cfg(quench_openssl_provider)]
-        #[cfg(test)]
-        method "cryptoHashPublicInstall" (2) => crate::modules::crypto_hash_source_shared_vm::install_binding,
-        #[cfg(quench_openssl_provider)]
         method "cryptoPublicHash" (2) => crate::modules::crypto_hash_source_shared_vm::hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicOneShot" (3) => crate::modules::crypto_hash_source_shared_vm::one_shot,
         #[cfg(quench_openssl_provider)]
         method "cryptoPublicHmac" (3) => crate::modules::crypto_hash_source_shared_vm::hmac,
         #[cfg(quench_openssl_provider)]

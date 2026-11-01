@@ -179,6 +179,9 @@ fn cache(
     cache: Option<RootId>,
 ) -> Result<(), RootedError> {
     if let Some(cache) = cache {
+        if c.rooted_value(cache).is_some_and(|value| value.is_undefined()) {
+            return Ok(());
+        }
         let key = c.string_rooted(name);
         let value = c.number(f64::from(id));
         if !c.set_property_rooted(cache, key, value, cache)? {

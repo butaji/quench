@@ -143,8 +143,6 @@ pub(crate) mod util_mime_shared_vm;
 pub(crate) mod util_module_shared_vm;
 pub(crate) mod util_parse_args_shared_vm;
 pub(crate) mod util_shared_vm;
-#[cfg(quench_openssl_provider)]
-pub(crate) mod util_deprecate_shared_vm;
 pub mod util_strip;
 pub(crate) mod util_style_shared_vm;
 pub(crate) mod util_system_error_shared_vm;

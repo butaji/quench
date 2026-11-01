@@ -2200,25 +2200,20 @@ fn cached_builtin(
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
     // `fs` installs its library policy with the rest of its members (`initialize_module`).
-    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
+    if matches!(builtin, BuiltinModule::Events) {
         let policy = context.with_startup_intrinsics(|context| {
-            if matches!(builtin, BuiltinModule::Events) {
-                let listener = get(context, module, "addAbortListener")?;
-                let data = context.array_rooted(&[module, listener])?;
-                let initialize = context.host_function_with_data(
-                    crate::host::shared_vm::operation("eventsOnInitialize"),
-                    data,
-                )?;
-                return context.define_lazy_data_properties_rooted(
-                    module,
-                    &["on"],
-                    true,
-                    initialize,
-                );
-            }
-            let setter =
-                node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
-            set(context, module, "setEngine", setter)
+            let listener = get(context, module, "addAbortListener")?;
+            let data = context.array_rooted(&[module, listener])?;
+            let initialize = context.host_function_with_data(
+                crate::host::shared_vm::operation("eventsOnInitialize"),
+                data,
+            )?;
+            context.define_lazy_data_properties_rooted(
+                module,
+                &["on"],
+                true,
+                initialize,
+            )
         });
         if let Err(error) = policy {
             roots.borrow_mut().builtin_cache.remove(&key);

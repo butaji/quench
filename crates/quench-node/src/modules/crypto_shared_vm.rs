@@ -1,8 +1,5 @@
-//! The hash surface used by the pinned framework package paths.
-//!
-//! `etag` calls `createHash("sha1").update(string, "utf8").digest("base64")`.
-//! Keep that Node-facing wrapper in the guest realm and the digest primitive
-//! in Rust; it shares the SHA-1 implementation with the legacy Node module.
+//! Node crypto namespace and native cryptographic operations.
+//! Public digest policy shares the canonical native hash binding and byte codecs.
 
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
@@ -53,142 +50,26 @@ pub(crate) fn global_crypto(
     get(context, module, "webcrypto")
 }
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-    transform: RootId,
-) -> Result<RootId, RootedError> {
-    #[cfg(quench_openssl_provider)]
-    let (webcrypto, random_values) = {
-        let getter =
-            context.host_function(crate::host::shared_vm::operation("cryptoWebNamespace"))?;
-        let random = crate::host::shared_vm::commonjs::node_library_export(
-            context,
-            "crypto.js",
-            "internal/crypto/random.js",
-            "getRandomValues",
-        )?;
-        (getter, random)
-    };
-    #[cfg(not(quench_openssl_provider))]
-    let (webcrypto, random_values) = (context.undefined(), context.undefined());
-    let factory = crate::host::removed_javascript("node:crypto/shared.js")?;
-    let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
-    let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
-    let mac_digest = context.host_function(crate::host::shared_vm::operation("cryptoMacDigest"))?;
-    let sign = context.host_function(crate::host::shared_vm::operation("cryptoSign"))?;
-    let verify = context.host_function(crate::host::shared_vm::operation("cryptoVerify"))?;
-    let random_bytes =
-        context.host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
-    let pbkdf2 = context.host_function(crate::host::shared_vm::operation("cryptoPbkdf2"))?;
-    let scrypt = context.host_function(crate::host::shared_vm::operation("cryptoScrypt"))?;
-    let cipher_process =
-        context.host_function(crate::host::shared_vm::operation("cryptoCipherProcess"))?;
-    let generate_rsa_key_pair = context.host_function(crate::host::shared_vm::operation(
-        "cryptoGenerateRsaKeyPair",
-    ))?;
-    let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
-    let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
-    let secret_material =
-        context.host_function(crate::host::shared_vm::operation("cryptoSecretMaterial"))?;
-    let native_constants = super::crypto_constants::binding(context)?;
-    #[cfg(quench_openssl_provider)]
-    let provider_binding = super::tls_shared_vm::facade::binding(context)?;
-    #[cfg(quench_openssl_provider)]
-    let get_macs_native = get(context, provider_binding, "getMacs")?;
-    #[cfg(not(quench_openssl_provider))]
-    let get_macs_native = context.undefined();
-    #[cfg(quench_openssl_provider)]
-    let argon2_module = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "crypto.js",
-        "internal/crypto/argon2.js",
-    )?;
-    #[cfg(quench_openssl_provider)]
-    let argon2 = get(context, argon2_module, "argon2")?;
-    #[cfg(quench_openssl_provider)]
-    let argon2_sync = get(context, argon2_module, "argon2Sync")?;
-    #[cfg(quench_openssl_provider)]
-    let kem_module = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "crypto.js",
-        "internal/crypto/kem.js",
-    )?;
-    #[cfg(quench_openssl_provider)]
-    let kem_encapsulate = get(context, kem_module, "encapsulate")?;
-    #[cfg(quench_openssl_provider)]
-    let kem_decapsulate = get(context, kem_module, "decapsulate")?;
-    #[cfg(not(quench_openssl_provider))]
-    let (argon2, argon2_sync) = (context.undefined(), context.undefined());
-    let capture_brands =
-        context.host_function(crate::host::shared_vm::operation("cryptoCaptureKeyBrands"))?;
-    let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
-    #[cfg(quench_openssl_provider)]
-    let diffie_hellman =
-        context.host_function(crate::host::shared_vm::operation("cryptoDiffieHellman"))?;
-    #[cfg(not(quench_openssl_provider))]
-    let diffie_hellman = context.undefined();
-    let handle_symbol =
-        context.host_function(crate::host::shared_vm::operation("cryptoHandleSymbol"))?;
-    let x509_metadata =
-        context.host_function(crate::host::shared_vm::operation("cryptoX509Metadata"))?;
-    let x509_check_host =
-        context.host_function(crate::host::shared_vm::operation("cryptoX509CheckHost"))?;
-    let global = context.global_root()?;
-    let buffer = get(context, global, "Buffer")?;
-    let undefined = context.undefined();
-    let module = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            hash,
-            hmac,
-            mac_digest,
-            sign,
-            verify,
-            buffer,
-            random_bytes,
-            pbkdf2,
-            scrypt,
-            transform,
-            cipher_process,
-            generate_rsa_key_pair,
-            rsa_crypt,
-            ecdh,
-            diffie_hellman,
-            set_engine,
-            capture_brands,
-            handle_symbol,
-            webcrypto,
-            random_values,
-            secret_material,
-            native_constants,
-            get_macs_native,
-            argon2,
-            argon2_sync,
-            x509_metadata,
-            x509_check_host,
-        ],
-    )?;
-    #[cfg(quench_openssl_provider)]
-    {
-        let get_fips = get(context, provider_binding, "getFipsCrypto")?;
-        set(context, module, "getFips", get_fips)?;
-        let set_fips = get(context, provider_binding, "setFipsCrypto")?;
-        set(context, module, "setFips", set_fips)?;
-        set(context, module, "encapsulate", kem_encapsulate)?;
-        set(context, module, "decapsulate", kem_decapsulate)?;
-        super::crypto_hash_source_shared_vm::install(context, module, transform)?;
-        let keygen = crate::host::shared_vm::commonjs::node_library_module(
-            context,
-            "crypto.js",
-            "internal/crypto/keygen.js",
-        )?;
-        for name in ["generateKey", "generateKeySync"] {
-            let function = get(context, keygen, name)?;
-            set(context, module, name, function)?;
-        }
-    }
+#[cfg(quench_openssl_provider)]
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>, transform: RootId) -> Result<RootId, RootedError> {
+    let module = context.object_rooted()?;
+    super::crypto_hash_source_shared_vm::install(context, module, transform)?;
+    let setter = context.host_function_named(crate::host::shared_vm::operation("cryptoSetEngine"), "setEngine")?;
+    context.define_named_data_property_rooted(module, "setEngine", setter, true, true, true)?;
+    let constants = super::crypto_constants::binding(context)?;
+    context.define_named_data_property_rooted(module, "constants", constants, false, true, false)?;
+    let getter = context.host_function(crate::host::shared_vm::operation("cryptoWebNamespace"))?;
+    let key = context.string_rooted("webcrypto");
+    context.define_property_fields_rooted(module, key, quench_runtime::DescriptorFields {
+        get: Some(getter), enumerable: Some(true), configurable: Some(false), ..Default::default()
+    })?;
     Ok(module)
+}
+
+#[cfg(not(quench_openssl_provider))]
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>, transform: RootId) -> Result<RootId, RootedError> {
+    let _ = (context, transform);
+    crate::host::removed_javascript("node:crypto/shared.js")
 }
 
 /// Parse the X509 fields used by Node's TLS helpers. The certificate remains
