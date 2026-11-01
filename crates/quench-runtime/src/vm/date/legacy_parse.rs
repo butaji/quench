@@ -167,7 +167,7 @@ impl<'a> Tokenizer<'a> {
         }
         if ch == '(' {
             let mut balance = 0usize;
-            while let Some(ch) = self.chars.next() {
+            for ch in self.chars.by_ref() {
                 match ch {
                     '(' => balance += 1,
                     ')' => balance -= 1,

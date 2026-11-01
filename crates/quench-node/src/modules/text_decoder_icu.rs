@@ -179,7 +179,8 @@ impl Converter {
                 &mut status,
             )
         };
-        let result = if status <= 0 {
+        
+        if status <= 0 {
             let written = unsafe { target.offset_from(begin) };
             if written < 0 || written as usize > limit {
                 Err(())
@@ -195,8 +196,7 @@ impl Converter {
             }
         } else {
             Err(())
-        };
-        result
+        }
     }
 }
 
@@ -331,8 +331,10 @@ pub(crate) fn transcode(bytes: &[u8], from: &str, to: &str) -> Result<Vec<u8>, i
     }
     if from == "utf16le" && to == "utf8" {
         let units = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .as_chunks::<{ std::mem::size_of::<u16>() }>()
+            .0
+            .iter()
+            .map(|b| u16::from_le_bytes(*b))
             .collect::<Vec<_>>();
         let text = String::from_utf16(&units).map_err(|_| INVALID_CHARACTER)?;
         if text.is_empty() {
@@ -344,8 +346,10 @@ pub(crate) fn transcode(bytes: &[u8], from: &str, to: &str) -> Result<Vec<u8>, i
     let mut status = 0;
     if from == "utf16le" && to != "utf16le" {
         let units = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .as_chunks::<{ std::mem::size_of::<u16>() }>()
+            .0
+            .iter()
+            .map(|b| u16::from_le_bytes(*b))
             .collect::<Vec<_>>();
         let length = i32::try_from(units.len()).map_err(|_| ILLEGAL_ARGUMENT)?;
         let mut output = vec![0_u8; units.len()];

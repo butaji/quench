@@ -342,13 +342,13 @@ impl LaneView {
                 tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
                 lane_backedge_count: site.lane_backedge_count.get(),
                 analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
-                compile_attempts: u64::from(site.compile_attempts.get()),
-                compile_successes: u64::from(site.compile_successes.get()),
+                compile_attempts: site.compile_attempts.get(),
+                compile_successes: site.compile_successes.get(),
                 native_entry_attempts: site.native_entry_attempts.get(),
                 native_region_runs: site.native_region_runs.get(),
                 entry_guard_misses: site.entry_guard_misses.get(),
-                exits: u64::from(site.native_exits.get()),
-                widenings: u64::from(site.widenings.get()),
+                exits: site.native_exits.get(),
+                widenings: site.widenings.get(),
             }
         }).collect::<Vec<_>>();
         sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
@@ -2050,7 +2050,7 @@ fn profile_script_call_target<H: Host>(
 
 /// The handler of the record at `ip`.
 #[inline(always)]
-fn handler<H: Host>(ip: Ip) -> Handler {
+fn handler(ip: Ip) -> Handler {
     #[cfg(feature = "profile-lane-exits")]
     super::lane_exits::count_record(ip.addr(), std::mem::size_of::<LaneInstruction>());
     // SAFETY: a view is only run by the VM type whose handlers built it, and
@@ -2065,7 +2065,7 @@ macro_rules! next {
         let ip: Ip = $ip;
         let view: Carried = $view;
         let _ = $cx;
-        return handler::<H>(ip)(
+        return handler(ip)(
             $r,
             ip,
             view.memory.bytes,
@@ -4080,7 +4080,8 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::
 fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
-    let value = if env.is_deleted() {
+    
+    if env.is_deleted() {
         let frame = unsafe { (*cx).frame };
         let value = vm.cached_direct_capture(frame, depth, slot);
         if depth == 0
@@ -4104,8 +4105,7 @@ fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -
                 }
                 vm.owned_capture(slots, root, slot)
             })
-    };
-    value
+    }
 }
 
 script_handler! {
@@ -12984,9 +12984,7 @@ fn forwarded_resolution<H: Host>(
     }
     let prototype = vm.heap.object_record(plan.prototype)?;
     let (method_slot, found) = data_slot(prototype, method.method.0)?;
-    let Some(FunctionRecord { object, .. }) = vm.heap.function(function) else {
-        return None;
-    };
+    let FunctionRecord { object, .. } = vm.heap.function(function)?;
     if found != function || vm.shape_slot(object.shape(), method.apply.0).is_some() {
         return None;
     }
@@ -13026,9 +13024,7 @@ fn resolved_forwarded_method<H: Host>(vm: &Vm<H>, callee: Value, plan: &Construc
     let prototype = vm.heap.object_record(plan.prototype)?;
     // SAFETY: the plan's proof keeps the prototype's shape, which holds the slot.
     let function = unsafe { vm.heap.property_get_shaped(prototype, usize::from(resolution.method_slot)) }?;
-    let Some(FunctionRecord { object, .. }) = vm.heap.function(function) else {
-        return None;
-    };
+    let FunctionRecord { object, .. } = vm.heap.function(function)?;
     if object.shape() != resolution.method_shape || object.proto() != resolution.apply_holder {
         return None;
     }
@@ -13378,7 +13374,7 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
     if let Some(entry) = vm.script_call_entry(callee) {
         // SAFETY: the entry is read before anything else touches the cache.
         let target = unsafe { &*entry };
-        return admits(target).then(|| *target);
+        return admits(target).then_some(*target);
     }
     if vm.cross_call_entry(callee).is_some() {
         return None;
@@ -15724,7 +15720,7 @@ fn lane_push_frame_call<H: Host>(
     // moves nor frees before it copies them; a list outlives the push.
     let arguments: *const [Value] = match passed {
         FrameCallArguments::Window(skip) => unsafe {
-            std::slice::from_raw_parts(r.0.add(usize::from(window) + skip), usize::from(argc) - skip)
+            std::ptr::slice_from_raw_parts(r.0.add(usize::from(window) + skip), usize::from(argc) - skip)
         },
         FrameCallArguments::List(list) => list,
     };
@@ -15949,7 +15945,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
     // SAFETY: the construction's window is registers of the caller frame, which the push
     // neither moves nor frees before it copies them.
-    let arguments: *const [Value] = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.c)), argc) };
+    let arguments: *const [Value] = unsafe { std::ptr::slice_from_raw_parts(r.0.add(usize::from(i.c)), argc) };
     vm.construct_target = Some(super::activation::ConstructionTarget { callee, new_target: callee });
     // A constructor of another program runs in its own, which the push makes active and the
     // loop's executing one sets aside, as `lane_push_frame_call` pushes a call.
@@ -15990,13 +15986,12 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 vm.frames[callee_frame].program,
                 vm.frames[callee_frame].function,
             );
-            if !handoff {
-                if let super::compiled::JsTierFrameEntry::ContinueAt(return_pc) =
+            if !handoff
+                && let super::compiled::JsTierFrameEntry::ContinueAt(return_pc) =
                     vm.js_tier_frame_entry(code, callee_frame, false)
                 {
                     vm.frames[callee_frame].pc = return_pc;
                 }
-            }
             let callee_ip = lane_enter_script_frame(cx, callee_frame);
             if handoff {
                 exit(callee_ip)
@@ -17833,7 +17828,7 @@ fn install_loop_sites<'live, H: Host>(
                         std::cell::OnceCell::new(),
                         false,
                         Some(failure),
-                        diagnostics.then(|| vec![failure.pc]).unwrap_or_default(),
+                        if diagnostics { vec![failure.pc] } else { Default::default() },
                     )
                 }
                 Err(failure) => {
@@ -18741,7 +18736,12 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn lane_runs(view: *const LaneView, pc: usize) -> bool {
         // SAFETY: a non-null view has an entry for every validated PC.
-        crate::DYNAMIC_EXECUTION_ENABLED && !view.is_null() && unsafe { *(&(*view).entries).get_unchecked(pc) }
+        crate::DYNAMIC_EXECUTION_ENABLED
+            && !view.is_null()
+            && unsafe {
+                let entries: &[bool] = &(*view).entries;
+                *entries.get_unchecked(pc)
+            }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
@@ -19155,7 +19155,7 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
             ((*cx).memory, (*cx).registers, acc)
         };
-        let next = handler::<H>(ip)(
+        let next = handler(ip)(
             registers,
             ip,
             view.bytes,

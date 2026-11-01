@@ -210,7 +210,7 @@ fn run_parallel_cases(
                     };
                     outcomes.lock().expect("case results poisoned")[index] = Some(result);
                     let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 100 == 0 || count == files.len() {
+                    if count.is_multiple_of(100) || count == files.len() {
                         eprintln!("run-all progress={count}/{} jobs={jobs}", files.len());
                     }
                 })
@@ -663,7 +663,7 @@ fn update_ratchet_at(
     let current_passes = files
         .iter()
         .zip(outcomes)
-        .filter_map(|(path, outcome)| outcome.is_ok().then(|| report_path(path, &test_root)))
+        .filter(|&(_path, outcome)| outcome.is_ok()).map(|(path, _outcome)| report_path(path, &test_root))
         .collect::<HashSet<_>>();
     let mut regressions = Vec::new();
     if path.exists() {

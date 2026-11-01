@@ -437,7 +437,7 @@ fn load_checkpoint(
     {
         let line = std::str::from_utf8(line)
             .map_err(|error| format!("checkpoint line {}: {error}", line_index + 1))?;
-        let record: serde_json::Value = serde_json::from_str(&line)
+        let record: serde_json::Value = serde_json::from_str(line)
             .map_err(|error| format!("checkpoint line {}: {error}", line_index + 1))?;
         if record
             .get("inventory_hash")

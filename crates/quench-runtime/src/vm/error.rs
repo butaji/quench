@@ -366,7 +366,8 @@ impl<H: Host> Vm<H> {
             let prepare_atom = self.intern_atom("prepareStackTrace");
             let prepare = self.get_property(program, constructor, prepare_atom)?;
             roots.push(self.heap.root(prepare));
-            let result = (|| {
+            
+            (|| {
                 if self.is_function(prepare) {
                     let sites = self.error_call_site_array(&records)?;
                     let sites_root = self.heap.root(sites);
@@ -380,8 +381,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.error_default_stack(program, receiver_root, &records)
                 }
-            })();
-            result
+            })()
         })();
         if let Ok(value) = outcome {
             let target = self.heap.root_value(receiver_root).unwrap();
@@ -418,7 +418,7 @@ impl<H: Host> Vm<H> {
 
     fn error_call_site_array(&mut self, records: &[CallSiteRecord]) -> Result<Value, JsError> {
         let mut roots = Vec::with_capacity(records.len());
-        let result = (|| {
+        let result = {
             let mut sites = Vec::with_capacity(records.len());
             for record in records {
                 let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
@@ -438,7 +438,7 @@ impl<H: Host> Vm<H> {
                     sites,
                 ),
             }))
-        })();
+        };
         for root in roots {
             self.heap.release_root(root);
         }
@@ -548,13 +548,10 @@ impl<H: Host> Vm<H> {
             return Ok(Some(JsString::from_str("Proxy")));
         }
         if matches!(self.heap.function(receiver), Some(FunctionRecord { kind, .. }) if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)))
-        {
-            if let Some(name) = self.debug_function_name(receiver) {
-                if !name.units().is_empty() {
+            && let Some(name) = self.debug_function_name(receiver)
+                && !name.units().is_empty() {
                     return Ok(Some(name));
                 }
-            }
-        }
         Ok(self.constructor_name(receiver))
     }
 
@@ -1021,14 +1018,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(object) = self.object_data_mut(receiver) {
-            if matches!(
+        if let Some(object) = self.object_data_mut(receiver)
+            && matches!(
                 object.stack_data(),
                 Some(StackData::Captured { .. } | StackData::Formatted(_))
             ) {
                 object.set_stack_data(StackData::Formatted(value));
             }
-        }
         Ok(Value::UNDEFINED)
     }
 
@@ -1162,7 +1158,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn enter_stack(&mut self) -> Result<crate::stack::StackGuard, JsError> {
-        crate::stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())
+        crate::stack::StackGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())
     }
 
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {

@@ -697,6 +697,7 @@ impl<H: Host> Vm<H> {
 
     /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any
     /// argument is another value.
+    #[expect(clippy::wrong_self_convention, reason = "named for `String.fromCharCode`; allocates its result on the VM heap")]
     pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
         let units = args
             .iter()

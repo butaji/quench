@@ -1636,7 +1636,8 @@ pub(crate) fn end(
             Ok(context.undefined())
         }
         Ok(_) => Ok(context.undefined()),
-        Err((client, error)) => {
+        Err(failure) => {
+            let (client, error) = *failure;
             context.release_root(client.request_root);
             Err(RootedError::host(error))
         }
@@ -1660,7 +1661,7 @@ enum StartOutcome {
 fn start_client(
     host: &mut SharedNodeState,
     mut client: super::state::Client,
-) -> Result<StartOutcome, (super::state::Client, String)> {
+) -> Result<StartOutcome, Box<(super::state::Client, String)>> {
     if client.origin.pooled() {
         // Node's agent takes a socket from `freeSockets[name]` for this origin and
         // destroys one it cannot use (peer closed, stray bytes, mid-delivery).
@@ -1694,7 +1695,7 @@ fn start_client(
             host.http.clients.insert(socket, client);
             Ok(StartOutcome::Started { reused: false })
         }
-        Err(error) => Err((client, error)),
+        Err(error) => Err(Box::new((client, error))),
     }
 }
 
@@ -1733,9 +1734,9 @@ pub(crate) fn drain_pending(
             // Capacity disappeared between the check and the start; the client is
             // back in the queue.
             Ok(StartOutcome::Queued) => break,
-            Err((client, error)) => {
+            Err(failure) => {
                 progressed = true;
-                failures.push((client, error));
+                failures.push(*failure);
             }
         }
     }
@@ -2062,15 +2063,12 @@ pub(crate) fn read_headers(
         return Ok(Vec::new());
     };
     let items = context.array_like_values_rooted(headers)?;
-    let pairs = items.chunks_exact(HEADER_PAIR_FIELDS);
-    if !pairs.remainder().is_empty() {
+    let (pairs, remainder) = items.as_chunks::<HEADER_PAIR_FIELDS>();
+    if !remainder.is_empty() {
         return Err(RootedError::host("HTTP header pair list is malformed"));
     }
     let mut result = Vec::with_capacity(pairs.len());
-    for pair in pairs {
-        let &[name, value] = pair else {
-            unreachable!("chunks_exact yields name and value pairs");
-        };
+    for &[name, value] in pairs {
         let name = context.to_string(name)?;
         let value = context.to_string(value)?;
         if name.is_empty()

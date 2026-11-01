@@ -1072,9 +1072,7 @@ impl RangeSearcher<'_> {
                     return None;
                 }
                 if let Some(literal) = complete.required_bytes.as_ref() {
-                    if literal.find(&bytes[start..]).is_none() {
-                        return None;
-                    }
+                    literal.find(&bytes[start..])?;
                 }
                 let budget = linear.then(|| backtrack::Program::budget(bytes.len()));
                 match program.find_bounds(bytes, start, false, budget) {
@@ -1766,7 +1764,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 greedy: quantifier.greedy,
             }
         }
-        ast::Term::Character(character) => lower_character(character, &lowering.source),
+        ast::Term::Character(character) => lower_character(character, lowering.source),
         ast::Term::Dot(_) => Expr::Dot,
         ast::Term::CharacterClassEscape(escape) => Expr::Class(ClassExpr {
             negative: false,
@@ -1778,7 +1776,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
             kind: ClassKind::Union,
             items: vec![ClassItem::property(property)],
         }),
-        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, &lowering.source)),
+        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering.source)),
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
             lowering.next_capture += 1;

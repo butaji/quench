@@ -641,7 +641,7 @@ impl<H: Host> Vm<H> {
             }
         };
         let result = if let Some(species) = species {
-            if !self.is_constructable(p, species) {
+            if !self.is_constructable(species) {
                 return Err(self.type_error(p, "ArrayBuffer species is not a constructor".into()));
             }
             self.construct_value_with_new_target(
@@ -917,14 +917,13 @@ impl<H: Host> Vm<H> {
         if requested < current_length || requested > max_length {
             return Err(self.range_error(p, "SharedArrayBuffer grow length is out of range".into()));
         }
-        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(this) {
-            if let Some(backing) = bytes.shared_backing() {
+        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(this)
+            && let Some(backing) = bytes.shared_backing() {
                 backing
                     .grow(requested)
                     .map_err(|_| self.range_error(p, "SharedArrayBuffer grow failed".into()))?;
                 return Ok(Value::UNDEFINED);
             }
-        }
         let (before, after) = {
             let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
                 unreachable!("grow receiver validated before mutation");

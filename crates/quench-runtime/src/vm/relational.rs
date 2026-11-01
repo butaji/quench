@@ -243,9 +243,7 @@ impl<H: Host> Vm<H> {
     /// `ordinary_instanceof_walk`.
     #[inline(always)]
     pub(super) fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
-        let Some(FunctionRecord { kind, object, .. }) = self.heap.function(constructor) else {
-            return None;
-        };
+        let FunctionRecord { kind, object, .. } = self.heap.function(constructor)?;
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
             return None;
         }
@@ -300,9 +298,7 @@ impl<H: Host> Vm<H> {
     /// `ordinary_instanceof` in full: whatever its steady case leaves.
     #[inline(never)]
     fn ordinary_instanceof_walk(&mut self, value: Value, constructor: Value) -> Option<bool> {
-        let Some(FunctionRecord { kind, object, .. }) = self.heap.function(constructor) else {
-            return None;
-        };
+        let FunctionRecord { kind, object, .. } = self.heap.function(constructor)?;
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
             return None;
         }

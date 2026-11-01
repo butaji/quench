@@ -443,7 +443,7 @@ impl<H: Host> Vm<H> {
                 value,
                 args.get(1).copied().unwrap_or(Value::UNDEFINED),
             )?
-            .map(|value| value as i32);
+            .map(|value| value);
             let args = [
                 Value::number(f64::from(year)),
                 Value::number(f64::from(month)),
@@ -1094,7 +1094,7 @@ impl<H: Host> Vm<H> {
                 1,
                 calendar_fields
                     .as_ref()
-                    .map_or(super::temporal_date::ISO_MONTHS_PER_YEAR as i32, |fields| {
+                    .map_or(super::temporal_date::ISO_MONTHS_PER_YEAR, |fields| {
                         fields.months_in_year as i32
                     }),
             )

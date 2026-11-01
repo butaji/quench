@@ -430,7 +430,7 @@ fn parse_trailer_lines(bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
         trailers.push((
             name,
             value
-                .trim_start_matches(|character| character == ' ' || character == '\t')
+                .trim_start_matches([' ', '\t'])
                 .to_owned(),
         ));
         start += end + 2;
@@ -740,7 +740,7 @@ fn decode_chunked(bytes: &[u8]) -> ChunkedBody {
                 trailers.push((
                     name.to_owned(),
                     value
-                        .trim_start_matches(|character| character == ' ' || character == '\t')
+                        .trim_start_matches([' ', '\t'])
                         .to_owned(),
                 ));
             }

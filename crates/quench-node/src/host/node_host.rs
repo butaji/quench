@@ -294,6 +294,7 @@ impl SharedNodeState {
         self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
+        self.diagnostics = Default::default();
         self.buffer_pool = Default::default();
         self.messaging.reset();
         #[cfg(not(quench_node_cares))]

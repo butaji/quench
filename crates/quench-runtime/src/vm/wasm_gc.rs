@@ -441,8 +441,8 @@ impl<H: Host> Vm<H> {
         let source =
             self.wasm_array_segment_values(kind, source, field.element_type, input, count)?;
         // Reference type admission is complete before the first mutation.
-        if let ArraySegmentValues::Elements { source, range } = &source {
-            if !range.is_empty() {
+        if let ArraySegmentValues::Elements { source, range } = &source
+            && !range.is_empty() {
                 let Some(Cell::WasmElements(values)) = self.heap.get(*source) else {
                     unreachable!("checked element segment")
                 };
@@ -450,7 +450,6 @@ impl<H: Host> Vm<H> {
                     self.wasm_storage_value(*value, field.element_type, owner)?;
                 }
             }
-        }
         for (index, destination) in output.enumerate() {
             let value = self.wasm_array_segment_value(&source, index);
             let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {

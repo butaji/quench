@@ -351,9 +351,7 @@ impl<H: Host> Vm<H> {
             None | Some(Value::UNDEFINED) => None,
             Some(value) => {
                 let value = self.to_number(p, value)?;
-                let digits = if value.is_nan() || value == 0.0 {
-                    0
-                } else if !number.is_finite() {
+                let digits = if value.is_nan() || value == 0.0 || !number.is_finite() {
                     0
                 } else if !value.is_finite() || value.trunc() < 0.0 {
                     return Err(self.range_error(p, "toExponential() argument out of range".into()));

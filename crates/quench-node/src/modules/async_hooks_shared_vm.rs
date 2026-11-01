@@ -981,14 +981,14 @@ pub(crate) fn initialize_resource(
         .rooted_value(options)
         .is_some_and(|v| v.is_undefined())
     {
-        context.number(trigger_parent as f64)
+        context.number(trigger_parent)
     } else {
         let trigger = get(context, options, "triggerAsyncId")?;
         let trigger = if context
             .rooted_value(trigger)
             .is_some_and(|v| v.is_undefined())
         {
-            context.number(trigger_parent as f64)
+            context.number(trigger_parent)
         } else {
             get(context, options, "triggerAsyncId")?
         };
@@ -1000,8 +1000,7 @@ pub(crate) fn initialize_resource(
     if !number.is_some_and(|n| {
         n.is_finite()
             && n.fract() == 0.0
-            && n >= -1.0
-            && n <= super::util_shared_vm::MAX_SAFE_INTEGER
+            && (-1.0..=super::util_shared_vm::MAX_SAFE_INTEGER).contains(&n)
     }) {
         let received = super::util_shared_vm::range_error_received(context, trigger)?;
         let error =

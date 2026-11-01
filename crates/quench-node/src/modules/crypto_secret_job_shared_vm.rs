@@ -177,7 +177,7 @@ fn generate(bits: u32, mode: u32) -> Outcome {
     };
     let mut material = Material::new(vec![0; bytes as usize]);
     openssl::rand::rand_priv_bytes(&mut material).map_err(Failure::Crypto)?;
-    if mode == WEBCRYPTO && bits % BITS_PER_BYTE != 0 {
+    if mode == WEBCRYPTO && !bits.is_multiple_of(BITS_PER_BYTE) {
         if let Some(last) = material.last_mut() {
             *last &= u8::MAX << (BITS_PER_BYTE - bits % BITS_PER_BYTE);
         }
@@ -217,11 +217,10 @@ fn aes_cipher(request: AesRequest) -> Result<Vec<u8>, openssl::error::ErrorStack
         &request.key,
         Some(&request.iv),
     )?;
-    if kind == 2 {
-        if !request.additional_data.is_empty() {
+    if kind == 2
+        && !request.additional_data.is_empty() {
             crypter.aad_update(&request.additional_data)?;
         }
-    }
 
     let (input, decrypt_tag) = if kind == 2 && !request.encrypt {
         let split = request.data.len().saturating_sub(request.tag_length);
@@ -268,29 +267,25 @@ fn aes_key_wrap(request: AesRequest) -> Result<Vec<u8>, openssl::error::ErrorSta
     } else {
         input_blocks.saturating_sub(1)
     };
-    if request.data.len() % 8 != 0 || n < 2 {
+    if !request.data.len().is_multiple_of(8) || n < 2 {
         return Err(openssl::error::ErrorStack::get());
     }
-    let mut blocks = request
-        .data
-        .chunks_exact(8)
-        .map(|chunk| <[u8; 8]>::try_from(chunk).expect("chunk is eight bytes"))
-        .collect::<Vec<_>>();
+    let mut blocks = request.data.as_chunks::<8>().0.to_vec();
     if request.encrypt {
         let mut a = [0xa6u8; 8];
         let mut r = blocks;
         for j in 0..6u64 {
-            for i in 0..n {
+            for (i, half) in r.iter_mut().enumerate() {
                 let mut block = [0u8; 16];
                 block[..8].copy_from_slice(&a);
-                block[8..].copy_from_slice(&r[i]);
+                block[8..].copy_from_slice(half);
                 let mut encrypted = transform(&block, Mode::Encrypt)?;
                 let t = j * n as u64 + i as u64 + 1;
                 for (byte, mask) in encrypted[..8].iter_mut().zip(t.to_be_bytes()) {
                     *byte ^= mask;
                 }
                 a.copy_from_slice(&encrypted[..8]);
-                r[i].copy_from_slice(&encrypted[8..]);
+                half.copy_from_slice(&encrypted[8..]);
             }
         }
         let mut output = Vec::with_capacity((n + 1) * 8);

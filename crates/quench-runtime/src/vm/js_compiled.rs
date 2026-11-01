@@ -353,10 +353,10 @@ fn number_type_dispatch_reaches(
                 let value = registers
                     .get(usize::from(instruction.register_a()))?
                     .clone()?;
-                *locals.get_mut(usize::from(instruction.local_slot()))? = Some(value);
+                *locals.get_mut(instruction.local_slot())? = Some(value);
             }
             Op::LoadLocal | Op::LoadLocalPlain => {
-                let value = locals.get(usize::from(instruction.local_slot()))?.clone()?;
+                let value = locals.get(instruction.local_slot())?.clone()?;
                 *registers.get_mut(usize::from(instruction.result_register()))? = Some(value);
             }
             Op::Binary
@@ -391,9 +391,7 @@ fn number_type_dispatch_reaches(
             {
                 let left = read(instruction.operand_b(), &registers)?;
                 let right = read(instruction.operand_c(), &registers)?;
-                let Some(equal) = number_dispatch_equal(left, right) else {
-                    return None;
-                };
+                let equal = number_dispatch_equal(left, right)?;
                 let operator = instruction.binary_operator_field();
                 let holds = if operator == BinaryOperator::Inequality as u32
                     || operator == BinaryOperator::StrictInequality as u32
@@ -897,7 +895,8 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 .filter(|parameter| *parameter < function.params)
             {
                 JsJitFieldReceiver::Parameter(parameter)
-            } else if let Some(register) = base.register_index() {
+            } else {
+                let register = base.register_index()?;
                 let capture = captured_registers
                     .get(usize::from(register))
                     .copied()
@@ -906,8 +905,6 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                     return None;
                 }
                 JsJitFieldReceiver::Capture { register, capture }
-            } else {
-                return None;
             };
             if branch_seen && matches!(receiver, JsJitFieldReceiver::Parameter(_)) {
                 // Preserve the existing field entry path for parameter reads
@@ -2065,7 +2062,7 @@ fn compile_number_domain_boolean_tree(
                 }
             }
             Op::StoreLocal | Op::StoreLocalPlain => {
-                let slot = usize::from(instruction.local_slot());
+                let slot = instruction.local_slot();
                 let value = *state.registers.get(usize::from(instruction.register_a()))?;
                 if !branch_value_supported_local(value) {
                     return None;
@@ -2077,7 +2074,7 @@ fn compile_number_domain_boolean_tree(
                 successors.push(pc + 1);
             }
             Op::LoadLocal | Op::LoadLocalPlain => {
-                let slot = usize::from(instruction.local_slot());
+                let slot = instruction.local_slot();
                 let value = *state.locals.get(slot)?;
                 if !branch_value_supported_local(value) {
                     return None;
@@ -2375,7 +2372,7 @@ fn compile_number_domain_boolean_tree(
                 ) {
                     let value = builder.use_var(*variables.get(source)?);
                     builder.def_var(
-                        *local_variables.get(usize::from(instruction.local_slot()))?,
+                        *local_variables.get(instruction.local_slot())?,
                         value,
                     );
                     if let Some(register) = instruction.optional_register_b() {
@@ -2384,7 +2381,7 @@ fn compile_number_domain_boolean_tree(
                 }
             }
             Op::LoadLocal | Op::LoadLocalPlain => {
-                let local = usize::from(instruction.local_slot());
+                let local = instruction.local_slot();
                 if matches!(
                     state.locals.get(local),
                     Some(
@@ -2899,7 +2896,7 @@ fn branch_numeric_operand(
                     };
                     Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
                 }
-                _ => return None,
+                _ => None,
             }
         }
         OperandKind::Constant => {
@@ -3082,9 +3079,7 @@ fn compile_numeric_loop(
                 let relation = (instruction.op() == Op::Binary)
                     .then(|| super::operations::NumberRelation::from_operator(operator))
                     .flatten();
-                let kind = if number_inputs && arithmetic.is_some() {
-                    NumericFlowKind::Number
-                } else if number_inputs && bitwise.is_some() {
+                let kind = if number_inputs && (arithmetic.is_some() || bitwise.is_some()) {
                     NumericFlowKind::Number
                 } else if number_inputs && relation.is_some() {
                     NumericFlowKind::Boolean
@@ -3225,12 +3220,12 @@ fn compile_numeric_loop(
         .collect::<Vec<_>>();
     let interrupt_exit = builder.create_block();
     let interrupt_status = builder.append_block_param(interrupt_exit, isa.pointer_type());
-    for index in 0..params {
+    for (index, &variable) in numeric_variables[..params].iter().enumerate() {
         let offset = i32::try_from(index.checked_mul(std::mem::size_of::<f64>())?).ok()?;
         let value = builder
             .ins()
             .load(types::F64, ir::MemFlagsData::trusted(), arguments, offset);
-        builder.def_var(numeric_variables[index], value);
+        builder.def_var(variable, value);
     }
     builder.ins().jump(*blocks.first()?, &[]);
 
@@ -3312,7 +3307,7 @@ fn compile_numeric_loop(
                 let left = numeric_loop_operand(
                     &mut builder,
                     program,
-                    &state,
+                    state,
                     &numeric_variables,
                     registers,
                     instruction.operand_b(),
@@ -3320,7 +3315,7 @@ fn compile_numeric_loop(
                 let right = numeric_loop_operand(
                     &mut builder,
                     program,
-                    &state,
+                    state,
                     &numeric_variables,
                     registers,
                     instruction.operand_c(),
@@ -3561,7 +3556,7 @@ fn numeric_flow_operand(
         )
         .then_some(NumericFlowKind::Number),
         OperandKind::Local => {
-            let local = usize::try_from(operand.payload()).ok()?;
+            let local = usize::from(operand.payload());
             let kind = *state.get(registers.checked_add(local)?)?;
             matches!(kind, NumericFlowKind::Number | NumericFlowKind::Boolean).then_some(kind)
         }
@@ -3593,7 +3588,7 @@ fn numeric_loop_operand(
             Some(builder.ins().f64const(Ieee64::with_bits(value.to_bits())))
         }
         OperandKind::Local => {
-            let local = registers.checked_add(usize::try_from(operand.payload()).ok()?)?;
+            let local = registers.checked_add(usize::from(operand.payload()))?;
             if state.get(local).copied()? != NumericFlowKind::Number {
                 return None;
             }
@@ -3859,11 +3854,7 @@ fn compile_string_branches(
                 builder.ins().jump(blocks[target]?, &[]);
             }
             Op::JumpBinaryFalse => {
-                let Some(condition) =
-                    comparison(&mut builder, program, instruction, &registers, &state)
-                else {
-                    return None;
-                };
+                let condition = comparison(&mut builder, program, instruction, &registers, &state)?;
                 let fallthrough = pc + 1;
                 let target = instruction.jump_target() as usize;
                 push_string_state(&mut states, fallthrough, state.clone())?;
@@ -4083,9 +4074,7 @@ fn field_reject_layout(function: &Function) -> Option<FieldRejectLayout> {
     {
         return None;
     }
-    let Some(field) = function_instruction(function, 0) else {
-        return None;
-    };
+    let field = function_instruction(function, 0)?;
     if field.op() != Op::GetField
         || field.returns_from_frame()
         || !matches!(

@@ -3050,8 +3050,6 @@ pub(crate) fn set_timeout(
     Ok(context.undefined())
 }
 
-/// Adapt the generic stream completion to Socket's latched destruction outcome.
-
 #[cfg(unix)]
 fn listen_local(
     transport: &mut Transport,

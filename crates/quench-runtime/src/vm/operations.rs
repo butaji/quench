@@ -838,11 +838,13 @@ impl RelationalOperator {
 
     pub(super) fn matches(self, ordering: std::cmp::Ordering) -> bool {
         use std::cmp::Ordering::{Equal, Greater, Less};
-        match (self, ordering) {
-            (Self::LessThan, Less) | (Self::LessEqual, Less | Equal) => true,
-            (Self::GreaterThan, Greater) | (Self::GreaterEqual, Greater | Equal) => true,
-            _ => false,
-        }
+        matches!(
+            (self, ordering),
+            (Self::LessThan, Less)
+                | (Self::LessEqual, Less | Equal)
+                | (Self::GreaterThan, Greater)
+                | (Self::GreaterEqual, Greater | Equal)
+        )
     }
 
     #[inline(always)]
@@ -974,7 +976,7 @@ impl<H: Host> Vm<H> {
             };
             return Err(self.type_error(
                 p,
-                format!("Constructor {constructor} requires 'new'").into(),
+                format!("Constructor {constructor} requires 'new'"),
             ));
         }
         if let Some(result) = self.maybe_call_typed_array_native(p, native, this, args) {
@@ -2556,7 +2558,7 @@ pub(super) fn equality_operator(op: u32) -> Option<(bool, bool)> {
         NEGATED == 1
             && STRICT == 2
             && STRICT_INEQUALITY - EQUALITY == STRICT | NEGATED
-            && EQUALITY % (STRICT << 1) == 0
+            && EQUALITY.is_multiple_of(STRICT << 1)
     );
     let offset = op.wrapping_sub(EQUALITY);
     (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))

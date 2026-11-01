@@ -105,14 +105,12 @@ pub(crate) fn random_alias_factory(source: &str) -> Result<String, &'static str>
                 .id
                 .as_ref()
                 .is_some_and(|id| id.name == "getRandomBytesAlias")
-            {
-                if declaration
+                && declaration
                     .replace(function.span().source_text(source))
                     .is_some()
                 {
                     return Err("Ambiguous random alias declaration");
                 }
-            }
         }
         let Statement::ExpressionStatement(statement) = statement else {
             continue;
@@ -138,14 +136,13 @@ pub(crate) fn random_alias_factory(source: &str) -> Result<String, &'static str>
             let PropertyKey::StaticIdentifier(key) = &property.key else {
                 continue;
             };
-            if ["prng", "pseudoRandomBytes", "rng"].contains(&key.name.as_str()) {
-                if aliases
+            if ["prng", "pseudoRandomBytes", "rng"].contains(&key.name.as_str())
+                && aliases
                     .insert(key.name.as_str(), property.span().source_text(source))
                     .is_some()
                 {
                     return Err("Ambiguous random alias descriptor");
                 }
-            }
         }
     }
     let declaration = declaration.ok_or("Configured random alias declaration missing")?;

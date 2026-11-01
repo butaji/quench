@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::DataView {
             object: Box::new(crate::heap::BufferViewObject {
                 object: Self::empty_object(prototype),
-                offset: offset,
+                offset,
             }),
             buffer,
             length,
@@ -406,11 +406,10 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Cannot write to an immutable ArrayBuffer".into()));
         }
         let index = self.data_view_index(p, args.first().copied())?;
-        if !is_setter {
-            if self.array_buffer_out_of_bounds(buffer, offset, length) {
+        if !is_setter
+            && self.array_buffer_out_of_bounds(buffer, offset, length) {
                 return Err(self.type_error(p, "Detached DataView".into()));
             }
-        }
         let width = data_view_width(native);
         let check_bounds = || index.saturating_add(width) > length;
         if !is_setter && check_bounds() {
@@ -592,7 +591,7 @@ fn data_view_index_of(number: f64) -> Option<usize> {
         return Some(0);
     }
     let integer = number.trunc();
-    (integer.is_finite() && integer >= 0.0 && integer <= MAX_SAFE_INTEGER).then_some(integer as usize)
+    (integer.is_finite() && (0.0..=MAX_SAFE_INTEGER).contains(&integer)).then_some(integer as usize)
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.

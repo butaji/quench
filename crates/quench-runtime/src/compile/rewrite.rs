@@ -224,9 +224,9 @@ fn remove_dead_moves(
         .filter(|entry| entry.local < function.params)
         .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
-    for pc in 0..function.code.len() {
+    for (pc, &is_protected) in protected.iter().enumerate().take(function.code.len()) {
         let mov = function.code[pc];
-        if mov.op() != Op::Move || mov.is_wide() || protected[pc] {
+        if mov.op() != Op::Move || mov.is_wide() || is_protected {
             continue;
         }
         let destination = register_bit(mov.result_register());
@@ -543,7 +543,7 @@ fn coalesce_distant_producer_moves(
         }
         if pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(function, &live, target, mov.as_wide()) & register_bit(source)
+            || liveness::live_out(function, live, target, mov.as_wide()) & register_bit(source)
                 != 0
         {
             continue;
@@ -675,7 +675,7 @@ fn forward_move_sources(
                     && !in_handler(pc + 1)
                     && register_bit(destination) & storage == 0
                     && read & register_bit(destination) != 0
-                    && liveness::live_out(function, &live, pc + 1, consumer.as_wide())
+                    && liveness::live_out(function, live, pc + 1, consumer.as_wide())
                         & register_bit(destination)
                         == 0;
                 let rewritten = substitute_register_read(consumer, destination, source)?;
@@ -1073,8 +1073,8 @@ fn apply_rule(
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
-    if matches!(rule.recipe, Recipe::GetSetThis) {
-        if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
+    if matches!(rule.recipe, Recipe::GetSetThis)
+        && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
             let at = |pc: usize| {
                 positions
                     .partition_point(|p| p.pc as usize <= pc)
@@ -1087,7 +1087,6 @@ fn apply_rule(
             }
             site.sources[2] = at(pc + 1);
         }
-    }
     Some(replacement)
 }
 

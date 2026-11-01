@@ -4050,8 +4050,9 @@ impl ResidualProgram {
             }
         };
         if let Some(unlowered) = unlowered {
-            assert!(crate::DYNAMIC_EXECUTION_ENABLED,
-                "native function {index} of {} was not lowered before linking", self.source_name);
+            if !crate::DYNAMIC_EXECUTION_ENABLED {
+                panic!("native function {index} of {} was not lowered before linking", self.source_name);
+            }
             let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
@@ -4068,8 +4069,9 @@ impl ResidualProgram {
                 panic!("function {index} of {} does not decode: {error}", self.source_name)
             }),
             None => {
-                assert!(crate::DYNAMIC_EXECUTION_ENABLED,
-                    "native function {index} of {} has no archived record", self.source_name);
+                if !crate::DYNAMIC_EXECUTION_ENABLED {
+                    panic!("native function {index} of {} has no archived record", self.source_name);
+                }
                 crate::compile::replay::recompile(self, index as u32)
                 .unwrap_or_else(|error| {
                     panic!("function {index} of {} does not compile again: {error}", self.source_name)

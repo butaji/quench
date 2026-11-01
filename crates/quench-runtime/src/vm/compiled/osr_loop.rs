@@ -542,12 +542,16 @@ fn tagged_registers_with_failure(
     let mut tagged: std::collections::BTreeSet<Register> = instructions
         .iter()
         .filter_map(|instruction| identity_branch(*instruction, constants).map(|branch| branch.register))
-        .chain(instructions.iter().filter_map(|instruction| {
-            ((instruction.op() == Op::Unary
-                && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX)
-                || number_comparison(*instruction).is_some())
-                .then(|| instruction.result_register())
-        }))
+        .chain(
+            instructions
+                .iter()
+                .filter(|instruction| {
+                    (instruction.op() == Op::Unary
+                        && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX)
+                        || number_comparison(**instruction).is_some()
+                })
+                .map(|instruction| instruction.result_register()),
+        )
         // An entry array's register; a dynamic array's (one the region defines) is tagged by
         // its values' webs instead (`representations`), as its register may hold Numbers too.
         .chain(instructions.iter().filter_map(|instruction| match instruction.op() {
@@ -1831,11 +1835,10 @@ fn admit_lifetime_roles(
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
     let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new())
-        .map_err(|failure| {
+        .inspect_err(|&failure| {
             if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
             }
-            failure
         }).ok()?;
     let tagged_entries = (0..flow.entry_count()).filter_map(|entry| {
         region.tagged.contains(identities.get(&values.find(entry))?)
@@ -3836,7 +3839,7 @@ impl Parking {
             };
             let body = &region.instructions[(inner.header - region.header) as usize..=(inner.backedge - region.header) as usize];
             let reaching = &webs.reaching[(inner.header - region.header) as usize];
-            for (&register, _) in reaching {
+            for &register in reaching.keys() {
                 if crate::compile::liveness::register_in(at_header, usize::from(register))
                     && body.iter().all(|instruction| !mentions(*instruction, register, &[]))
                 {
@@ -5575,11 +5578,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let dfg = &self.body.builder.func.dfg;
             (operator, int32_key(dfg, left), int32_key(dfg, right))
         };
-        if let Some((result, computed)) = self.exact.get(&key) {
-            if *computed == chain {
+        if let Some((result, computed)) = self.exact.get(&key)
+            && *computed == chain {
                 return *result;
             }
-        }
         let result = self.int32_arithmetic_guarded(pc, operator, register, left, right);
         self.exact.insert(key, (result, chain));
         result

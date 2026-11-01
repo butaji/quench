@@ -20,13 +20,12 @@ pub(crate) fn delimiter<C: GetSpan>(text: &str, comments: &[C], start: u32, end:
     let end = (end as usize).min(text.len());
     let mut comment = comments.partition_point(|comment| comment.span().end <= start);
     while cursor < end {
-        if let Some(span) = comments.get(comment).map(GetSpan::span) {
-            if span.start as usize <= cursor && cursor < span.end as usize {
+        if let Some(span) = comments.get(comment).map(GetSpan::span)
+            && span.start as usize <= cursor && cursor < span.end as usize {
                 cursor = span.end as usize;
                 comment += 1;
                 continue;
             }
-        }
         let Some(character) = text[cursor..end].chars().next() else { break };
         if character == delimiter { return cursor as u32; }
         cursor += character.len_utf8();

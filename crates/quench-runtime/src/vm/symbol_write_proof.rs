@@ -26,6 +26,7 @@ struct SymbolWriteProof {
     epoch: u64,
 }
 
+#[derive(Default)]
 pub(super) struct SymbolWriteProofs {
     entries: super::shape_memo::DirectMappedTable<SymbolWriteProof, SYMBOL_WRITE_PROOF_ENTRIES>,
     /// Per lane write site: the write it made last (`SiteSymbolWrite`), so the site's next
@@ -60,11 +61,6 @@ pub(super) enum SymbolWriteStep {
     Add { prototype: Value, target: u32 },
 }
 
-impl Default for SymbolWriteProofs {
-    fn default() -> Self {
-        Self { entries: Default::default(), sites: Default::default() }
-    }
-}
 
 impl SymbolWriteProofs {
     fn index(prototype: Value, key: Value) -> usize {

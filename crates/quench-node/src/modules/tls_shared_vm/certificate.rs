@@ -306,8 +306,10 @@ pub(crate) fn legacy(
                         )
                     } else if bytes.len() == IPV6_OCTETS {
                         let groups = bytes
-                            .chunks_exact(std::mem::size_of::<u16>())
-                            .map(|pair| format!("{:X}", u16::from_be_bytes([pair[0], pair[1]])))
+                            .as_chunks::<{ std::mem::size_of::<u16>() }>()
+                            .0
+                            .iter()
+                            .map(|pair| format!("{:X}", u16::from_be_bytes(*pair)))
                             .collect::<Vec<_>>();
                         format!("IP Address:{}", groups.join(":"))
                     } else {

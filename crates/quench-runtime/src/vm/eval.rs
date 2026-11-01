@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
             let pattern_units = &units[start..end];
             let flag_units = literal.flags.encode_utf16().collect::<Vec<_>>();
             if let (Ok(pattern), Ok(flags)) = (
-                String::from_utf16(&pattern_units),
+                String::from_utf16(pattern_units),
                 String::from_utf16(&flag_units),
             ) && quench_regexp::validate_property_escapes(&pattern, &flags)
                 .is_err_and(|error| quench_regexp::is_stack_exhaustion_message(&error))
@@ -734,7 +734,7 @@ impl<H: Host> Vm<H> {
         if !self.prepared_script_is_current(prepared) {
             return Err(self.type_error(&program, "prepared Script belongs to a different runtime state".into()));
         }
-        let Some(program_id) = self.store_prepared_script(&prepared)? else {
+        let Some(program_id) = self.store_prepared_script(prepared)? else {
             return Err(self.type_error(&program, "dynamic program store is full".into()));
         };
         self.run_global_eval_program(&program, program_id)
@@ -895,7 +895,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if caller_scope {
-                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms());
+                self.prepare_direct_eval_var_bindings(root_function.global_var_atoms());
             }
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {

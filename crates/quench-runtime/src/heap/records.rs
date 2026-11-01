@@ -102,7 +102,7 @@ impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
     }
     #[cfg(debug_assertions)]
     fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId)) {
-        RecordSpace::for_each_marked(self, |id| visit(id));
+        RecordSpace::for_each_marked(self, visit);
     }
 }
 
@@ -663,7 +663,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         for (block, block_marks) in self
             .blocks
             .iter_mut()
-            .zip(marks.chunks_exact(BLOCK_WORDS))
+            .zip(marks.as_chunks::<BLOCK_WORDS>().0)
         {
             block.marked.copy_from_slice(block_marks);
         }
@@ -1080,7 +1080,7 @@ mod tests {
         assert_eq!(last as usize, RECORDS_PER_BLOCK);
         // SAFETY: the first id remains live after the second block is added.
         assert_eq!(unsafe { arena.get_live(first) }, "first");
-        assert!(RECORD_SPACE_CAPACITY > RECORDS_PER_BLOCK);
+        const { assert!(RECORD_SPACE_CAPACITY > RECORDS_PER_BLOCK) };
         assert_eq!(arena.remove_live(first), "first");
         assert_eq!(arena.try_insert(String::from("reused")).unwrap(), first);
         // SAFETY: the slot-index id was reinitialized by the insertion above.

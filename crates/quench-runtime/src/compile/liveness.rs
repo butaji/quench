@@ -586,9 +586,9 @@ mod tests {
         // every result flag combination the A field can carry.
         let values: [u16; 6] = [0, 1, 63, 127, 128, u16::MAX >> 4];
         let mut checked = 0;
-        for index in 0..Op::COUNT {
+        for (index, transfer) in FIXED_TRANSFERS.iter().enumerate() {
             let op = Op::from_index(index).unwrap();
-            if FIXED_TRANSFERS[index].is_none() {
+            if transfer.is_none() {
                 continue;
             }
             for &a in values.iter().chain(&[crate::bytecode::RETURN_REGISTER, crate::bytecode::NUMERIC_LOCAL_TARGET, 5 | crate::bytecode::RETURN_REGISTER]) {
@@ -610,7 +610,7 @@ mod tests {
     fn register_ranges_are_their_registers_bits() {
         let width = RegisterSet::BITS as u16;
         for base in (0..width + 4).chain([u16::MAX - 2, u16::MAX]) {
-            for count in (0..width + 4).chain([u16::MAX - base.min(u16::MAX)]) {
+            for count in (0..width + 4).chain([u16::MAX - base]) {
                 let expected = (0..count)
                     .filter_map(|offset| base.checked_add(offset))
                     .fold(0, |mask, register| mask | register_bit(register));

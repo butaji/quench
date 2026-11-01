@@ -115,7 +115,7 @@ pub(crate) fn valid_header_unit(unit: u16, lenient: bool) -> bool {
     const OBS_TEXT_START: u16 = 0x80;
     let byte = unit <= u16::from(u8::MAX);
     if lenient {
-        byte && ![b'\0', b'\r', b'\n']
+        byte && !b"\0\r\n"
             .iter()
             .any(|value| unit == u16::from(*value))
     } else {

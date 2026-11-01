@@ -295,13 +295,11 @@ impl<H: Host> Vm<H> {
             let mut enumerable = Vec::with_capacity(keys.len());
             for (index, key) in keys.iter().enumerate() {
                 let property = self.root_value(*key).expect("own key root is live");
-                if !include_indices {
-                    if let Some(text) = self.heap.string(property) {
-                        if super::object_static::array_index(text.host_string()).is_some() {
+                if !include_indices
+                    && let Some(text) = self.heap.string(property)
+                        && super::object_static::array_index(text.host_string()).is_some() {
                             continue;
                         }
-                    }
-                }
                 if !include_symbols && matches!(self.heap.get(property), Some(Cell::Symbol(_))) {
                     continue;
                 }
@@ -466,8 +464,7 @@ impl<H: Host> Vm<H> {
         if let Some(crate::heap::StackData::Captured { records, source }) = self
             .object_data(value)
             .and_then(crate::heap::Object::stack_data)
-        {
-            if let Some(record) = records
+            && let Some(record) = records
                 .iter()
                 .find(|record| matches!(record.location, CallSiteLocation::Source { .. }))
             {
@@ -489,7 +486,6 @@ impl<H: Host> Vm<H> {
                     column_number: *column,
                 }));
             }
-        }
         let Some((mut record, module, source_line)) = self.frames.iter().rev().find_map(|frame| {
             let (record, module) = self.source_call_site_record(frame, false)?;
             let CallSiteLocation::Source { line, .. } = &record.location else {

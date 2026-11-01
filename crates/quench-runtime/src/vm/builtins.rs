@@ -751,7 +751,7 @@ impl<H: Host> Vm<H> {
             let name = well_known.name();
             let value = self
                 .heap
-                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}").into()))));
+                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}")))));
             self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }

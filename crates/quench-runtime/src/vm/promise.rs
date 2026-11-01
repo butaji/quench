@@ -1565,7 +1565,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<(Value, Value, Value), JsError> {
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(
                 p,
                 "Promise.withResolvers receiver is not a constructor".into(),
@@ -1649,7 +1649,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     Ok(Value::UNDEFINED)
                 } else {
-                    if !self.is_constructable(p, this) {
+                    if !self.is_constructable(this) {
                         return Err(self.type_error(
                             p,
                             "Promise.resolve receiver is not a constructor".into(),
@@ -2315,7 +2315,7 @@ impl<H: Host> Vm<H> {
         &self,
         key: &str,
         seen: &mut FxHashSet<String>,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, crate::stack::StackExhausted> {
         let _stack = quench_stack::StackGuard::enter()?;
         if !seen.insert(key.to_owned()) {
             return Ok(false);
@@ -2370,7 +2370,7 @@ impl<H: Host> Vm<H> {
         };
         if self
             .synchronous_graph_has_await(&key, &mut FxHashSet::default())
-            .map_err(|()| self.stack_exhaustion_error())?
+            .map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?
         {
             for (linked_module, _) in linked {
                 if let Some(record) = self
@@ -3077,7 +3077,7 @@ impl<H: Host> Vm<H> {
                 .get(&key)
                 .and_then(ModuleRecord::pending_namespace);
             let namespace = if import.phase == crate::bytecode::ModuleRequestPhase::Defer {
-                deferred_namespace.or_else(|| match outcome {
+                deferred_namespace.or(match outcome {
                     Some(
                         ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace),
                     ) => Some(namespace),
@@ -3773,7 +3773,7 @@ impl<H: Host> Vm<H> {
                 .inspect_err(|_| self.record_native_execution_rejection())?,
         };
         let _stack =
-            quench_stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
+            quench_stack::StackGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
         let program = match precompiled {
             Some(program) => program,
             None if let Some(program) = self.kept_static_module_program(module) => self
@@ -4404,7 +4404,7 @@ impl<H: Host> Vm<H> {
             let atom = residual
                 .atoms
                 .iter()
-                .position(|name| name == &import.local)
+                .position(|name| name == import.local)
                 .ok_or_else(|| self.type_error(p, "source import binding is unavailable".into()))?
                 as u32;
             let slot = residual.function(0)
@@ -5855,7 +5855,7 @@ impl<H: Host> Vm<H> {
         let species = self.species_of(p, constructor)?;
         if species.is_undefined() || species.is_null() {
             Ok(self.intrinsic_promise_constructor())
-        } else if self.is_constructable(p, species) {
+        } else if self.is_constructable(species) {
             Ok(species)
         } else {
             Err(self.type_error(p, "Promise species is not a constructor".into()))
@@ -6032,7 +6032,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_constructable(p, constructor) {
+        if !self.is_constructable(constructor) {
             return Err(self.type_error(p, "Promise.try receiver is not a constructor".into()));
         }
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);

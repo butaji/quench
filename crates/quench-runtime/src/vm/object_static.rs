@@ -343,6 +343,8 @@ impl<H: Host> Vm<H> {
             }));
         }
         let mut visited_objects = FxHashMap::default();
+        // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
+        #[allow(clippy::mutable_key_type)]
         let mut visited_names = FxHashSet::default();
         let mut keys = Vec::new();
         let mut own_keys = Vec::new();

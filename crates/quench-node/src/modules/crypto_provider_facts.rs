@@ -179,10 +179,10 @@ pub fn names(kind: Kind) -> Vec<String> {
 pub enum KeyFamily {
     Other,
     EdDSA,
-    XDH,
-    MLDSA,
-    MLKEM,
-    SLHDSA,
+    Xdh,
+    MlDsa,
+    MlKem,
+    SlhDsa,
 }
 pub struct KeyAlgorithm {
     name: &'static std::ffi::CStr,
@@ -197,18 +197,18 @@ impl KeyAlgorithm {
         self.has_key_type.then(|| self.name().to_ascii_lowercase())
     }
     pub fn is_okp(&self) -> bool {
-        matches!(self.family, KeyFamily::EdDSA | KeyFamily::XDH)
+        matches!(self.family, KeyFamily::EdDSA | KeyFamily::Xdh)
     }
     pub fn is_pqc(&self) -> bool {
         matches!(
             self.family,
-            KeyFamily::MLDSA | KeyFamily::MLKEM | KeyFamily::SLHDSA
+            KeyFamily::MlDsa | KeyFamily::MlKem | KeyFamily::SlhDsa
         )
     }
     pub fn is_one_shot(&self) -> bool {
         matches!(
             self.family,
-            KeyFamily::EdDSA | KeyFamily::MLDSA | KeyFamily::SLHDSA
+            KeyFamily::EdDSA | KeyFamily::MlDsa | KeyFamily::SlhDsa
         )
     }
 }
@@ -250,12 +250,12 @@ const KEY_ALGORITHMS: &[KeyAlgorithm] = &[
     },
     KeyAlgorithm {
         name: c"X25519",
-        family: KeyFamily::XDH,
+        family: KeyFamily::Xdh,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"X448",
-        family: KeyFamily::XDH,
+        family: KeyFamily::Xdh,
         has_key_type: true,
     },
     KeyAlgorithm {
@@ -265,92 +265,92 @@ const KEY_ALGORITHMS: &[KeyAlgorithm] = &[
     },
     KeyAlgorithm {
         name: c"ML-DSA-44",
-        family: KeyFamily::MLDSA,
+        family: KeyFamily::MlDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"ML-DSA-65",
-        family: KeyFamily::MLDSA,
+        family: KeyFamily::MlDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"ML-DSA-87",
-        family: KeyFamily::MLDSA,
+        family: KeyFamily::MlDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"ML-KEM-512",
-        family: KeyFamily::MLKEM,
+        family: KeyFamily::MlKem,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"ML-KEM-768",
-        family: KeyFamily::MLKEM,
+        family: KeyFamily::MlKem,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"ML-KEM-1024",
-        family: KeyFamily::MLKEM,
+        family: KeyFamily::MlKem,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-128f",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-128s",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-192f",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-192s",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-256f",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHA2-256s",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-128f",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-128s",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-192f",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-192s",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-256f",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
     KeyAlgorithm {
         name: c"SLH-DSA-SHAKE-256s",
-        family: KeyFamily::SLHDSA,
+        family: KeyFamily::SlhDsa,
         has_key_type: true,
     },
 ];
@@ -396,6 +396,19 @@ pub fn key_available(name: &str) -> bool {
             EVP_PKEY_CTX_free(ctx);
             true
         }
+    }
+}
+
+/// Real heap state: default Node builds use ordinary backing allocations when
+/// OpenSSL secure heap is disabled. Active secure heap needs owner adoption.
+pub fn secure_heap_initialized() -> bool {
+    unsafe { CRYPTO_secure_malloc_initialized() == 1 }
+}
+pub fn secure_heap_used() -> usize {
+    if secure_heap_initialized() {
+        unsafe { CRYPTO_secure_used() }
+    } else {
+        0
     }
 }
 
@@ -445,18 +458,5 @@ mod tests {
             assert_eq!(fips_enabled(), before);
             assert_eq!(fips_generation(), generation);
         }
-    }
-}
-
-/// Real heap state: default Node builds use ordinary backing allocations when
-/// OpenSSL secure heap is disabled. Active secure heap needs owner adoption.
-pub fn secure_heap_initialized() -> bool {
-    unsafe { CRYPTO_secure_malloc_initialized() == 1 }
-}
-pub fn secure_heap_used() -> usize {
-    if secure_heap_initialized() {
-        unsafe { CRYPTO_secure_used() }
-    } else {
-        0
     }
 }

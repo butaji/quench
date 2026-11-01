@@ -1298,7 +1298,7 @@ pub(crate) fn construct(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 #[cfg(feature = "native-execution")]
                 if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
-                    return Err(Failure::host(super::worker_shared_vm::NATIVE_ENTRY_UNAVAILABLE.into()));
+                    return Err(Failure::host(super::worker_shared_vm::NATIVE_ENTRY_UNAVAILABLE.into()).into());
                 }
                 let mut host = NodeHost::new(argv)
                     .with_initial_node_options(child_node_options)
@@ -1326,7 +1326,7 @@ pub(crate) fn construct(
                         } else {
                             error.to_string()
                         };
-                        return Err(Failure::host(message));
+                        return Err(Failure::host(message).into());
                     }
                     let kind = NodeHost::source_kind(&path).map_err(Failure::host)?;
                     let name = path.to_string_lossy().into_owned();
@@ -1521,7 +1521,7 @@ pub(crate) fn construct(
                     // module await remains unsettled after all queued jobs run.
                     return Ok(13);
                 }
-                Ok::<_, Failure>(runtime.host_mut().exit_code().unwrap_or(0))
+                Ok::<_, Box<Failure>>(runtime.host_mut().exit_code().unwrap_or(0))
             }));
             match result {
                 Ok(Ok(code)) => {
@@ -1529,7 +1529,7 @@ pub(crate) fn construct(
                 }
                 Ok(Err(e)) => {
                     let code = e.exit_code;
-                    report.send(Event::Error(e)).ok();
+                    report.send(Event::Error(*e)).ok();
                     report.send(Event::Exit(code)).ok();
                 }
                 Err(_) => {
@@ -2532,9 +2532,7 @@ pub(crate) fn poll_native(
                     let destroy =
                         super::async_hooks_shared_vm::emit_destroy_immediate(ctx, resource);
                     ctx.release_root(resource);
-                    if let Err(error) = destroy {
-                        return Err(error);
-                    }
+                    destroy?;
                 }
                 let mut completion = emit(ctx, root, "exit", &[n]);
                 if let Some(resource) = async_resource {

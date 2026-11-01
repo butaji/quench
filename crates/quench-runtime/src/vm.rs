@@ -1835,6 +1835,8 @@ pub(crate) struct Vm<H> {
     /// strings are immutable, so every closure of a plan can hold the same name value.
     /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
     atom_strings: FxHashMap<Atom, Value>,
+    // Boxed: frames move between this stack, `frame_pool` and suspended generators by pointer.
+    #[allow(clippy::vec_box)]
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
@@ -1843,6 +1845,8 @@ pub(crate) struct Vm<H> {
     gc_root_count: usize,
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
+    // Boxed: pooled frames are reused as the `Box<Frame>` the stack and generators hold.
+    #[allow(clippy::vec_box)]
     frame_pool: Vec<Box<Frame>>,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.

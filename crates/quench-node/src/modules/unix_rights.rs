@@ -113,7 +113,7 @@ pub(crate) fn receive(socket: BorrowedFd<'_>, payload: &mut [u8]) -> io::Result<
             }
             if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
                 let bytes = length - base;
-                malformed |= bytes % size_of::<RawFd>() != 0;
+                malformed |= !bytes.is_multiple_of(size_of::<RawFd>());
                 for index in 0..bytes / size_of::<RawFd>() {
                     let fd = std::ptr::read_unaligned(
                         libc::CMSG_DATA(header).cast::<RawFd>().add(index),

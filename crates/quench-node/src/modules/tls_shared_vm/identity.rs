@@ -217,11 +217,10 @@ pub(crate) fn check_server_identity(
     } else {
         let length = get(context, dns_array, "length")?;
         let has_dns = context.truthy_rooted(length)?;
-        let cn = if has_dns {
-            context.undefined()
-        } else if context
-            .rooted_value(subject)
-            .is_some_and(|value| value.is_null() || value.is_undefined())
+        let cn = if has_dns
+            || context
+                .rooted_value(subject)
+                .is_some_and(|value| value.is_null() || value.is_undefined())
         {
             context.undefined()
         } else {

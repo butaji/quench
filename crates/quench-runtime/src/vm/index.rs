@@ -48,9 +48,7 @@ impl<H: Host> Vm<H> {
     /// one-unit string at `index`, or `None` past its end, where lookup continues on the
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
-        let Some(text) = self.heap.string(string) else {
-            return None;
-        };
+        let text = self.heap.string(string)?;
         let unit = text.units().get(index)?;
         Some(self.heap.alloc_string(JsString::from_units(&[unit])))
     }
@@ -359,9 +357,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let Some(object) = self.heap.array(base) else {
-            return None;
-        };
+        let object = self.heap.array(base)?;
         object
             .elements()
             .get(index)
@@ -599,9 +595,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }
-        let Some(key) = self.heap.string(key) else {
-            return None;
-        };
+        let key = self.heap.string(key)?;
         super::object_static::array_index(key.host_string())
     }
 
@@ -678,12 +672,11 @@ impl<H: Host> Vm<H> {
         array: Value,
         values: impl IntoIterator<Item = Value>,
     ) -> Result<(), JsError> {
-        let mut index = self
+        let start = self
             .own_array_length(array)
             .ok_or_else(|| JsError("array literal is not an array".into()))?;
-        for value in values {
+        for (index, value) in (start..).zip(values) {
             self.define_array_literal_element(p, array, index, value)?;
-            index += 1;
         }
         Ok(())
     }

@@ -197,7 +197,7 @@ impl Lowering<'_> {
                 if self.path == Reachability::Live {
                     let index = self.pop()?;
                     self.materialize_aliases()?;
-                    self.branch_table(index, &targets)?;
+                    self.branch_table(index, targets)?;
                     self.make_dead();
                 }
             }

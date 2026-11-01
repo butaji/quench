@@ -597,15 +597,14 @@ impl<H: Host> Vm<H> {
                     return value;
                 }
                 // JS host numbers in the signed i31 range have the canonical immediate representation.
-                if let Some(number) = value.as_number() {
-                    if number >= f64::from(crate::wasm::i31::SIGNED_MIN)
+                if let Some(number) = value.as_number()
+                    && number >= f64::from(crate::wasm::i31::SIGNED_MIN)
                         && number <= f64::from(crate::wasm::i31::SIGNED_MAX)
                         && number.fract() == 0.0
                         && !(number == 0.0 && number.is_sign_negative())
                     {
                         return Value::integer((number as i32) & crate::wasm::i31::I31_MASK);
                     }
-                }
                 self.heap.alloc(Cell::WasmExtern(value))
             }
             ExternalConversion::Externalize => self.wasm_external_value(value),
@@ -1697,11 +1696,7 @@ impl<H: Host> Vm<H> {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
         } else if let Some(bits) = self.decode_bits64(value) {
             Some(crate::wasm::ScalarBits::Bits64(bits))
-        } else if let Some(bits) = self.heap.v128(value) {
-            Some(crate::wasm::ScalarBits::Bits128(bits))
-        } else {
-            None
-        };
+        } else { self.heap.v128(value).map(crate::wasm::ScalarBits::Bits128) };
         bits.and_then(|bits| ty.decode(bits))
             .ok_or_else(|| JsError::validation("invalid Wasm scalar representation".into()))
     }
@@ -4352,7 +4347,7 @@ mod tests {
                 &[crate::WasmMemory {
                     ty: wasmparser::MemoryType {
                         initial: 1,
-                        maximum: maximum,
+                        maximum,
                         memory64: false,
                         shared,
                         page_size_log2: None,

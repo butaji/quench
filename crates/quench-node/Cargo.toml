@@ -72,3 +72,6 @@ pkg-config = "0.3"
 # measured 0.7-2.1% lower maximum RSS and 2.6-4.7% higher throughput (TOD-173 npm rows).
 [target.'cfg(unix)'.dependencies]
 quench-alloc = { path = "../quench-alloc" }
+
+[lints]
+workspace = true

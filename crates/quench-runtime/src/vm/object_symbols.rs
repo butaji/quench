@@ -421,7 +421,7 @@ impl<H: Host> Vm<H> {
         // and a string no atom names is no key of it.
         let excluded = excluded
             .iter()
-            .map(|key| self.heap.string(*key).and_then(|text| self.lookup_atom(&text.host_string())))
+            .map(|key| self.heap.string(*key).and_then(|text| self.lookup_atom(text.host_string())))
             .collect::<smallvec::SmallVec<[Option<Atom>; PLAIN_COPY_INLINE_PROPERTIES]>>();
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();

@@ -519,14 +519,12 @@ pub(crate) fn find_package_json(
             None
         } else if let Some(base) = context.string_text(base_value)? {
             Some(base)
+        } else if super::url_shared_vm::is_url_like(context, base_value)? {
+            Some(context.to_string(base_value)?)
         } else {
-            if super::url_shared_vm::is_url_like(context, base_value)? {
-                Some(context.to_string(base_value)?)
-            } else {
-                return Err(super::util_shared_vm::argument_type_error(
-                    context, base_value, "base", "string",
-                )?);
-            }
+            return Err(super::util_shared_vm::argument_type_error(
+                context, base_value, "base", "string",
+            )?);
         }
     } else {
         None

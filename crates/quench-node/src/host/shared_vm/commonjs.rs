@@ -3876,7 +3876,7 @@ fn read_vfs_module_source(
     let filename = context.string_rooted(&filename.to_string_lossy());
     let receiver = context.undefined();
     let source = context.call_rooted(read_source, receiver, &[filename])?;
-    Ok(context.string_text(source)?)
+    context.string_text(source)
 }
 
 fn vfs_module_type(
@@ -3895,7 +3895,7 @@ fn vfs_module_type(
     let filename = context.string_rooted(&filename.to_string_lossy());
     let receiver = context.undefined();
     let result = context.call_rooted(module_type, receiver, &[filename])?;
-    Ok(context.string_text(result)?)
+    context.string_text(result)
 }
 
 /// Captured once by bootstrap's first module, before preloads or guest code.

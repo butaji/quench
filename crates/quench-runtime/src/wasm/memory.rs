@@ -425,7 +425,7 @@ loads! { word;
 
 impl MemoryLoad {
     pub(crate) fn read_atomic(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
-        if address % self.width() as u64 != 0 {
+        if !address.is_multiple_of(self.width() as u64) {
             return Err(WasmTrap::UnalignedAtomic);
         }
         self.read(bytes, address)
@@ -569,7 +569,7 @@ pub(super) fn direct_access_memory(
 ) -> Option<usize> {
     let index = direct_access(operator)
         .map(|(_, memarg)| memarg.memory)
-        .or_else(|| match operator {
+        .or(match operator {
             wasmparser::Operator::MemorySize { mem } | wasmparser::Operator::MemoryFill { mem } => {
                 Some(*mem)
             }

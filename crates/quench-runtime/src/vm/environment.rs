@@ -1794,13 +1794,10 @@ impl<H: Host> Vm<H> {
         if root && !self.root_environment_slot_is_binding(scope.program(), slot) {
             return None;
         }
-        let Some(value) = self
+        let value = self
             .heap
             .environment_slot(env, usize::from(slot))
-            .filter(|value| !value.is_deleted())
-        else {
-            return None;
-        };
+            .filter(|value| !value.is_deleted())?;
         Some(value)
     }
 
@@ -2128,11 +2125,10 @@ impl<H: Host> Vm<H> {
                     if let Some(slot) = self.heap.environment_slot_mut(owner_env, slot_index) {
                         *slot = value;
                     }
-                } else if !captured {
-                    if let Some(slot) = self.frames[owner].locals.get_mut(slot_index) {
+                } else if !captured
+                    && let Some(slot) = self.frames[owner].locals.get_mut(slot_index) {
                         *slot = value;
                     }
-                }
             }
         }
         if function == 0
@@ -2180,11 +2176,10 @@ impl<H: Host> Vm<H> {
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
         let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
-        if internal {
-            if let Some(value) = self.intrinsic_name_value(atom) {
+        if internal
+            && let Some(value) = self.intrinsic_name_value(atom) {
                 return Ok(value);
             }
-        }
         if !internal && self.names_resolve_to_global_object(p, atom) {
             return self.load_global_object_name(p, atom, cache, allow_unresolvable);
         }
@@ -2682,5 +2677,5 @@ pub(super) fn direct_store_owner<'p>(
 /// The `Vm::capture_walks` entry a walk from `env` to `depth` uses.
 #[inline(always)]
 fn capture_walk_index(env: Value, depth: u16) -> Option<usize> {
-    Some((env.heap_index()? as usize ^ usize::from(depth) * (CAPTURE_WALKS / 2 + 1)) & (CAPTURE_WALKS - 1))
+    Some((env.heap_index()? as usize ^ (usize::from(depth) * (CAPTURE_WALKS / 2 + 1))) & (CAPTURE_WALKS - 1))
 }

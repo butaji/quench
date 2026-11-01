@@ -599,7 +599,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.get_property(p, realm, constructor_atom);
         let message_value = self.heap.alloc_string(JsString::from_str(message));
         let error = match constructor {
-            Ok(constructor) if self.is_constructable(p, constructor) => self
+            Ok(constructor) if self.is_constructable(constructor) => self
                 .construct_value_with_new_target(p, constructor, constructor, &[message_value])
                 .map(|value| JsError::thrown(value, format!("{name}: {message}"))),
             _ => Err(self.type_error(p, message.into())),

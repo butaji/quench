@@ -115,7 +115,7 @@ impl Context {
         native(unsafe { openssl_sys::EVP_PKEY_keygen(self.0, &mut p) })?;
         Ok(unsafe { PKey::from_ptr(p) })
     }
-    fn from_params(&self) -> Result<PKey<Private>, KeyError> {
+    fn generate_from_params(&self) -> Result<PKey<Private>, KeyError> {
         let mut p = std::ptr::null_mut();
         native(unsafe { openssl_sys::EVP_PKEY_paramgen(self.0, &mut p) })?;
         let params = unsafe { PKey::<openssl::pkey::Params>::from_ptr(p) };
@@ -201,7 +201,7 @@ impl OwnedKey {
                 if let Some(n) = divisor_bits {
                     c.control("dsa_paramgen_q_bits", &n.to_string())?
                 }
-                c.from_params()?
+                c.generate_from_params()?
             }
             Generation::Dh { params, generator } => {
                 let params = match params {

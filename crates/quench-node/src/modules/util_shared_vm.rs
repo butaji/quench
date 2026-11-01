@@ -510,7 +510,7 @@ fn integer_separators(text: &str) -> String {
     let start = usize::from(text.starts_with('-'));
     let mut result = String::with_capacity(text.len() + text.len() / 3);
     for (index, character) in text.char_indices() {
-        if index > start && (text.len() - index) % 3 == 0 {
+        if index > start && (text.len() - index).is_multiple_of(3) {
             result.push('_');
         }
         result.push(character);

@@ -164,6 +164,14 @@ impl Drop for Pool {
         self.shutdown()
     }
 }
+
+impl Pool {
+    /// A pool whose workers have not started holds no work (`startup_snapshot`).
+    pub(crate) fn snapshot_quiescent(&self) -> bool {
+        let Self { shared: _, workers, configured: _, started } = self;
+        !started && workers.is_empty()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,13 +264,5 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 100);
         assert!(pool.submit(|| {}).is_err());
         gate_tx.send(()).unwrap();
-    }
-}
-
-impl Pool {
-    /// A pool whose workers have not started holds no work (`startup_snapshot`).
-    pub(crate) fn snapshot_quiescent(&self) -> bool {
-        let Self { shared: _, workers, configured: _, started } = self;
-        !started && workers.is_empty()
     }
 }

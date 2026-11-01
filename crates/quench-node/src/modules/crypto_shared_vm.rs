@@ -2686,8 +2686,7 @@ pub(crate) fn generate_rsa_key_pair(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let bits = args
-        .get(0)
+    let bits = args.first()
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
         .filter(|value| {
@@ -2820,8 +2819,7 @@ pub(crate) fn rsa_crypt(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let decrypt = args
-        .get(0)
+    let decrypt = args.first()
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
@@ -3353,13 +3351,12 @@ pub(crate) fn cipher_process(
                 .map_err(|error| RootedError::host(error.to_string()))?;
         }
     }
-    if is_aead {
-        if !aad.is_empty() {
+    if is_aead
+        && !aad.is_empty() {
             crypter
                 .aad_update(&aad)
                 .map_err(|error| RootedError::host(error.to_string()))?;
         }
-    }
     let mut output = vec![0; input.len() + cipher.block_size()];
     let mut written = crypter
         .update(&input, &mut output)

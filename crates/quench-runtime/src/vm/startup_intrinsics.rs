@@ -324,12 +324,11 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         property: SlotProperty,
     ) -> Result<bool, JsError> {
-        if let Some(mut attributes) = self.property_attributes(holder, key) {
-            if !attributes.configurable {
+        if let Some(mut attributes) = self.property_attributes(holder, key)
+            && !attributes.configurable {
                 attributes.configurable = true;
                 self.set_property_attributes(holder, key, attributes);
             }
-        }
         let extensible = self.object_data(holder).is_some_and(Object::is_extensible);
         if !extensible {
             self.object_data_mut(holder)

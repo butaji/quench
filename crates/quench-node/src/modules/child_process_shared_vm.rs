@@ -1445,11 +1445,8 @@ pub(crate) fn poll(
             // before an observed exit is read too, and reaches its streams first, as the pipes'
             // readiness precedes the exit notification in Node.
             let mut observed = Vec::new();
-            loop {
-                match process.events.try_recv() {
-                    Ok(event) => observed.push(event),
-                    Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
-                }
+            while let Ok(event) = process.events.try_recv() {
+                observed.push(event);
             }
             // Once the child exits, Node resumes the output streams no guest consumes
             // (`flushStdio`) so they reach EOF and the child can close: one host read per
@@ -1505,13 +1502,10 @@ pub(crate) fn poll(
             events.append(&mut observed);
             let mut exit = None;
             for event in &events {
-                match event {
-                    ChildProcessEvent::Exit(code, signal) => {
-                        process.handle_phase = crate::host::node_host::ChildHandlePhase::Closing;
-                        process.exit = Some((*code, signal.clone()));
-                        exit = Some((*code, signal.clone()));
-                    }
-                    _ => {}
+                if let ChildProcessEvent::Exit(code, signal) = event {
+                    process.handle_phase = crate::host::node_host::ChildHandlePhase::Closing;
+                    process.exit = Some((*code, signal.clone()));
+                    exit = Some((*code, signal.clone()));
                 }
             }
             let close = raw_ipc_closed

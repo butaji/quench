@@ -414,7 +414,8 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let detached = self.array_buffer_detached(*buffer);
-        let out = if *length_tracking {
+        
+        if *length_tracking {
             match self.heap.get(*buffer) {
                 Some(Cell::ArrayBuffer { bytes, .. }) => detached || object.offset > bytes.len(),
                 _ => true,
@@ -425,8 +426,7 @@ impl<H: Host> Vm<H> {
                 object.offset,
                 length.saturating_mul(kind.width()),
             )
-        };
-        out
+        }
     }
 
     pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {

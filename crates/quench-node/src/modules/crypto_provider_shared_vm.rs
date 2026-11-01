@@ -159,7 +159,7 @@ pub(crate) fn operation(
                         let mut parts = name.split('.');
                         let first = parts.next().unwrap_or_default();
                         let rest = parts.collect::<Vec<_>>();
-                        !(rest.len() >= 1
+                        !(!rest.is_empty()
                             && !first.is_empty()
                             && first.bytes().all(|byte| byte.is_ascii_digit())
                             && rest.iter().all(|part| {

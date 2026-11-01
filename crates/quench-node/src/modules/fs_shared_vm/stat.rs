@@ -724,7 +724,7 @@ fn symlink_loop(path: &Path) -> bool {
                         .unwrap_or_else(|| Path::new("/"))
                         .join(target)
                 };
-                replacement.extend(pending.into_iter());
+                replacement.extend(pending);
                 pending = replacement
                     .components()
                     .map(|part| PathBuf::from(part.as_os_str()))

@@ -81,12 +81,12 @@ impl Heap {
                 heap.free_slots += 1;
             }
         }
-        read_records(reader, &mut heap.object_records, |reader| Object::read_snapshot(reader))?;
-        read_records(reader, &mut heap.array_records, |reader| ArrayObject::read_snapshot(reader))?;
-        read_records(reader, &mut heap.function_records, |reader| FunctionRecord::read_snapshot(reader))?;
-        read_records(reader, &mut heap.promise_records, |reader| PromiseCell::read_snapshot(reader))?;
-        read_records(reader, &mut heap.iterator_records, |reader| IteratorRecord::read_snapshot(reader))?;
-        read_records(reader, &mut heap.string_records, |reader| JsString::read_snapshot(reader))?;
+        read_records(reader, &mut heap.object_records, Object::read_snapshot)?;
+        read_records(reader, &mut heap.array_records, ArrayObject::read_snapshot)?;
+        read_records(reader, &mut heap.function_records, FunctionRecord::read_snapshot)?;
+        read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
+        read_records(reader, &mut heap.iterator_records, IteratorRecord::read_snapshot)?;
+        read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {

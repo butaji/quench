@@ -199,8 +199,7 @@ impl<T> Pipe<T> {
             return progress;
         }
         if self.reading {
-            loop {
-                let Some(socket) = self.socket() else { break };
+            while let Some(socket) = self.socket() {
                 let mut bytes = vec![0; IPC_READ_BYTES];
                 match rights::receive(socket.as_fd(), &mut bytes) {
                     Ok(read) if read.bytes == 0 => {

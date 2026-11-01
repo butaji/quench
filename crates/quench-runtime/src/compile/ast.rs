@@ -406,14 +406,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 })
         });
         self.code.push(instruction);
-        if let Some((line, column)) = self.current_source_position {
-            if self
+        if let Some((line, column)) = self.current_source_position
+            && (self
                 .source_positions
                 .last()
                 .is_none_or(|position| position.line != line || position.column != column)
                 // Calls expose their own source position. An argument Move carrying
                 // the same compressed position may disappear during rewriting.
-                || op.control_flow_layout() == crate::bytecode::ControlFlowLayout::Call
+                || op.control_flow_layout() == crate::bytecode::ControlFlowLayout::Call)
             {
                 self.source_positions.push(crate::bytecode::SourcePosition {
                     pc: u32::try_from(self.code.len() - 1).unwrap_or(u32::MAX),
@@ -421,7 +421,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     column,
                 });
             }
-        }
         if op == Op::MakeClosure && self.with_depth != self.inherited_with_depth {
             self.record_lexical_binding_site(self.code.len() - 1);
         }

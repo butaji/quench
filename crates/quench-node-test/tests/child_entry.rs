@@ -6626,7 +6626,11 @@ socket.on('secureConnect',()=>socket.{send}(Buffer.from([0,22,23,127,254,255])))
         assert!(!result.timed_out,"external client timed out");assert_eq!(result.signal,None,"external client crashed");
         assert_eq!(result.exit_code,Some(0),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
         let deadline=std::time::Instant::now()+Duration::from_secs(5);
-        let status=loop{if let Some(status)=peer.0.try_wait().unwrap(){break status;}if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}std::thread::sleep(Duration::from_millis(10));};
+        let status=loop{
+            if let Some(status)=peer.0.try_wait().unwrap(){break status;}
+            if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}
+            std::thread::sleep(Duration::from_millis(10));
+        };
         let mut rest=String::new();stdout.read_to_string(&mut rest).unwrap();
         assert!(status.success(),"TLS server failed");
         (result.exit_code,result.signal,result.stdout,result.stderr,rest)

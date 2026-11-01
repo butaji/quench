@@ -239,7 +239,7 @@ pub(crate) fn open_numeric(
             return Err(io::Error::last_os_error());
         }
         // SAFETY: a successful open returned a new descriptor owned by this File.
-        return Ok(unsafe { std::fs::File::from_raw_fd(fd) });
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
     }
     #[cfg(not(unix))]
     {

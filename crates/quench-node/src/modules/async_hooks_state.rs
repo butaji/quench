@@ -175,7 +175,7 @@ impl SharedAsyncHooksState {
 
     pub(super) fn default_trigger_async_id(&self) -> f64 {
         self.default_trigger_async_id
-            .filter(|id| !(*id < 0.0))
+            .filter(|id| id.partial_cmp(&0.0) != Some(std::cmp::Ordering::Less))
             .unwrap_or(self.identity.current_async_id() as f64)
     }
 

@@ -228,6 +228,7 @@ impl<H: Host> Vm<H> {
         [atoms.enumerable, atoms.configurable, atoms.value, atoms.writable, atoms.get, atoms.set]
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_property_descriptor(
         &mut self,
         p: &ResidualProgram,
@@ -397,6 +398,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation (FromPropertyDescriptor), which allocates on the VM heap")]
     pub(super) fn from_property_descriptor(
         &mut self,
         record: PropertyDescriptorRecord,

@@ -4,10 +4,7 @@ use crate::heap::PrivateBrand;
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
     ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
-        let previous = std::mem::replace(
-            &mut $vm.frames[$frame].binding_site_pc,
-            Some($resume_pc as u32),
-        );
+        let previous = $vm.frames[$frame].binding_site_pc.replace($resume_pc as u32);
         let result = $action;
         $vm.frames[$frame].binding_site_pc = previous;
         result
@@ -498,9 +495,7 @@ impl<H: Host> Vm<H> {
         if list.is_null() || list.is_undefined() {
             return Some(Vec::new());
         }
-        let Some(object) = self.heap.array(list) else {
-            return None;
-        };
+        let object = self.heap.array(list)?;
         if object.has_indexed_descriptors() || self.heap.sparse_length(list).is_some() {
             return None;
         }
@@ -583,8 +578,8 @@ impl<H: Host> Vm<H> {
                     i.boolean_field(crate::bytecode::InstructionField::C)
                         .unwrap_or(false),
                 )?;
-                if self.frames[f].function == 0 {
-                    if function
+                if self.frames[f].function == 0
+                    && function
                         .local_atoms
                         .get(slot)
                         .is_some_and(|atom| function.declares_global_immutable(*atom))
@@ -592,7 +587,6 @@ impl<H: Host> Vm<H> {
                     {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
                     }
-                }
                 *self
                     .frame_binding_mut(p, f, slot)
                     .ok_or_else(|| JsError("invalid local slot".into()))? = value;
@@ -1019,7 +1013,7 @@ impl<H: Host> Vm<H> {
             }
             Op::ValidateClassHeritage => {
                 let heritage = self.read(f, i.register_a());
-                if !heritage.is_null() && !self.is_constructable(p, heritage) {
+                if !heritage.is_null() && !self.is_constructable(heritage) {
                     return Err(self
                         .type_error(p, "Class extends value is not a constructor or null".into()));
                 }
@@ -1456,10 +1450,7 @@ impl<H: Host> Vm<H> {
                         }) if *realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
-                    Some(std::mem::replace(
-                        &mut self.frames[f].binding_site_pc,
-                        Some(*pc as u32),
-                    ))
+                    Some(self.frames[f].binding_site_pc.replace(*pc as u32))
                 } else {
                     None
                 };

@@ -21,20 +21,6 @@ impl ProgramStore {
             reclaim_passes,
             unchecked_reclaimable,
             // Compiled code is never in a snapshot: its budgets and memos start over.
-            no_entry_facts: _,
-            js_jit_tracked_functions: _,
-            js_jit_tracking_exhaustions: _,
-            js_jit_rejected_functions: _,
-            jit_code_cache: _,
-            js_jit_diagnostics: _,
-            // Process configuration a restoring store reads again, and its diagnostics.
-            general_baseline_priced: _,
-            js_jit_general_dispatch_enabled: _,
-            // Hotness counters are process-local and start fresh after restore.
-            js_general_dispatch_work: _,
-            js_jit_dataview_float64_enabled: _,
-            js_jit_dataview_float64_get_entries: _,
-            js_jit_dataview_float64_set_entries: _,
             ..
         } = self;
         if !owned_scripts.is_empty() {
@@ -72,6 +58,8 @@ impl ProgramStore {
         for _ in 0..count {
             programs.push(if reader.bool()? { Some(Box::new(ProgramEntry::read_snapshot(reader, bytes, atoms)?)) } else { None });
         }
+        // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
+        #[allow(clippy::mutable_key_type)]
         let global_eval_programs = read_list(reader, |reader| {
             Ok((JsString::read_snapshot(reader)?, ProgramId::from_raw(reader.u32()?)))
         })?
@@ -195,7 +183,7 @@ impl ProgramEntry {
         let encoded_start = reader.position();
         reader.skip(encoded_len)?;
         let window = crate::snapshot::Window::new(bytes.clone(), encoded_start, encoded_len)?;
-        ResidualProgram::verify_snapshot(window.as_ref().as_ref())
+        ResidualProgram::verify_snapshot(window.as_ref())
             .map_err(|error| SnapshotError(format!("snapshot program: {error}")))?;
         let residual = Residual::encoded(sites, EncodedResidual { bytes: Rc::new(window), text, atoms: atoms.clone() });
         let constants = reader.values()?;

@@ -416,10 +416,10 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::ArrayLength => instruction.array_length() <= super::MAX_ARRAY_LENGTH,
         super::ImmediateRole::MethodSiteIndex => {
-            (instruction.method_site_index() as usize) < bounds.method_sites
+            instruction.method_site_index() < bounds.method_sites
         }
         super::ImmediateRole::ObjectSiteIndex => {
-            (instruction.object_site_index() as usize) < bounds.object_sites
+            instruction.object_site_index() < bounds.object_sites
         }
         super::ImmediateRole::RegExpLiteralSiteIndex => {
             instruction.regexp_literal_site_index() < bounds.regexp_literal_sites
@@ -428,7 +428,7 @@ fn immediate_domains_in_bounds(
             instruction.literal_template_index() < bounds.literal_templates
         }
         super::ImmediateRole::SuperinstructionIndex => {
-            (instruction.superinstruction_index() as usize) < bounds.superinstructions
+            instruction.superinstruction_index() < bounds.superinstructions
         }
         super::ImmediateRole::JumpTarget => instruction.jump_target() < bounds.code_len,
         // Control-flow validation bounds the entries and checks that each is a jump.
@@ -459,7 +459,7 @@ fn packed_layout_domains_in_bounds(
             (layout != ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
                 || window.count == super::SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT)
                 && register_window_in_bounds(
-                    u16::from(window.base),
+                    window.base,
                     u32::from(window.count),
                     bounds.registers,
                 )

@@ -237,7 +237,7 @@ impl<H: Host> Vm<H> {
         }
         let slot = self.walked_property_shape_slot(shape, key);
         // A slot past u32 is never memoized; it is walked again.
-        if let Some(recorded) = slot.map(u32::try_from).transpose().ok() {
+        if let Ok(recorded) = slot.map(u32::try_from).transpose() {
             self.shape_slot_memo.record(shape, key, recorded);
         }
         slot
@@ -663,7 +663,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether array `array` has no element, dense or sparse.
     fn array_holds_no_element(&self, array: Value) -> bool {
-        self.heap.array_elements(array).is_none_or(|elements| elements.len() == 0)
+        self.heap.array_elements(array).is_none_or(|elements| elements.is_empty())
             && self.heap.sparse_length(array).is_none()
     }
 
@@ -2373,12 +2373,9 @@ impl<H: Host> Vm<H> {
         let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
         {
             (cache, 0)
-        } else if let Some(cache) =
-            self.megamorphic_field_cache(site, receiver.shape(), holder.shape())
-        {
-            (cache, 2)
         } else {
-            return None;
+            let cache = self.megamorphic_field_cache(site, receiver.shape(), holder.shape())?;
+            (cache, 2)
         };
         let value = unsafe {
             // SAFETY: both immutable shapes and the property slot were recorded
@@ -2801,9 +2798,7 @@ impl<H: Host> Vm<H> {
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
-            let Some(data) = self.inherited_chain_link(prototype, cache.atom, cache.function_links) else {
-                return None;
-            };
+            let data = self.inherited_chain_link(prototype, cache.atom, cache.function_links)?;
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
                 return None;
             }
@@ -2913,9 +2908,7 @@ impl<H: Host> Vm<H> {
             if prototype.is_null() {
                 return absence_cacheable.then_some((cache, Value::UNDEFINED));
             }
-            let Some(data) = self.inherited_chain_link(prototype, atom, function_links) else {
-                return None;
-            };
+            let data = self.inherited_chain_link(prototype, atom, function_links)?;
             let shape = data.shape();
             if data.is_module_namespace()
                 || data.is_arguments_object()
@@ -3949,9 +3942,7 @@ impl<H: Host> Vm<H> {
             if depth == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
                 return None;
             }
-            let Some(data) = self.heap.object_record(prototype) else {
-                return None;
-            };
+            let data = self.heap.object_record(prototype)?;
             let shape = data.shape();
             if data.is_module_namespace()
                 || data.is_arguments_object()

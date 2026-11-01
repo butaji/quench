@@ -2100,7 +2100,7 @@ impl<H: Host> Vm<H> {
                     None
                 } else {
                     let name = self.coerce_js_string(p, property_key)?;
-                    Some(self.intern_atom(&name.host_string()))
+                    Some(self.intern_atom(name.host_string()))
                 };
                 let enumerable = if self.heap.array(input).is_some()
                     || matches!(
@@ -2176,8 +2176,10 @@ impl<H: Host> Vm<H> {
             Ok(result) => Ok(result),
             Err(error) => {
                 let iterators = roots
-                    .chunks_exact(2)
-                    .filter_map(|pair| self.heap.root_value(pair[0]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .filter_map(|[iterator, _]| self.heap.root_value(*iterator))
                     .collect::<Vec<_>>();
                 let _ = self.iterator_close_all(p, &iterators, None);
                 Err(error)
@@ -2216,13 +2218,9 @@ impl<H: Host> Vm<H> {
             }
             return Ok(values);
         }
-        let iterator = match self
+        let iterator = self
             .get_iterator(p, padding)
-            .and_then(|iterator| self.iterator_get_direct(p, iterator))
-        {
-            Ok(iterator) => iterator,
-            Err(error) => return Err(error),
-        };
+            .and_then(|iterator| self.iterator_get_direct(p, iterator))?;
         let iterator_root = self.heap.root(iterator);
         let mut values = Vec::with_capacity(count);
         let mut value_roots = Vec::with_capacity(count);
@@ -2556,7 +2554,7 @@ impl<H: Host> Vm<H> {
             value_roots.into_iter().for_each(|root| {
                 self.heap.release_root(root);
             });
-            Ok(self.iterator_result(result, false)?)
+            self.iterator_result(result, false)
         })();
         iterator_roots.into_iter().for_each(|root| {
             self.heap.release_root(root);
@@ -3016,11 +3014,10 @@ impl<H: Host> Vm<H> {
                         elements.get(1).copied().unwrap_or(Value::UNDEFINED),
                     )
                 });
-        if done {
-            if let Some(IteratorRecord { done, .. }) = self.heap.iterator_mut(iterator) {
+        if done
+            && let Some(IteratorRecord { done, .. }) = self.heap.iterator_mut(iterator) {
                 *done = true;
             }
-        }
         self.iterator_result(value, done)
     }
 

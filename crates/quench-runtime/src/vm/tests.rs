@@ -4744,12 +4744,11 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
                     let outcome = vm.array_reduce_native(&program, native, source, &args);
                     assert_eq!(outcome.is_err(), fails);
                     assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                    if let Ok(result) = outcome {
-                        if let Some(handle) = vm.heap.weak_handle(result) {
+                    if let Ok(result) = outcome
+                        && let Some(handle) = vm.heap.weak_handle(result) {
                             vm.collect_now(&program);
                             assert!(vm.heap.weak_value(handle).is_none());
                         }
-                    }
                 }
             }
         }
@@ -7002,7 +7001,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                     }
                     assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
                     assert_eq!(
-                        vm.is_constructable(&program, proxy),
+                        vm.is_constructable(proxy),
                         constructable,
                         "{kind} {owner} {entry}"
                     );
@@ -15594,7 +15593,7 @@ fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
           }
         "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        &source,
+        source,
         "js-jit-boolean-joins.js",
     ))
     .unwrap();
@@ -15662,7 +15661,7 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
       if (isBindingPattern(null) !== false) throw Error('falsey fallback');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        &source,
+        source,
         "js-jit-kind-field.js",
     ))
     .unwrap();

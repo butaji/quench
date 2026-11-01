@@ -454,7 +454,7 @@ impl OwnedKey {
                 }
             }
             if format == RawFormat::Private
-                && descriptor.family == super::crypto_provider_facts::KeyFamily::SLHDSA
+                && descriptor.family == super::crypto_provider_facts::KeyFamily::SlhDsa
             {
                 // The raw SLH-DSA private representation contains four n-byte
                 // values. Reject a mismatched parameter set before asking the
@@ -473,8 +473,8 @@ impl OwnedKey {
             if format == RawFormat::Private
                 && matches!(
                     descriptor.family,
-                    super::crypto_provider_facts::KeyFamily::MLDSA
-                        | super::crypto_provider_facts::KeyFamily::MLKEM
+                    super::crypto_provider_facts::KeyFamily::MlDsa
+                        | super::crypto_provider_facts::KeyFamily::MlKem
                 )
             {
                 return Err(KeyError::Unsupported(
@@ -484,7 +484,7 @@ impl OwnedKey {
             if format == RawFormat::Seed
                 && matches!(
                     descriptor.family,
-                    super::crypto_provider_facts::KeyFamily::SLHDSA
+                    super::crypto_provider_facts::KeyFamily::SlhDsa
                 )
             {
                 return Err(KeyError::Unsupported(
@@ -845,7 +845,7 @@ impl OwnedKey {
                 // component instead.
                 let private_param = if matches!(
                     algorithm.family,
-                    super::crypto_provider_facts::KeyFamily::SLHDSA
+                    super::crypto_provider_facts::KeyFamily::SlhDsa
                 ) {
                     c"priv"
                 } else {
@@ -878,7 +878,7 @@ impl OwnedKey {
                         fields.insert(n.into(), v.ok_or(KeyError::InvalidJwk)?.to_vec());
                     }
                     let count = unsafe { RSA_get_multi_prime_extra_count(k.as_ptr()) };
-                    if count < 0 || count > 8 {
+                    if !(0..=8).contains(&count) {
                         return Err(KeyError::InvalidJwk);
                     }
                     if count > 0 {
@@ -986,7 +986,7 @@ impl OwnedKey {
                 self.raw(),
                 if matches!(
                     family,
-                    Some(super::crypto_provider_facts::KeyFamily::SLHDSA)
+                    Some(super::crypto_provider_facts::KeyFamily::SlhDsa)
                 ) {
                     c"priv"
                 } else {
@@ -1135,7 +1135,7 @@ fn import_akp_jwk(kind: KeyKind, jwk: &Jwk) -> Result<OwnedKey, KeyError> {
     }
     let private_name = if matches!(
         descriptor.family,
-        super::crypto_provider_facts::KeyFamily::SLHDSA
+        super::crypto_provider_facts::KeyFamily::SlhDsa
     ) {
         c"priv"
     } else {
@@ -1146,8 +1146,8 @@ fn import_akp_jwk(kind: KeyKind, jwk: &Jwk) -> Result<OwnedKey, KeyError> {
         .get("priv")
         .map(|value| {
             let expected_len = match descriptor.family {
-                super::crypto_provider_facts::KeyFamily::MLDSA => Some(32),
-                super::crypto_provider_facts::KeyFamily::MLKEM => Some(64),
+                super::crypto_provider_facts::KeyFamily::MlDsa => Some(32),
+                super::crypto_provider_facts::KeyFamily::MlKem => Some(64),
                 _ => None,
             };
             if expected_len.is_some_and(|len| value.len() != len) {

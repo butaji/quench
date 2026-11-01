@@ -12,15 +12,11 @@ const FUNCTION_NAME_SHAPE_ENTRIES: usize = 1 << 8;
 /// Closures of one site take the same name on the same shape, but that shape has a named
 /// child per site, which defeats `Shape::last_child`. Entries name shapes, so they are
 /// cleared with the transition index and whenever a collection renumbers shapes.
+#[derive(Default)]
 pub(super) struct FunctionNameShapes {
     entries: super::shape_memo::DirectMappedTable<(u32, Atom, u32), FUNCTION_NAME_SHAPE_ENTRIES>,
 }
 
-impl Default for FunctionNameShapes {
-    fn default() -> Self {
-        Self { entries: Default::default() }
-    }
-}
 
 impl FunctionNameShapes {
     fn index(shape: u32, name: Atom) -> usize {
@@ -284,9 +280,8 @@ impl<H: Host> Vm<H> {
     /// The source/debug name can differ from the public creation name: dynamic
     /// Function constructors expose "anonymous" while their source name is empty.
     pub(super) fn original_debug_name(&self, function: Value) -> Option<JsString> {
-        if let Some(FunctionRecord { kind: FunctionKind::User(program, id), .. }) = self.heap.function(function) {
-            if self.programs.is_function_constructor_body(*program, *id) { return None; }
-        }
+        if let Some(FunctionRecord { kind: FunctionKind::User(program, id), .. }) = self.heap.function(function)
+            && self.programs.is_function_constructor_body(*program, *id) { return None; }
         self.original_function_name(function).map(|name| self.atom_value(name))
     }
 
@@ -295,14 +290,13 @@ impl<H: Host> Vm<H> {
         let name_key = self.find_atom(Self::atom_hash_str("name"), |atom| {
             self.atom_units_equal_str(atom, "name")
         });
-        if let Some(name_key) = name_key {
-            if let Some(name) = self
+        if let Some(name_key) = name_key
+            && let Some(name) = self
                 .diagnostic_data_property(function, PropertyKey::string(name_key))
                 .and_then(|value| self.heap.string(value))
             {
                 return Some(name.clone());
             }
-        }
         self.original_debug_name(function)
     }
 

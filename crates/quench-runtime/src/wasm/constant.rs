@@ -72,8 +72,8 @@ impl InitializerType {
                 // Embeddings have an implicit final function type, without a
                 // module declaration index. Declared functions use the ordinary
                 // reference subtype operation, including static import exactness.
-                if !ty.requires_declarations() {
-                    if let WasmType::Reference {
+                if !ty.requires_declarations()
+                    && let WasmType::Reference {
                         kind: super::WasmReferenceKind::DeclaredFunction { index, exact },
                         ..
                     } = expected
@@ -84,7 +84,6 @@ impl InitializerType {
                             },
                         );
                     }
-                }
                 ty
             }
             (Self::Function(_), None)

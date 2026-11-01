@@ -291,9 +291,7 @@ fn take_group(
         if index >= bytes.len() || bytes[index] == b'=' {
             break;
         }
-        if alphabet_value(alphabet, bytes[index]).is_none() {
-            return None;
-        }
+        alphabet_value(alphabet, bytes[index])?;
         group.push(bytes[index]);
         index += 1;
     }

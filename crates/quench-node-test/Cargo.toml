@@ -23,3 +23,6 @@ url = "2"
 quench-stack = { path = "../quench-stack" }
 openssl = "0.10"
 wast = "247"
+
+[lints]
+workspace = true

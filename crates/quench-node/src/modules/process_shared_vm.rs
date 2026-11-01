@@ -1285,6 +1285,10 @@ fn apply_groups(
 
 #[cfg(unix)]
 fn initgroups_syscall(user: &std::ffi::CString, group: u32) -> std::io::Result<()> {
+    #[allow(
+        clippy::useless_conversion,
+        reason = "initgroups takes gid_t on Linux but c_int on Apple platforms"
+    )]
     let group = group
         .try_into()
         .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -1311,6 +1315,10 @@ fn setgroups_syscall(groups: &[u32]) -> std::io::Result<()> {
                 .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))
         })
         .collect::<std::io::Result<Vec<_>>>()?;
+    #[allow(
+        clippy::useless_conversion,
+        reason = "setgroups takes size_t on Linux but c_int on BSD and Apple platforms"
+    )]
     let count = groups
         .len()
         .try_into()
@@ -1499,7 +1507,7 @@ fn parse_credential_id(
             ))?;
             return Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"));
         }
-        return Ok(number as u32);
+        Ok(number as u32)
     } else if let Some(name) = context.string_text(value)? {
         let Some(id) = credential_id_by_name(&name, kind) else {
             let noun = match kind {
@@ -1513,9 +1521,9 @@ fn parse_credential_id(
                 false,
             )?);
         };
-        return Ok(id);
+        Ok(id)
     } else {
-        return Err(credential_type_error(context, Some(value))?);
+        Err(credential_type_error(context, Some(value))?)
     }
 }
 
@@ -1572,7 +1580,7 @@ fn credential_id_by_name(name: &str, kind: CredentialKind) -> Option<u32> {
     #[cfg(unix)]
     {
         let name = std::ffi::CString::new(name).ok()?;
-        return unsafe {
+        unsafe {
             match kind {
                 CredentialKind::Uid | CredentialKind::Euid => libc::getpwnam(name.as_ptr())
                     .as_ref()
@@ -1581,7 +1589,7 @@ fn credential_id_by_name(name: &str, kind: CredentialKind) -> Option<u32> {
                     .as_ref()
                     .map(|entry| entry.gr_gid),
             }
-        };
+        }
     }
     #[cfg(not(unix))]
     {
@@ -3677,10 +3685,7 @@ fn schedule_unhandled_rejection_warnings(
     id: u64,
     reason: RootId,
 ) -> Result<(), String> {
-    let stack = match own_stack_string(runtime, program, reason) {
-        Ok(stack) => stack,
-        Err(_) => None,
-    };
+    let stack = own_stack_string(runtime, program, reason).unwrap_or_default();
     let message = match &stack {
         Some(stack) => stack.clone(),
         None => detail_string_rooted(runtime, program, reason)?,

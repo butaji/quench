@@ -315,13 +315,13 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             any = true;
-            let normalized = match key.as_ref() {
+            let normalized = match *key {
                 "localeMatcher" | "formatMatcher" | "hourCycle" | "weekday" | "era" | "year"
                 | "month" | "day" | "dayPeriod" | "hour" | "minute" | "second" | "timeZoneName"
                 | "dateStyle" | "timeStyle" => {
                     let text = self.to_string(p, value)?;
                     if !allowed.contains(&text.as_str()) {
-                        return Err(self.range_error(p, format!("invalid {key}").into()));
+                        return Err(self.range_error(p, format!("invalid {key}")));
                     }
                     match *key {
                         "year" | "month" | "day" | "weekday" | "era" => has_date = true,
@@ -358,7 +358,7 @@ impl<H: Host> Vm<H> {
                 "calendar" => {
                     let text = self.to_string(p, value)?;
                     if !quench_intl::valid_unicode_type(&text) {
-                        return Err(self.range_error(p, format!("invalid {key}").into()));
+                        return Err(self.range_error(p, format!("invalid {key}")));
                     }
                     let calendar = quench_intl::calendar_alias(&text);
                     quench_intl::valid_calendar(&calendar)
@@ -367,7 +367,7 @@ impl<H: Host> Vm<H> {
                 "numberingSystem" => {
                     let text = self.to_string(p, value)?.to_ascii_lowercase();
                     if !quench_intl::valid_unicode_type(&text) {
-                        return Err(self.range_error(p, format!("invalid {key}").into()));
+                        return Err(self.range_error(p, format!("invalid {key}")));
                     }
                     quench_intl::valid_numbering_system(&text)
                         .then(|| self.heap.alloc_string(text.into()))

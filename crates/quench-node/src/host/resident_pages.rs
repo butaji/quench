@@ -764,8 +764,8 @@ fn file_page_runs(start: usize, end: usize) -> Vec<(usize, usize)> {
         return Vec::new();
     }
     let mut runs: Vec<(usize, usize)> = Vec::new();
-    for (index, entry) in entries.chunks_exact(PAGEMAP_ENTRY_BYTES).enumerate() {
-        let entry = u64::from_le_bytes(entry.try_into().expect("a page map entry"));
+    for (index, entry) in entries.as_chunks::<PAGEMAP_ENTRY_BYTES>().0.iter().enumerate() {
+        let entry = u64::from_le_bytes(*entry);
         let private = entry & PAGEMAP_SWAPPED != 0
             || entry & (PAGEMAP_PRESENT | PAGEMAP_FILE) == PAGEMAP_PRESENT;
         if private {

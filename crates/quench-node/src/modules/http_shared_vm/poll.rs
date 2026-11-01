@@ -122,7 +122,8 @@ fn emit_client_error(
     runtime.release_root(emit);
     runtime.release_root(error);
     runtime.release_root(socket);
-    let result = match result {
+    
+    match result {
         Ok(result) => {
             let handled = runtime
                 .rooted_value(result)
@@ -138,8 +139,7 @@ fn emit_client_error(
             }
             Err(message)
         }
-    };
-    result
+    }
 }
 
 fn server_request_rules(
@@ -749,7 +749,7 @@ pub(crate) fn poll(
                         };
                         let error_code = message
                             .parse_error
-                            .or_else(|| {
+                            .or({
                                 if header_overflow {
                                     Some("HPE_HEADER_OVERFLOW")
                                 } else if invalid_headers || missing_host {
@@ -1631,9 +1631,7 @@ pub(crate) fn poll(
                 for response in contexts {
                     retire_response(runtime, shared_state, response);
                 }
-                if server_id.is_some() || free_socket_destroyed {
-                    progressed = true;
-                } else if client_was_present {
+                if server_id.is_some() || free_socket_destroyed || client_was_present {
                     progressed = true;
                 } else {
                     return Err(format!("shared HTTP socket failed: {message}"));

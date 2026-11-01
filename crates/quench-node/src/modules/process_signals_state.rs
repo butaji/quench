@@ -195,7 +195,7 @@ mod platform {
                 return Ok(());
             }
             let sequence = next_sequence()?;
-            if !self.previous.contains_key(&signal) {
+            if let std::collections::hash_map::Entry::Vacant(e) = self.previous.entry(signal) {
                 let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
                 let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
                 action.sa_sigaction = receive as *const () as usize;
@@ -206,7 +206,7 @@ mod platform {
                 if unsafe { libc::sigaction(signal, &action, &mut previous) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
-                self.previous.insert(signal, previous);
+                e.insert(previous);
             }
             self.subscribers
                 .get_mut(&id)

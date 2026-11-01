@@ -3835,7 +3835,7 @@ pub(crate) fn initialize_module(
 
 fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
     super::fs_watch_shared_vm::install(context, module)?;
-    let opendir_promise;
+    
     let read_file = get(context, module, "readFileSync")?;
     let read_file_factory = context
         .evaluate_script_rooted(ASYNC_READ_FILE_FACTORY, "node:fs/shared-async-read-file.js")?;
@@ -3932,7 +3932,7 @@ fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Re
     let dir_constructor = get(context, opendir_api, "Dir")?;
     let opendir = get(context, opendir_api, "opendir")?;
     let opendir_sync = get(context, opendir_api, "opendirSync")?;
-    opendir_promise = get(context, opendir_api, "opendirPromise")?;
+    let opendir_promise = get(context, opendir_api, "opendirPromise")?;
     set(context, module, "Dir", dir_constructor)?;
     set(context, module, "opendir", opendir)?;
     set(context, module, "opendirSync", opendir_sync)?;

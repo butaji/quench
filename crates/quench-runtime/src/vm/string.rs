@@ -452,12 +452,11 @@ impl<H: Host> Vm<H> {
                     let segment = vm.get_property(p, raw, atom)?;
                     let segment = vm.coerce_js_string(p, segment)?;
                     output.push_js_string(&segment);
-                    if index + 1 < length {
-                        if let Some(substitution) = args.get(index + 1) {
+                    if index + 1 < length
+                        && let Some(substitution) = args.get(index + 1) {
                             let substitution = vm.coerce_js_string(p, *substitution)?;
                             output.push_js_string(&substitution);
                         }
-                    }
                 }
                 Ok(vm.heap.alloc_string(output))
             })

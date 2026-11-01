@@ -435,7 +435,11 @@ pub(crate) enum Native {
     Error, ErrorToString, ErrorIsError, ErrorCaptureStackTrace, ErrorStackGetter, ErrorStackSetter,
     CallSiteGetFileName, CallSiteGetThis, CallSiteGetFunctionName, CallSiteGetLineNumber, CallSiteGetColumnNumber,
     CallSiteGetTypeName, CallSiteGetMethodName, CallSiteIsEval, CallSiteGetEvalOrigin,
-    CallSiteIsConstructor, CallSiteIsNative, CallSiteToString,
+    CallSiteIsConstructor,
+    // Named for `CallSite.prototype.isNative`, like every `<Builtin><Method>` variant.
+    #[allow(clippy::enum_variant_names)]
+    CallSiteIsNative,
+    CallSiteToString,
     AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
     RegExp, RegExpCompile, RegExpEscape, RegExpLegacyGetter, RegExpLegacySetter, RegExpToString, RegExpSymbolMatch, RegExpSymbolSearch, RegExpSymbolReplace,
     RegExpSymbolMatchAll, RegExpSymbolSplit, RegExpSpecies,
@@ -3468,6 +3472,8 @@ pub(crate) enum Cell {
     },
     WeakSet {
         object: Box<Object>,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         entries: Box<Vec<Value>>,
     },
     WeakRef {
@@ -3508,7 +3514,12 @@ pub(crate) enum Cell {
     /// Opaque external payload in the internal anyref hierarchy, outside eqref.
     WasmExtern(Value),
     /// One exception identity owns its original tag and traced payload.
-    WasmException { tag: Value, payload: Box<Vec<Value>> },
+    WasmException {
+        tag: Value,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
+        payload: Box<Vec<Value>>,
+    },
     /// A tag retains its original declaration; identity is independent of type equality.
     WasmTag { declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
@@ -3563,17 +3574,23 @@ pub(crate) enum Cell {
         year: i32,
         month: u32,
         day: u32,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
     },
     TemporalPlainDateTime {
         object: Box<Object>,
         date_time: Box<IsoDateTimeFields>,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
     },
     TemporalPlainMonthDay {
         object: Box<Object>,
         month: u32,
         day: u32,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
         reference_iso_year: i32,
     },
@@ -3581,12 +3598,16 @@ pub(crate) enum Cell {
         object: Box<Object>,
         year: i32,
         month: u32,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
         reference_iso_day: u32,
     },
     TemporalZonedDateTime {
         object: Box<Object>,
         instant: Box<ZonedInstant>,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
     },
     TemporalInstant {

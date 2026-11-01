@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
         if allowed.contains(&value.as_str()) {
             Ok(value)
         } else {
-            Err(self.range_error(p, format!("invalid {name}").into()))
+            Err(self.range_error(p, format!("invalid {name}")))
         }
     }
 }

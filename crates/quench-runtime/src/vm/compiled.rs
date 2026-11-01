@@ -903,21 +903,18 @@ pub(super) fn lower_js_numeric_region(
                 );
                 let value = if let Some(operation) = arithmetic {
                     emit_number_arithmetic_operation(&mut body.builder, operation, left, right)
-                } else if let Some(operation) =
-                    super::operations::NumberBitwise::from_js_instruction(
+                } else {
+                    let operation = super::operations::NumberBitwise::from_js_instruction(
                         instruction.op(),
                         op,
                     )
                     .filter(|operation| {
                         int32_bitwise
                             && operation.in_signed_int32_domain()
-                    })
-                {
+                    })?;
                     let left = body.builder.ins().fcvt_to_sint(types::I32, left);
                     let right = body.builder.ins().fcvt_to_sint(types::I32, right);
                     emit_number_bitwise_operation(&mut body.builder, operation, left, right)
-                } else {
-                    return None;
                 };
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
@@ -4018,7 +4015,7 @@ fn note_compiled_callout(counter: *mut u64) {
 }
 
 fn native_entry_sample_due(entry_count: u64) -> bool {
-    entry_count > 0 && entry_count % JIT_NATIVE_ENTRY_SAMPLE_INTERVAL == 0
+    entry_count > 0 && entry_count.is_multiple_of(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL)
 }
 
 unsafe fn note_import_callout_target(
@@ -7571,12 +7568,10 @@ fn affine_pair_loop(
         if u64::from(*second_destination) != u64::from(*destination) + 4 {
             continue;
         }
-        let (left, right) = if u64::from(second_sources[0]) == u64::from(sources[0]) + 4
-            && u64::from(second_sources[1]) == u64::from(sources[1]) + 4
-        {
-            (sources[0], sources[1])
-        } else if u64::from(second_sources[0]) == u64::from(sources[1]) + 4
-            && u64::from(second_sources[1]) == u64::from(sources[0]) + 4
+        let (left, right) = if (u64::from(second_sources[0]) == u64::from(sources[0]) + 4
+            && u64::from(second_sources[1]) == u64::from(sources[1]) + 4)
+            || (u64::from(second_sources[0]) == u64::from(sources[1]) + 4
+                && u64::from(second_sources[1]) == u64::from(sources[0]) + 4)
         {
             (sources[0], sources[1])
         } else {
@@ -10037,7 +10032,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let done = self.body.core.builder.create_block();
         let status_slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
-            types::I64.bytes() as u32,
+            types::I64.bytes(),
             types::I64.bytes().trailing_zeros() as u8,
         ));
         self.body.core.builder
@@ -12435,8 +12430,8 @@ impl<H: Host> Vm<H> {
                 instructions,
             );
         }
-        if allow_inline_calls && (general_candidate || promote_general) {
-            if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
+        if allow_inline_calls && (general_candidate || promote_general)
+            && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, 0, true, promote_general,
             ) {
                 return match outcome {
@@ -12444,7 +12439,6 @@ impl<H: Host> Vm<H> {
                     JsNativeDispatchResult::Resume(pc) => JsTierFrameEntry::NativeResume(pc),
                 };
             }
-        }
         let (program_id, function_id) = (self.frames[frame].program, self.frames[frame].function);
         self.programs
             .record_js_jit_fallback_entry(program_id, function_id);
@@ -12606,9 +12600,7 @@ impl<H: Host> Vm<H> {
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
             return None;
         }
-        let Some(key_hash) = hash_value.as_number() else {
-            return None;
-        };
+        let key_hash = hash_value.as_number()?;
         let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
             super::object::FieldCacheProbe::Hit(value) => value,
             super::object::FieldCacheProbe::Ineligible => {
@@ -12618,9 +12610,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         };
-        let Some(mut entry) = self.direct_array_index_data(array, index_value) else {
-            return None;
-        };
+        let mut entry = self.direct_array_index_data(array, index_value)?;
         let mut cached_equals_function = None;
         let mut equal_arguments = [Value::UNDEFINED; 2];
         equal_arguments[0] = key_value;
@@ -12643,16 +12633,9 @@ impl<H: Host> Vm<H> {
                 }
                 return Some((candidate.return_pc, candidate.return_register, entry));
             }
-            if self.heap.object(entry).is_none() {
-                return None;
-            }
+            self.heap.object(entry)?;
             let entry_hash = match self.cached_field_hit(program, entry, candidate.hash_cache) {
-                super::object::FieldCacheProbe::Hit(value) => {
-                    let Some(value) = value.as_number() else {
-                        return None;
-                    };
-                    value
-                }
+                super::object::FieldCacheProbe::Hit(value) => value.as_number()?,
                 super::object::FieldCacheProbe::Ineligible => {
                     return None;
                 }
@@ -12686,15 +12669,11 @@ impl<H: Host> Vm<H> {
                         return None;
                     }
                 };
-                if entry_key.as_number().is_none() {
-                    return None;
-                }
+                entry_key.as_number()?;
                 equal_arguments[1] = entry_key;
                 let equal =
                     self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
-                let Some(equal) = equal else {
-                    return None;
-                };
+                let equal = equal?;
                 if equal == Value::TRUE {
                     if self.programs.js_jit_diagnostics_enabled() {
                         self.programs
@@ -12804,8 +12783,8 @@ impl<H: Host> Vm<H> {
                 );
                 field_return_diagnostic_entry_recorded = true;
             }
-            if let Some(receiver) = entry.this {
-                if let super::object::FieldCacheProbe::Hit(value) =
+            if let Some(receiver) = entry.this
+                && let super::object::FieldCacheProbe::Hit(value) =
                     self.cached_field_hit(program, receiver, candidate.cache_site)
                 {
                     if self.programs.js_jit_diagnostics_enabled() {
@@ -12814,7 +12793,6 @@ impl<H: Host> Vm<H> {
                     }
                     return Some((candidate.return_pc, candidate.return_register, value));
                 }
-            }
         }
         let tier = self.programs.js_tier(program_id, function_id);
         let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
@@ -13056,10 +13034,7 @@ impl<H: Host> Vm<H> {
                 first_argument.is_some_and(|value| self.heap.is_string(value))
             });
         let string_transform_units = string_transform.and_then(|_| {
-            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
-            else {
-                return None;
-            };
+            let string = first_argument.and_then(|value| self.heap.string(value))?;
             Some(string.units())
         });
         if let Some((entries, reason)) = rejected_entry {
@@ -13319,12 +13294,9 @@ impl<H: Host> Vm<H> {
                 let value = if !matched {
                     first_argument?
                 } else {
-                    let Some(string) = first_argument
+                    let string = first_argument
                         .and_then(|value| self.heap.string(value))
-                        .cloned()
-                    else {
-                        return None;
-                    };
+                        .cloned()?;
                     let units = string.units();
                     match transform {
                         super::js_compiled::JsJitStringTransform::PrefixUnderscore => {
@@ -13810,11 +13782,12 @@ impl<H: Host> Vm<H> {
             }
             let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
-            if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
+            if let Some(root) = root
+                && body_projected_len > MAX_JIT_ROOT_CODE_BYTES
+            {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
-                        root.expect("root mode checked")
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
                 }
                 return None;
@@ -13825,11 +13798,12 @@ impl<H: Host> Vm<H> {
             spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
-            if root.is_some() && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
+            if let Some(root) = root
+                && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES
+            {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
-                        root.expect("root mode checked")
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
                 }
                 return None;

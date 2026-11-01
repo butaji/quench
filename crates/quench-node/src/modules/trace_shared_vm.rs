@@ -386,61 +386,61 @@ fn build_internal_binding(
 ) -> Result<RootId, RootedError> {
     match name {
         #[cfg(unix)]
-        "os" => return super::os_binding_shared_vm::os_binding(context),
+        "os" => super::os_binding_shared_vm::os_binding(context),
         // Node's `lib/os.js` reads `getTempDir` from this binding at load time.
         #[cfg(unix)]
-        "credentials" => return super::os_binding_shared_vm::credentials_binding(context),
-        "fs" => return super::fs_directory_shared_vm::binding(context),
-        "errors" => return super::node_errors_shared_vm::binding(context),
-        "report" => return super::report_configuration_shared_vm::binding(context),
+        "credentials" => super::os_binding_shared_vm::credentials_binding(context),
+        "fs" => super::fs_directory_shared_vm::binding(context),
+        "errors" => super::node_errors_shared_vm::binding(context),
+        "report" => super::report_configuration_shared_vm::binding(context),
         #[cfg(unix)]
-        "process_methods" => return super::process_metrics_shared_vm::binding(context),
+        "process_methods" => super::process_metrics_shared_vm::binding(context),
         "modules" => {
-            return crate::host::shared_vm::commonjs::cached_native_binding(
+            crate::host::shared_vm::commonjs::cached_native_binding(
                 context,
                 "\0binding:modules",
                 module_protocol_binding,
-            );
+            )
         }
-        "stream_wrap" => return super::stream_binding::binding(context),
-        "tty_wrap" => return tty_binding(context),
-        "udp_wrap" => return super::udp_binding::binding(context),
-        "pipe_wrap" => return super::pipe_binding::binding(context),
-        "tcp_wrap" => return super::tcp_binding::binding(context),
-        "contextify" => return super::contextify_shared_vm::binding(context),
-        "types" => return super::util_shared_vm::types_binding(context),
-        "messaging" => return super::messaging_binding_shared_vm::binding(context),
-        "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
-        "util" => return super::util_shared_vm::key_binding(context),
-        "options" => return super::cli_options_shared_vm::binding(context),
-        "string_decoder" => return super::string_decoder_shared_vm::binding(context),
-        "zlib" => return super::zlib_native_shared_vm::binding(context),
-        "serdes" => return super::serdes_shared_vm::binding(context),
-        "ipc_serdes" => return super::ipc_serdes_shared_vm::binding(context),
-        "v8" => return super::v8_shared_vm::binding(context),
-        "heap_utils" => return super::v8_shared_vm::heap_utils_binding(context),
-        "internal_only_v8" => return super::v8_shared_vm::internal_only_binding(context),
-        "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
+        "stream_wrap" => super::stream_binding::binding(context),
+        "tty_wrap" => tty_binding(context),
+        "udp_wrap" => super::udp_binding::binding(context),
+        "pipe_wrap" => super::pipe_binding::binding(context),
+        "tcp_wrap" => super::tcp_binding::binding(context),
+        "contextify" => super::contextify_shared_vm::binding(context),
+        "types" => super::util_shared_vm::types_binding(context),
+        "messaging" => super::messaging_binding_shared_vm::binding(context),
+        "crypto_keys" => super::crypto_key_shared_vm::binding(context),
+        "util" => super::util_shared_vm::key_binding(context),
+        "options" => super::cli_options_shared_vm::binding(context),
+        "string_decoder" => super::string_decoder_shared_vm::binding(context),
+        "zlib" => super::zlib_native_shared_vm::binding(context),
+        "serdes" => super::serdes_shared_vm::binding(context),
+        "ipc_serdes" => super::ipc_serdes_shared_vm::binding(context),
+        "v8" => super::v8_shared_vm::binding(context),
+        "heap_utils" => super::v8_shared_vm::heap_utils_binding(context),
+        "internal_only_v8" => super::v8_shared_vm::internal_only_binding(context),
+        "encoding_binding" => super::encoding_binding_shared_vm::binding(context),
         #[cfg(quench_icu)]
-        "icu" => return super::icu_binding_shared_vm::binding(context),
+        "icu" => super::icu_binding_shared_vm::binding(context),
         "config" => {
             let binding = context.object_rooted()?;
             let has_intl = context.boolean(cfg!(quench_icu));
             put(context, binding, "hasIntl", has_intl)?;
             Ok(binding)
         }
-        "symbols" => return super::util_shared_vm::symbols_binding(context),
-        "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
-        "http_parser" => return super::http_common_shared_vm::module(context),
-        "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
-        "buffer" => return super::buffer_binding_shared_vm::binding(context),
-        "url" => return super::url_binding_shared_vm::binding(context),
-        "blob" => return super::blob_binding_shared_vm::binding(context),
-        "crypto" => return super::tls_shared_vm::facade::binding(context),
-        "timers" => return super::timers_shared_vm::binding(context),
-        "performance" => return super::performance_binding_shared_vm::binding(context),
-        "uv" => return super::util_system_error_shared_vm::uv_binding(context),
-        "fs_event_wrap" => return super::fs_watch_shared_vm::event_binding(context),
+        "symbols" => super::util_shared_vm::symbols_binding(context),
+        "cares_wrap" => crate::host::shared_vm::commonjs::cares_binding(context),
+        "http_parser" => super::http_common_shared_vm::module(context),
+        "http2" => crate::host::shared_vm::commonjs::http2_binding(context),
+        "buffer" => super::buffer_binding_shared_vm::binding(context),
+        "url" => super::url_binding_shared_vm::binding(context),
+        "blob" => super::blob_binding_shared_vm::binding(context),
+        "crypto" => super::tls_shared_vm::facade::binding(context),
+        "timers" => super::timers_shared_vm::binding(context),
+        "performance" => super::performance_binding_shared_vm::binding(context),
+        "uv" => super::util_system_error_shared_vm::uv_binding(context),
+        "fs_event_wrap" => super::fs_watch_shared_vm::event_binding(context),
         "trace_events" => {
             let binding = context.object_rooted()?;
             for (name, operation) in [
@@ -497,7 +497,7 @@ fn build_internal_binding(
             let error = context.error_rooted(&format!("No such binding: {name}"))?;
             let code = context.string_rooted("ERR_INVALID_MODULE");
             put(context, error, "code", code)?;
-            return Err(context.throw(error));
+            Err(context.throw(error))
         }
     }
 }

@@ -471,8 +471,8 @@ fn response_object(
 ) -> Result<RootId, RootedError> {
     let body = String::from_utf8_lossy(&response.body).into_owned();
     let headers = context.object_rooted()?;
-    for (name, value) in response.headers.iter().cloned() {
-        set_text(context, headers, &name, &value)?;
+    for (name, value) in response.headers.iter() {
+        set_text(context, headers, name, value)?;
     }
     let init = context.object_rooted()?;
     set_number(context, init, "status", response.status as f64)?;

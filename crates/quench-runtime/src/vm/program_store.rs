@@ -458,7 +458,9 @@ struct JsTierEntryDecision {
 /// One sparse tier-state table per program. Frontend-specific transitions and
 /// artifacts stay typed, while JS and Wasm share the same state owner and
 /// avoid carrying a second empty hash-map header in every program entry.
+#[derive(Default)]
 enum JitTierManager {
+    #[default]
     Empty,
     JavaScript(FxHashMap<u32, JsTierState>),
     Wasm(WasmTiers),
@@ -492,11 +494,6 @@ impl Default for WasmModuleTier {
     }
 }
 
-impl Default for JitTierManager {
-    fn default() -> Self {
-        Self::Empty
-    }
-}
 
 impl JitTierManager {
     /// Apply JavaScript's bounded statistical promotion transition to the
@@ -2524,9 +2521,7 @@ impl ProgramStore {
                 let opcode_counts = opcode_counts
                     .into_iter()
                     .enumerate()
-                    .filter_map(|(opcode, count)| {
-                        (count != 0).then(|| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
-                    })
+                    .filter(|&(_opcode, count)| count != 0).map(|(opcode, count)| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
                     .collect();
                 // This is a bytecode-site census, not a claim that a site is
                 // pure, redundant, or safe to remove. Predicate purity and
@@ -3497,11 +3492,11 @@ impl Drop for ProgramStore {
                     let atom = header.name.or(header.inferred_name)? as usize;
                     (atom < entry.residual.atoms.len()).then(|| &entry.residual.atoms[atom])
                 })
-                .or_else(|| counters.function_name.as_deref())
+                .or(counters.function_name.as_deref())
                 .unwrap_or("");
             let source_name = entry
                 .map(|entry| entry.residual.source_name.as_str())
-                .or_else(|| counters.source_name.as_deref())
+                .or(counters.source_name.as_deref())
                 .unwrap_or("");
             let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
             let total_entries = counters.entries.saturating_add(counters.lane_entries);

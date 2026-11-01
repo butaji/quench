@@ -2681,15 +2681,14 @@ pub(crate) fn response_write_head(
     // nothing: data properties holding strings, numbers or `undefined`. Anything else
     // answers `false` before any effect, and the guest builds the entries.
     let source = args.get(HEAD_SOURCE_ARGUMENT).and_then(|&root| context.rooted_value(root)).and_then(Value::as_bool) == Some(true);
-    let plain = match source {
-        true => match {
-            let source = argument(context, args.get(3).copied());
-            plain_head_entries(context, source)
-        } {
+    let plain = if source {
+        let source = argument(context, args.get(3).copied());
+        match plain_head_entries(context, source) {
             Some(entries) => Some(entries),
             None => return Ok(context.boolean(false)),
-        },
-        false => None,
+        }
+    } else {
+        None
     };
     let lifecycle = context
         .host_mut()
@@ -3320,17 +3319,14 @@ fn write_head_entries(
     relaxed: bool,
 ) -> Result<Vec<(String, Vec<String>)>, RootedError> {
     let items = context.array_like_values_rooted(root)?;
-    let entries = items.chunks_exact(HEAD_ENTRY_FIELDS);
-    if !entries.remainder().is_empty() {
+    let (entries, remainder) = items.as_chunks::<HEAD_ENTRY_FIELDS>();
+    if !remainder.is_empty() {
         return Err(RootedError::host(
             "shared HTTP header entries are malformed",
         ));
     }
     let mut result = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let &[name_root, values_root, multiple_root] = entry else {
-            unreachable!("chunks_exact yields entries of HEAD_ENTRY_FIELDS values");
-        };
+    for &[name_root, values_root, multiple_root] in entries {
         let name = header_name(context, name_root)?;
         let multiple = context
             .rooted_value(multiple_root)

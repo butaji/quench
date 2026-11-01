@@ -1650,17 +1650,6 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn operation_names_are_unique() {
-        let mut names = std::collections::HashSet::new();
-        for binding in super::bindings() {
-            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
-        }
-    }
-}
-
 /// One export-name authority for Node's ESM facade generation and AOT SDK staging.
 pub(crate) fn builtin_export_names(name: &str) -> &'static [String] {
     static EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> = std::sync::OnceLock::new();
@@ -1763,42 +1752,40 @@ impl NodeHost {
         self.record_module_bytes(&path, kind, &bytes).map_err(|error| error.to_string())?;
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
+        } else if kind == quench_runtime::SourceKind::Module {
+            String::from_utf8(bytes)
+                .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
         } else {
-            if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes)
-                    .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
-            } else {
-                #[cfg(feature = "aot")]
-                self.record_module_resolution(&path, &path.to_string_lossy(), &path)?;
-                let filename = serde_json::to_string(&path.to_string_lossy())
-                    .map_err(|error| error.to_string())?;
-                let mut source = format!(
-                    "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+            #[cfg(feature = "aot")]
+            self.record_module_resolution(&path, &path.to_string_lossy(), &path)?;
+            let filename = serde_json::to_string(&path.to_string_lossy())
+                .map_err(|error| error.to_string())?;
+            let mut source = format!(
+                "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+            );
+            source.push_str("export { __quenchModule as 'module.exports' };\n");
+            for (index, export) in
+                commonjs_exports::names(&path, &commonjs::source_text(&bytes))
+                    .into_iter()
+                    .enumerate()
+            {
+                let local = format!("__quenchExport{index}");
+                source.push_str("const ");
+                source.push_str(&local);
+                source.push_str(" = __quenchModule[");
+                source.push_str(
+                    &serde_json::to_string(&export).map_err(|error| error.to_string())?,
                 );
-                source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in
-                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
-                        .into_iter()
-                        .enumerate()
-                {
-                    let local = format!("__quenchExport{index}");
-                    source.push_str("const ");
-                    source.push_str(&local);
-                    source.push_str(" = __quenchModule[");
-                    source.push_str(
-                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
-                    );
-                    source.push_str("];\n");
-                    source.push_str("export { ");
-                    source.push_str(&local);
-                    source.push_str(" as ");
-                    source.push_str(
-                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
-                    );
-                    source.push_str(" };\n");
-                }
-                source
+                source.push_str("];\n");
+                source.push_str("export { ");
+                source.push_str(&local);
+                source.push_str(" as ");
+                source.push_str(
+                    &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                );
+                source.push_str(" };\n");
             }
+            source
         };
         // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
         // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
@@ -1964,5 +1951,16 @@ impl NodeHost {
             path.to_string_lossy().into_owned()
         };
         Ok(Some(ImportLocation { path, name }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operation_names_are_unique() {
+        let mut names = std::collections::HashSet::new();
+        for binding in super::bindings() {
+            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+        }
     }
 }

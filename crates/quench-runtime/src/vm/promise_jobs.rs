@@ -473,8 +473,7 @@ impl<H: Host> Vm<H> {
         self.switch_realm_global(reaction.realm);
         let previous_context = reaction
             .execution_context
-            .map(|context| self.host.enter_job_context(context))
-            .flatten();
+            .and_then(|context| self.host.enter_job_context(context));
         let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
             vm.promise_job_boundary(reaction.execution_context, true)?;
             let await_reaction = vm.heap.await_state(reaction.handler).is_some();

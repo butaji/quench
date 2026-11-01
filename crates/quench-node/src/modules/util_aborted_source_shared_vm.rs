@@ -74,7 +74,7 @@ pub(crate) fn bind_original(
             |source| {
                 let allocator = oxc_allocator::Allocator::default();
                 let parsed =
-                    oxc_parser::Parser::new(&allocator, &source, oxc_span::SourceType::cjs())
+                    oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs())
                         .parse();
                 if !parsed.diagnostics.is_empty() {
                     return Err("configured abort controller source does not parse".to_owned());

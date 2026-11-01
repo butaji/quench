@@ -1121,13 +1121,12 @@ impl<H: Host> Vm<H> {
         // life once replaced: 837 KiB of RegExp's 4.3 MB malloc peak (massif, 2026-10-22).
         let input = &input.unkept_flat();
         let subject = self.regexp_subject(input, matcher);
-        if let FastReplacement::Template(template) = replacement {
-            if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
+        if let FastReplacement::Template(template) = replacement
+            && !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
                     p, receiver, input, &subject, template, matcher, flags, result_used,
                 );
             }
-        }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
             self.regexp_global_matches(
                 p,
@@ -1714,7 +1713,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         input: &JsString,
     ) -> Option<(Rc<quench_regexp::Regex>, RegExpFlags)> {
-        if input.units().len() == 0 {
+        if input.units().is_empty() {
             return None;
         }
         let intrinsic = self.regexp_intrinsic_constructor();
@@ -1763,7 +1762,7 @@ impl<H: Host> Vm<H> {
                 if species.is_undefined() || species.is_null() {
                     return Ok(vm.regexp_intrinsic_constructor());
                 }
-                if !vm.is_constructable(p, species) {
+                if !vm.is_constructable(species) {
                     return Err(vm.type_error(p, "RegExp species is not a constructor".into()));
                 }
                 Ok(species)
@@ -2338,7 +2337,7 @@ impl<H: Host> Vm<H> {
         let source = self
             .programs
             .constant(program, site.pattern_constant as usize)
-            .and_then(|value| self.heap.string(value).map(|source| source.clone()))
+            .and_then(|value| self.heap.string(value).cloned())
             .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
         let flags_text = self
             .programs
@@ -2533,7 +2532,7 @@ impl<H: Host> Vm<H> {
         let Some(input) = self.heap.string(value) else {
             return Err(self.type_error(program, "RegExp.escape requires a string value".into()));
         };
-        Ok(self.heap.alloc_string(escape_regexp_string(&input)))
+        Ok(self.heap.alloc_string(escape_regexp_string(input)))
     }
 
     pub(super) fn regexp_test(
