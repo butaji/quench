@@ -345,9 +345,12 @@ pub(crate) fn socket_construct(c: &mut Context<'_>, this: RootId, args: &[RootId
     invoke(c, "initSocketOptions", &[this, options])?;
     put_bool(c, this, "connecting", false)?;
     let zero = c.number(0.0);
-    put(c, this, "bytesRead", zero)?;
-    put(c, this, "bytesWritten", zero)?;
+    hide(c, this, "bytesRead", zero)?;
+    hide(c, this, "bytesWritten", zero)?;
     hide(c, this, TIMEOUT, zero)?;
+    let null = c.null();
+    put(c, this, "server", null)?;
+    hide(c, this, "_server", null)?;
     let null = c.null();
     hide(c, this, TIMEOUT_TIMER, null)?;
     invoke(c, "initializeRead", &[this, options])?;

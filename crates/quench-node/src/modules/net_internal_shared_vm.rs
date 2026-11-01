@@ -31,16 +31,25 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     })
 }
 
-/// `operation` as a method named `name`: `this` becomes its first argument.
+/// `operation` as a method named `name`: `this` becomes its first argument, and the
+/// method's parameters are the operation's remaining ones (a missing one is undefined).
 pub(crate) fn method(c: &mut Context<'_>, operation: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.host_function_named_with_data(crate::host::shared_vm::operation("netReceiverCall"), name, operation)
+    let length = c.get_named_property_rooted(operation, "length")?;
+    let data = c.array_rooted(&[operation, length])?;
+    c.host_function_named_with_data(crate::host::shared_vm::operation("netReceiverCall"), name, data)
 }
 
 pub(crate) fn receiver_call(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let operation = c.host_function_data()?;
-    let mut arguments = Vec::with_capacity(args.len() + 1);
+    let data = c.host_function_data()?;
+    let operation = c.get_named_property_rooted(data, "0")?;
+    let length = c.get_named_property_rooted(data, "1")?;
+    let length = c.rooted_value(length).and_then(|value| value.as_number()).unwrap_or(0.0) as usize;
+    let undefined = c.undefined();
+    let mut arguments = Vec::with_capacity(length.max(args.len() + 1));
     arguments.push(this);
     arguments.extend_from_slice(args);
-    let undefined = c.undefined();
+    if arguments.len() < length {
+        arguments.resize(length, undefined);
+    }
     c.call_rooted(operation, undefined, &arguments)
 }

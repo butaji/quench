@@ -1009,20 +1009,18 @@ fn timer_handle_prototype(
         } else {
             "immediateDispose"
         }))?;
-    let factory = crate::host::removed_javascript("node:timers/dispose-facade.js")?;
-    let undefined = context.undefined();
-    let method = context.call_rooted(factory, undefined, &[operation])?;
+    let method = super::net_internal_shared_vm::method(context, operation, "")?;
     let global = context.global_root()?;
     let symbol = property(context, global, "Symbol")?;
     let key = property(context, symbol, "dispose")?;
     context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     if owner == "Timeout" {
         let operation = context.host_function(crate::host::shared_vm::operation("timerClose"))?;
-        let method = context.call_rooted(factory, undefined, &[operation])?;
+        let method = super::net_internal_shared_vm::method(context, operation, "")?;
         install(context, prototype, "close", method)?;
         let operation =
             context.host_function(crate::host::shared_vm::operation("timerToPrimitive"))?;
-        let method = context.call_rooted(factory, undefined, &[operation])?;
+        let method = super::net_internal_shared_vm::method(context, operation, "")?;
         let key = property(context, symbol, "toPrimitive")?;
         context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     }
