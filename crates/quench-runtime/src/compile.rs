@@ -161,6 +161,11 @@ impl Diagnostic {
         self.kind == DiagnosticKind::Syntax
     }
 
+    /// The UTF-8 offset in the source the diagnostic points at.
+    pub fn offset(&self) -> u32 {
+        self.span.start
+    }
+
     /// The diagnostic message without a leading SyntaxError class name.
     pub fn syntax_message(&self) -> &str {
         let message = self.message();

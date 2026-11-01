@@ -958,26 +958,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         },
         exec_argv,
     });
-    let input = if interactive {
-        match input {
-            SharedInput::Eval {
-                source,
-                print,
-                goal,
-                exec_argv,
-            } => SharedInput::Eval {
-                source: format!(
-                    "globalThis.console.log(`Welcome to Node.js ${{process.version}}.\\nType \".help\" for more information.`);\n;globalThis.process.getBuiltinModule('repl').start({{ useGlobal: true }});\n{source}"
-                ),
-                print,
-                goal,
-                exec_argv,
-            },
-            input => input,
-        }
-    } else {
-        input
-    };
+    // `-i` keeps `--interactive` in execArgv; the host starts the REPL before the entry
+    // (`repl::start_interactive`).
     if has_check {
         return check_cli_source(&input);
     }

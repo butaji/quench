@@ -507,6 +507,17 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
     context.scoped(initialize_cluster_worker)?;
+    let interactive = context.host_mut().commonjs_entry.is_none()
+        && context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .exec_argv
+            .iter()
+            .any(|argument| matches!(argument.as_str(), "-i" | "--interactive"));
+    if interactive {
+        context.scoped(crate::modules::repl::start_interactive)?;
+    }
     // Node exposes these web and timer globals as enumerable own properties.
     // The host bindings and several bootstrap polyfills use non-enumerable
     // descriptors by default, so normalize their public descriptors before
@@ -2145,6 +2156,14 @@ pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
     cached_builtin(context, BuiltinModule::Net)
 }
 
+pub(crate) fn vm_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Vm)
+}
+
+pub(crate) fn console_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Console)
+}
+
 pub(crate) fn child_process_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::ChildProcess)
 }
@@ -2587,19 +2606,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Err(RootedError::host("node:http2 is not implemented".to_owned()))
         }
         BuiltinModule::Cluster => crate::modules::cluster::module(context),
-        BuiltinModule::Repl => {
-            // The internal CJS loader normally initializes this list during
-            // Node's pre-execution phase. Quench loads the library module on
-            // demand, so seed it from the public Module API before REPL
-            // utilities read it.
-            let cjs_loader =
-                node_library_module(context, "repl.js", "internal/modules/cjs/loader.js")?;
-            let cjs_module = get(context, cjs_loader, "Module")?;
-            let public_module = cached_builtin(context, BuiltinModule::Module)?;
-            let builtin_modules = get(context, public_module, "builtinModules")?;
-            set(context, cjs_module, "builtinModules", builtin_modules)?;
-            node_library_module(context, "repl.js", "repl.js")
-        }
+        BuiltinModule::Repl => crate::modules::repl::module(context),
         BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
         BuiltinModule::Sea => crate::host::removed_javascript("node:sea.js"),
         BuiltinModule::Process
