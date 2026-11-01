@@ -434,6 +434,18 @@ pub fn at_compile_phase(phase: quench_runtime::CompilePhase) {
     }
 }
 
+/// The release before a kept program loads (`Host::kept_compiled_program`), at most once per
+/// `compile_release_interval`. A bootstrap loads its builtin modules from the compile cache
+/// with no compilation boundary between them, so the code each module's set-up ran stayed
+/// resident beside the next one's: V8-v7 Richards start-up peaked at 4.0 MB, 3.2 MB with
+/// these releases and the two before the bootstrap (`execute_shared_on_worker`).
+pub fn release_at_module_load() {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if release_due() {
+        release_read_only_pages();
+    }
+}
+
 /// The host's action once a compilation offers its program to the compile cache
 /// (`Host::keep_compiled_program`): the compilation is over, and the program runs from its
 /// kept form, so the parser's, code generator's and encoder's pages leave before its decode

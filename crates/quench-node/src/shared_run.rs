@@ -367,6 +367,9 @@ fn execute_shared_on_worker(
     let request = ExecutionRequest { source: &source, name: &name, kind };
     let in_worker = worker.is_some();
     let host = new_host(worker)?;
+    // Start-up runs no compilation boundary before the bootstrap's first module: the host's
+    // and the realm's set-up code leave here (`resident_pages::release_at_module_load`).
+    crate::host::resident_pages::release_read_only_pages();
     let snapshot_entry = match &entry_file {
         Some(path) => Some(crate::host::startup_snapshot::SnapshotEntry::File(path)),
         None if eval_builtin_globals => Some(crate::host::startup_snapshot::SnapshotEntry::Inline(&source)),
@@ -380,6 +383,7 @@ fn execute_shared_on_worker(
     };
     runtime.set_execution_mode(mode);
     runtime.set_memory_policy(memory_policy);
+    crate::host::resident_pages::release_read_only_pages();
     let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
     let mut restored = false;
     if let Some(snapshot) = snapshot {

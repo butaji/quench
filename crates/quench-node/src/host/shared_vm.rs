@@ -1136,6 +1136,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+        crate::host::resident_pages::release_at_module_load();
         self.compile_cache.entry(name, parts)?.load()
     }
     fn keeps_compiled_programs(&self) -> bool {
