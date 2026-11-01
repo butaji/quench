@@ -187,7 +187,7 @@ pub(crate) fn stage_host_sources(
     // Process is an implicit Node entry capability and can escape through
     // aliases or reflection. Materialize its declared lazy groups, without
     // invoking ordinary accessor getters or any process operation.
-    for name in crate::modules::process_surface::LAZY_MEMBERS {
+    for name in crate::modules::process_surface::LAZY_GROUPS.iter().flat_map(|(members, _)| members.iter()) {
         context.materialize_lazy_data_property_rooted(process, name)
             .map_err(|error| quench_runtime::RootedError::host(format!("AOT process.{name} staging: {error}")))?;
     }

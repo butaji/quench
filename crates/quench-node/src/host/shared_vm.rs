@@ -1147,6 +1147,10 @@ node_bindings! {
         method "bufferAliasGet" (0) => crate::modules::buffer_module::alias_get,
         method "bufferSlowBuffer" (1) => crate::modules::buffer_module::slow_buffer,
         method "bufferWebExports" (0) => crate::modules::buffer_module::web_exports,
+        method "processCoreInitialize" (0) => crate::modules::process_surface::initialize_core,
+        method "processRef" (1) => crate::modules::process_surface::reference::<NodeHost, true>,
+        method "processUnref" (1) => crate::modules::process_surface::reference::<NodeHost, false>,
+        method "processGetBuiltinModule" (1) => commonjs::process_get_builtin_module,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing

@@ -70,18 +70,24 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     Ok(())
 }
 
-/// The `process` members defined on first access (`processSurfaceInitialize`).
-pub(crate) const LAZY_MEMBERS: &[&str] = &[
+/// Native capability families are admitted independently. Observing one family
+/// must not load an unrelated SDK policy.
+pub(crate) const LAZY_GROUPS: &[(&[&str], &str)] = &[
+    (&["ref", "unref", "getBuiltinModule",
+        #[cfg(unix)] "availableMemory", #[cfg(unix)] "constrainedMemory"], "processCoreInitialize"),
+    (SURFACE_MEMBERS, "processSurfaceInitialize"),
+];
+
+const SURFACE_MEMBERS: &[&str] = &[
     "getActiveResourcesInfo",
     "_getActiveRequests",
-    "availableMemory",
-    "constrainedMemory",
+    #[cfg(not(unix))] "availableMemory",
+    #[cfg(not(unix))] "constrainedMemory",
     "setSourceMapsEnabled",
     "abort",
     "sourceMapsEnabled",
     "debugPort",
     "allowedNodeEnvironmentFlags",
-    "getBuiltinModule",
     "finalization",
     "permission",
     "resourceUsage",
@@ -90,9 +96,106 @@ pub(crate) const LAZY_MEMBERS: &[&str] = &[
     "threadCpuUsage",
     // Node's own wrapper over the native system call (`process_metrics_shared_vm`).
     "execve",
-    "ref",
-    "unref",
 ];
+
+pub(crate) fn initialize_core(c: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let process = c.host_mut().shared_state().borrow().process_module
+        .ok_or_else(|| RootedError::host("native process capabilities have no owner"))?;
+    #[cfg(unix)]
+    super::process_memory_shared_vm::install(c)?;
+    c.with_startup_intrinsics(|c| {
+        let global = c.global_root()?;
+        let symbol = get(c, global, "Symbol")?;
+        let intern = get(c, symbol, "for")?;
+        for (name, operation, key) in [
+            ("ref", "processRef", "nodejs.ref"), ("unref", "processUnref", "nodejs.unref"),
+        ] {
+            let key = c.string_rooted(key);
+            let key = c.call_rooted(intern, symbol, &[key])?;
+            let method = c.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, key)?;
+            c.assign_named_property_rooted(process, name, method)?;
+        }
+        Ok(())
+    })?;
+    let method = c.host_constructor_named(crate::host::shared_vm::operation("processGetBuiltinModule"), "getBuiltinModule")?;
+    c.assign_named_property_rooted(process, "getBuiltinModule", method)?;
+    Ok(c.undefined())
+}
+
+/// Node's reference protocol: the symbol has priority when truthy, including
+/// when it holds a non-callable value. Public `.call` hooks are never consulted.
+pub(crate) fn reference<H: quench_runtime::Host, const REF: bool>(
+    c: &mut NativeContext<'_, H>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = c.undefined();
+    let target = args.first().copied().unwrap_or(undefined);
+    if c.rooted_value(target).is_some_and(|value| value.is_null() || value.is_undefined()) {
+        return Ok(undefined);
+    }
+    let key = c.host_function_data()?;
+    let mut method = c.get_property_rooted(target, key)?;
+    if !c.truthy_rooted(method)? {
+        method = c.get_named_property_rooted(target, if REF { "ref" } else { "unref" })?;
+    }
+    if c.is_callable_rooted(method)? { c.call_rooted(method, target, &[])?; }
+    Ok(undefined)
+}
+
+#[cfg(test)]
+mod native_core_tests {
+    #[test]
+    fn reference_protocol_and_builtin_lookup_keep_node_boundaries() {
+        let source = r#"
+          for (const name of ['ref', 'unref']) {
+            const fn = process[name], key = Symbol.for('nodejs.' + name);
+            if (fn.name !== name || fn.length !== 1 || !Object.hasOwn(fn, 'prototype')) throw Error('metadata');
+            for (const value of [null, undefined, 0, false, '', 'x'])
+              if (fn(value) !== undefined) throw Error('primitive completion');
+            for (const symbolValue of [0, false, null, undefined, true, {}, 'truthy']) {
+              const trace = [];
+              const target = {
+                get [key]() {trace.push('symbol');return symbolValue;},
+                get [name]() {trace.push('fallback');return function() {
+                  if (this !== target || arguments.length !== 0) throw Error('call'); trace.push('invoke');
+                };},
+              };
+              if (fn.call({}, target, 'ignored') !== undefined) throw Error('return');
+              const expected = symbolValue ? ['symbol'] : ['symbol', 'fallback', 'invoke'];
+              if (JSON.stringify(trace) !== JSON.stringify(expected)) throw Error('lookup order');
+            }
+            const error = {};
+            for (const target of [{get [key]() {throw error;}}, {[key]() {throw error;}},
+              {[key]: false, get [name]() {throw error;}}]) {
+              try {fn(target);throw Error('missing throw');} catch (caught) {if(caught!==error)throw caught;}
+            }
+            const target = {[key]: function() {if(this!==target)throw Error('receiver');}};
+            target[key].call = function() {throw Error('mutable call hook');};
+            fn(target);
+            if (Object.getPrototypeOf(new fn()) !== fn.prototype) throw Error('constructor');
+          }
+          const builtin = process.getBuiltinModule;
+          if (builtin.name !== 'getBuiltinModule' || builtin.length !== 1 || !Object.hasOwn(builtin,'prototype')) throw Error('builtin metadata');
+          if (builtin('path') !== require('path') || builtin('node:path') !== require('path') ||
+              builtin('process') !== process || builtin('not-a-builtin') !== undefined) throw Error('canonical loader');
+          const path = builtin('path'), replacement = {};
+          require.cache.path = {exports: replacement};
+          if (require('path') !== replacement || builtin('path') !== path) throw Error('builtin cache boundary');
+          delete require.cache.path;
+          for (const id of ['internal/async_hooks', 'node:internal/async_hooks',
+            'internal/timers', 'node:internal/timers', 'vfs', 'node:vfs']) {
+            if (builtin(id) !== undefined) throw Error('builtin visibility');
+          }
+          for(const value of [null,undefined,1,false]) {
+            try {builtin(value);throw Error('missing type error');} catch(e) {
+              if(e.name!=='TypeError'||e.code!=='ERR_INVALID_ARG_TYPE')throw e;
+            }
+          }
+        "#;
+        let program = quench_runtime::Engine::specialize(source, "native-process-core.js").unwrap();
+        let host = crate::NodeHost::new(vec!["quench-node".into()]);
+        quench_runtime::Runtime::new(host).execute(&program).unwrap();
+    }
+}
 
 /// Node's own CLI options (the source list of `process.allowedNodeEnvironmentFlags`).
 pub(crate) const NODE_FLAGS: &[&str] = &[

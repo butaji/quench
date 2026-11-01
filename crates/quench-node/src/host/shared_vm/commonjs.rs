@@ -386,14 +386,11 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let release = context.host_function(super::operation("processReleaseInitialize"))?;
     context.define_lazy_data_properties_rooted(process, &[PROCESS_RELEASE], true, release)?;
     context.release_root(release);
-    let initializer = context.host_function(super::operation("processSurfaceInitialize"))?;
-    context.define_lazy_data_properties_rooted(
-        process,
-        crate::modules::process_surface::LAZY_MEMBERS,
-        true,
-        initializer,
-    )?;
-    context.release_root(initializer);
+    for (members, operation) in crate::modules::process_surface::LAZY_GROUPS {
+        let initializer = context.host_function(super::operation(operation))?;
+        context.define_lazy_data_properties_rooted(process, members, true, initializer)?;
+        context.release_root(initializer);
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
     context.scoped(crate::modules::buffer_shared_vm::install_global)?;
@@ -1307,200 +1304,8 @@ fn require_for_module_inner(
     if specifier == "internal/bootstrap/realm" {
         return crate::host::removed_javascript("internal/bootstrap/realm.js");
     }
-    match requested_builtin(context, &specifier) {
-        Some(BuiltinModule::Process) => {
-            return match context.host_mut().shared_state().borrow().process_module {
-                Some(root) => Ok(root),
-                _ => Err(RootedError::host(
-                    "shared process module is not initialized",
-                )),
-            };
-        }
-        Some(BuiltinModule::UtilTypes) => {
-            return cached_builtin(context, BuiltinModule::UtilTypes);
-        }
-        Some(BuiltinModule::InternalUrl) => {
-            return cached_builtin(context, BuiltinModule::InternalUrl);
-        }
-        Some(BuiltinModule::Internal("_http_agent")) => {
-            return cached_builtin(context, BuiltinModule::Internal("_http_agent"));
-        }
-        Some(BuiltinModule::InternalVfsFd) => {
-            return cached_builtin(context, BuiltinModule::InternalVfsFd);
-        }
-        Some(BuiltinModule::Vm) => {
-            return cached_builtin(context, BuiltinModule::Vm);
-        }
-        Some(BuiltinModule::InternalUndici) => {
-            let filename = context
-                .host_mut()
-                .node_library_root
-                .join("deps/undici/undici.js");
-            return load(context, &filename, Some(parent), EntryGoal::CommonJs);
-        }
-        Some(BuiltinModule::Dgram) => {
-            return node_library_module(context, "dgram.js", "dgram.js");
-        }
-        Some(BuiltinModule::InternalDgram) => {
-            return node_library_module(context, "internal/dgram.js", "internal/dgram.js");
-        }
-        Some(BuiltinModule::InternalTestBinding) => {
-            // Unlike internal policy initialization, this guest-facing SDK bridge
-            // must observe the current process.emitWarning and warning options.
-            // Its intrinsic operations already come from the SDK primordials.
-            let root = context.host_mut().node_library_root.clone();
-            return load(
-                context,
-                &root.join("lib/internal/test/binding.js"),
-                Some(parent),
-                EntryGoal::CommonJs,
-            );
-        }
-        Some(BuiltinModule::InternalBlockList) => {
-            let module = crate::host::removed_javascript("internal/blocklist.js")?;
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let constructor = get(context, net, "BlockList")?;
-            set(context, module, "BlockList", constructor)?;
-            return Ok(module);
-        }
-        Some(BuiltinModule::InternalSocketAddress) => {
-            let module = crate::host::removed_javascript("internal/socketaddress.js")?;
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let constructor = get(context, net, "SocketAddress")?;
-            // cached_builtin may return the cache's retained root: ownership
-            // remains with builtin_cache, not this projection's call frame.
-            set(context, module, "SocketAddress", constructor)?;
-            return Ok(module);
-        }
-        Some(BuiltinModule::Assert) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            return crate::modules::assert_shared_vm::module(context, util);
-        }
-        Some(BuiltinModule::AssertStrict) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            let module = crate::modules::assert_shared_vm::module(context, util)?;
-            return get(context, module, "strict");
-        }
-        Some(BuiltinModule::Path) => {
-            return crate::modules::path_shared_vm::module(context);
-        }
-        Some(BuiltinModule::PathPosix) => {
-            return crate::modules::path_shared_vm::posix(context);
-        }
-        Some(BuiltinModule::PathWin32) => {
-            return crate::modules::path_shared_vm::win32(context);
-        }
-        Some(BuiltinModule::Url) => {
-            return cached_builtin(context, BuiltinModule::Url);
-        }
-        Some(BuiltinModule::Readline) => {
-            return cached_builtin(context, BuiltinModule::Readline);
-        }
-        Some(BuiltinModule::StreamConsumers) => {
-            return cached_builtin(context, BuiltinModule::StreamConsumers);
-        }
-        Some(BuiltinModule::Querystring) => {
-            return cached_builtin(context, BuiltinModule::Querystring);
-        }
-        Some(BuiltinModule::Events) => {
-            return cached_builtin(context, BuiltinModule::Events);
-        }
-        Some(BuiltinModule::Console) => {
-            return cached_builtin(context, BuiltinModule::Console);
-        }
-        Some(BuiltinModule::Tty) => {
-            return cached_builtin(context, BuiltinModule::Tty);
-        }
-        Some(BuiltinModule::Crypto) => {
-            return cached_builtin(context, BuiltinModule::Crypto);
-        }
-        Some(BuiltinModule::Domain) => {
-            return cached_builtin(context, BuiltinModule::Domain);
-        }
-        Some(BuiltinModule::Tls) => {
-            return cached_builtin(context, BuiltinModule::Tls);
-        }
-        Some(BuiltinModule::V8) => {
-            return cached_builtin(context, BuiltinModule::V8);
-        }
-        Some(BuiltinModule::Module) => {
-            return cached_builtin(context, BuiltinModule::Module);
-        }
-        Some(BuiltinModule::AsyncHooks) => {
-            return if specifier.strip_prefix("node:").unwrap_or(&specifier)
-                == "internal/async_hooks"
-            {
-                crate::modules::domain_trampoline::internal_hooks(context)
-            } else {
-                crate::modules::async_hooks_shared_vm::module(context)
-            };
-        }
-        Some(BuiltinModule::DiagnosticsChannel) => {
-            return crate::modules::diagnostics_channel_shared_vm::module(context);
-        }
-        Some(BuiltinModule::Dns) => {
-            return cached_builtin(context, BuiltinModule::Dns);
-        }
-        Some(BuiltinModule::PerfHooks) => {
-            return cached_builtin(context, BuiltinModule::PerfHooks);
-        }
-        Some(BuiltinModule::Bench) => {
-            return cached_builtin(context, BuiltinModule::Bench);
-        }
-        Some(BuiltinModule::BenchReporters) => {
-            return cached_builtin(context, BuiltinModule::BenchReporters);
-        }
-        Some(BuiltinModule::Zlib) => {
-            return cached_builtin(context, BuiltinModule::Zlib);
-        }
-        Some(BuiltinModule::WebStreams) => {
-            return cached_builtin(context, BuiltinModule::WebStreams);
-        }
-        Some(
-            module @ (BuiltinModule::Fs
-            | BuiltinModule::FsPromises
-            | BuiltinModule::Vfs
-            | BuiltinModule::Net
-            | BuiltinModule::Http
-            | BuiltinModule::Os
-            | BuiltinModule::Buffer
-            | BuiltinModule::Stream
-            | BuiltinModule::StreamPromises
-            | BuiltinModule::StreamIter
-            | BuiltinModule::ZlibIter
-            | BuiltinModule::Timers
-            | BuiltinModule::InternalTimers
-            | BuiltinModule::TimersPromises
-            | BuiltinModule::NodeTest
-            | BuiltinModule::StringDecoder
-            | BuiltinModule::WorkerThreads
-            | BuiltinModule::Util
-            | BuiltinModule::ChildProcess
-            | BuiltinModule::InternalChildProcess
-            | BuiltinModule::Https
-            | BuiltinModule::Http2
-            | BuiltinModule::DnsPromises
-            | BuiltinModule::CaresBinding
-            | BuiltinModule::Http2Binding
-            | BuiltinModule::Inspector
-            | BuiltinModule::Repl
-            | BuiltinModule::Sea
-            | BuiltinModule::Cluster
-            | BuiltinModule::Wasi
-            | BuiltinModule::TraceEvents),
-        ) => {
-            return cached_builtin(context, module);
-        }
-        Some(BuiltinModule::Internal("internal/histogram")) => {
-            // Node's internal/histogram class is the implementation exported by
-            // perf_hooks here. Keep both require paths on the same constructor
-            // so instanceof checks agree across the public and internal APIs.
-            return cached_builtin(context, BuiltinModule::PerfHooks);
-        }
-        Some(module @ BuiltinModule::Internal(_)) => {
-            return cached_builtin(context, module);
-        }
-        None => {}
+    if let Some(builtin) = requested_builtin(context, &specifier) {
+        return builtin_exports(context, builtin, Some(parent));
     }
     let filename = resolve_filename(context, &specifier, parent)?;
     let root = context.host_mut().node_library_root.clone();
@@ -1969,6 +1774,23 @@ fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<Built
     }
 }
 
+pub(crate) fn process_get_builtin_module(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let id = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(id_text) = context.string_text(id)? else {
+        return Err(crate::modules::util_shared_vm::argument_type_error(context, id, "id", "string")?);
+    };
+    let normalized = id_text.strip_prefix("node:").unwrap_or(&id_text);
+    let internal = normalized.starts_with("internal/");
+    if internal && !internals_exposed(context) { return Ok(context.undefined()); }
+    if normalized == "vfs" && (id_text == "vfs" || !context.host_mut().vfs_enabled()) {
+        return Ok(context.undefined());
+    }
+    match requested_builtin(context, if internal { normalized } else { &id_text }) {
+        Some(builtin) => builtin_exports(context, builtin, None),
+        None => Ok(context.undefined()),
+    }
+}
+
 pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
     BuiltinModule::from_specifier(specifier).is_some()
 }
@@ -2183,7 +2005,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:module", BuiltinModule::Module),
     ("async_hooks", BuiltinModule::AsyncHooks),
     ("node:async_hooks", BuiltinModule::AsyncHooks),
-    ("internal/async_hooks", BuiltinModule::AsyncHooks),
+    ("internal/async_hooks", BuiltinModule::Internal("internal/async_hooks")),
     (
         "internal/child_process",
         BuiltinModule::InternalChildProcess,
@@ -2229,6 +2051,198 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("zlib", BuiltinModule::Zlib),
     ("node:zlib", BuiltinModule::Zlib),
 ];
+
+fn builtin_exports(context: &mut Context<'_>, builtin: BuiltinModule, parent: Option<RootId>) -> Result<RootId, RootedError> {
+    match builtin {
+        BuiltinModule::Process => {
+            return match context.host_mut().shared_state().borrow().process_module {
+                Some(root) => Ok(root),
+                _ => Err(RootedError::host(
+                    "shared process module is not initialized",
+                )),
+            };
+        }
+        BuiltinModule::UtilTypes => {
+            return cached_builtin(context, BuiltinModule::UtilTypes);
+        }
+        BuiltinModule::InternalUrl => {
+            return cached_builtin(context, BuiltinModule::InternalUrl);
+        }
+        BuiltinModule::Internal("_http_agent") => {
+            return cached_builtin(context, BuiltinModule::Internal("_http_agent"));
+        }
+        BuiltinModule::InternalVfsFd => {
+            return cached_builtin(context, BuiltinModule::InternalVfsFd);
+        }
+        BuiltinModule::Vm => {
+            return cached_builtin(context, BuiltinModule::Vm);
+        }
+        BuiltinModule::InternalUndici => {
+            let filename = context
+                .host_mut()
+                .node_library_root
+                .join("deps/undici/undici.js");
+            return load(context, &filename, parent, EntryGoal::CommonJs);
+        }
+        BuiltinModule::Dgram => {
+            return node_library_module(context, "dgram.js", "dgram.js");
+        }
+        BuiltinModule::InternalDgram => {
+            return node_library_module(context, "internal/dgram.js", "internal/dgram.js");
+        }
+        BuiltinModule::InternalTestBinding => {
+            // Unlike internal policy initialization, this guest-facing SDK bridge
+            // must observe the current process.emitWarning and warning options.
+            // Its intrinsic operations already come from the SDK primordials.
+            let root = context.host_mut().node_library_root.clone();
+            return load(
+                context,
+                &root.join("lib/internal/test/binding.js"),
+                parent,
+                EntryGoal::CommonJs,
+            );
+        }
+        BuiltinModule::InternalBlockList => {
+            let module = crate::host::removed_javascript("internal/blocklist.js")?;
+            let net = cached_builtin(context, BuiltinModule::Net)?;
+            let constructor = get(context, net, "BlockList")?;
+            set(context, module, "BlockList", constructor)?;
+            return Ok(module);
+        }
+        BuiltinModule::InternalSocketAddress => {
+            let module = crate::host::removed_javascript("internal/socketaddress.js")?;
+            let net = cached_builtin(context, BuiltinModule::Net)?;
+            let constructor = get(context, net, "SocketAddress")?;
+            // cached_builtin may return the cache's retained root: ownership
+            // remains with builtin_cache, not this projection's call frame.
+            set(context, module, "SocketAddress", constructor)?;
+            return Ok(module);
+        }
+        BuiltinModule::Assert => {
+            let util = cached_builtin(context, BuiltinModule::Util)?;
+            return crate::modules::assert_shared_vm::module(context, util);
+        }
+        BuiltinModule::AssertStrict => {
+            let util = cached_builtin(context, BuiltinModule::Util)?;
+            let module = crate::modules::assert_shared_vm::module(context, util)?;
+            return get(context, module, "strict");
+        }
+        BuiltinModule::Path => {
+            return crate::modules::path_shared_vm::module(context);
+        }
+        BuiltinModule::PathPosix => {
+            return crate::modules::path_shared_vm::posix(context);
+        }
+        BuiltinModule::PathWin32 => {
+            return crate::modules::path_shared_vm::win32(context);
+        }
+        BuiltinModule::Url => {
+            return cached_builtin(context, BuiltinModule::Url);
+        }
+        BuiltinModule::Readline => {
+            return cached_builtin(context, BuiltinModule::Readline);
+        }
+        BuiltinModule::StreamConsumers => {
+            return cached_builtin(context, BuiltinModule::StreamConsumers);
+        }
+        BuiltinModule::Querystring => {
+            return cached_builtin(context, BuiltinModule::Querystring);
+        }
+        BuiltinModule::Events => {
+            return cached_builtin(context, BuiltinModule::Events);
+        }
+        BuiltinModule::Console => {
+            return cached_builtin(context, BuiltinModule::Console);
+        }
+        BuiltinModule::Tty => {
+            return cached_builtin(context, BuiltinModule::Tty);
+        }
+        BuiltinModule::Crypto => {
+            return cached_builtin(context, BuiltinModule::Crypto);
+        }
+        BuiltinModule::Domain => {
+            return cached_builtin(context, BuiltinModule::Domain);
+        }
+        BuiltinModule::Tls => {
+            return cached_builtin(context, BuiltinModule::Tls);
+        }
+        BuiltinModule::V8 => {
+            return cached_builtin(context, BuiltinModule::V8);
+        }
+        BuiltinModule::Module => {
+            return cached_builtin(context, BuiltinModule::Module);
+        }
+        BuiltinModule::AsyncHooks => {
+            return crate::modules::async_hooks_shared_vm::module(context);
+        }
+        BuiltinModule::Internal("internal/async_hooks") => {
+            return crate::modules::domain_trampoline::internal_hooks(context);
+        }
+        BuiltinModule::DiagnosticsChannel => {
+            return crate::modules::diagnostics_channel_shared_vm::module(context);
+        }
+        BuiltinModule::Dns => {
+            return cached_builtin(context, BuiltinModule::Dns);
+        }
+        BuiltinModule::PerfHooks => {
+            return cached_builtin(context, BuiltinModule::PerfHooks);
+        }
+        BuiltinModule::Bench => {
+            return cached_builtin(context, BuiltinModule::Bench);
+        }
+        BuiltinModule::BenchReporters => {
+            return cached_builtin(context, BuiltinModule::BenchReporters);
+        }
+        BuiltinModule::Zlib => {
+            return cached_builtin(context, BuiltinModule::Zlib);
+        }
+        BuiltinModule::WebStreams => {
+            return cached_builtin(context, BuiltinModule::WebStreams);
+        }
+        module @ (BuiltinModule::Fs
+            | BuiltinModule::FsPromises
+            | BuiltinModule::Vfs
+            | BuiltinModule::Net
+            | BuiltinModule::Http
+            | BuiltinModule::Os
+            | BuiltinModule::Buffer
+            | BuiltinModule::Stream
+            | BuiltinModule::StreamPromises
+            | BuiltinModule::StreamIter
+            | BuiltinModule::ZlibIter
+            | BuiltinModule::Timers
+            | BuiltinModule::InternalTimers
+            | BuiltinModule::TimersPromises
+            | BuiltinModule::NodeTest
+            | BuiltinModule::StringDecoder
+            | BuiltinModule::WorkerThreads
+            | BuiltinModule::Util
+            | BuiltinModule::ChildProcess
+            | BuiltinModule::InternalChildProcess
+            | BuiltinModule::Https
+            | BuiltinModule::Http2
+            | BuiltinModule::DnsPromises
+            | BuiltinModule::CaresBinding
+            | BuiltinModule::Http2Binding
+            | BuiltinModule::Inspector
+            | BuiltinModule::Repl
+            | BuiltinModule::Sea
+            | BuiltinModule::Cluster
+            | BuiltinModule::Wasi
+            | BuiltinModule::TraceEvents) => {
+            return cached_builtin(context, module);
+        }
+        BuiltinModule::Internal("internal/histogram") => {
+            // Node's internal/histogram class is the implementation exported by
+            // perf_hooks here. Keep both require paths on the same constructor
+            // so instanceof checks agree across the public and internal APIs.
+            return cached_builtin(context, BuiltinModule::PerfHooks);
+        }
+        module @ BuiltinModule::Internal(_) => {
+            return cached_builtin(context, module);
+        }
+    }
+}
 
 fn cached_builtin(
     context: &mut Context<'_>,
@@ -2331,7 +2345,7 @@ pub(crate) fn events_on_initialize(
 /// pinned library file.
 pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
     if let Some(builtin) = BuiltinModule::from_specifier(id) {
-        return cached_builtin(context, builtin);
+        return builtin_exports(context, builtin, None);
     }
     let relative = if id.ends_with(".js") { id.to_owned() } else { format!("{id}.js") };
     node_library_module(context, "internal/util.js", &relative)
