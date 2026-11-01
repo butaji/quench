@@ -6380,7 +6380,7 @@ unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
 impl<H: Host> Vm<H> {
     /// The receiver field sites of `function` whose cache entries prove a holderless exact
     /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
-    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Option<ReceiverField>> {
+    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Vec<ReceiverField>> {
         let Some(body) = program.function_get(function as usize) else { return Vec::new() };
         body.code
             .iter()
@@ -6389,12 +6389,15 @@ impl<H: Host> Vm<H> {
                 let site = match instruction.op() {
                     Op::GetField => match instruction.field_lookup() {
                         Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
-                        _ => return None,
+                        _ => return Vec::new(),
                     },
                     Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
-                    _ => return None,
+                    _ => return Vec::new(),
                 };
-                self.native_field_load_descriptor(site).map(|(shape, slot)| ReceiverField { shape, slot })
+                self.native_field_load_descriptors(site)
+                    .into_iter()
+                    .map(|(shape, slot)| ReceiverField { shape, slot })
+                    .collect()
             })
             .collect()
     }
@@ -6423,7 +6426,7 @@ impl<H: Host> Vm<H> {
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
         #[cfg(test)]
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let shape_epoch = receiver_fields.iter().any(Option::is_some).then_some(epoch);
+        let shape_epoch = receiver_fields.iter().any(|shapes| !shapes.is_empty()).then_some(epoch);
         Some(LaneMethod { _code: code, entry, shape_epoch })
     }
 

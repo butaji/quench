@@ -1444,6 +1444,27 @@ impl<H: Host> Vm<H> {
             .then_some((cache.receiver, cache.slot))
     }
 
+    /// Every holderless exact shape and slot the site's caches prove, for generated code to
+    /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
+    /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
+    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<(u32, u16)> {
+        let index = self.field_cache_index(site);
+        // SAFETY: compiler-produced sites index exactly-sized cache vectors.
+        let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
+        if table_index == NO_MEGAMORPHIC_FIELD {
+            return self.native_field_load_descriptor(site).into_iter().collect();
+        }
+        // SAFETY: every non-sentinel index was installed together with its table.
+        let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
+        if set.overflow.is_some() {
+            return Vec::new();
+        }
+        set.recorded()
+            .filter(|entry| entry.holder == NO_FIELD_HOLDER && entry.receiver != NO_FIELD_RECEIVER)
+            .map(|entry| (entry.receiver, entry.slot))
+            .collect()
+    }
+
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
     /// data field where the entry names no holder, else that of its prototype, an object
     /// record; `None` where either shape differs. The primary own and record-holder reads

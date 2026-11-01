@@ -39,9 +39,8 @@ struct Registers {
 #[derive(Clone)]
 struct State {
     known: Vec<Known>,
-    /// Registers proved to hold a direct object of the shape (`field shape`), this block,
-    /// with the object's record address.
-    shapes: BTreeMap<Register, (u32, ir::Value)>,
+    /// Registers proved to hold a direct object, this block: its record address and shape.
+    shapes: BTreeMap<Register, (ir::Value, ir::Value)>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
 }
@@ -75,7 +74,7 @@ struct Lowering<'a, 'f> {
     program: &'a ResidualProgram,
     function: &'a Function,
     helpers: LaneHelpers,
-    fields: &'a [Option<ReceiverField>],
+    fields: &'a [Vec<ReceiverField>],
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -306,7 +305,7 @@ pub(super) fn compile(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
-    fields: &[Option<ReceiverField>],
+    fields: &[Vec<ReceiverField>],
 ) -> Option<LaneRegion> {
     let function = program.function_get(function_id as usize)?;
     if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
@@ -685,88 +684,99 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         let exit = self.guard_exit(state, pc as u32);
-        let folded = self.fields.get(pc).copied().flatten();
-        if base == crate::bytecode::FieldBase::THIS {
-            let entry = self.entry.as_ref().expect("entry facts");
-            if let Some(field) = folded {
-                // The receiver's shape was tested once, at entry.
-                let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
-                let object = self.builder.use_var(entry.receiver.object);
-                let inline = self.builder.use_var(entry.receiver.inline);
-                let properties = self.builder.use_var(entry.receiver.properties);
-                let properties_len = self.builder.use_var(entry.receiver.properties_len);
-                emit_js_guard(&mut self.builder, same, exit);
-                let value = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
-                self.set_tagged(state, destination, value);
-                return Some(true);
-            }
-            let this = self.builder.use_var(entry.this);
-            let value = self.field_probe(this, cache_site, exit);
-            self.set_tagged(state, destination, value);
-            return Some(true);
-        }
-        let register = base.register_index()?;
-        if register >= self.function.registers {
+        let shapes = self.fields.get(pc).cloned().unwrap_or_default();
+        let register = base.register_index();
+        if register.is_some_and(|register| register >= self.function.registers) {
             return None;
         }
-        if let Some(field) = folded {
-            if state.receivers.contains(&register) {
+        let receiver = base == crate::bytecode::FieldBase::THIS
+            || register.is_some_and(|register| state.receivers.contains(&register));
+        if !shapes.is_empty() {
+            // The site's proved shapes and slots, folded: one shape load of the object (the
+            // receiver's was proved at entry), a compare per shape, a direct read.
+            let (object, shape, inline) = if receiver {
                 let entry = self.entry.as_ref().expect("entry facts");
-                let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
-                let object = self.builder.use_var(entry.receiver.object);
-                let inline = self.builder.use_var(entry.receiver.inline);
-                let properties = self.builder.use_var(entry.receiver.properties);
-                let properties_len = self.builder.use_var(entry.receiver.properties_len);
-                emit_js_guard(&mut self.builder, same, exit);
-                let value = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
-                self.set_tagged(state, destination, value);
-                return Some(true);
-            }
-            let (object, inline) = self.object_of_shape(state, register, field.shape, exit);
-            let entry = self.entry.as_ref().expect("entry facts");
-            let properties = self.builder.use_var(entry.receiver.properties);
-            let properties_len = self.builder.use_var(entry.receiver.properties_len);
-            let value = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
+                (
+                    self.builder.use_var(entry.receiver.object),
+                    self.builder.use_var(entry.receiver.shape),
+                    self.builder.use_var(entry.receiver.inline),
+                )
+            } else {
+                self.object_record(state, register.expect("a register base"), exit)
+            };
+            let value = self.shape_switch_read(object, shape, inline, &shapes, exit);
             self.set_tagged(state, destination, value);
             return Some(true);
         }
-        let object_bits = self.tagged(state, register);
+        let object_bits = if receiver && register.is_none() {
+            let entry = self.entry.as_ref().expect("entry facts");
+            self.builder.use_var(entry.this)
+        } else {
+            self.tagged(state, register?)
+        };
         let value = self.field_probe(object_bits, cache_site, exit);
         self.set_tagged(state, destination, value);
         Some(true)
     }
 
-    /// The record of the direct object in `register`, proved to have `shape` once per block
-    /// (`State::shapes`), and its meta's inline-storage bits.
-    fn object_of_shape(&mut self, state: &mut State, register: Register, shape: u32, exit: ir::Block) -> (ir::Value, ir::Value) {
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        if let Some((known, object)) = state.shapes.get(&register).copied()
-            && known == shape
-        {
-            let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.meta_offset as i32);
-            let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-            return (object, inline);
+    /// Read the slot `shapes` names for the record's `shape`; `exit` for any other shape.
+    fn shape_switch_read(
+        &mut self,
+        object: ir::Value,
+        shape: ir::Value,
+        inline: ir::Value,
+        shapes: &[ReceiverField],
+        exit: ir::Block,
+    ) -> ir::Value {
+        let entry = self.entry.as_ref().expect("entry facts");
+        let properties = self.builder.use_var(entry.receiver.properties);
+        let properties_len = self.builder.use_var(entry.receiver.properties_len);
+        let join = self.builder.create_block();
+        let value = self.builder.append_block_param(join, types::I64);
+        for field in shapes {
+            let matched = self.builder.create_block();
+            let next = self.builder.create_block();
+            let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+            self.ins().brif(same, matched, &[], next, &[]);
+            self.builder.switch_to_block(matched);
+            let read = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
+            self.ins().jump(join, &[ir::BlockArg::Value(read)]);
+            self.builder.switch_to_block(next);
         }
-        let bits = self.tagged(state, register);
-        let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let is_object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-        emit_js_guard(&mut self.builder, is_object, exit);
-        let record_id = self.ins().ireduce(types::I32, bits);
-        let in_range = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
-        emit_js_guard(&mut self.builder, in_range, exit);
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-        emit_js_guard(&mut self.builder, present, exit);
-        let record_id = self.ins().uextend(types::I64, record_id);
-        let offset = self.ins().imul_imm_u(record_id, layout.record_size as i64);
-        let object = self.ins().iadd(records, offset);
-        let actual = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.auxiliary_offset as i32);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, actual, i64::from(shape));
-        emit_js_guard(&mut self.builder, same, exit);
-        state.shapes.insert(register, (shape, object));
+        self.ins().jump(exit, &[]);
+        self.builder.switch_to_block(join);
+        value
+    }
+
+    /// The record address, exact shape and inline-storage bits of the direct object in
+    /// `register`, proved once per block (`State::shapes`).
+    fn object_record(&mut self, state: &mut State, register: Register, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let (object, shape) = match state.shapes.get(&register).copied() {
+            Some(known) => known,
+            None => {
+                let bits = self.tagged(state, register);
+                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+                let is_object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+                emit_js_guard(&mut self.builder, is_object, exit);
+                let record_id = self.ins().ireduce(types::I32, bits);
+                let in_range = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
+                emit_js_guard(&mut self.builder, in_range, exit);
+                let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+                let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+                emit_js_guard(&mut self.builder, present, exit);
+                let record_id = self.ins().uextend(types::I64, record_id);
+                let offset = self.ins().imul_imm_u(record_id, layout.record_size as i64);
+                let object = self.ins().iadd(records, offset);
+                // The exact shape carries the dictionary bit, so a dictionary never matches.
+                let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.auxiliary_offset as i32);
+                state.shapes.insert(register, (object, shape));
+                (object, shape)
+            }
+        };
         let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.meta_offset as i32);
         let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        (object, inline)
+        (object, shape, inline)
     }
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included;
@@ -789,7 +799,7 @@ impl Lowering<'_, '_> {
         let known_int = matches!(state.known[usize::from(source)], Known::Int { .. });
         let value = self.tagged(state, source);
         let entry = self.entry.as_ref().expect("entry facts");
-        if let Some(field) = self.fields.get(pc).copied().flatten() {
+        if let Some(field) = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0])) {
             let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
             let admitted = self.builder.use_var(entry.store_atoms[&atom]);
             let inline = self.builder.use_var(entry.receiver.inline);
