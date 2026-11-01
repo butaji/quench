@@ -1080,6 +1080,23 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "objectTemplateCopy",
     "byteStringEnd",
     "headerFields",
+    // Socket, timer, decoder and listener bookkeeping a request or message makes several
+    // times (ws, undici, esbuild and Fastify package censuses): none reads the frame stack
+    // itself, and the guest code or errors any of them reaches take frames first
+    // (`Vm::materialize_deferred_lane`).
+    "netSocketAccountWrite",
+    "netSocketRead",
+    "netSocketWrite",
+    "netSocketReference",
+    "setImmediate",
+    "clearTimeout",
+    "textDecoderDecode",
+    "encodingUtf8",
+    "emitterOnce",
+    "emitterAddListener",
+    "emitterRemoveListener",
+    "primordialsCopy",
+    "childProcessReference",
 ];
 
 impl quench_runtime::Host for NodeHost {
