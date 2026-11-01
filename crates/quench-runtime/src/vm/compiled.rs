@@ -50,7 +50,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod wavefront;
-pub(super) use osr_loop::{CALLEE_CAPTURE, NATIVE_FIELD_SHAPES, 
+pub(super) use osr_loop::{CALLEE_CAPTURE, THIS_CAPTURE, NATIVE_FIELD_SHAPES, 
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
