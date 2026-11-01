@@ -241,6 +241,50 @@ impl<H: Host> Vm<H> {
         Some(f(bytes.get(offset..end)?))
     }
 
+    /// `typed_array_get` of a non-BigInt typed array, which allocates nothing: the element,
+    /// or `undefined` past the end or of a detached buffer. One read of the view's cell, and
+    /// an integer element's value made as an integer, so an index loop over a `Uint8Array`
+    /// (ws's frame masking) converts through no float. `None` for any other object.
+    #[inline]
+    pub(super) fn typed_array_number_element(&self, object: Value, index: usize) -> Option<Value> {
+        let Some(Cell::TypedArray { kind, object: view_object, buffer, length, length_tracking }) = self.heap.get(object)
+        else {
+            return None;
+        };
+        let kind = *kind;
+        if kind.is_bigint() {
+            return None;
+        }
+        let view = TypedArrayView {
+            kind,
+            buffer: *buffer,
+            offset: view_object.offset,
+            length: *length,
+            length_tracking: *length_tracking,
+        };
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
+            return Some(Value::UNDEFINED);
+        };
+        let bytes = bytes.read();
+        let Some(start) = view.element(index, bytes.len()) else {
+            return Some(Value::UNDEFINED);
+        };
+        Some(match kind {
+            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(bytes[start])),
+            TypedArrayKind::Int8 => Value::integer(i32::from(bytes[start] as i8)),
+            TypedArrayKind::Uint16 => Value::integer(i32::from(u16::from_ne_bytes([bytes[start], bytes[start + 1]]))),
+            TypedArrayKind::Int16 => Value::integer(i32::from(i16::from_ne_bytes([bytes[start], bytes[start + 1]]))),
+            TypedArrayKind::Int32 => Value::integer(i32::from_ne_bytes(
+                bytes[start..start + 4].try_into().expect("an Int32 element has four bytes"),
+            )),
+            _ => {
+                let mut element = [0; size_of::<u64>()];
+                element[..kind.width()].copy_from_slice(&bytes[start..start + kind.width()]);
+                Value::number(Self::typed_array_number_of(kind, &element))
+            }
+        })
+    }
+
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;

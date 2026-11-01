@@ -68,12 +68,7 @@ impl<H: Host> Vm<H> {
     /// of a non-BigInt kind, or `undefined` past the end. `None` for any other read.
     pub(super) fn plain_typed_element(&mut self, object: Value, key: Value) -> Option<Value> {
         let index = self.array_index_key(key)? as usize;
-        match self.heap.get(object) {
-            Some(Cell::TypedArray { kind, .. })
-                if !matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64) => {}
-            _ => return None,
-        }
-        self.typed_array_get(object, index)
+        self.typed_array_number_element(object, index)
     }
 
     pub(super) fn get_index(
