@@ -1725,6 +1725,87 @@ fn emit_js_own_field_set(
     exact.emit(builder, fallback);
 }
 
+/// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
+fn emit_lane_helper_call(
+    builder: &mut FunctionBuilder<'_>,
+    payload: ir::Value,
+    helper: usize,
+    arguments: &[ir::Value],
+) -> ir::Value {
+    let mut signature = Signature::new(builder.func.signature.call_conv);
+    for _ in 0..arguments.len() + 2 {
+        signature.params.push(AbiParam::new(types::I64));
+    }
+    signature.returns.push(AbiParam::new(types::I64));
+    let signature = builder.import_signature(signature);
+    let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let residual = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
+    let mut values = vec![vm, residual];
+    values.extend_from_slice(arguments);
+    let target = builder.ins().iconst(types::I64, helper as i64);
+    let call = builder.ins().call_indirect(signature, target, &values);
+    builder.inst_results(call)[0]
+}
+
+/// A lane body's field read: the own slot natively, else the VM's cache probe, else the
+/// exact exit.
+#[allow(clippy::too_many_arguments)]
+fn emit_lane_field_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    helpers: LaneHelpers,
+    base_source: ir::Value,
+    base_offset: i32,
+    site: u16,
+    destination_offset: i32,
+    next: ir::Block,
+    exact: &JsExactFallback,
+) {
+    let probe = builder.create_block();
+    let address = emit_js_own_field_slot(builder, base_source, payload, base_offset, site, probe);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    builder.switch_to_block(probe);
+    let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), base_source, base_offset);
+    let site = builder.ins().iconst(types::I64, i64::from(site));
+    let value = emit_lane_helper_call(builder, payload, helpers.field_get, &[receiver, site]);
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    let store = builder.create_block();
+    let exit = builder.create_block();
+    builder.ins().brif(hit, store, &[], exit, &[]);
+    builder.switch_to_block(store);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, exit);
+}
+
+/// A lane body's own-field store through the lane's logged store hit, else the exact exit.
+#[allow(clippy::too_many_arguments)]
+fn emit_lane_field_set(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    helpers: LaneHelpers,
+    base_source: ir::Value,
+    base_offset: i32,
+    value_offset: i32,
+    atom: Atom,
+    site: u16,
+    next: ir::Block,
+    exact: &JsExactFallback,
+) {
+    let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), base_source, base_offset);
+    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
+    let atom = builder.ins().iconst(types::I64, i64::from(atom));
+    let site = builder.ins().iconst(types::I64, i64::from(site));
+    let stored = emit_lane_helper_call(builder, payload, helpers.field_set, &[receiver, atom, site, value]);
+    let exit = builder.create_block();
+    builder.ins().brif(stored, next, &[], exit, &[]);
+    exact.emit(builder, exit);
+}
+
 /// Read the VM's atomic cancellation flag at a JS loop backedge. The caller
 /// sends a set flag to the exact-PC `Vm::step` callout, which reports the same
 /// interruption as the interpreter before consuming the branch.
@@ -1738,7 +1819,16 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum GeneralDispatchMode {
     Frame,
-    Lane,
+    Lane(LaneHelpers),
+}
+
+/// The host-specific semantic helpers a lane body calls where its native path does not
+/// apply: the VM's own field-cache read and its logged own-field store, each the rule the
+/// lane's handlers run (`Vm::cached_field_hit`, `Vm::primary_own_field_store_hit`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LaneHelpers {
+    field_get: usize,
+    field_set: usize,
 }
 
 enum JsGeneralBranch {
@@ -1759,7 +1849,11 @@ pub(super) fn compile_js_general_dispatch(
     unresolved_names_are_global: bool,
     mode: GeneralDispatchMode,
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
-    let lane = mode == GeneralDispatchMode::Lane;
+    let helpers = match mode {
+        GeneralDispatchMode::Lane(helpers) => Some(helpers),
+        GeneralDispatchMode::Frame => None,
+    };
+    let lane = helpers.is_some();
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
     }
@@ -1944,10 +2038,12 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_set(
+            let helpers = helpers.expect("a lane body has helpers");
+            emit_lane_field_set(
                 &mut builder,
                 arguments,
                 payload,
+                helpers,
                 payload,
                 receiver_offset,
                 value_offset,
@@ -2086,7 +2182,10 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_get(&mut builder, arguments, payload, base_source, base_offset, cache_site, destination_offset, next, &exact);
+            match helpers {
+                Some(helpers) => emit_lane_field_get(&mut builder, arguments, payload, helpers, base_source, base_offset, cache_site, destination_offset, next, &exact),
+                None => emit_js_own_field_get(&mut builder, arguments, payload, base_source, base_offset, cache_site, destination_offset, next, &exact),
+            }
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -2131,18 +2230,33 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_set(
-                &mut builder,
-                arguments,
-                payload,
-                arguments,
-                base_offset,
-                value_offset,
-                instruction.atom_index(),
-                instruction.cache_site_index(),
-                next,
-                &exact,
-            );
+            match helpers {
+                Some(helpers) => emit_lane_field_set(
+                    &mut builder,
+                    arguments,
+                    payload,
+                    helpers,
+                    arguments,
+                    base_offset,
+                    value_offset,
+                    instruction.atom_index(),
+                    instruction.cache_site_index(),
+                    next,
+                    &exact,
+                ),
+                None => emit_js_own_field_set(
+                    &mut builder,
+                    arguments,
+                    payload,
+                    arguments,
+                    base_offset,
+                    value_offset,
+                    instruction.atom_index(),
+                    instruction.cache_site_index(),
+                    next,
+                    &exact,
+                ),
+            }
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -6193,6 +6307,9 @@ struct JsStepDispatch {
     receiver: u64,
     /// A lane body's dense capture slots (`LaneContext::capture`, its tag cleared), or null.
     captures: usize,
+    /// A lane body's VM and running residual, which its semantic helpers take.
+    vm: usize,
+    residual: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6220,6 +6337,33 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
     i64::from(NATIVE_JS_STOPPED)
 }
 
+/// A lane body's field read where its own-slot path does not apply: the VM's cache probe
+/// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
+/// leaves native code for the lane's full read.
+unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, site: u64) -> u64 {
+    // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
+    // body runs; the probe reads caches and never allocates.
+    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    match vm.cached_field_hit(residual, Value::from_bits(receiver), site as u16) {
+        super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
+        _ => Value::DELETED.to_bits(),
+    }
+}
+
+/// A lane body's own-field store: the lane's logged store hit, write barrier included
+/// (`Vm::primary_own_field_store_hit`). Zero leaves native code for the full store.
+unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
+    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    u64::from(vm.primary_own_field_store_hit::<true>(
+        residual,
+        Value::from_bits(receiver),
+        atom as Atom,
+        Value::from_bits(value),
+        site as u16,
+    ))
+}
+
 /// A lane body's read of the running function's capture `slot`, by the lane's own rule
 /// (`EnvironmentSlots::dense_plain`); `DELETED` where that rule finds no plain value, which
 /// leaves native code for the lane's full read.
@@ -6240,7 +6384,11 @@ impl<H: Host> Vm<H> {
     /// instruction runs natively: an entry that leaves at once is pure cost.
     pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32) -> Option<LaneMethod> {
         self.host.before_native_compilation();
-        let artifact = compile_js_general_dispatch(program, function, false, GeneralDispatchMode::Lane);
+        let helpers = LaneHelpers {
+            field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
+        };
+        let artifact = compile_js_general_dispatch(program, function, false, GeneralDispatchMode::Lane(helpers));
         self.host.after_native_compilation();
         let artifact = artifact.ok()?;
         if artifact.general_dispatch_native_pcs.first() != Some(&1) {
@@ -6260,6 +6408,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         method: &LaneMethod,
         program: ProgramId,
+        residual: &ResidualProgram,
         registers: *mut Value,
         receiver: Value,
         captures: *const crate::heap::EnvironmentSlots,
@@ -6274,6 +6423,8 @@ impl<H: Host> Vm<H> {
             dispatch.native_registers = registers;
             dispatch.receiver = receiver.to_bits();
             dispatch.captures = captures as usize;
+            dispatch.vm = (self as *mut Self).addr();
+            dispatch.residual = residual as *const ResidualProgram as usize;
             dispatch.refresh_heap_bases(self);
             let context = &mut frame.context;
             context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
@@ -6327,6 +6478,8 @@ impl LaneFrame {
                 stores_specialized: 0,
                 receiver: Value::DELETED.to_bits(),
                 captures: 0,
+                vm: 0,
+                residual: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -6418,6 +6571,8 @@ impl JsStepDispatch {
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
             captures: 0,
+            vm: 0,
+            residual: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

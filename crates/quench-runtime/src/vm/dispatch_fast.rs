@@ -13485,7 +13485,9 @@ script_handler! {
             let receiver = if i.b != 0 && !this.is_deleted() { this } else { Value::DELETED };
             // SAFETY: the activation just set the context to its own captures.
             let captures = capture_reads(unsafe { (*cx).capture });
-            let pc = vm.run_lane_method(method, program, r.0, receiver, captures);
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            let pc = vm.run_lane_method(method, program, code, r.0, receiver, captures);
             // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
             let resume = unsafe { base.add(pc) };
             let mut carried = Carried::script(cx);
