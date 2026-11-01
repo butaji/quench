@@ -6,8 +6,6 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
 
-/// The script name Node's frames give `internal/buffer.js`.
-const INTERNAL_BUFFER_SCRIPT: &str = "node:internal/buffer";
 /// Internal requests the projected library files make for host-held state; only Node's
 /// library code can make them.
 pub(crate) const FAST_BUFFER_REQUEST: &str = "internal/quench/fast_buffer";
@@ -55,10 +53,10 @@ fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, Rooted
     c.get_named_property_rooted(object, name)
 }
 
-/// Load lib/buffer.js. Its `FastBuffer`, which every host-created Buffer shares, is the host's
-/// class (`project_internal_buffer`).
+/// The `buffer` module (`buffer_module`), over the canonical `Buffer`.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::node_library_module(c, "buffer.js", "buffer.js")
+    let buffer = fast_buffer_class(c)?;
+    super::buffer_module::exports(c, buffer)
 }
 
 /// Installs `globalThis.Buffer` as Node's accessor pair (non-enumerable getter `get` and
@@ -66,11 +64,54 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// built on the first read of either, not at start-up; the getter then holds the constructor
 /// that read loaded, as Node's holds the one its bootstrap loaded.
 pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let load = c.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
-    let installer = crate::host::removed_javascript("node:buffer/install-global.js")?;
-    let undefined = c.undefined();
-    c.call_rooted(installer, undefined, &[load])?;
+    let global = c.global_root()?;
+    // `Buffer`'s accessor pair shares one slot: unbound, the getter builds the class; a set
+    // replaces it.
+    let slot = c.null_object_rooted()?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("bufferGlobalGet"), "get", slot)?;
+    let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("bufferGlobalSet"), "set", slot)?;
+    let no = c.boolean(false);
+    let yes = c.boolean(true);
+    let descriptor = c.null_object_rooted()?;
+    c.assign_named_property_rooted(descriptor, "get", getter)?;
+    c.assign_named_property_rooted(descriptor, "set", setter)?;
+    c.assign_named_property_rooted(descriptor, "enumerable", no)?;
+    c.assign_named_property_rooted(descriptor, "configurable", yes)?;
+    let key = c.string_rooted("Buffer");
+    c.define_property_descriptor_rooted(global, key, descriptor)?;
+    let load = c.host_function_named(crate::host::shared_vm::operation("bufferConstructor"), "get")?;
+    let descriptor = c.null_object_rooted()?;
+    c.assign_named_property_rooted(descriptor, "get", load)?;
+    c.assign_named_property_rooted(descriptor, "enumerable", no)?;
+    c.assign_named_property_rooted(descriptor, "configurable", yes)?;
+    let key = c.string_rooted("NodeBuffer");
+    c.define_property_descriptor_rooted(global, key, descriptor)?;
     Ok(())
+}
+
+/// The slot key behind the global `Buffer` accessor.
+const GLOBAL_BUFFER_SLOT: &str = "value";
+
+/// `globalThis.Buffer`'s getter.
+pub(crate) fn global_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = c.host_function_data()?;
+    if c.has_own_property_rooted(slot, GLOBAL_BUFFER_SLOT)? {
+        return get(c, slot, GLOBAL_BUFFER_SLOT);
+    }
+    let buffer = fast_buffer_class(c)?;
+    c.assign_named_property_rooted(slot, GLOBAL_BUFFER_SLOT, buffer)?;
+    Ok(buffer)
+}
+
+/// `globalThis.Buffer`'s setter.
+pub(crate) fn global_set(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = c.host_function_data()?;
+    let value = match args.first() {
+        Some(value) => *value,
+        None => c.undefined(),
+    };
+    c.assign_named_property_rooted(slot, GLOBAL_BUFFER_SLOT, value)?;
+    Ok(c.undefined())
 }
 
 /// The canonical FastBuffer class, made on first use by the host or by `internal/buffer.js`
@@ -78,8 +119,15 @@ pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
 /// prototype gets `Buffer.prototype`'s members as pending properties whose first
 /// observation loads `buffer.js`; when `buffer.js` is the loader, its first write to the
 /// prototype materializes them.
-fn fast_buffer_class(_: &mut Context<'_>) -> Result<RootId, RootedError> {
-    crate::host::removed_javascript(INTERNAL_BUFFER_SCRIPT)
+fn fast_buffer_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let shared = c.host_mut().shared_state();
+    if let Some(buffer) = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied() {
+        return Ok(buffer);
+    }
+    let buffer = super::buffer_module::build_class(c)?;
+    let buffer = c.retain(buffer)?;
+    shared.borrow_mut().builtin_cache.insert(FAST_BUFFER_CACHE.to_owned(), buffer);
+    Ok(buffer)
 }
 
 
@@ -87,7 +135,7 @@ fn fast_buffer_class(_: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// Its load may be what first wrote to the prototype; the library cache then returns it as
 /// it stands.
 pub(crate) fn initialize_prototype(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::node_library_module(c, "buffer.js", "buffer.js")?;
+    fast_buffer_class(c)?;
     Ok(c.undefined())
 }
 
@@ -207,18 +255,12 @@ fn set_slot(c: &mut Context<'_>, state: RootId, slot: PoolSlot, value: RootId) -
 
 /// The `buffer` module's `Buffer`, building the module on first use.
 pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let module = crate::host::shared_vm::commonjs::buffer_module(c)?;
-    get(c, module, "Buffer")
+    fast_buffer_class(c)
 }
 
 /// The canonical FastBuffer, loading the buffer module on first use.
 pub(crate) fn fast_buffer(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
-    if !shared.borrow().builtin_cache.contains_key(FAST_BUFFER_CACHE) {
-        crate::host::shared_vm::commonjs::buffer_module(c)?;
-    }
-    let fast = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied();
-    fast.ok_or_else(|| RootedError::host("canonical FastBuffer missing"))
+    fast_buffer_class(c)
 }
 
 /// A new Buffer holding a copy of `bytes`. A class's `prototype` is non-writable and

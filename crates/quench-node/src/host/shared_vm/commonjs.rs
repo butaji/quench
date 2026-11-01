@@ -518,9 +518,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // descriptors by default, so normalize their public descriptors before
     // user preloads inspect globalThis. Node 26 also provides navigator by
     // default; retain the standard getter shape even when the engine lacks it.
-    let install_node_global_descriptors = crate::host::removed_javascript("node:bootstrap/global-descriptors.js")?;
-    let undefined = context.undefined();
-    context.call_rooted(install_node_global_descriptors, undefined, &[])?;
+    context.scoped(install_global_descriptors)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -780,8 +778,7 @@ pub(crate) fn vfs_position_set(
 
 /// Node's replaceable `performance` global loads `perf_hooks` on first access.
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let root = crate::host::removed_javascript("node:bootstrap/performance-global.js")?;
-    context.release_root(root);
+    install_lazy_global(context, "performance", "perf_hooks", "performance", true)?;
     Ok(())
 }
 
@@ -2535,9 +2532,179 @@ fn task_queues_module(context: &mut Context<'_>) -> Result<RootId, RootedError> 
     let raw_queue_key = context.string_rooted("\0quench:queueMicrotaskRaw");
     let raw_enqueue = context.get_property_rooted(global, raw_queue_key)?;
     let require = get(context, global, BOOTSTRAP_REQUIRE)?;
-    let factory = crate::host::removed_javascript("node:internal/process/task_queues-quench.js")?;
+    let state = context.null_object_rooted()?;
+    set(context, state, "enqueue", raw_enqueue)?;
+    set(context, state, "require", require)?;
+    let queue = context.host_function_named_with_data(super::operation("taskQueueMicrotask"), "queueMicrotask", state)?;
+    let module = context.object_rooted()?;
+    set(context, module, "queueMicrotask", queue)?;
+    Ok(module)
+}
+
+/// The web and timer globals Node defines enumerable.
+const ENUMERABLE_GLOBALS: &[&str] = &[
+    "queueMicrotask", "clearImmediate", "clearInterval", "clearTimeout", "setImmediate",
+    "setInterval", "setTimeout", "structuredClone", "fetch", "crypto", "performance",
+];
+
+/// Node's global descriptors: `ENUMERABLE_GLOBALS` enumerable, a `navigator` getter, and
+/// `globalThis[Symbol.toStringTag]` as `'global'`.
+fn install_global_descriptors(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let yes = context.boolean(true);
+    for name in ENUMERABLE_GLOBALS {
+        let key = context.string_rooted(name);
+        let descriptor = context.own_property_descriptor_rooted(global, key)?;
+        if !context.is_object_rooted(descriptor)? {
+            continue;
+        }
+        let enumerable = get(context, descriptor, "enumerable")?;
+        if !context.truthy_rooted(enumerable)? {
+            set(context, descriptor, "enumerable", yes)?;
+            context.define_property_descriptor_rooted(global, key, descriptor)?;
+        }
+    }
+    let key = context.string_rooted("navigator");
+    let existing = context.own_property_descriptor_rooted(global, key)?;
+    if !context.is_object_rooted(existing)? {
+        let getter = context.host_function_named(super::operation("navigatorGet"), "get navigator")?;
+        let descriptor = context.null_object_rooted()?;
+        set(context, descriptor, "get", getter)?;
+        set(context, descriptor, "enumerable", yes)?;
+        set(context, descriptor, "configurable", yes)?;
+        context.define_property_descriptor_rooted(global, key, descriptor)?;
+    }
+    let symbol = get(context, global, "Symbol")?;
+    let tag = get(context, symbol, "toStringTag")?;
+    let own = context.own_property_descriptor_rooted(global, tag)?;
+    if !context.is_object_rooted(own)? {
+        let value = context.string_rooted("global");
+        context.define_data_property_rooted(global, tag, value, false, false, true)?;
+    }
+    Ok(())
+}
+
+/// `navigator`'s getter: one object whose `userAgent` names the Node major version.
+pub(crate) fn navigator_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    const CACHE: &str = "\0builtin:navigator";
+    let shared = context.host_mut().shared_state();
+    if let Some(navigator) = shared.borrow().builtin_cache.get(CACHE).copied() {
+        return Ok(navigator);
+    }
+    let major = crate::modules::process_state::NODE_VERSION.split('.').next().unwrap_or_default();
+    let navigator = context.object_rooted()?;
+    let agent = context.string_rooted(&format!("Node.js/{major}"));
+    set(context, navigator, "userAgent", agent)?;
+    let navigator = context.retain(navigator)?;
+    shared.borrow_mut().builtin_cache.insert(CACHE.to_owned(), navigator);
+    Ok(navigator)
+}
+
+/// A replaceable global whose getter loads `module` on first access and reads its `export`;
+/// assigning it replaces the value, as Node's lazy bootstrap globals do.
+pub(crate) fn install_lazy_global(
+    context: &mut Context<'_>,
+    name: &str,
+    module: &str,
+    export: &str,
+    enumerable: bool,
+) -> Result<(), RootedError> {
+    let slot = context.null_object_rooted()?;
+    let module_name = context.string_rooted(module);
+    set(context, slot, "module", module_name)?;
+    let export_name = context.string_rooted(export);
+    set(context, slot, "export", export_name)?;
+    let getter = context.host_function_named_with_data(super::operation("lazyGlobalGet"), &format!("get {name}"), slot)?;
+    let setter = context.host_function_named_with_data(super::operation("lazyGlobalSet"), &format!("set {name}"), slot)?;
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    set(context, descriptor, "set", setter)?;
+    let enumerable = context.boolean(enumerable);
+    set(context, descriptor, "enumerable", enumerable)?;
+    let yes = context.boolean(true);
+    set(context, descriptor, "configurable", yes)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted(name);
+    context.define_property_descriptor_rooted(global, key, descriptor)?;
+    Ok(())
+}
+
+/// A lazy global's getter.
+pub(crate) fn lazy_global_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = context.host_function_data()?;
+    if context.has_own_property_rooted(slot, "value")? {
+        return get(context, slot, "value");
+    }
+    let global = context.global_root()?;
+    let require = get(context, global, BOOTSTRAP_REQUIRE)?;
+    let module = get(context, slot, "module")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[raw_enqueue, require])
+    let exports = context.call_rooted(require, undefined, &[module])?;
+    let export = get(context, slot, "export")?;
+    let value = context.get_property_rooted(exports, export)?;
+    set(context, slot, "value", value)?;
+    Ok(value)
+}
+
+/// A lazy global's setter.
+pub(crate) fn lazy_global_set(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = context.host_function_data()?;
+    let value = match args.first() {
+        Some(value) => *value,
+        None => context.undefined(),
+    };
+    set(context, slot, "value", value)?;
+    Ok(context.undefined())
+}
+
+/// `queueMicrotask(callback)`: the callback runs in a `Microtask` AsyncResource's scope,
+/// which is destroyed after it, so async context follows it; async_hooks loads on the first
+/// queued callback. Other values reach the host operation, which validates them.
+pub(crate) fn queue_microtask(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let state = context.host_function_data()?;
+    let enqueue = get(context, state, "enqueue")?;
+    let callback = match args.first() {
+        Some(callback) => *callback,
+        None => context.undefined(),
+    };
+    let undefined = context.undefined();
+    if !context.is_callable_rooted(callback)? {
+        return context.call_rooted(enqueue, undefined, &[callback]);
+    }
+    let mut resource_class = get(context, state, "AsyncResource")?;
+    if context.rooted_value(resource_class).is_some_and(|value| value.is_undefined()) {
+        let require = get(context, state, "require")?;
+        let name = context.string_rooted("async_hooks");
+        let hooks = context.call_rooted(require, undefined, &[name])?;
+        resource_class = get(context, hooks, "AsyncResource")?;
+        set(context, state, "AsyncResource", resource_class)?;
+    }
+    let options = context.object_rooted()?;
+    let yes = context.boolean(true);
+    set(context, options, "requireManualDestroy", yes)?;
+    let kind = context.string_rooted("Microtask");
+    let resource = context.construct_rooted(resource_class, resource_class, &[kind, options])?;
+    set(context, resource, "callback", callback)?;
+    let job = context.host_function_with_data(super::operation("taskQueueMicrotaskJob"), resource)?;
+    context.call_rooted(enqueue, undefined, &[job])
+}
+
+/// A queued microtask: runs its callback in its resource's scope.
+pub(crate) fn queue_microtask_job(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = context.host_function_data()?;
+    let run = context.host_function_with_data(super::operation("taskQueueMicrotaskRun"), resource)?;
+    let scope = get(context, resource, "runInAsyncScope")?;
+    context.call_rooted(scope, resource, &[run])
+}
+
+/// The scope's body: the callback, then the resource's destroy, whatever the callback did.
+pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = context.host_function_data()?;
+    let callback = get(context, resource, "callback")?;
+    let result = context.call_rooted(callback, resource, &[]);
+    let destroy = get(context, resource, "emitDestroy")?;
+    context.call_rooted(destroy, resource, &[])?;
+    result
 }
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {

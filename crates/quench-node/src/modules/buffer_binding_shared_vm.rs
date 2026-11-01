@@ -288,7 +288,7 @@ fn slice(c: &mut Context<'_>, args: &[RootId], encoding: &str) -> Result<RootId,
 
 /// The longest prefix of `encoded` that fits `capacity` without splitting a character
 /// (`StringBytes::Write`).
-fn writable_prefix(encoded: &[u8], encoding: &str, capacity: usize) -> usize {
+pub(crate) fn writable_prefix(encoded: &[u8], encoding: &str, capacity: usize) -> usize {
     let mut count = capacity.min(encoded.len());
     match encoding {
         "utf8" => {
