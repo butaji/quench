@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod kernel;
+pub(crate) mod facade;
 pub(crate) mod promise;
 pub(crate) mod recursive;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -117,53 +118,42 @@ fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 
-pub(crate) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
-    fs: RootId,
-) -> Result<(), RootedError> {
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = (context, fs);
-        return Ok(());
+/// The watch API (`facade::watch_api`), built when `fs` first needs it.
+fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    if let Some(api) = context.host_mut().shared_state().borrow().fs_watch.api {
+        return Ok(api);
     }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        let global = context.global_root()?;
-        let emitter = get(context, global, "__nodeEventEmitter")?;
-        let mut functions = vec![emitter];
-        for name in [
-            "fsWatchClose",
-            "fsWatchRef",
-            "fsWatchHandleClose",
-            "fsWatchHandleRef",
-            "fsWatchHandleHasRef",
-            "fsWatchHandleInitialized",
-            "fsWatch",
-        ] {
-            functions.push(context.host_function(crate::host::shared_vm::operation(name))?);
-        }
-        let factory = crate::host::removed_javascript("node:fs/watch-facade.js")?;
-        let undefined = context.undefined();
-        let api = context.call_rooted(factory, undefined, &functions)?;
-        recursive::install(context, api, fs, emitter)?;
-        promise::install(context, api)?;
-        let regexp = get(context, global, "RegExp")?;
-        let prototype = get(context, regexp, "prototype")?;
-        let exec = get(context, prototype, "exec")?;
-        set(context, api, "regexpExec", exec)?;
-        set(context, api, "regexpConstructor", regexp)?;
-        let watch = get(context, api, "watch")?;
-        set(context, fs, "watch", watch)?;
-        let api = context.retain(api)?;
-        let dispatch =
-            context.host_function(crate::host::shared_vm::operation("fsWatchDispatch"))?;
-        let dispatch = context.retain(dispatch)?;
-        let state = context.host_mut().shared_state();
-        let mut state = state.borrow_mut();
-        state.fs_watch.api = Some(api);
-        state.fs_watch.dispatch = Some(dispatch);
-        Ok(())
-    }
+    let api = facade::watch_api(context)?;
+    let global = context.global_root()?;
+    let regexp = get(context, global, "RegExp")?;
+    let prototype = get(context, regexp, "prototype")?;
+    let exec = get(context, prototype, "exec")?;
+    set(context, api, "regexpExec", exec)?;
+    set(context, api, "regexpConstructor", regexp)?;
+    let api = context.retain(api)?;
+    let dispatch = context.host_function(crate::host::shared_vm::operation("fsWatchDispatch"))?;
+    let dispatch = context.retain(dispatch)?;
+    let state = context.host_mut().shared_state();
+    let mut state = state.borrow_mut();
+    state.fs_watch.api = Some(api);
+    state.fs_watch.dispatch = Some(dispatch);
+    Ok(api)
+}
+
+/// `fs.watch`.
+pub(crate) fn watch_function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let api = api(context)?;
+    get(context, api, "watch")
+}
+
+/// `fs.promises.watch`.
+pub(crate) fn promise_watch_function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    api(context)?;
+    let watch = context.host_function_named(crate::host::shared_vm::operation("fsRecursivePromiseWatch"), "_watch")?;
+    let key = context.string_rooted("length");
+    let length = context.number(1.0);
+    context.define_data_property_rooted(watch, key, length, false, false, true)?;
+    Ok(watch)
 }
 
 fn clone_options(
@@ -266,15 +256,6 @@ fn validate_encoding(
     super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_ARG_VALUE")?;
     Err(context.throw(error))
 }
-fn wrap_matcher(
-    context: &mut NativeContext<'_, NodeHost>,
-    native: RootId,
-) -> Result<RootId, RootedError> {
-    let factory =
-        crate::host::removed_javascript("node:fs/watch-ignore-forward.js")?;
-    let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[native])
-}
 fn ignore_matcher(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
@@ -343,13 +324,13 @@ fn ignore_matcher(
                 crate::host::shared_vm::operation("fsWatchIgnorePattern"),
                 data,
             )?;
-            compiled.push(wrap_matcher(context, native)?);
+            compiled.push(native);
         } else if context.has_builtin_brand_rooted(value, BuiltinBrand::RegExp)? {
             let native = context.host_function_with_data(
                 crate::host::shared_vm::operation("fsWatchIgnoreRegExp"),
                 value,
             )?;
-            compiled.push(wrap_matcher(context, native)?);
+            compiled.push(native);
         } else if context.is_callable_rooted(value)? {
             compiled.push(value);
         } else {
@@ -369,7 +350,7 @@ fn ignore_matcher(
     let array = context.array_rooted(&compiled)?;
     let native = context
         .host_function_with_data(crate::host::shared_vm::operation("fsWatchIgnore"), array)?;
-    wrap_matcher(context, native)
+    Ok(native)
 }
 pub(crate) fn ignore(
     context: &mut NativeContext<'_, NodeHost>,
@@ -502,17 +483,6 @@ pub(crate) fn watch(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let mut forwarded = [undefined; 3];
-    for (slot, value) in forwarded.iter_mut().zip(args) {
-        *slot = *value;
-    }
-    // SDK watch dispatch precedes overload, option and path validation.
-    if let Some(watcher) =
-        crate::modules::fs_policy_shared_vm::vfs_read(context, "watch", &forwarded)?
-    {
-        return Ok(watcher);
-    }
     let filename = args.first().copied().unwrap_or_else(|| context.undefined());
     let raw_options = args.get(1).copied().unwrap_or_else(|| context.undefined());
     let listener = if context.is_callable_rooted(raw_options)? {

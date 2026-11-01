@@ -1532,16 +1532,6 @@ pub(crate) fn stage_builtin_exports(context: &mut Context<'_>, name: &str) -> Re
     Ok(())
 }
 
-/// Stage a dependency through the owner's actual SDK require protocol. Bundled
-/// virtual IDs and frozen resolution metadata follow the same path as execution.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_library_dependency(context: &mut Context<'_>, owner: &str, id: &str) -> Result<(), RootedError> {
-    let root = context.host_mut().node_library_root.clone();
-    let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    let specifier = context.string_rooted(id);
-    host_load(|| context.with_startup_intrinsics(|context| require_for_module(context, parent, &[specifier]).map(drop)))
-}
-
 /// The values of a builtin module's named exports (`args`: the module and the export names),
 /// aligned with the names. As lib/internal/bootstrap/realm.js `syncExports` does, each is read
 /// with `getOwn` (absent own property: `undefined`), in the order the module lists its own
@@ -2424,6 +2414,10 @@ pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError
 
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
+}
+
+pub(crate) fn readline_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Readline)
 }
 
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -4077,7 +4071,6 @@ fn load_with_resolution(
     let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
     if is_fs_utilities {
         if let Ok(exports) = &result {
-            crate::modules::fs_policy_shared_vm::adopt(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;

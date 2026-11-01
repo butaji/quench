@@ -340,44 +340,6 @@ pub(super) fn decorate_range_error(
     decorate_coded_error(context, error, code, ErrorClass::RangeError, &[])
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MessageOrder {
-    BeforeCode,
-    AfterConstructorFields,
-}
-
-pub(super) fn decorate_formatted_range_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootId,
-    code: &'static str,
-) -> Result<(), RootedError> {
-    decorate_ordered_error(
-        context,
-        error,
-        code,
-        ErrorClass::RangeError,
-        &[],
-        MessageOrder::BeforeCode,
-    )
-}
-
-fn decorate_coded_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootId,
-    code: &'static str,
-    class: ErrorClass,
-    fields: &[(&str, RootId)],
-) -> Result<(), RootedError> {
-    decorate_ordered_error(
-        context,
-        error,
-        code,
-        class,
-        fields,
-        MessageOrder::AfterConstructorFields,
-    )
-}
-
 /// Every coded native error uses this shared utility policy, including errors
 /// reached only by invalid inputs. Native staging must close the same source
 /// obligation without exercising an application operation to provoke an error.
@@ -387,13 +349,12 @@ pub(crate) fn prepare_coded_error_support(
     super::util_shared_vm::module(context).map(drop)
 }
 
-fn decorate_ordered_error(
+fn decorate_coded_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
     code: &'static str,
     class: ErrorClass,
     fields: &[(&str, RootId)],
-    order: MessageOrder,
 ) -> Result<(), RootedError> {
     prepare_coded_error_support(context)?;
     let prototype = coded_error_prototype(context, code, class)?;
@@ -401,17 +362,15 @@ fn decorate_ordered_error(
     // Node's variadic error constructor installs its code field before message.
     let message_key = context.string_rooted("message");
     let message = context.get_property_rooted(error, message_key)?;
-    if order == MessageOrder::AfterConstructorFields {
-        let data = context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .event_targets_api
-            .ok_or_else(|| RootedError::host("argument error assignment API missing"))?;
-        let delete = get(context, data, "delete")?;
-        let undefined = context.undefined();
-        context.call_rooted(delete, undefined, &[error, message_key])?;
-    }
+    let data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("argument error assignment API missing"))?;
+    let delete = get(context, data, "delete")?;
+    let undefined = context.undefined();
+    context.call_rooted(delete, undefined, &[error, message_key])?;
     let code = context.string_rooted(code);
     let key = context.string_rooted("code");
     context.define_data_property_rooted(error, key, code, true, true, true)?;

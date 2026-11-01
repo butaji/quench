@@ -4,13 +4,21 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 type Context<'a> = NativeContext<'a, NodeHost>;
-struct Entry {
-    name: std::ffi::OsString,
-    kind: i32,
+pub(crate) struct Entry {
+    pub(crate) name: std::ffi::OsString,
+    pub(crate) kind: i32,
 }
 
+/// A directory's entries in libuv's `scandir` order: sorted by name.
+pub(crate) fn scan(path: &Path) -> std::io::Result<Vec<Entry>> {
+    let mut entries = scan_unsorted(path)?;
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(entries)
+}
+
+/// A directory's entries in the order the kernel reads them (`uv_fs_readdir`).
 #[cfg(target_os = "linux")]
-fn scan(path: &Path) -> std::io::Result<Vec<Entry>> {
+pub(crate) fn scan_unsorted(path: &Path) -> std::io::Result<Vec<Entry>> {
     use std::{
         ffi::{CStr, CString},
         os::unix::ffi::{OsStrExt, OsStringExt},
@@ -64,22 +72,19 @@ fn scan(path: &Path) -> std::io::Result<Vec<Entry>> {
             kind,
         });
     }
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(entries)
 }
 #[cfg(not(target_os = "linux"))]
-fn scan(path: &Path) -> std::io::Result<Vec<Entry>> {
-    let mut entries = std::fs::read_dir(path)?
+pub(crate) fn scan_unsorted(path: &Path) -> std::io::Result<Vec<Entry>> {
+    std::fs::read_dir(path)?
         .map(|entry| {
             let entry = entry?;
             Ok(Entry {
                 name: entry.file_name(),
-                kind: fs::stat::directory_entry_type(entry.file_type()?),
+                kind: fs::dir::entry_type(entry.file_type()?),
             })
         })
-        .collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(entries)
+        .collect()
 }
 fn bytes(path: &std::ffi::OsStr) -> Vec<u8> {
     #[cfg(unix)]
@@ -192,7 +197,7 @@ fn read(c: &mut Context<'_>, args: &[RootId], recursive: bool) -> Result<RootId,
                 let child = path.join(&entry.name);
                 if entry.kind == UV_DIRENT_UNKNOWN {
                     if let Ok(metadata) = std::fs::symlink_metadata(&child) {
-                        entry.kind = fs::stat::directory_entry_type(metadata.file_type());
+                        entry.kind = fs::dir::entry_type(metadata.file_type());
                     }
                 }
                 let is_directory = entry.kind == UV_DIRENT_DIR
@@ -268,8 +273,23 @@ fn error_at(
     } else {
         root.join(relative)
     };
-    fs::stream_io_error(c, error, "scandir", &path.to_string_lossy()).unwrap_or_else(|error| error)
+    fs::failure::system(c, &error, fs::failure::Syscall::at("scandir", &path.to_string_lossy()))
 }
+/// `binding.writeFileUtf8(path | fd, data, flags, mode)`: `data`'s UTF-8 bytes, the whole
+/// file, with policy already applied by the caller.
+pub(crate) fn write_file_utf8(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let argument = |c: &mut Context<'_>, index: usize| args.get(index).copied().unwrap_or_else(|| c.undefined());
+    let (target, data, flags, mode) = (argument(c, 0), argument(c, 1), argument(c, 2), argument(c, 3));
+    let file = fs::ops::file_argument(c, target)?;
+    let bytes = c
+        .string_utf8(data)?
+        .ok_or_else(|| RootedError::host("internal fs.writeFileUtf8 requires string data"))?;
+    let flags = c.to_number(flags)? as i32;
+    let mode = c.to_number(mode)? as u32;
+    fs::ops::write_whole(c, &file, &bytes, flags, mode, false)?;
+    Ok(c.undefined())
+}
+
 pub(crate) fn readdir(
     c: &mut Context<'_>,
     _: RootId,

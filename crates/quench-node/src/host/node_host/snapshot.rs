@@ -59,8 +59,7 @@ impl SharedNodeState {
             tls_contexts,
             #[cfg(quench_icu)]
             icu_converters,
-            fs_stats,
-            fs_policy,
+            fs_classes,
             fs_stat_watch,
             cwd: _,
             module_parent_api,
@@ -169,8 +168,7 @@ impl SharedNodeState {
         performance_native.write_snapshot(writer)?;
         fs_watch.write_snapshot(writer)?;
         tls_contexts.write_snapshot(writer)?;
-        fs_stats.write_snapshot(writer)?;
-        fs_policy.write_snapshot(writer)?;
+        fs_classes.write_snapshot(writer)?;
         fs_stat_watch.write_snapshot(writer)?;
         module_parent_api.write(writer)?;
         builtin_cache.write(writer)?;
@@ -244,8 +242,7 @@ impl SharedNodeState {
         self.performance_native.read_snapshot(reader)?;
         self.fs_watch.read_snapshot(reader)?;
         self.tls_contexts.read_snapshot(reader)?;
-        self.fs_stats.read_snapshot(reader)?;
-        self.fs_policy.read_snapshot(reader)?;
+        self.fs_classes.read_snapshot(reader)?;
         self.fs_stat_watch.read_snapshot(reader)?;
         self.module_parent_api = HostSnap::read(reader)?;
         self.builtin_cache = HostSnap::read(reader)?;

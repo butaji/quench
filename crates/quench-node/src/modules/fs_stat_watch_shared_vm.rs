@@ -52,37 +52,28 @@ fn set(
     context.define_data_property_rooted(object, key, value, true, true, true)?;
     Ok(())
 }
-pub(crate) fn install(
+/// `fs.watchFile` or `fs.unwatchFile` (`name`), over the stat-watcher API built on first use.
+pub(crate) fn function(
     context: &mut NativeContext<'_, NodeHost>,
-    fs: RootId,
-) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let emitter = get(context, global, "__nodeEventEmitter")?;
-    let mut arguments = vec![emitter];
-    for name in [
-        "fsStatWatch",
-        "fsStatUnwatch",
-        "fsStatWatchStop",
-        "fsStatWatchRef",
-    ] {
-        arguments.push(context.host_function(crate::host::shared_vm::operation(name))?);
-    }
-    let factory = crate::host::removed_javascript("node:fs/stat-watcher-facade.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &arguments)?;
-    for name in ["watchFile", "unwatchFile"] {
-        let function = get(context, api, name)?;
-        set(context, fs, name, function)?;
-    }
-    let api = context.retain(api)?;
-    let dispatcher =
-        context.host_function(crate::host::shared_vm::operation("fsStatWatchDispatch"))?;
-    let dispatcher = context.retain(dispatcher)?;
+    name: &str,
+) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
-    let mut state = shared.borrow_mut();
-    state.fs_stat_watch.api = Some(api);
-    state.fs_stat_watch.dispatch = Some(dispatcher);
-    Ok(())
+    let existing = shared.borrow().fs_stat_watch.api;
+    let api = match existing {
+        Some(api) => api,
+        None => {
+            let api = super::fs_watch_shared_vm::facade::stat_watch_api(context)?;
+            let api = context.retain(api)?;
+            let dispatcher =
+                context.host_function(crate::host::shared_vm::operation("fsStatWatchDispatch"))?;
+            let dispatcher = context.retain(dispatcher)?;
+            let mut state = shared.borrow_mut();
+            state.fs_stat_watch.api = Some(api);
+            state.fs_stat_watch.dispatch = Some(dispatcher);
+            api
+        }
+    };
+    get(context, api, name)
 }
 
 fn resolved_path(
@@ -469,9 +460,9 @@ pub(crate) fn dispatch(
         let watcher = context.retain(watcher)?;
         let result = (|| {
             let current =
-                super::fs_shared_vm::stat::metadata_stats(context, current.as_ref(), bigint)?;
+                super::fs_shared_vm::stats::stats(context, &super::fs_shared_vm::stats::StatRecord::of(current.as_ref()), bigint)?;
             let previous =
-                super::fs_shared_vm::stat::metadata_stats(context, previous.as_ref(), bigint)?;
+                super::fs_shared_vm::stats::stats(context, &super::fs_shared_vm::stats::StatRecord::of(previous.as_ref()), bigint)?;
             let emit = get(context, watcher, "emit")?;
             let change = context.string_rooted("change");
             context.call_rooted(emit, watcher, &[change, current, previous])
