@@ -511,7 +511,7 @@ pub(crate) fn compile_function(c: &mut Context<'_>, receiver: RootId, args: &[Ro
 /// `vm.measureMemory(options)`: Quench's heap as one estimate. An eager measurement
 /// resolves at once; a default one waits for a collection Quench does not report.
 pub(crate) fn measure_memory(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    warn_measure_memory(c)?;
+    super::v8_shared_vm::warn_experimental_once(c, "\0warned:vm.measureMemory", MEASURE_MEMORY_WARNING)?;
     let options = argument(c, args, 0);
     let options = options_object(c, options)?;
     let default_mode = c.string_rooted(MEASURE_MODES[0]);
@@ -545,17 +545,6 @@ pub(crate) fn measure_memory(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
     Ok(promise)
 }
 
-fn warn_measure_memory(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let shared = c.host_mut().shared_state();
-    if std::mem::replace(&mut shared.borrow_mut().vm_scripts.measure_memory_warned, true) {
-        return Ok(());
-    }
-    let process = shared.borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
-    let message = c.string_rooted(MEASURE_MEMORY_WARNING);
-    let kind = c.string_rooted("ExperimentalWarning");
-    super::stream_shared_vm::call_method(c, process, "emitWarning", &[message, kind])?;
-    Ok(())
-}
 
 /// The `vm` module's exports, in Node's order.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {

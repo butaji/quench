@@ -28,7 +28,6 @@ pub(crate) struct State {
     scripts: HashMap<u64, Script>,
     /// The index the next unnamed context's default name takes.
     pub(crate) next_context_name: u64,
-    pub(crate) measure_memory_warned: bool,
 }
 
 static NEXT_SCRIPT: AtomicU64 = AtomicU64::new(1);
