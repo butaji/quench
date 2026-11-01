@@ -7149,6 +7149,11 @@ fn lane_loop_entry<H: Host>(
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
         for slot in &region.captures {
+            // The activation's `this`, for reads of `this` the region stores (`THIS_CAPTURE`).
+            if *slot == super::compiled::THIS_CAPTURE {
+                entry.push_capture(unsafe { lane_held_this(cx) });
+                continue;
+            }
             // An inlined callee's capture reads its own environment (`Inlining::callee_captures`).
             if slot & super::compiled::CALLEE_CAPTURE != 0 {
                 let inlining = region.inlining.as_deref()?;
@@ -7224,10 +7229,17 @@ fn lane_loop_entry<H: Host>(
     // SAFETY: the runtime cache probe proves a primary own-data slot. `osr_loop::admit_region`
     // admits only Number values and rejects receiver rewrites and same-name field reads.
     for field in &region.field_store_sites {
-        let object = r.get(field.receiver);
+        let object = match field.receiver {
+            super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx) },
+            super::compiled::FieldReceiver::Register(register) => r.get(register),
+            super::compiled::FieldReceiver::Field(_) => return None,
+        };
         let pointer = unsafe {
             vm.cached_field_store_pointer(code, object, field.atom, field.cache_site)
         }?;
+        // A store may write a heap value: the receiver is logged in the generational
+        // barrier now, and nothing collects before the run ends.
+        vm.heap.object_store_mut(object, object)?;
         entry.push_field_store(pointer);
     }
     if region.reads_heap_natively() {
