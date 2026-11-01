@@ -1,23 +1,8 @@
-//! Native steps of undici's WebIDL conversions and Headers checks (`deps/undici/undici.js`),
-//! which the bundle reaches through parameters of its module wrapper
-//! (`UNDICI_WRAPPER_PREFIX`), bindings only its own code sees.
+//! WebIDL ByteString conversion and HTTP header-field checks, in Rust.
 use crate::host::NodeHost;
 use quench_runtime::{IntactBuiltin, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
-
-/// The library path of the undici bundle.
-pub(crate) const UNDICI: &str = "deps/undici/undici.js";
-
-/// The CommonJS wrapper of the undici bundle: the ordinary one, binding `byteStringEnd`
-/// (`byte_string_end_binding!`) and `headerFields` (`header_fields_binding!`) too.
-pub(crate) const UNDICI_WRAPPER_PREFIX: &str = concat!(
-    "(function (exports, require, module, __filename, __dirname, ",
-    byte_string_end_binding!(),
-    ", ",
-    header_fields_binding!(),
-    ") { "
-);
 
 /// The largest code unit a WebIDL ByteString holds (WebIDL, "ByteString").
 const BYTE_STRING_MAX_UNIT: u16 = 0xff;

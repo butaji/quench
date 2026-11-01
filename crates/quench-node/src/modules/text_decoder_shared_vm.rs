@@ -3,83 +3,6 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-#[cfg(not(quench_icu))]
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(canonicalEncoding, decodeBytes) => {
-  const decoders = new WeakMap();
-  const stateFor = (receiver) => {
-    const state = decoders.get(receiver);
-    if (state === undefined) {
-      throw new TypeError("Illegal invocation");
-    }
-    return state;
-  };
-
-  class TextDecoder {
-    constructor(label = "utf-8", options = {}) {
-      const requested = String(label);
-      const encoding = canonicalEncoding(requested);
-      if (encoding === undefined) {
-        throw new RangeError(`The encoding label provided ('${requested}') is invalid.`);
-      }
-      decoders.set(this, {
-        encoding,
-        fatal: Boolean(options?.fatal),
-        ignoreBOM: Boolean(options?.ignoreBOM),
-      });
-    }
-
-    get encoding() { return stateFor(this).encoding; }
-    get fatal() { return stateFor(this).fatal; }
-    get ignoreBOM() { return stateFor(this).ignoreBOM; }
-
-    decode(input = undefined) {
-      const state = stateFor(this);
-      let view;
-      if (input === undefined) {
-        view = new Uint8Array(0);
-      } else if (input instanceof ArrayBuffer ||
-                 Object.prototype.toString.call(input) === "[object ArrayBuffer]") {
-        view = new Uint8Array(input);
-      } else if (ArrayBuffer.isView(input)) {
-        view = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-      } else {
-        throw new TypeError(
-          'The "input" argument must be an instance of ArrayBuffer or ArrayBufferView.'
-        );
-      }
-      return decodeBytes(view, state.encoding, state.fatal, state.ignoreBOM);
-    }
-  }
-
-  class TextEncoder {
-    get encoding() { return "utf-8"; }
-    get fatal() { return false; }
-    get ignoreBOM() { return true; }
-    encode(input = "") {
-      return new Uint8Array(globalThis.Buffer.from(String(input), "utf8"));
-    }
-    encodeInto(input, destination) {
-      if (!(destination instanceof Uint8Array)) {
-        throw new TypeError('The "destination" argument must be an instance of Uint8Array');
-      }
-      const text = String(input);
-      let read = 0;
-      let written = 0;
-      for (const character of text) {
-        const bytes = globalThis.Buffer.from(character, "utf8");
-        if (written + bytes.length > destination.length) break;
-        destination.set(bytes, written);
-        written += bytes.length;
-        read += character.length;
-      }
-      return { read, written };
-    }
-  }
-
-  return { TextDecoder, TextEncoder };
-}"#
-);
 
 pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder", "TextEncoder"];
 
@@ -116,7 +39,7 @@ pub(crate) fn initialize(
         ))?;
         let decode =
             context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
-        let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
+        let factory = crate::host::removed_javascript("node:text-decoder/shared-vm.js")?;
         let undefined = context.undefined();
         context.call_rooted(factory, undefined, &[canonical, decode])?
     };
@@ -125,10 +48,7 @@ pub(crate) fn initialize(
     let constructor = context.get_property_rooted(constructors, decoder_key)?;
     let encoder_key = context.string_rooted("TextEncoder");
     let encoder = context.get_property_rooted(constructors, encoder_key)?;
-    let install = context.evaluate_script_rooted(
-        "(decoder, encoder) => { Object.defineProperty(globalThis, 'TextDecoder', { value: decoder, writable: true, configurable: true }); Object.defineProperty(globalThis, 'TextEncoder', { value: encoder, writable: true, configurable: true }); }",
-        "node:text-decoder/install-global.js",
-    )?;
+    let install = crate::host::removed_javascript("node:text-decoder/install-global.js")?;
     context.call_rooted(install, undefined, &[constructor, encoder])?;
     Ok(undefined)
 }

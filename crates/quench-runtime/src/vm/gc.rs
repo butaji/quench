@@ -102,8 +102,8 @@ fn append_shape_roots(
             .into_iter()
             .flatten()
             .flat_map(|(key, attributes)| {
-                // A slot getter is traced with its object's slots.
-                let (getter, setter) = attributes.functions(accessors, || None);
+                // Slot-held accessors (a getter, a pair cell) are traced with their object's slots.
+                let (getter, setter) = attributes.functions(accessors, || (None, None));
                 key.symbol_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
@@ -976,6 +976,7 @@ impl<H: Host> Vm<H> {
     fn compact_live_shapes(&mut self, live_shapes: Vec<u32>) {
         // Compiled code and proofs name shapes by id, which compaction renumbers.
         crate::heap::advance_prototype_layout_epoch();
+        self.bound_parts_layout.set(None);
         let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
         #[cfg(feature = "profile-memory")]
         let old_shape_count = old_shapes.len();
@@ -1278,13 +1279,20 @@ mod tests {
                 string_key.facts,
             )
         };
-        // A getter and a setter live in the shape's accessor table, which the shape roots.
-        let table_accessor = accessor_shape(Some(Value::heap(2)), Some(Value::heap(3)));
+        // A lone setter lives in the shape's accessor table, which the shape roots.
+        let table_accessor = accessor_shape(None, Some(Value::heap(3)));
         assert!(table_accessor.facts.may_have_gc_roots());
         assert!(!table_accessor.facts.slot_getters());
+        assert!(table_accessor.facts.accessor_pairs());
         // A lone getter lives in its object's slot, traced with the object.
         let slot_getter = accessor_shape(Some(Value::heap(2)), None);
         assert!(!slot_getter.facts.may_have_gc_roots());
         assert!(slot_getter.facts.slot_getters());
+        assert!(!slot_getter.facts.accessor_pairs());
+        // A getter and a setter live in the slot as one pair cell, told by its value.
+        let slot_pair = accessor_shape(Some(Value::heap(2)), Some(Value::heap(3)));
+        assert!(!slot_pair.facts.may_have_gc_roots());
+        assert!(!slot_pair.facts.slot_getters());
+        assert!(slot_pair.facts.accessor_pairs());
     }
 }

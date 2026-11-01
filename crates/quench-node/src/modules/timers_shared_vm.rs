@@ -37,73 +37,6 @@ const CALLBACK_TIMER_EXPORTS: &[&str] = &[
     "clearImmediate",
 ];
 
-const PROMISE_INTERVAL_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(schedule, cancel) => function setInterval(delay, value, options = {}) {
-  const signal = options?.signal;
-  let timer;
-  let stopped = false;
-  let failure;
-  let waiter;
-  const values = [];
-  const cleanup = () => signal?.removeEventListener?.("abort", abort);
-  const stop = () => {
-    if (stopped) return;
-    stopped = true;
-    if (timer !== undefined) cancel(timer);
-    cleanup();
-  };
-  const abort = () => {
-    failure = new Error("The operation was aborted");
-    failure.name = "AbortError";
-    failure.code = "ABORT_ERR";
-    stop();
-    if (waiter) {
-      const reject = waiter.reject;
-      waiter = undefined;
-      reject(failure);
-    }
-  };
-  const iterator = {
-    [Symbol.asyncIterator]() { return this; },
-    next() {
-      if (failure) return Promise.reject(failure);
-      if (values.length) return Promise.resolve({ value: values.shift(), done: false });
-      if (stopped) return Promise.resolve({ value: undefined, done: true });
-      return new Promise((resolve, reject) => { waiter = { resolve, reject }; });
-    },
-    return() {
-      values.length = 0;
-      stop();
-      if (waiter) {
-        const resolve = waiter.resolve;
-        waiter = undefined;
-        resolve({ value: undefined, done: true });
-      }
-      return Promise.resolve({ value: undefined, done: true });
-    },
-    throw(error) { stop(); return Promise.reject(error); },
-    ref() { timer?.ref?.(); return this; },
-    unref() { timer?.unref?.(); return this; },
-    hasRef() { return timer?.hasRef?.() ?? true; },
-  };
-  if (signal?.aborted) {
-    abort();
-  } else {
-    signal?.addEventListener?.("abort", abort, { once: true });
-    timer = schedule(() => {
-      if (stopped) return;
-      if (waiter) {
-        const resolve = waiter.resolve;
-        waiter = undefined;
-        resolve({ value, done: false });
-      } else {
-        values.push(value);
-      }
-    }, delay);
-  }
-  return iterator;
-}"#
-);
 
 #[derive(Clone, Copy)]
 pub(crate) struct TimerHandleApi {
@@ -176,8 +109,7 @@ pub(crate) fn promises_module(
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, module, name, function)?;
     }
-    let factory = context
-        .evaluate_script_rooted(PROMISE_INTERVAL_FACTORY, "node:timers/promises/interval.js")?;
+    let factory = crate::host::removed_javascript("node:timers/promises/interval.js")?;
     let global = context.global_root()?;
     let schedule = property(context, global, "setInterval")?;
     let cancel = property(context, global, "clearInterval")?;
@@ -1016,18 +948,9 @@ fn timer_handle_prototype(
     owner: &str,
     has_ref_operation: &str,
 ) -> Result<RootId, RootedError> {
-    let class_source = match owner {
-        "Timeout" => {
-            "(() => class Timeout { constructor(callback, after, args, repeat, isRefed) { const schedule = repeat ? setInterval : setTimeout; const handle = Reflect.apply(schedule, undefined, [callback, after, ...(args ?? [])]); if (!isRefed) handle.unref(); return handle; } })()"
-        }
-        "Immediate" => {
-            "(() => class Immediate { constructor(callback, args) { return Reflect.apply(setImmediate, undefined, [callback, ...(args ?? [])]); } })()"
-        }
-        _ => return Err(RootedError::host("unknown timer handle kind")),
-    };
-    let constructor = context.evaluate_script_rooted(class_source, "node:timers/shared.js")?;
-    let prototype_key = context.string_rooted("prototype");
-    let prototype = context.get_property_rooted(constructor, prototype_key)?;
+    // The handle classes' constructors were JavaScript (decision 38); their prototypes
+    // carry the Rust-backed methods.
+    let prototype = context.object_rooted()?;
     let (ref_operation, unref_operation) = match owner {
         "Timeout" => ("timerRef", "timerUnref"),
         "Immediate" => ("immediateRef", "immediateUnref"),
@@ -1086,27 +1009,89 @@ fn timer_handle_prototype(
         } else {
             "immediateDispose"
         }))?;
-    let factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!("operation=>function(){'use strict';return operation(this);}"),
-        "node:timers/dispose-facade.js",
-    )?;
-    let undefined = context.undefined();
-    let method = context.call_rooted(factory, undefined, &[operation])?;
+    let method = context.host_constructor_named_with_data(
+        crate::host::shared_vm::operation("timerReceiverMethod"), "", operation)?;
     let global = context.global_root()?;
     let symbol = property(context, global, "Symbol")?;
     let key = property(context, symbol, "dispose")?;
     context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     if owner == "Timeout" {
         let operation = context.host_function(crate::host::shared_vm::operation("timerClose"))?;
-        let method = context.call_rooted(factory, undefined, &[operation])?;
+        let method = context.host_constructor_named_with_data(
+            crate::host::shared_vm::operation("timerReceiverMethod"), "", operation)?;
         install(context, prototype, "close", method)?;
         let operation =
             context.host_function(crate::host::shared_vm::operation("timerToPrimitive"))?;
-        let method = context.call_rooted(factory, undefined, &[operation])?;
+        let method = context.host_constructor_named_with_data(
+            crate::host::shared_vm::operation("timerReceiverMethod"), "", operation)?;
         let key = property(context, symbol, "toPrimitive")?;
         context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     }
     Ok(prototype)
+}
+
+pub(crate) fn receiver_method<H: quench_runtime::Host>(
+    context: &mut NativeContext<'_, H>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let operation = context.host_function_data()?;
+    let undefined = context.undefined();
+    context.call_rooted(operation, undefined, &[receiver])
+}
+
+#[cfg(test)]
+mod receiver_tests {
+    use quench_runtime::{Host, HostFunction, HostFunctionId, NativeContext, RootId, RootedError};
+
+    struct TestHost;
+    impl Host for TestHost {
+        fn write_line(&mut self, _: &str) {}
+        fn clock_millis(&mut self) -> f64 { 0.0 }
+        fn functions(&self) -> &[HostFunction<Self>] {
+            quench_runtime::host_functions![
+                global "makeNative" (1) => make,
+                method "receiver" (0) => super::receiver_method::<Self>,
+                global "collect" (0) => collect,
+            ]
+        }
+    }
+    fn make(c: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+        c.host_constructor_named_with_data(HostFunctionId(1), "", args[0])
+    }
+    fn collect(c: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        c.collect()?;
+        Ok(c.undefined())
+    }
+
+    #[test]
+    fn receiver_method_keeps_strict_receiver_identity_and_traced_operation() {
+        let program = quench_runtime::Engine::specialize(r#"
+          const makeGuest = operation => function() {'use strict';return operation(this);};
+          for (const make of [makeGuest, makeNative]) {
+            const receiver = {}, error = {};
+            let seen, count = 0;
+            const method = make(function(value) {
+              'use strict';
+              if (this !== undefined || arguments.length !== 1) throw Error('operation call');
+              collect(); seen = value; count++;
+              if (value === error) throw error;
+              return value;
+            });
+            collect();
+            if (method.name !== '' || method.length !== 0 || !Object.hasOwn(method,'prototype'))
+              throw Error('Node timer method metadata');
+            for (const value of [receiver, null, undefined, 7, 'x', false]) {
+              if (method.call(value, 'ignored') !== value || seen !== value) throw Error('receiver');
+            }
+            try {method.call(error);throw Error('missing throw');} catch(e) {if(e!==error)throw e;}
+            const constructed = new method('ignored');
+            if (Object.getPrototypeOf(constructed)!==method.prototype || seen!==constructed || count!==8)
+              throw Error('ordinary constructor');
+          }
+        "#, "native-timer-receiver.js").unwrap();
+        quench_runtime::Runtime::new(TestHost).execute(&program).unwrap();
+    }
 }
 
 fn timer_id(
@@ -1683,12 +1668,7 @@ pub(crate) fn internal_module(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            "schedule=>function setUnrefTimeout(callback,after){return schedule(callback,after);}"
-        ),
-        "node:internal/timers/set-unref-facade.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:internal/timers/set-unref-facade.js")?;
     let operation =
         context.host_function(crate::host::shared_vm::operation("internalSetUnrefTimeout"))?;
     let undefined = context.undefined();

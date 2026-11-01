@@ -6,20 +6,12 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
 
-/// `internal/buffer.js` declares the class every Buffer is an instance of with this statement;
-/// the host makes the class from the same text (`fast_buffer_class`), and the library's load
-/// takes it through `FAST_BUFFER_REQUEST` instead (`project_internal_buffer`).
-const FAST_BUFFER_STATEMENT: &str = "class FastBuffer extends Uint8Array {}";
-const INTERNAL_BUFFER_LIBRARY: &str = "lib/internal/buffer.js";
 /// The script name Node's frames give `internal/buffer.js`.
 const INTERNAL_BUFFER_SCRIPT: &str = "node:internal/buffer";
 /// Internal requests the projected library files make for host-held state; only Node's
 /// library code can make them.
 pub(crate) const FAST_BUFFER_REQUEST: &str = "internal/quench/fast_buffer";
 pub(crate) const BUFFER_POOL_REQUEST: &str = "internal/quench/buffer_pool";
-/// `buffer.js` creates its allocation pool with this top-level statement; the projection
-/// adopts a pool the host made first (`project_buffer`).
-const CREATE_POOL_STATEMENT: &str = "\ncreatePool();\n";
 
 /// `buffer.js`'s `Buffer.poolSize = 64 * 1024` and `kPoolAlignment = 64`, which the host's
 /// pool follows until `buffer.js` loads (no script can change them before).
@@ -32,31 +24,6 @@ const HEAP_BUFFER_LIMIT: usize = 64;
 /// `alignPool` keeps pooled slices 8-byte aligned.
 const POOL_SLICE_ALIGNMENT: usize = 8;
 
-/// `Buffer.prototype`'s own keys after `buffer.js` loads, in Node's order, beside
-/// `constructor` (first) and `util.inspect.custom` (last); all are enumerable. The host gives
-/// a prototype made before the library these keys as pending members, which the library
-/// then defines itself (`define_pending_prototype`); `buffer_prototype_keys_match_node`
-/// checks the list against the loaded library.
-const PROTOTYPE_KEYS: &[&str] = &[
-    "readBigUInt64LE", "readBigUInt64BE", "readBigUint64LE", "readBigUint64BE", "readBigInt64LE",
-    "readBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE", "writeBigUint64LE",
-    "writeBigUint64BE", "writeBigInt64LE", "writeBigInt64BE", "readUIntLE", "readUInt32LE",
-    "readUInt16LE", "readUInt8", "readUIntBE", "readUInt32BE", "readUInt16BE", "readUintLE",
-    "readUint32LE", "readUint16LE", "readUint8", "readUintBE", "readUint32BE", "readUint16BE",
-    "readIntLE", "readInt32LE", "readInt16LE", "readInt8", "readIntBE", "readInt32BE",
-    "readInt16BE", "writeUIntLE", "writeUInt32LE", "writeUInt16LE", "writeUInt8", "writeUIntBE",
-    "writeUInt32BE", "writeUInt16BE", "writeUintLE", "writeUint32LE", "writeUint16LE",
-    "writeUint8", "writeUintBE", "writeUint32BE", "writeUint16BE", "writeIntLE", "writeInt32LE",
-    "writeInt16LE", "writeInt8", "writeIntBE", "writeInt32BE", "writeInt16BE", "readFloatLE",
-    "readFloatBE", "readDoubleLE", "readDoubleBE", "writeFloatLE", "writeFloatBE",
-    "writeDoubleLE", "writeDoubleBE", "asciiSlice", "base64Slice", "base64urlSlice",
-    "latin1Slice", "hexSlice", "ucs2Slice", "utf8Slice", "asciiWrite", "base64Write",
-    "base64urlWrite", "latin1Write", "hexWrite", "ucs2Write", "utf8Write", "parent", "offset",
-    "copy", "toString", "equals", "inspect", "compare", "indexOf", "lastIndexOf", "includes",
-    "fill", "write", "toJSON", "subarray", "slice", "swap16", "swap32", "swap64",
-    "toLocaleString",
-];
-const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
 
 /// Who owns Buffer's allocation pool: nobody yet, the host (which allocated before
 /// `buffer.js` loaded), or `buffer.js` (which adopted the host's pool or made its own when its
@@ -82,8 +49,6 @@ enum PoolSlot {
 
 impl PoolSlot {
     const COUNT: usize = Self::Buffer as usize + 1;
-    /// `buffer.js`'s pool bindings, by slot.
-    const BINDINGS: [&str; Self::COUNT] = ["poolSize", "poolOffset", "poolBase", "allocPool", "allocBuffer"];
 }
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
@@ -102,29 +67,16 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// that read loaded, as Node's holds the one its bootstrap loaded.
 pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
     let load = c.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
-    let installer = c.evaluate_script_rooted(
-        r#"(load) => {
-  let _Buffer;
-  let bound = false;
-  Object.defineProperty(globalThis, "Buffer", {
-    get() {
-      if (!bound) { _Buffer = load(); bound = true; }
-      return _Buffer;
-    },
-    set(value) { bound = true; _Buffer = value; },
-    enumerable: false,
-    configurable: true,
-  });
-  Object.defineProperty(globalThis, "NodeBuffer", {
-    get: load,
-    enumerable: false,
-    configurable: true,
-  });
-}"#,
-        "node:buffer/install-global.js",
-    )?;
-    let undefined = c.undefined();
-    c.call_rooted(installer, undefined, &[load])?;
+    super::lazy_binding_shared_vm::install(c, "Buffer", load, false, ["get", "set"])?;
+    let global = c.global_root()?;
+    let yes = c.boolean(true);
+    let no = c.boolean(false);
+    let alias = c.null_object_rooted()?;
+    c.assign_named_property_rooted(alias, "get", load)?;
+    c.assign_named_property_rooted(alias, "configurable", yes)?;
+    c.assign_named_property_rooted(alias, "enumerable", no)?;
+    let key = c.string_rooted("NodeBuffer");
+    c.define_property_descriptor_rooted(global, key, alias)?;
     Ok(())
 }
 
@@ -133,46 +85,10 @@ pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
 /// prototype gets `Buffer.prototype`'s members as pending properties whose first
 /// observation loads `buffer.js`; when `buffer.js` is the loader, its first write to the
 /// prototype materializes them.
-fn fast_buffer_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
-    if let Some(fast) = shared.borrow().builtin_cache.get(FAST_BUFFER_CACHE).copied() {
-        return Ok(fast);
-    }
-    let root = c.host_mut().node_library_root.clone();
-    let source = c.host_mut().node_library_view(&root.join(INTERNAL_BUFFER_LIBRARY), crate::node_sources::LibrarySource::Bundled,
-        crate::node_sources::SourceView::FastBuffer, |library| {
-            let start = library.find(FAST_BUFFER_STATEMENT).ok_or("internal/buffer.js declares no FastBuffer")?;
-            let line = library[..start].matches('\n').count();
-            Ok(format!("{}(\n{FAST_BUFFER_STATEMENT}\n)", "\n".repeat(line.saturating_sub(1))))
-        }).map_err(RootedError::host)?;
-    let fast = c.with_startup_intrinsics(|c| {
-        let fast = c.evaluate_script_rooted(&source, INTERNAL_BUFFER_SCRIPT)?;
-        let prototype = get(c, fast, "prototype")?;
-        define_pending_prototype(c, prototype)?;
-        Ok(fast)
-    })?;
-    let fast = c.retain(fast)?;
-    shared.borrow_mut().builtin_cache.insert(FAST_BUFFER_CACHE.to_owned(), fast);
-    Ok(fast)
+fn fast_buffer_class(_: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::host::removed_javascript(INTERNAL_BUFFER_SCRIPT)
 }
 
-/// `Buffer.prototype`'s members on FastBuffer's prototype until `buffer.js` defines them:
-/// `constructor` stays in place for the library to assign, and the library defines the rest
-/// itself.
-fn define_pending_prototype(c: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
-    let global = c.global_root()?;
-    let symbol_constructor = get(c, global, "Symbol")?;
-    let symbol_for = get(c, symbol_constructor, "for")?;
-    let name = c.string_rooted(INSPECT_CUSTOM);
-    let inspect = c.call_rooted(symbol_for, symbol_constructor, &[name])?;
-    let mut members = vec![(c.string_rooted("constructor"), false, false)];
-    for key in PROTOTYPE_KEYS {
-        members.push((c.string_rooted(key), true, true));
-    }
-    members.push((inspect, true, true));
-    let initializer = c.host_function(crate::host::shared_vm::operation("bufferPrototypeInitialize"))?;
-    c.define_lazy_members_rooted(prototype, &members, initializer)
-}
 
 /// Loads `buffer.js`, which defines a pending prototype's members (`define_pending_prototype`).
 /// Its load may be what first wrote to the prototype; the library cache then returns it as
@@ -199,26 +115,8 @@ pub(crate) fn buffer_pool_request(c: &mut Context<'_>) -> Result<RootId, RootedE
     }
 }
 
-/// The projected `internal/buffer.js`: its FastBuffer is the host's class.
-pub(crate) fn project_internal_buffer(source: &str) -> Result<String, RootedError> {
-    project_once(source, FAST_BUFFER_STATEMENT, &format!("const FastBuffer = require('{FAST_BUFFER_REQUEST}');"))
-}
 
-/// The projected `buffer.js`: its pool is the host's when the host allocated first.
-pub(crate) fn project_buffer(source: &str) -> Result<String, RootedError> {
-    let adopt = format!(
-        "\nconst hostPool = require('{BUFFER_POOL_REQUEST}'); if (hostPool === undefined) createPool(); else [{}] = hostPool;\n",
-        PoolSlot::BINDINGS.join(", "),
-    );
-    project_once(source, CREATE_POOL_STATEMENT, &adopt)
-}
 
-fn project_once(source: &str, statement: &str, replacement: &str) -> Result<String, RootedError> {
-    if source.matches(statement).count() != 1 {
-        return Err(RootedError::host("Buffer library projection expects its statement once"));
-    }
-    Ok(source.replacen(statement, replacement, 1))
-}
 
 /// `Buffer.allocUnsafe(size)` before `buffer.js` has loaded: Node's `allocate(size)` over a pool
 /// the host holds for the library to adopt. `None` once the library owns the pool.

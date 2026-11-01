@@ -2,23 +2,13 @@
 use super::{get, set};
 use crate::{
     host::{
-        shared_vm::{commonjs, policy_projection},
+        shared_vm::commonjs,
         NodeHost,
     },
     modules::fs_policy_shared_vm as policy,
 };
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
-const CAPTURES: &[&str] = &[
-    "vfsState",
-    "getOptions",
-    "getValidatedPath",
-    "PromisePrototypeThen",
-    "PromiseReject",
-    "ErrorCaptureStackTrace",
-    "binding",
-    "kUsePromises",
-];
 /// Defines `fs.promises.readlink` as a lazy data property: Node's policy loads
 /// `internal/fs/promises.js` and `internal/fs/utils.js` (Buffer, URL, streams), which only a
 /// script that reads `readlink` needs (`initialize`).
@@ -40,17 +30,7 @@ pub(crate) fn initialize(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result
     c.with_startup_intrinsics(|c| {
         let root = c.host_mut().node_library_root.clone();
         let filename = root.join("lib/internal/fs/promises.js");
-        let exports = ["readlink"];
-        let source = c.host_mut().node_library_view(&filename, crate::node_sources::LibrarySource::Configured,
-            crate::node_sources::SourceView::Policy { exports: &exports, supplied: CAPTURES },
-            |source| policy_projection::project_with_bindings(source, &exports, CAPTURES)).map_err(RootedError::host)?;
-        let factory = c.evaluate_script_rooted(
-            &format!(
-                "({}, module) => {{\n{source}\nreturn module.exports.readlink;\n}}",
-                CAPTURES.join(", ")
-            ),
-            &filename.to_string_lossy(),
-        )?;
+        let factory = crate::host::removed_javascript(filename.to_string_lossy())?;
         let primordials = commonjs::node_primordials(c)?
             .ok_or_else(|| RootedError::host("SDK promise policy requires primordials"))?;
         // This unique symbol is a capability for the promise-only native

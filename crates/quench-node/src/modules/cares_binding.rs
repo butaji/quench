@@ -56,9 +56,6 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let value = c.number(number as f64);
         put(c, object, name, value)?;
     }
-    #[cfg(quench_node_cares)]
-    super::cares_channel_shared_vm::install(c, object)?;
-    #[cfg(not(quench_node_cares))]
     super::dns_shared_vm::install_channel(c, object)?;
     Ok(object)
 }

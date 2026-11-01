@@ -7,17 +7,6 @@ pub(crate) const DEFAULT_MAX_LISTENERS: f64 = 10.0;
 // AbortSignal disables leak warnings by default, independently of emitter defaults.
 pub(crate) const ABORT_SIGNAL_MAX_LISTENERS: f64 = 0.0;
 
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(defaultGetNative, defaultSetNative, getNative, setNative, globalGetNative, globalSetNative) => ({
-  defaultGet: function get() { return defaultGetNative(); },
-  defaultSet: function set(value) { return defaultSetNative(value); },
-  get: function getMaxListeners() { 'use strict'; return getNative(this); },
-  set: function setMaxListeners(value) { 'use strict'; return setNative(this, value); },
-  globalGet: function getMaxListeners(target) { return globalGetNative(target); },
-  // Node's `EventEmitter.setMaxListeners` is an anonymous function assignment.
-  globalSet: (0, function(value = undefined, ...targets) { return globalSetNative(value, ...targets); })
-})"#
-);
 
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -85,37 +74,22 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let mut operations = Vec::new();
-    for name in [
-        "eventsDefaultMaxGet",
-        "eventsDefaultMaxSet",
-        "emitterMaxGet",
-        "emitterMaxSet",
-        "eventsMaxGet",
-        "eventsMaxSet",
-    ] {
-        operations
-            .push(context.host_function_with_data(crate::host::shared_vm::operation(name), data)?);
-    }
-    let factory = context.evaluate_script_rooted(FACTORY, "node:events/limits.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &operations)?;
     let global = context.global_root()?;
     let emitter = get(context, global, "__nodeEventEmitter")?;
     let prototype = get(context, emitter, "prototype")?;
-    for (target, name, projection) in [
-        (prototype, "getMaxListeners", "get"),
-        (prototype, "setMaxListeners", "set"),
-        (emitter, "getMaxListeners", "globalGet"),
-        (emitter, "setMaxListeners", "globalSet"),
+    for (target, name, operation, function_name) in [
+        (prototype, "getMaxListeners", "emitterPublicMaxGet", "getMaxListeners"),
+        (prototype, "setMaxListeners", "emitterPublicMaxSet", "setMaxListeners"),
+        (emitter, "getMaxListeners", "eventsMaxGet", "getMaxListeners"),
+        (emitter, "setMaxListeners", "eventsPublicMaxSet", ""),
     ] {
         let key = context.string_rooted(name);
-        let value = get(context, api, projection)?;
+        let value = context.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), function_name, data)?;
         context.define_data_property_rooted(target, key, value, true, true, true)?;
     }
     let descriptor = context.null_object_rooted()?;
-    let getter = get(context, api, "defaultGet")?;
-    let setter = get(context, api, "defaultSet")?;
+    let getter = context.host_constructor_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxGet"), "get", data)?;
+    let setter = context.host_constructor_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxSet"), "set", data)?;
     set(context, descriptor, "get", getter)?;
     set(context, descriptor, "set", setter)?;
     let yes = context.boolean(true);
@@ -177,6 +151,16 @@ pub(crate) fn emitter_get(
     let target = args.first().copied().unwrap_or(undefined);
     let data = context.host_function_data()?;
     emitter_max(context, data, target)
+}
+
+pub(crate) fn public_get(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    emitter_get(context, undefined, &[receiver])
+}
+
+pub(crate) fn public_set(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    emitter_set(context, undefined, &[receiver, args.first().copied().unwrap_or(undefined)])
 }
 pub(crate) fn emitter_set(
     context: &mut NativeContext<'_, NodeHost>,

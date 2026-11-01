@@ -3,10 +3,6 @@
 use crate::modules::zlib_constants::Mode;
 #[path = "zlib_native_codec_zlib.rs"]
 mod zlib;
-#[cfg(quench_node_brotli)]
-#[path = "zlib_native_brotli.rs"]
-mod brotli;
-#[cfg(not(quench_node_brotli))]
 #[path = "zlib_native_brotli_rust.rs"]
 mod brotli;
 pub(crate) use zlib::version;

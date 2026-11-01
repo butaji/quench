@@ -7,37 +7,6 @@ use std::{
     ptr,
 };
 
-#[cfg(quench_node_zlib)]
-mod sys {
-    use std::ffi::{c_char, c_int, c_uint};
-    pub(super) use libz_rs_sys::z_stream;
-    // libz-rs-sys only names the C `z_stream` layout here; the functions are Node's zlib.
-    #[link(name = "quench_node_zlib", kind = "static")]
-    extern "C" {
-        pub(super) fn zlibVersion() -> *const c_char;
-        pub(super) fn deflateInit2_(
-            s: *mut z_stream,
-            level: c_int,
-            method: c_int,
-            window: c_int,
-            memory: c_int,
-            strategy: c_int,
-            version: *const c_char,
-            size: c_int,
-        ) -> c_int;
-        pub(super) fn inflateInit2_(s: *mut z_stream, window: c_int, version: *const c_char, size: c_int) -> c_int;
-        pub(super) fn deflate(s: *mut z_stream, flush: c_int) -> c_int;
-        pub(super) fn inflate(s: *mut z_stream, flush: c_int) -> c_int;
-        pub(super) fn deflateEnd(s: *mut z_stream) -> c_int;
-        pub(super) fn inflateEnd(s: *mut z_stream) -> c_int;
-        pub(super) fn deflateReset(s: *mut z_stream) -> c_int;
-        pub(super) fn inflateReset(s: *mut z_stream) -> c_int;
-        pub(super) fn deflateParams(s: *mut z_stream, level: c_int, strategy: c_int) -> c_int;
-        pub(super) fn deflateSetDictionary(s: *mut z_stream, dict: *const u8, length: c_uint) -> c_int;
-        pub(super) fn inflateSetDictionary(s: *mut z_stream, dict: *const u8, length: c_uint) -> c_int;
-    }
-}
-#[cfg(not(quench_node_zlib))]
 mod sys {
     pub(super) use libz_rs_sys::{
         deflate, deflateEnd, deflateInit2_, deflateParams, deflateReset, deflateSetDictionary, inflate,

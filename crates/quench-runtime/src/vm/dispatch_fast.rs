@@ -5148,7 +5148,29 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let receiver = r.get(i.b);
         let Some(length) = vm.arguments_object_length(receiver).or_else(|| vm.plain_function_length(receiver)) else {
+            // A site that reads a typed array's length mostly reads typed arrays, as a loop
+            // over one does: it reads the intrinsic getter's geometry first from now on.
+            if let Some(length) = vm.typed_array_geometry_read(receiver, vm.length_atom) {
+                requicken::<H>(ip, lane_get_length_typed::<H>);
+                r.set(i.a, length);
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, length);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_length` at a site that read a typed array's length
+    /// (`lane_get_length_arguments`): the intrinsic `length` getter's value for a typed array
+    /// that shadows it nowhere (`Vm::typed_array_geometry_read`); any other receiver takes
+    /// `lane_get_length`.
+    fn lane_get_length_typed<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(length) = vm.typed_array_geometry_read(r.get(i.b), vm.length_atom) else {
+            sibling!(lane_get_length::<H>, r, ip, view)
         };
         r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -5515,6 +5537,21 @@ fn lane_activate_getter<H: Host>(
             return Err(exit(ip));
         };
         return lane_activate_keeping::<H, false>(cx, r, ip, &target, no_arguments, this, false, None);
+    }
+    // A getter that makes closures, of this program or another, runs as the environment
+    // activation its plain call makes (`lane_activate_environment`), with no arguments, as
+    // Zod's `get error() { ... issues.map((iss) => ...) }` does.
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    let environment = vm
+        .script_call_entry(getter)
+        .or_else(|| vm.cross_call_entry(getter))
+        .map(|target| unsafe { *target })
+        .filter(|target| target.entry == CallEntry::Environment && !lane_constructing(vm, getter));
+    if let Some(target) = environment {
+        let Some(this) = lane_call_this(vm, &target, base) else {
+            return Err(exit(ip));
+        };
+        return lane_activate_environment(cx, r, ip, &target, &[], this);
     }
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let Some(target) = vm
@@ -6547,6 +6584,20 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `StringCaseIndex`: the case a string `switch` selects (`Vm::string_case_index`) among
+    /// the run of constants the record's immediate starts, which the view checked lies in
+    /// the program's constants (`lane_operand`).
+    fn lane_string_case_index<>(cx, r, ip, i, view) {
+        let start = i.imm() as usize;
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
+        let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + usize::from(i.b)) };
+        let index = unsafe { vm(cx) }.string_case_index(r.get(i.c), cases);
+        r.set(i.a, Value::integer(index as i32));
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The strict operators `lane_jump_strict_constant_false` decides.
 const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
 
@@ -7308,11 +7359,12 @@ fn lane_loop_entry<H: Host>(
         }
     }
     let vm = unsafe { vm(cx) };
-    // These regions cannot run calls or field writes, and their element stores define or
-    // replace own data elements, which changes no shape slot. Thus a hit on an ordinary
-    // data field stays valid for the whole native run. Any miss, accessor, private name, or
-    // non-Number exits before native code can alter a register. A field read through
-    // another's value follows it.
+    // No guest call or allocation occurs in a native run. Field writes replace guarded
+    // own slots, and element stores change no shape slot. Immutable fields keep their
+    // entry values; admitted same-receiver Number writes update SSA field cells. Other
+    // possible aliases are rejected by region admission. Any miss, accessor, private
+    // name or non-Number declines before native effects. Nested receivers follow the
+    // earlier field's value.
     for (index, field) in region.fields.iter().enumerate() {
         // A field native code reads at its instruction (`LoopRegion::is_dynamic_field`) takes
         // its entry value only to seed its representation: a receiver it does not answer for
@@ -13769,7 +13821,11 @@ fn lane_tier_enter<H: Host>(
     // SAFETY: the activation just set the context to its own function's.
     let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
     let receiver = (binds_this && !this.is_deleted()).then_some(this);
-    if let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env) {
+    // A function only lane bodies claimed (`claim_for_tier`) has no JS-tier entry to try.
+    let may_claim = vm.js_tier_may_claim(code, program, function);
+    if may_claim
+        && let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env)
+    {
         if let Some(own) = own
             && let Some(direct) = vm.direct_tier_entry(code, program, function)
         {
@@ -13781,7 +13837,8 @@ fn lane_tier_enter<H: Host>(
     // function the general tier holds gains nothing from frameless claims either.
     if let Some(own) = own
         && (vm.programs.js_jit_lane_methods_enabled()
-            || vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
+            || !may_claim
+            || vm.js_tier_holds_for_general(program, function))
     {
         // A declined function may still run natively on its lane activations: the
         // prologue keeps the start once that body compiles. Frame entries keep whatever
@@ -16576,6 +16633,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
+        Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
@@ -16782,6 +16840,12 @@ fn lane_operand(
             LaneOperand {
                 jump: distance.checked_mul(record)?,
             }
+        }
+        // A case selector reads its run of constants from the context by index.
+        ImmediateRole::ConstantIndex if instruction.op() == Op::StringCaseIndex => {
+            let start = instruction.imm() as usize;
+            constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
+            LaneOperand { imm: instruction.imm() }
         }
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,

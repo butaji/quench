@@ -5,19 +5,9 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 /// Node AsyncWrap legacy async_context{0,0}, not the startup resource ID.
 pub(crate) const LEGACY_CALLBACK_ASYNC_ID: u64 = 0;
-const CACHE: &str = "\0native:domain-trampoline";
 fn state(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    commonjs::cached_native_binding(c, CACHE, |c| {
-        c.with_startup_intrinsics(|c| {
-            let root = c.host_mut().node_library_root.clone();
-            let path = root.join("lib/internal/async_hooks.js");
-            let projected = c.host_mut().node_library_view(&path, crate::node_sources::LibrarySource::Configured,
-                crate::node_sources::SourceView::DomainTrampoline, |source| super::domain_source::trampoline(source).map_err(str::to_owned)).map_err(RootedError::host)?;
-            let factory = c.evaluate_script_rooted(&projected, &path.to_string_lossy())?;
-            let undefined = c.undefined();
-            c.call_rooted(factory, undefined, &[])
-        })
-    })
+    let _ = c;
+    crate::host::removed_javascript("node:internal/async_hooks domain trampoline")
 }
 /// Separate internal export projection keeps registration out of public hooks.
 pub(crate) fn internal_hooks(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -40,17 +30,7 @@ pub(crate) fn internal_hooks(c: &mut Context<'_>) -> Result<RootId, RootedError>
         let async_id_symbol = c.get_property_rooted(symbols, async_id_symbol_key)?;
         c.release_root(async_id_symbol_key);
         c.release_root(symbols);
-        let factory = c.evaluate_script_rooted(
-            r#"(asyncIdSymbol) => {
-              let nextAsyncId = 0;
-              return function getOrSetAsyncId(object) {
-                if (Object.prototype.hasOwnProperty.call(object, asyncIdSymbol))
-                  return object[asyncIdSymbol];
-                return object[asyncIdSymbol] = ++nextAsyncId;
-              };
-            }"#,
-            "node:internal/async_hooks/get-or-set-async-id.js",
-        )?;
+        let factory = crate::host::removed_javascript("node:internal/async_hooks/get-or-set-async-id.js")?;
         let undefined = c.undefined();
         let get_or_set_async_id = c.call_rooted(factory, undefined, &[async_id_symbol])?;
         c.release_root(factory);

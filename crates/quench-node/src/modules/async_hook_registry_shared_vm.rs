@@ -4,6 +4,65 @@ use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 
+#[cfg(test)]
+mod fatal_tests {
+    struct FatalHost(std::rc::Rc<std::cell::RefCell<Vec<String>>>);
+    impl quench_runtime::Host for FatalHost {
+        fn write_line(&mut self, line: &str) { self.0.borrow_mut().push(line.to_owned()); }
+        fn clock_millis(&mut self) -> f64 { 0.0 }
+        fn functions(&self) -> &[quench_runtime::HostFunction<Self>] {
+            quench_runtime::host_functions![global "nativeFatal" (1) => super::fatal_error::<Self>]
+        }
+    }
+
+    #[test]
+    fn fatal_error_preserves_guest_lookup_order_and_utf16() {
+        let source = r#"
+          function guestFatal(error) {
+            if (typeof error?.stack === 'string') process._rawDebug(error.stack);
+            else process._rawDebug(`Error: ${String(error)}`);
+            process.exit(1);
+          }
+          let events, accesses, active;
+          const originalString = String;
+          Object.defineProperty(globalThis, 'process', {get() { events.push('process'); return active; }});
+          function run(operation, makeError, phase) {
+            events = []; accesses = 0;
+            const error = makeError();
+            active = {
+              get _rawDebug() { events.push('debug:get'); return function(value) {
+                events.push(['debug:call', this === active, typeof value, originalString(value)]);
+                if (phase === 'debug') throw new RangeError('debug');
+              }; },
+              get exit() { events.push('exit:get'); return function(code) {
+                events.push(['exit:call', this === active, code]); return 17;
+              }; }
+            };
+            globalThis.String = value => { events.push('String'); return {toString() { events.push('coerce'); return '\ud800'; }}; };
+            try { events.push(['result', originalString(operation(error))]); }
+            catch (error) { events.push(['throw', error.name]); }
+            finally { globalThis.String = originalString; }
+            return JSON.stringify(events);
+          }
+          const factories = [() => undefined, () => null, () => 7,
+            () => ({get stack() { events.push('stack'); return ++accesses === 1 ? 'yes' : 42; }}),
+            () => ({get stack() { events.push('stack'); return undefined; }}),
+            () => ({get stack() { events.push('stack'); throw new TypeError('stack'); }})];
+          for (const factory of factories) for (const phase of ['', 'debug']) {
+            const expected = run(guestFatal, factory, phase);
+            const actual = run(nativeFatal, factory, phase);
+            if (actual !== expected) throw Error(actual + ' != ' + expected);
+            console.log(actual);
+          }
+        "#;
+        let program = quench_runtime::Engine::specialize(source, "async-hook-fatal-oracle.js").unwrap();
+        let lines = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        quench_runtime::Runtime::new(FatalHost(lines.clone())).execute(&program).unwrap();
+        let expected: Vec<_> = include_str!("../../tests/fixtures/async-hook-fatal.jsonl").lines().collect();
+        assert_eq!(lines.borrow().as_slice(), expected.as_slice());
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum HookKind {
     Init,
@@ -83,6 +142,35 @@ impl Registry {
     }
 }
 
+pub(crate) fn fatal_error<H: quench_runtime::Host>(context: &mut NativeContext<'_, H>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let error = args.first().copied().unwrap_or(undefined);
+    let stack = if context.rooted_value(error).is_some_and(|value| value.is_null() || value.is_undefined()) {
+        undefined
+    } else {
+        context.get_named_property_rooted(error, "stack")?
+    };
+    let has_stack = context.value_type_rooted(stack) == Some(quench_runtime::ValueType::String);
+    let global = context.global_root()?;
+    let process = context.get_named_property_rooted(global, "process")?;
+    let debug = context.get_named_property_rooted(process, "_rawDebug")?;
+    let message = if has_stack {
+        context.get_named_property_rooted(error, "stack")?
+    } else {
+        let string = context.get_named_property_rooted(global, "String")?;
+        let value = context.call_rooted(string, undefined, &[error])?;
+        let mut units: Vec<u16> = "Error: ".encode_utf16().collect();
+        units.extend(context.to_string_code_units(value)?);
+        context.string_units_rooted(&units)
+    };
+    context.call_rooted(debug, process, &[message])?;
+    let process = context.get_named_property_rooted(global, "process")?;
+    let exit = context.get_named_property_rooted(process, "exit")?;
+    let failure = context.number(1.0);
+    context.call_rooted(exit, process, &[failure])?;
+    Ok(undefined)
+}
+
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     if let Some(api) = context
         .host_mut()
@@ -95,18 +183,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
         return Ok(api);
     }
     let api = context.null_object_rooted()?;
-    let fatal_error = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            r#"(function asyncHookFatalError(error) {
-            if (typeof error?.stack === 'string') {
-              process._rawDebug(error.stack);
-            } else {
-              process._rawDebug(`Error: ${String(error)}`);
-            }
-            process.exit(1);
-          })"#
-        ),
-        "node:async_hooks/fatal-error.js",
+    let fatal_error = context.host_function_named(
+        crate::host::shared_vm::operation("asyncHookFatalError"), "asyncHookFatalError",
     )?;
     let fatal_error_key = context.string_rooted("fatalError");
     context.define_data_property_rooted(api, fatal_error_key, fatal_error, true, false, true)?;

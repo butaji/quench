@@ -28,27 +28,11 @@ pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     Ok(module)
 }
 pub(crate) fn info(
-    context: &mut NativeContext<'_, NodeHost>,
+    _: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    // Node's benchmark runner uses CLI option metadata to distinguish flags
-    // that require a value from boolean flags. Preserve the shape and types
-    // needed by that validation path, including the -r alias for --require.
-    let factory = context.evaluate_script_rooted(
-        r#"(() => {
-          const options = new Map([
-            ["--bench", { type: 2 }],
-            ["--experimental-bench", { type: 2 }],
-            ["--bench-name-pattern", { type: 5 }],
-            ["--require", { type: 5 }],
-          ]);
-          const aliases = new Map([["-r", ["--require"]]]);
-          return { options, aliases };
-        })()"#,
-        "internal/options/cli-info.js",
-    )?;
-    Ok(factory)
+    crate::host::removed_javascript("internal/options/cli-info.js")
 }
 pub(crate) fn flags(
     context: &mut NativeContext<'_, NodeHost>,

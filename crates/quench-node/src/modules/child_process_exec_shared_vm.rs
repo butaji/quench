@@ -19,10 +19,7 @@ pub(crate) fn install_promisified(
     context: &mut NativeContext<'_, NodeHost>,
     originals: &[RootId],
 ) -> Result<(), RootedError> {
-    let factory = context.evaluate_script_rooted(
-        "(invoke) => function(...args) { return invoke(args); }",
-        "node:child_process/promisified.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:child_process/promisified.js")?;
     let global = context.global_root()?;
     let promise = get(context, global, "Promise")?;
     let with_resolvers = get(context, promise, "withResolvers")?;

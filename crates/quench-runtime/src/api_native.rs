@@ -1991,6 +1991,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Perform strict guest deletion, including proxy traps and primitive boxing.
+    pub fn delete_property_strict_rooted(&mut self, object: RootId, key: RootId) -> Result<(), RootedError> {
+        self.vm.delete_property_strict_rooted(object, key).map_err(|error| self.error(error))
+    }
+
+    /// Guest deletion without strict-mode rejection of a non-configurable property.
+    pub fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, RootedError> {
+        self.vm.delete_property_rooted(object, key).map_err(|error| self.error(error))
+    }
+
     pub fn set_property_rooted(
         &mut self,
         object: RootId,

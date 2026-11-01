@@ -139,7 +139,20 @@ pub(crate) struct Fact {
     pub(crate) projection: Projection,
 }
 
+/// Immutable, consistent semantic type and representation evidence. Entry guards
+/// and checked-definition obligations must still be discharged before publication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedFact(Fact);
+
+impl std::ops::Deref for VerifiedFact {
+    type Target = Fact;
+    fn deref(&self) -> &Fact { &self.0 }
+}
+
 impl Fact {
+    pub(crate) fn verified(self) -> Option<VerifiedFact> {
+        self.verify().then_some(VerifiedFact(self))
+    }
     pub(crate) fn verify(self) -> bool {
         (self.representation.accepts(self.ty)
             || (self.projection == Projection::CheckedDefinitions
@@ -230,5 +243,25 @@ mod tests {
         assert!(!Representation::Int32.can_receive(Representation::Float64));
         assert!(!Representation::Float64.can_receive(Representation::Tagged));
         assert!(Representation::Float64.can_receive(Representation::Int32));
+    }
+
+    #[test]
+    fn admission_rejects_missing_types_and_unproved_machine_views() {
+        let canonical = Fact::tagged(BindingTime::Location, Proof::CanonicalValue);
+        for malformed in [
+            Fact { ty: Type::NEVER, ..canonical },
+            Fact { representation: Representation::Float64, ..canonical },
+            Fact { ty: Type::NUMBER, ..canonical },
+            Fact { proof: Proof::Static, ..canonical },
+            Fact { binding: BindingTime::Static, ..canonical },
+        ] {
+            assert!(malformed.verified().is_none(), "{malformed:?}");
+        }
+        let union = Type::NUMBER.join(Type::language(ValueType::BigInt));
+        let fact = Fact { ty: union, binding: BindingTime::Dynamic,
+            proof: Proof::Definition, ..canonical };
+        assert_eq!(fact.verified().unwrap().ty, union);
+        assert!(Fact { representation: Representation::Float64, ..fact }.verified().is_none());
+        assert_eq!(canonical.verified().unwrap().ty, Type::ANY);
     }
 }

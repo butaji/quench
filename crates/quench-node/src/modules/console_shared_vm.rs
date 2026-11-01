@@ -175,19 +175,7 @@ pub(crate) fn adopt(context: &mut NativeContext<'_, NodeHost>, module: RootId, s
     cache(context, SDK_CONSOLE, sdk)?;
     let stdout = cached(context, STDOUT).unwrap_or_else(|| context.undefined());
     let stderr = cached(context, STDERR).unwrap_or_else(|| context.undefined());
-    let adopt = context.evaluate_script_rooted(
-        "(sdk, console, stdout, stderr, writers) => {\n\
-           for (const key of Reflect.ownKeys(sdk)) {\n\
-             if (writers.includes(key)) continue;\n\
-             if (key === Symbol.toStringTag) delete console[key];\n\
-             Reflect.defineProperty(console, key, Reflect.getOwnPropertyDescriptor(sdk, key));\n\
-           }\n\
-           if (stdout !== undefined) sdk._stdout = stdout;\n\
-           if (stderr !== undefined) sdk._stderr = stderr;\n\
-           return Reflect.ownKeys(sdk).filter((key) => typeof key === 'string');\n\
-         }",
-        "node:internal/console/adopt.js",
-    )?;
+    let adopt = crate::host::removed_javascript("node:internal/console/adopt.js")?;
     let writers = CONSOLE_KEYS[..WRITERS.len()].iter().map(|(key, _)| context.string_rooted(key)).collect::<Vec<_>>();
     let writers = context.array_rooted(&writers)?;
     let undefined = context.undefined();

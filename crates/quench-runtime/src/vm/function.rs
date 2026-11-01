@@ -399,10 +399,40 @@ impl<H: Host> Vm<H> {
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
     pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
-        let target = self.own_property(env, self.runtime_atoms.bound_target)?;
-        let receiver = self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED);
-        let arguments = self
-            .own_property(env, self.runtime_atoms.bound_args)
+        let data = self.object_data(env)?;
+        let shape = data.shape();
+        // The environment's three slots, read through the layout its shape keeps for every
+        // bound function (`bound_parts_layout`), found by name once per shape.
+        let slots = match self.bound_parts_layout.get() {
+            Some((layout, slots)) if layout == shape => Some(slots),
+            _ => {
+                let atoms = self.runtime_atoms;
+                let slots = [atoms.bound_target, atoms.bound_this, atoms.bound_args]
+                    .map(|atom| self.shape_slot(shape, atom).and_then(|slot| u16::try_from(slot).ok()));
+                match slots {
+                    [Some(target), Some(this), Some(args)]
+                        if !self.shape_may_have_accessors(shape) && !self.shape_is_dictionary(shape) =>
+                    {
+                        self.bound_parts_layout.set(Some((shape, [target, this, args])));
+                        Some([target, this, args])
+                    }
+                    _ => None,
+                }
+            }
+        };
+        let (target, receiver, arguments) = match slots {
+            Some([target, this, args]) => (
+                self.heap.property_get(data, usize::from(target))?,
+                self.heap.property_get(data, usize::from(this)).unwrap_or(Value::UNDEFINED),
+                self.heap.property_get(data, usize::from(args)),
+            ),
+            None => (
+                self.own_property(env, self.runtime_atoms.bound_target)?,
+                self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED),
+                self.own_property(env, self.runtime_atoms.bound_args),
+            ),
+        };
+        let arguments = arguments
             .and_then(|list| self.heap.array_elements(list))
             .map_or(&[][..], |elements| elements.as_slice());
         Some((target, receiver, arguments))

@@ -586,6 +586,23 @@ impl FunctionCompiler<'_, '_> {
         (unary.operator == UnaryOperator::Typeof && literal_cases).then_some(&unary.argument)
     }
 
+    /// The string constants of a switch whose every case test is a string literal, in case
+    /// order, when there are enough of them that one selector (`StringCaseIndex`) beats a
+    /// chain of comparisons.
+    fn string_switch_cases(item: &SwitchStatement<'_>) -> Option<Vec<Constant>> {
+        const MINIMUM_CASES: usize = 4;
+        let strings = item
+            .cases
+            .iter()
+            .filter_map(|case| case.test.as_ref())
+            .map(|test| match test {
+                Expression::StringLiteral(literal) => Some(crate::compile::string::constant(literal)),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (strings.len() >= MINIMUM_CASES && strings.len() < usize::from(u16::MAX)).then_some(strings)
+    }
+
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
         self.clear_statement_completion();
         let discriminant_binding = self.hidden_local("\0quench:switch-discriminant");
@@ -600,39 +617,55 @@ impl FunctionCompiler<'_, '_> {
             self.emit_hoisted(&case.consequent);
         }
         let mut case_edges = Vec::with_capacity(item.cases.len());
-        // Every case test is an expression evaluated before any clause body runs, so no
-        // statement boundary releases this register before the last test reads it: one load
-        // serves every comparison, not one per case (`switch (node.kind)` with dozens of
-        // cases tests them in turn).
-        let discriminant = item
-            .cases
-            .iter()
-            .any(|case| case.test.is_some())
-            .then(|| self.load_atom(discriminant_binding));
-        for case in &item.cases {
-            case_edges.push(case.test.as_ref().and_then(|test| {
-                let test = match (typeof_operand, test) {
-                    (Some(_), Expression::StringLiteral(name)) => {
-                        let index = crate::bytecode::typeof_name_index(name.value.as_str())?;
-                        self.constant_operand(Constant::Number(index as f64))
-                    }
-                    _ => match binding_time::expression(test) {
-                        Some(constant) => self.constant_operand(constant),
-                        None => Operand::register(self.expression(test)),
-                    },
-                };
-                let discriminant = discriminant.expect("a case with a test loaded the discriminant");
-                // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
-                Some(self.emit(
-                    Op::JumpBinaryFalse,
-                    BinaryOperator::StrictInequality as u16,
-                    Operand::register(discriminant).0,
-                    test.0,
-                    0,
-                ))
-            }));
-        }
-        let no_match = self.emit(Op::Jump, 0, 0, 0, 0);
+        let string_cases = typeof_operand.is_none().then(|| Self::string_switch_cases(item)).flatten();
+        let no_match = if let Some(strings) = string_cases {
+            // Every test is a string literal, which evaluates to itself without effects: one
+            // selector finds the first case `===` the discriminant, and a table enters it.
+            let count = strings.len();
+            let start = self.owner.constant_run(strings);
+            let discriminant = self.load_atom(discriminant_binding);
+            let selector = self.reg();
+            self.emit(Op::StringCaseIndex, selector, count as u16, discriminant, start);
+            self.emit(Op::WasmBranchTable, selector, 0, 0, count as u32);
+            for case in &item.cases {
+                case_edges.push(case.test.as_ref().map(|_| self.emit(Op::Jump, 0, 0, 0, 0)));
+            }
+            self.emit(Op::Jump, 0, 0, 0, 0)
+        } else {
+            // Every case test is an expression evaluated before any clause body runs, so no
+            // statement boundary releases this register before the last test reads it: one load
+            // serves every comparison, not one per case (`switch (node.kind)` with dozens of
+            // cases tests them in turn).
+            let discriminant = item
+                .cases
+                .iter()
+                .any(|case| case.test.is_some())
+                .then(|| self.load_atom(discriminant_binding));
+            for case in &item.cases {
+                case_edges.push(case.test.as_ref().and_then(|test| {
+                    let test = match (typeof_operand, test) {
+                        (Some(_), Expression::StringLiteral(name)) => {
+                            let index = crate::bytecode::typeof_name_index(name.value.as_str())?;
+                            self.constant_operand(Constant::Number(index as f64))
+                        }
+                        _ => match binding_time::expression(test) {
+                            Some(constant) => self.constant_operand(constant),
+                            None => Operand::register(self.expression(test)),
+                        },
+                    };
+                    let discriminant = discriminant.expect("a case with a test loaded the discriminant");
+                    // `!(d !== t)` is exactly `d === t`: one fused test selects the clause.
+                    Some(self.emit(
+                        Op::JumpBinaryFalse,
+                        BinaryOperator::StrictInequality as u16,
+                        Operand::register(discriminant).0,
+                        test.0,
+                        0,
+                    ))
+                }));
+            }
+            self.emit(Op::Jump, 0, 0, 0, 0)
+        };
         self.push_control(ControlKind::Switch, None);
         let mut targets = Vec::with_capacity(item.cases.len());
         for case in &item.cases {

@@ -7,22 +7,6 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_POLL_INTERVAL_MS: u32 = 5007; // Node retains libev's historical interval.
 const MIN_POLL_INTERVAL_MS: u32 = 1; // uv_fs_poll_start normalizes zero to one.
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(Emitter, watch, unwatch, stop, reference) => {
- 'use strict';
- function StatWatcher() { Emitter.call(this); this._handle = null; }
- Object.setPrototypeOf(StatWatcher.prototype, Emitter.prototype);
- Object.setPrototypeOf(StatWatcher, Emitter);
- StatWatcher.prototype.start = () => {};
- StatWatcher.prototype.stop = function() { 'use strict'; return stop(this); };
- StatWatcher.prototype.ref = function() { 'use strict'; return reference(this, true); };
- StatWatcher.prototype.unref = function() { 'use strict'; return reference(this, false); };
- return { StatWatcher,
-   watchFile: function watchFile(filename, options, listener) { 'use strict'; return watch(filename, options, listener); },
-   unwatchFile: function unwatchFile(filename, listener) { 'use strict'; return unwatch(filename, listener); }
- };
-}"#
-);
 
 enum PollState {
     Initial,
@@ -83,7 +67,7 @@ pub(crate) fn install(
     ] {
         arguments.push(context.host_function(crate::host::shared_vm::operation(name))?);
     }
-    let factory = context.evaluate_script_rooted(FACTORY, "node:fs/stat-watcher-facade.js")?;
+    let factory = crate::host::removed_javascript("node:fs/stat-watcher-facade.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &arguments)?;
     for name in ["watchFile", "unwatchFile"] {

@@ -605,9 +605,7 @@ fn on_connection(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     }
     let operation =
         context.host_function(crate::host::shared_vm::operation("netServerOnConnection"))?;
-    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "operation=>function onconnection(err,clientHandle){'use strict';return operation(this,err,clientHandle);}"
-    ), "node:net/onconnection.js")?;
+    let factory = crate::host::removed_javascript("node:net/onconnection.js")?;
     let undefined = context.undefined();
     let callback = context.call_rooted(factory, undefined, &[operation])?;
     let retained = context.retain(callback)?;

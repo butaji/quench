@@ -4,26 +4,6 @@ use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const CLASS: &str = quench_js_check::checked_js!(
-    r#"(Emitter, Resource, prepare, initialize, emitNative, destroyNative, getNative, link, owner) => {
-  class EventEmitterReferencingAsyncResource extends Resource {
-    constructor(emitter, type, options) { super(type, options); link(this, emitter); }
-    get eventEmitter() { return owner(this); }
-  }
-  return class EventEmitterAsyncResource extends Emitter {
-    constructor(options = undefined) {
-      const setup = prepare(options, new.target);
-      super(setup.options);
-      initialize(this, EventEmitterReferencingAsyncResource, setup);
-    }
-    emit(event, ...args) { return emitNative(this, event, args); }
-    emitDestroy() { return destroyNative(this); }
-    get asyncId() { return getNative(this, 'asyncId'); }
-    get triggerAsyncId() { return getNative(this, 'triggerAsyncId'); }
-    get asyncResource() { return getNative(this, 'asyncResource'); }
-  };
-}"#
-);
 
 pub(super) fn install(
     context: &mut NativeContext<'_, NodeHost>,
@@ -42,10 +22,7 @@ pub(super) fn install(
         crate::host::shared_vm::operation("emitterAsyncConstructor"),
         api,
     )?;
-    let factory = context.evaluate_script_rooted(
-        "(native) => function lazyEventEmitterAsyncResource() { return native(); }",
-        "node:events/async-resource-getter.js",
-    )?;
+    let factory = crate::host::removed_javascript("node:events/async-resource-getter.js")?;
     let undefined = context.undefined();
     let getter = context.call_rooted(factory, undefined, &[native])?;
     let descriptor = context.null_object_rooted()?;
@@ -109,7 +86,7 @@ pub(crate) fn constructor(
     .map(|name| context.host_function_with_data(crate::host::shared_vm::operation(name), api))
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
-    let factory = context.evaluate_script_rooted(CLASS, "node:events/async-resource-class.js")?;
+    let factory = crate::host::removed_javascript("node:events/async-resource-class.js")?;
     let undefined = context.undefined();
     let mut arguments = vec![emitter, resource];
     arguments.extend(operations);

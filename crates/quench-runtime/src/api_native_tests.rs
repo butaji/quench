@@ -28,6 +28,39 @@ fn capturing_host() -> TestHost {
         })
 }
 
+#[test]
+fn native_strict_delete_matches_guest_effects_and_failures() {
+    fn remove(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+        context.delete_property_strict_rooted(args[0], args[1])?;
+        Ok(context.undefined())
+    }
+    let host = TestHost::default().with_natives(crate::host_functions![global "nativeDelete" (2) => remove]);
+    let program = Engine::specialize(r#"
+      function guestDelete(object, key) { 'use strict'; delete object[key]; }
+      const symbol = Symbol('key');
+      const cases = [() => ({x: 1}), () => Object.freeze({x: 1}),
+        () => [1, 2], () => 'abc', () => 7, () => null, () => undefined,
+        () => ({[symbol]: 1}),
+        () => new Proxy({x: 1}, {deleteProperty(t, k) { effects++; return false; }}),
+        () => new Proxy({x: 1}, {deleteProperty(t, k) { effects++; return Reflect.deleteProperty(t, k); }}),
+        () => new Proxy({}, {deleteProperty() { effects++; throw new RangeError('trap'); }})];
+      let effects = 0;
+      function run(operation, factory, key) {
+        const object = factory(); effects = 0;
+        let outcome;
+        try { outcome = String(operation(object, key)); } catch (e) { outcome = e.name; }
+        return JSON.stringify([outcome, effects, object == null ? null : Reflect.ownKeys(Object(object)).map(String)]);
+      }
+      for (const factory of cases) for (const key of ['x', '0', 'length', symbol,
+        {[Symbol.toPrimitive]() { effects++; return 'x'; }}]) {
+        const expected = run(guestDelete, factory, key);
+        const actual = run(nativeDelete, factory, key);
+        if (actual !== expected) throw Error(actual + ' != ' + expected);
+      }
+    "#, "native-strict-delete.js").unwrap();
+    Runtime::new(host).execute(&program).unwrap();
+}
+
 fn captured(
     context: &mut NativeContext<'_, TestHost>,
     _: RootId,

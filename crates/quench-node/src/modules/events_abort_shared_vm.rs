@@ -314,9 +314,24 @@ pub(crate) fn add_abort_listener(
         crate::host::shared_vm::operation("abortListenerDispose"),
         dispose_data,
     )?;
-    let factory = get(context, data, "disposeFactory")?;
     let key = get(context, data, "disposeKey")?;
-    context.call_rooted(factory, undefined, &[dispose, key])
+    let disposable = context.null_object_rooted()?;
+    let method = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("abortListenerDisposableInvoke"),
+        "[Symbol.dispose]",
+        dispose,
+    )?;
+    context.define_data_property_rooted(disposable, key, method, true, true, true)?;
+    Ok(disposable)
+}
+
+pub(crate) fn disposable_invoke(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let dispose = context.host_function_data()?;
+    let undefined = context.undefined();
+    context.call_rooted(dispose, undefined, &[])?;
+    Ok(undefined)
 }
 
 pub(crate) fn aborted_listener_job(

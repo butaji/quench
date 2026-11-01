@@ -307,7 +307,7 @@ fn declared_api_version(library: *mut c_void) -> i32 {
     let symbol = c"node_api_module_get_api_version_v1";
     // SAFETY: dlsym on a live handle with a NUL-terminated name.
     let address = unsafe { libc::dlsym(library, symbol.as_ptr()) };
-    let default = env!("QUENCH_NODE_API_DEFAULT_MODULE_API_VERSION")
+    let default = crate::modules::process_state::NODE_API_DEFAULT_MODULE_API_VERSION
         .parse()
         .unwrap_or(0);
     if address.is_null() {

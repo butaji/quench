@@ -174,7 +174,7 @@ fn node_version() -> &'static NodeVersion {
     static VERSION: std::sync::OnceLock<StaticNodeVersion> = std::sync::OnceLock::new();
     &VERSION
         .get_or_init(|| {
-            let mut parts = env!("QUENCH_NODE_COMPAT_VERSION")
+            let mut parts = crate::modules::process_state::NODE_VERSION
                 .split(['.', '-'])
                 .map(|part| part.parse().unwrap_or(0));
             StaticNodeVersion(NodeVersion {
@@ -207,7 +207,7 @@ node_api! {
     }
 
     fn napi_get_version(env: *mut Env, result: *mut u32) -> Status {
-        api(env, |_, _| out(result, env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX").parse().unwrap_or(0)))
+        api(env, |_, _| out(result, crate::modules::process_state::NODE_API_SUPPORTED_VERSION_MAX.parse().unwrap_or(0)))
     }
 
     fn napi_get_node_version(env: *mut Env, result: *mut *const NodeVersion) -> Status {

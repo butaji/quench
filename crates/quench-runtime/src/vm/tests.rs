@@ -1086,9 +1086,9 @@ fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
     let first_getter = vm.native_value(Native::Object);
     let second_getter = vm.native_value(Native::Array);
     let setter = vm.native_value(Native::Function);
-    // A lone getter lives in its object's slot, so the two objects share one shape; a getter
-    // with a setter lives in the shape's accessor table, so each object keeps its own.
-    for (setter, shared) in [(None, true), (Some(setter), false)] {
+    // A lone getter, or a getter with a setter as one pair cell, lives in its object's slot,
+    // so the two objects share one shape.
+    for (setter, shared) in [(None, true), (Some(setter), true)] {
         let first = vm.object();
         let second = vm.object();
         for (object, getter) in [(first, first_getter), (second, second_getter)] {
@@ -20747,7 +20747,7 @@ print(JSON.stringify(out));
 #[test]
 fn cached_accessor_reads_follow_getter_redefinitions() {
     // A site's accessor entry keeps whether the holder's slot holds the getter
-    // (`AccessorFieldCache::getter_in_slot`); redefined, shadowed and own getters must still
+    // (`AccessorFieldCache::slot_accessor`); redefined, shadowed and own getters must still
     // be the ones called. Expected output is Node's (v22).
     let source = r#"
 const out = [];

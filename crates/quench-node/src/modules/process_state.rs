@@ -3,8 +3,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-/// Compatibility target of the actual bundled Node standard library.
-pub(crate) const NODE_VERSION: &str = env!("QUENCH_NODE_COMPAT_VERSION");
+/// The Node release whose behavior quench-node reports (`process.version`).
+pub(crate) const NODE_VERSION: &str = "26.12.0";
+/// The highest Node-API version quench-node supports.
+pub(crate) const NODE_API_SUPPORTED_VERSION_MAX: &str = "10";
+/// The Node-API version assumed for an addon that declares none.
+pub(crate) const NODE_API_DEFAULT_MODULE_API_VERSION: &str = "8";
 
 pub(crate) fn openssl_version() -> String {
     #[cfg(quench_openssl_provider)]
@@ -37,7 +41,7 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
         ("node_module_version", ProcessFact::Number(127.0)),
         (
             "napi_build_version",
-            ProcessFact::String(env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX")),
+            ProcessFact::String(NODE_API_SUPPORTED_VERSION_MAX),
         ),
         (
             "node_builtin_shareable_builtins",
@@ -75,9 +79,6 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("node", NODE_VERSION),
         ("acorn", "8.19.0"),
         ("ada", "2.7.8"),
-        #[cfg(quench_node_cares)]
-        ("ares", super::cares_channel_shared_vm::VERSION),
-        #[cfg(not(quench_node_cares))]
         ("ares", "1.0.0"),
         ("brotli", "1.1.0"),
         ("cldr", "45.0"),
@@ -86,7 +87,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("llhttp", "9.2.1"),
         ("merve", "1.0.0"),
         ("modules", "127"),
-        ("napi", env!("QUENCH_NODE_API_SUPPORTED_VERSION_MAX")),
+        ("napi", NODE_API_SUPPORTED_VERSION_MAX),
         ("nbytes", "1.0.0"),
         ("ncrypto", "1.0.0"),
         ("nghttp2", "1.61.0"),

@@ -515,6 +515,73 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn getters_that_make_closures_run_as_environment_activations() {
+    // A getter whose body makes closures runs as an environment activation of its read
+    // (`lane_activate_getter`), as its plain call would: its closures see its captures and
+    // locals, a closure it returns outlives it, and a throw leaves through the read.
+    let source = r#"
+const out = [];
+const make = (items, tag) => { let error; return {
+  get error() { if (!error) error = items.map((x) => tag + x).filter((s) => s.length > 1); return error; },
+  set error(e) { error = e; },
+  get later() { const k = tag; return () => k + items.length; },
+}; };
+for (let round = 0; round < 3; round++) {
+  const r = make([1, 2, 3], "t" + round);
+  out.push(r.error.join(), r.error.length, r.later(), r.error === r.error);
+  r.error = ["x"]; out.push(r.error.join());
+}
+class Holder { constructor(v) { this.v = v; } get doubled() { const f = (n) => n * 2; return [this.v].map(f)[0]; } }
+const hs = [new Holder(2), new Holder(5)];
+for (let i = 0; i < 3; i++) out.push(hs[i & 1].doubled);
+const thrower = { get bad() { const f = () => { throw new Error("from getter"); }; return f(); } };
+try { thrower.bad; } catch (e) { out.push(e.message); }
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["t01,t02,t03|3|t03|true|x|t11,t12,t13|3|t13|true|x|t21,t22,t23|3|t23|true|x|4|10|4|from getter".to_string()]);
+}
+
+#[test]
+fn accessor_pairs_live_in_their_slots() {
+    // An accessor with a getter and a setter keeps them in its slot as one pair cell
+    // (`SLOT_ACCESSOR_PAIR`), so objects that each define their own pair share a shape; its
+    // descriptor, redefinition of either half, conversion to data and back, copies that run
+    // the getter, freezing, deletion, inheritance and collection see the same functions.
+    let source = r#"
+const out = [];
+const make = (v) => { let e = v; return { ok: true, get error() { return "g" + e; }, set error(x) { e = x; } }; };
+const objects = [];
+for (let i = 0; i < 2000; i++) objects.push(make(i));
+for (let round = 0; round < 3; round++) out.push(objects[5].error + objects[1999].error);
+objects[7].error = "x"; out.push(objects[7].error, objects[8].error);
+const d = Object.getOwnPropertyDescriptor(objects[3], "error");
+out.push(typeof d.get, typeof d.set, d.enumerable, d.configurable, d.get === Object.getOwnPropertyDescriptor(objects[3], "error").get);
+out.push(d.get === Object.getOwnPropertyDescriptor(objects[4], "error").get);
+Object.defineProperty(objects[9], "error", { get() { return "redefined"; } });
+out.push(objects[9].error); objects[9].error = 5; out.push(objects[9].error);
+Object.defineProperty(objects[10], "error", { set(x) { out.push("setter2:" + x); } });
+out.push(String(objects[10].error)); objects[10].error = 1;
+Object.defineProperty(objects[11], "error", { value: 42, writable: true });
+out.push(objects[11].error, JSON.stringify(Object.getOwnPropertyDescriptor(objects[11], "error")));
+Object.defineProperty(objects[11], "error", { get() { return "back"; }, set(v) {} });
+out.push(objects[11].error);
+out.push(JSON.stringify({ ...objects[12] }), JSON.stringify(Object.assign({}, objects[13])), JSON.stringify(objects[14]));
+out.push(Object.keys(objects[15]).join(), Object.entries(objects[16]).flat().join());
+Object.freeze(objects[17]); objects[17].error = "frozen"; out.push(objects[17].error, Object.isFrozen(objects[17]));
+delete objects[18].error; out.push("error" in objects[18], objects[18].error);
+const child = Object.create(objects[19]); child.error = "via-proto"; out.push(objects[19].error, Object.hasOwn(child, "error"));
+class Box { #v = 1; get v() { return this.#v; } set v(x) { this.#v = x * 2; } }
+const boxes = [new Box(), new Box()]; boxes[0].v = 5; out.push(boxes[0].v, boxes[1].v);
+let sum = 0; for (const o of objects) sum += String(o.error).length; out.push(sum);
+if (typeof gc === "function") gc();
+for (let i = 0; i < 2000; i++) objects[i] = make(-i);
+out.push(objects[1500].error);
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["g5g1999|g5g1999|g5g1999|gx|g8|function|function|true|true|true|false|redefined|redefined|g10|setter2:1|42|{\"value\":42,\"writable\":true,\"enumerable\":true,\"configurable\":true}|back|{\"ok\":true,\"error\":\"g12\"}|{\"ok\":true,\"error\":\"g13\"}|{\"ok\":true,\"error\":\"g14\"}|ok,error|ok,true,error,g16|gfrozen|true|false||gvia-proto|false|10|1|8915|g-1500".to_string()]);
+}
+
+#[test]
 fn own_name_reads_load_the_callee() {
     // A function expression reads its own name as `LoadCallee`; with no closure, eval or
     // `with` able to reach the name's slot, the slot goes (`drop_unread_self_binding`) and
@@ -579,6 +646,94 @@ delete String.prototype[6];
 print(out.join("|"));
 "#;
     assert_eq!(output(source), ["97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|3326|true".to_string()]);
+}
+
+#[test]
+fn string_switches_select_the_first_strictly_equal_case() {
+    // A switch whose every test is a string literal selects its clause by one
+    // `StringCaseIndex` and a branch table: the first equal case wins, a default anywhere
+    // takes the rest, clauses fall through, and only a string primitive matches, by text
+    // (ropes, slices, wide units) as `===` decides.
+    let source = r#"
+function kind(t) {
+  switch (t) {
+    case "div": return 1;
+    case "span": return 2;
+    case "a": case "b": return 3;
+    default: return 9;
+    case "span": return 4;
+    case "é": return 5;
+    case "": return 6;
+    case "x\u{1F600}": return 7;
+  }
+}
+const inputs = ["div", "span", "a", "b", "nope", "é", "", "x\u{1F600}", 1, null, undefined, new String("div"), {toString(){return "div"}}, "d" + "iv".slice(0), ["di", "v"].join(""), "spa" + "n".repeat(1)];
+const out = inputs.map(kind);
+function fall(t) {
+  const seen = [];
+  switch (t) {
+    case "one": seen.push(1);
+    case "two": seen.push(2); break;
+    case "three": { let x = 3; seen.push(x); }
+    case "four": seen.push(4);
+  }
+  return seen.join(",");
+}
+out.push(...["one","two","three","four","five"].map(fall));
+function noDefault(t) { let r = "none"; switch (t) { case "p": r = "P"; break; case "q": r = "Q"; break; case "r": r = "R"; break; case "s": r = "S"; } return r; }
+out.push(...["p","q","r","s","t", 5].map(noDefault));
+let big = ""; for (let i = 0; i < 20; i++) big += "x";
+function long(t) { switch (t) { case "xxxxxxxxxxxxxxxxxxxx": return "L"; case "xxxxxxxxxxxxxxxxxxxy": return "M"; case "y": return "Y"; case "z": return "Z"; default: return "D"; } }
+out.push(long(big), long(big.slice(0, 19) + "y"), long("z"));
+let hits = 0; for (let i = 0; i < 1000; i++) hits += kind(["div","span","li","a"][i & 3]);
+out.push(hits);
+print(JSON.stringify(out));
+"#;
+    assert_eq!(output(source), [r#"[1,2,3,3,9,5,6,7,9,9,9,9,9,1,1,2,"1,2","2","3,4","4","","P","Q","R","S","none","none","L","M","Z",3750]"#.to_string()]);
+}
+
+#[test]
+fn integer_stores_into_typed_arrays_wrap_and_clamp() {
+    // An integer stored into an integer typed array writes its low bytes, a Uint8Clamped
+    // clamps it, a float view converts it, and a store past the end writes nothing
+    // (`typed_array_set_integer`), through views sharing one buffer too.
+    let source = r#"
+const out = [];
+const kinds = [Uint8Array, Int8Array, Uint8ClampedArray, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array];
+const values = [0, 1, -1, 127, 128, 255, 256, -129, 65535, 65536, -32769, 2147483647, -2147483648, 300];
+const put = (view, i, v) => { view[i] = v; };
+for (const Kind of kinds) {
+  const view = new Kind(values.length + 1);
+  for (let round = 0; round < 2; round++) values.forEach((v, i) => put(view, i, v));
+  put(view, values.length + 5, 7);
+  out.push(Kind.name + ":" + Array.from(view).join(","));
+}
+const shared = new Uint8Array(4); const alias = new Uint8Array(shared.buffer, 1, 2);
+put(alias, 0, 513); put(alias, 1, -2); out.push(Array.from(shared).join(","));
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["Uint8Array:0,1,255,127,128,255,0,127,255,0,255,255,0,44,0|Int8Array:0,1,-1,127,-128,-1,0,127,-1,0,-1,-1,0,44,0|Uint8ClampedArray:0,1,0,127,128,255,255,0,255,255,0,255,0,255,0|Uint16Array:0,1,65535,127,128,255,256,65407,65535,0,32767,65535,0,300,0|Int16Array:0,1,-1,127,128,255,256,-129,-1,0,32767,-1,0,300,0|Uint32Array:0,1,4294967295,127,128,255,256,4294967167,65535,65536,4294934527,2147483647,2147483648,300,0|Int32Array:0,1,-1,127,128,255,256,-129,65535,65536,-32769,2147483647,-2147483648,300,0|Float32Array:0,1,-1,127,128,255,256,-129,65535,65536,-32769,2147483648,-2147483648,300,0|0,1,254,0".to_string()]);
+}
+
+#[test]
+fn typed_array_length_sites_read_the_intrinsic_getter() {
+    // A `length` site that read a typed array's reads the intrinsic getter's geometry first
+    // (`lane_get_length_typed`): an own `length`, a subclass getter, arrays and strings at the
+    // same site, a length-tracking view across a resize and a detached buffer read as before.
+    let source = r#"
+const out = [];
+const len = (v) => v.length;
+const a = new Uint8Array(3), b = new Float64Array(5);
+const own = new Int16Array(2); Object.defineProperty(own, "length", { value: 99 });
+class Odd extends Uint8Array { get length() { return -1; } }
+const values = [a, b, own, new Odd(4), [1, 2], "abcd", new Uint8Array(new ArrayBuffer(8), 2, 3)];
+for (let round = 0; round < 3; round++) out.push(values.map(len).join());
+const buffer = new ArrayBuffer(8, { maxByteLength: 16 }); const tracking = new Uint8Array(buffer);
+out.push(len(tracking)); buffer.resize(12); out.push(len(tracking));
+const detachable = new Uint8Array(4); detachable.buffer.transfer(); out.push(len(detachable));
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["3,5,99,-1,2,4,3|3,5,99,-1,2,4,3|3,5,99,-1,2,4,3|8|12|0".to_string()]);
 }
 
 #[test]

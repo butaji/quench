@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::bytecode::FieldLayout;
-use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
+use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,19 +28,24 @@ const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegisterFact {
-    value: Fact,
+    value: VerifiedFact,
     tagged_current: bool,
 }
 
 impl RegisterFact {
+    fn admit(value: Fact) -> Option<Self> {
+        Some(Self { value: value.verified()?, tagged_current: value.representation == Representation::Tagged })
+    }
+
     fn definition(ty: Type, representation: Representation) -> Self {
-        Self { value: Fact { ty, representation, binding: BindingTime::Dynamic,
-            proof: Proof::Definition, projection: Projection::Exact },
-            tagged_current: representation == Representation::Tagged }
+        Self::admit(Fact { ty, representation, binding: BindingTime::Dynamic,
+            proof: Proof::Definition, projection: Projection::Exact })
+            .expect("semantic operation's result type matches its representation")
     }
 
     fn canonical() -> Self {
-        Self { value: Fact::tagged(BindingTime::Location, Proof::CanonicalValue), tagged_current: true }
+        Self::admit(Fact::tagged(BindingTime::Location, Proof::CanonicalValue))
+            .expect("canonical tagged value")
     }
 }
 
@@ -174,7 +179,6 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
-        self.valid &= fact.value.verify();
         let index = usize::from(register);
         let variable = match fact.value.representation {
             Representation::Tagged => self.registers.tagged[index],
@@ -324,12 +328,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 let representation = if ty == Type::INT32 { Representation::Int32 }
                     else if ty == Type::NUMBER { Representation::Float64 }
                     else { Representation::Tagged };
-                let mut fact = RegisterFact::definition(ty, representation);
-                if pc == 0 {
-                    fact.value.binding = BindingTime::Location;
-                    fact.value.proof = if ty == Type::ANY { Proof::CanonicalValue } else { Proof::EntryGuard };
-                }
-                self.valid &= fact.value.verify();
+                let Some(fact) = RegisterFact::admit(Fact { ty, representation,
+                    binding: if pc == 0 { BindingTime::Location } else { BindingTime::Dynamic },
+                    proof: if pc != 0 { Proof::Definition }
+                        else if ty == Type::ANY { Proof::CanonicalValue } else { Proof::EntryGuard },
+                    projection: Projection::Exact,
+                }) else { self.valid = false; return state; };
                 state.values[index] = fact;
             }
         }
@@ -700,9 +704,9 @@ impl Lowering<'_, '_> {
                     } else {
                         (Representation::Tagged, self.ins().iconst(types::I64, value.to_bits() as i64))
                     };
-                    let mut fact = RegisterFact::definition(ty, representation);
-                    fact.value.binding = BindingTime::Static;
-                    fact.value.proof = Proof::Static;
+                    let fact = RegisterFact::admit(Fact { ty, representation,
+                        binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
+                        .expect("constant's canonical semantic type");
                     self.define(state, instruction.result_register(), native, fact);
                     true
                 })
@@ -1201,9 +1205,12 @@ impl Lowering<'_, '_> {
                                 self.valid &= current.tagged_current && incoming.tagged_current;
                                 Representation::Tagged
                             };
-                            let mut fact = RegisterFact::definition(current.value.ty.join(incoming.value.ty), representation);
+                            let Some(mut fact) = RegisterFact::admit(Fact {
+                                ty: current.value.ty.join(incoming.value.ty), representation,
+                                binding: BindingTime::Dynamic, proof: Proof::Definition,
+                                projection: Projection::Exact,
+                            }) else { self.valid = false; return None; };
                             fact.tagged_current = current.tagged_current && incoming.tagged_current;
-                            self.valid &= fact.value.verify();
                             state.values[index] = fact;
                         }
                     }

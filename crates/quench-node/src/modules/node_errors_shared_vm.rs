@@ -116,6 +116,31 @@ pub(crate) fn initialize_prepare_stack_trace(
 }
 
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
+
+#[cfg(test)]
+mod prototype_tests {
+    #[test]
+    fn native_coded_error_prototype_preserves_node_brand_and_constructor() {
+        let source = r#"
+          let error;
+          try { process.emitWarning(42); } catch(e) { error=e; }
+          if (!(error instanceof TypeError) || error.constructor !== TypeError) throw Error('coded error inheritance');
+          if (error.code !== 'ERR_INVALID_ARG_TYPE') throw Error('coded error code');
+          const message='The "warning" argument must be of type string or an instance of Error. Received type number (42)';
+          if (error.message !== message || error.toString() !== 'TypeError [ERR_INVALID_ARG_TYPE]: '+message) throw Error('coded error rendering');
+          const prototype=Object.getPrototypeOf(error);
+          const ctor=Object.getOwnPropertyDescriptor(prototype,'constructor');
+          if(ctor.enumerable||!ctor.configurable||ctor.set!==undefined||ctor.get.name!=='get constructor'||ctor.get.length!==0)throw Error('constructor descriptor');
+          const text=Object.getOwnPropertyDescriptor(prototype,'toString');
+          if(text.enumerable||!text.configurable||!text.writable||text.value.name!=='toString'||text.value.length!==0)throw Error('toString descriptor');
+          const symbols=Object.getOwnPropertySymbols(prototype);
+          if(symbols.length!==1||symbols[0].description!=='kIsNodeError'||error[symbols[0]]!==true)throw Error('coded error brand');
+        "#;
+        let program=quench_runtime::Engine::specialize(source,"native-node-error-prototype.js").unwrap();
+        let host=crate::NodeHost::new(vec!["quench-node".into()]);
+        quench_runtime::Runtime::new(host).execute(&program).unwrap();
+    }
+}
 pub(crate) struct NodeErrorApi {
     brand: RootId,
     prototypes: std::collections::HashMap<(&'static str, ErrorClass, ErrorPresentation), RootId>,
@@ -131,26 +156,56 @@ enum ErrorPresentation {
     Direct,
     HiddenStackFrames,
 }
-const HIDDEN_PROTOTYPE: &str = quench_js_check::checked_js!(
-    r#"constructorNative => class HideStackFramesError {
-      get ['constructor']() { return constructorNative(); }
-    }.prototype"#
-);
-const PROTOTYPE: &str = quench_js_check::checked_js!(
-    r#"(Base, constructorNative, brandNative, stringNative, brand) =>
-    class NodeError extends Base {
-      get ['constructor']() { return constructorNative(); }
-      get [brand]() { return brandNative(); }
-      toString() { return stringNative(this); }
-    }.prototype"#
-);
-
 fn presentation_factory(context: &mut NativeContext<'_, NodeHost>, presentation: ErrorPresentation) -> Result<RootId, RootedError> {
-    let (source, name) = match presentation {
-        ErrorPresentation::Direct => (PROTOTYPE, "node:internal/errors/argument-prototype.js"),
-        ErrorPresentation::HiddenStackFrames => (HIDDEN_PROTOTYPE, "node:internal/errors/validator-prototype.js"),
-    };
-    context.evaluate_script_rooted(source, name)
+    context.host_function(crate::host::shared_vm::operation(match presentation {
+        ErrorPresentation::Direct => "nodeErrorDirectPrototype",
+        ErrorPresentation::HiddenStackFrames => "nodeErrorHiddenPrototype",
+    }))
+}
+
+fn getter(context: &mut NativeContext<'_, NodeHost>, object: RootId, key: RootId, name: &str, callback: RootId) -> Result<(), RootedError> {
+    let function = context.host_function_named_with_data(crate::host::shared_vm::operation("nodeErrorForwardGetter"), name, callback)?;
+    let descriptor = context.null_object_rooted()?;
+    context.assign_named_property_rooted(descriptor, "get", function)?;
+    let yes = context.boolean(true);
+    context.assign_named_property_rooted(descriptor, "configurable", yes)?;
+    let no = context.boolean(false);
+    context.assign_named_property_rooted(descriptor, "enumerable", no)?;
+    context.define_property_descriptor_rooted(object, key, descriptor)?;
+    Ok(())
+}
+
+pub(crate) fn direct_prototype(c: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let base = args[0];
+    let prototype = c.object_rooted()?;
+    let parent = get(c, base, "prototype")?;
+    c.set_prototype_rooted(prototype, parent)?;
+    let constructor = c.string_rooted("constructor");
+    getter(c, prototype, constructor, "get constructor", args[1])?;
+    getter(c, prototype, args[4], "get [kIsNodeError]", args[2])?;
+    let string = c.host_function_named_with_data(crate::host::shared_vm::operation("nodeErrorForwardString"), "toString", args[3])?;
+    let key = c.string_rooted("toString");
+    c.define_data_property_rooted(prototype, key, string, true, false, true)?;
+    Ok(prototype)
+}
+
+pub(crate) fn hidden_prototype(c: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let prototype = c.object_rooted()?;
+    let constructor = c.string_rooted("constructor");
+    getter(c, prototype, constructor, "get constructor", args[0])?;
+    Ok(prototype)
+}
+
+pub(crate) fn forward_getter<H: quench_runtime::Host>(c: &mut NativeContext<'_, H>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let callback = c.host_function_data()?;
+    let undefined = c.undefined();
+    c.call_rooted(callback, undefined, &[])
+}
+
+pub(crate) fn forward_string<H: quench_runtime::Host>(c: &mut NativeContext<'_, H>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let callback = c.host_function_data()?;
+    let undefined = c.undefined();
+    c.call_rooted(callback, undefined, &[receiver])
 }
 
 #[cfg(feature = "aot")]
@@ -364,7 +419,7 @@ fn decorate_coded_error(
 pub(crate) fn prepare_coded_error_support(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
-    super::util_shared_vm::module(context).map(drop)
+    coded_error_prototype(context, INVALID_ARGUMENT_TYPE, ErrorClass::TypeError).map(drop)
 }
 
 fn decorate_ordered_error(

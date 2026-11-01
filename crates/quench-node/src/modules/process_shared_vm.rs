@@ -130,19 +130,16 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
     install(context, process, "_kill", kill)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let signals =
-            super::os_shared_vm::signal_constants(context, super::process_signals_state::SIGNALS)?;
+            super::os_shared_vm::signal_constants(context, super::os_binding_shared_vm::SIGNAL_CONSTANTS)?;
         let data = context.array_rooted(&[process, signals])?;
-        let operation = context
-            .host_function_with_data(crate::host::shared_vm::operation("processKill"), data)?;
-        let factory = context.evaluate_script_rooted(
-            "operation => function kill(pid, signal) { return operation(pid, signal); }",
-            "node:process/shared-kill.js",
+        let kill = context.host_function_named_with_data(
+            crate::host::shared_vm::operation("processKill"),
+            "kill",
+            data,
         )?;
-        let undefined = context.undefined();
-        let kill = context.call_rooted(factory, undefined, &[operation])?;
         install(context, process, "kill", kill)?;
     }
 
@@ -188,14 +185,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "__quenchGetActiveTimerResources",
         active_timer_resources,
     )?;
-    let hrtime_raw =
-        context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
-    let hrtime_factory = context.evaluate_script_rooted(
-        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
-        "node:process/shared-hrtime.js",
-    )?;
-    let undefined = context.undefined();
-    let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
+    let hrtime = context.host_function_named(crate::host::shared_vm::operation("processHrtime"), "hrtime")?;
+    let bigint = context.host_function_named(crate::host::shared_vm::operation("processHrtimeBigint"), "bigint")?;
+    install(context, hrtime, "bigint", bigint)?;
     install(context, process, "hrtime", hrtime)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
@@ -448,36 +440,112 @@ fn create_stream(
     // any final chunk, but it must not close the underlying process file
     // descriptor. Quench writes synchronously, so an end callback can run in
     // the next microtask after the final write has completed.
-    let end_factory = context.evaluate_script_rooted(
-        r#"(stream) => function end(chunk, encoding, callback) {
-          if (typeof chunk === 'function') {
-            callback = chunk;
-            chunk = undefined;
-          } else if (typeof encoding === 'function') {
-            callback = encoding;
-            encoding = undefined;
-          }
-          if (chunk !== undefined && chunk !== null) stream.write(chunk, encoding);
-          if (typeof callback === 'function') queueMicrotask(() => callback.call(stream));
-          return stream;
-        }"#,
-        "node:process/stdio-end.js",
+    let end = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("processStdioEnd"),
+        "end",
+        stream,
     )?;
-    let undefined = context.undefined();
-    let end = context.call_rooted(end_factory, undefined, &[stream])?;
     install(context, stream, "end", end)?;
     // Quench writes process stdio synchronously, so it has no native stream
     // handle whose reference state needs changing. Keep the Node stream API
     // shape available to callers which ref/unref stdio around IPC reads.
-    let reference = context.evaluate_script_rooted(
-        "() => function() { return this; }",
-        "node:process/stdio-reference.js",
-    )?;
-    let undefined = context.undefined();
-    let reference = context.call_rooted(reference, undefined, &[])?;
+    let reference = context.host_function(crate::host::shared_vm::operation("processStdioReference"))?;
     install(context, stream, "ref", reference)?;
     install(context, stream, "unref", reference)?;
     Ok(stream)
+}
+
+/// The key of the slot behind the `globalThis.process` accessor.
+const GLOBAL_PROCESS_SLOT: &str = "process";
+
+/// `globalThis.process`'s getter: the slot's current value.
+pub(crate) fn global_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let slot = context.host_function_data()?;
+    let key = context.string_rooted(GLOBAL_PROCESS_SLOT);
+    context.get_property_rooted(slot, key)
+}
+
+/// `globalThis.process`'s setter: replaces the slot's value.
+pub(crate) fn global_set(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let slot = context.host_function_data()?;
+    let value = match args.first() {
+        Some(value) => *value,
+        None => context.undefined(),
+    };
+    install(context, slot, GLOBAL_PROCESS_SLOT, value)?;
+    Ok(context.undefined())
+}
+
+/// `process.stdout.end(chunk, encoding, callback)`: writes a final chunk through the
+/// stream's own `write` and calls `callback` with the stream as `this` in a microtask; the
+/// descriptor stays open.
+pub(crate) fn stdio_end(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let stream = context.host_function_data()?;
+    let first = args.first().copied();
+    let second = args.get(1).copied();
+    let (chunk, encoding, callback) = match (first, second) {
+        (Some(chunk), _) if context.is_callable_rooted(chunk)? => (None, None, Some(chunk)),
+        (chunk, Some(encoding)) if context.is_callable_rooted(encoding)? => (chunk, None, Some(encoding)),
+        (chunk, encoding) => (chunk, encoding, args.get(2).copied()),
+    };
+    if let Some(chunk) = chunk {
+        let present = context.rooted_value(chunk).is_some_and(|value| !value.is_undefined() && !value.is_null());
+        if present {
+            let key = context.string_rooted("write");
+            let write = context.get_property_rooted(stream, key)?;
+            let encoding = match encoding {
+                Some(encoding) => encoding,
+                None => context.undefined(),
+            };
+            context.call_rooted(write, stream, &[chunk, encoding])?;
+        }
+    }
+    if let Some(callback) = callback {
+        if context.is_callable_rooted(callback)? {
+            let pair = context.array_rooted(&[callback, stream])?;
+            let call = context.host_function_with_data(
+                crate::host::shared_vm::operation("processStdioEndCallback"),
+                pair,
+            )?;
+            context.queue_microtask_rooted(call, &[])?;
+        }
+    }
+    Ok(stream)
+}
+
+/// Calls `stdio_end`'s callback with its stream as `this`.
+pub(crate) fn stdio_end_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let pair = context.host_function_data()?;
+    let callback_key = context.string_rooted("0");
+    let callback = context.get_property_rooted(pair, callback_key)?;
+    let stream_key = context.string_rooted("1");
+    let stream = context.get_property_rooted(pair, stream_key)?;
+    context.call_rooted(callback, stream, &[])
+}
+
+/// `process.stdout.ref()`/`unref()`: stdio has no handle to reference, so both return `this`.
+pub(crate) fn stdio_reference(
+    _: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(receiver)
 }
 
 fn define_global_process(
@@ -490,22 +558,19 @@ fn define_global_process(
     let define_key = context.string_rooted("defineProperty");
     let define = context.get_property_rooted(object, define_key)?;
     let name = context.string_rooted("process");
-    let factory = context.evaluate_script_rooted(
-        r#"(initial) => {
-          let current = initial;
-          return {
-            get() { return current; },
-            set(value) { current = value; },
-          };
-        }"#,
-        "node:process/global-accessor.js",
+    // `globalThis.process` is an accessor over one slot, which assignment replaces.
+    let slot = context.null_object_rooted()?;
+    install(context, slot, GLOBAL_PROCESS_SLOT, process)?;
+    let getter = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("processGlobalGet"),
+        "get",
+        slot,
     )?;
-    let undefined = context.undefined();
-    let accessors = context.call_rooted(factory, undefined, &[process])?;
-    let getter_key = context.string_rooted("get");
-    let getter = context.get_property_rooted(accessors, getter_key)?;
-    let setter_key = context.string_rooted("set");
-    let setter = context.get_property_rooted(accessors, setter_key)?;
+    let setter = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("processGlobalSet"),
+        "set",
+        slot,
+    )?;
     let descriptor = context.object_rooted()?;
     let enumerable = context.boolean(false);
     let configurable = context.boolean(true);
@@ -1650,28 +1715,81 @@ fn errno_name(errno: i32) -> &'static str {
     }
 }
 
-pub(crate) fn hrtime_now(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
+const NANOSECONDS_PER_SECOND: f64 = 1_000_000_000.0;
+
+/// The monotonic clock `process.hrtime` reads, in nanoseconds.
+fn monotonic_ns(context: &mut NativeContext<'_, NodeHost>) -> Result<f64, RootedError> {
     let control = context
         .host_mut()
         .shared_state()
         .borrow()
         .process_control
         .clone();
-    let monotonic_ns = control
+    control
         .monotonic_now_ns()
         .or_else(|| {
             control
                 .performance_origins()
-                .map(|(origin, _)| origin + control.uptime() * 1_000_000_000.0)
+                .map(|(origin, _)| origin + control.uptime() * NANOSECONDS_PER_SECOND)
         })
-        .ok_or_else(|| RootedError::host("Monotonic clock is unavailable"))?;
-    let seconds = context.number((monotonic_ns / 1_000_000_000.0).floor());
-    let nanoseconds = context.number(monotonic_ns.rem_euclid(1_000_000_000.0));
+        .ok_or_else(|| RootedError::host("Monotonic clock is unavailable"))
+}
+
+/// `process.hrtime([time])`: `[seconds, nanoseconds]` now, or since `time`.
+pub(crate) fn hrtime(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let now = monotonic_ns(context)?;
+    let mut seconds = (now / NANOSECONDS_PER_SECOND).floor();
+    let mut nanoseconds = now.rem_euclid(NANOSECONDS_PER_SECOND);
+    let previous = args.first().copied().filter(|root| context.rooted_value(*root).is_some_and(|value| !value.is_undefined()));
+    if let Some(previous) = previous {
+        if !context.is_array_rooted(previous)? {
+            return Err(super::util_shared_vm::argument_type_error_with_expected(
+                context,
+                previous,
+                "time",
+                "an instance of Array",
+            )?);
+        }
+        let length_key = context.string_rooted("length");
+        let length = context.get_property_rooted(previous, length_key)?;
+        let length = context.rooted_value(length).and_then(|value| value.as_number()).unwrap_or(f64::NAN);
+        const HRTIME_TUPLE: f64 = 2.0;
+        if length != HRTIME_TUPLE {
+            let error = context.range_error_rooted(&format!(
+                "The value of \"time\" is out of range. It must be 2. Received {length}"
+            ))?;
+            return Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"));
+        }
+        let mut part = |index: &str| -> Result<f64, RootedError> {
+            let key = context.string_rooted(index);
+            let value = context.get_property_rooted(previous, key)?;
+            Ok(context.rooted_value(value).and_then(|value| value.as_number()).unwrap_or(f64::NAN))
+        };
+        let (previous_seconds, previous_nanoseconds) = (part("0")?, part("1")?);
+        seconds -= previous_seconds;
+        nanoseconds -= previous_nanoseconds;
+        if nanoseconds < 0.0 {
+            seconds -= 1.0;
+            nanoseconds += NANOSECONDS_PER_SECOND;
+        }
+    }
+    let seconds = context.number(seconds);
+    let nanoseconds = context.number(nanoseconds);
     context.array_rooted(&[seconds, nanoseconds])
+}
+
+/// `process.hrtime.bigint()`: the monotonic clock in nanoseconds, as a BigInt.
+pub(crate) fn hrtime_bigint(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let now = monotonic_ns(context)?;
+    Ok(context.bigint_rooted(now as i128))
 }
 
 pub(crate) fn chdir(
@@ -2550,10 +2668,6 @@ fn drain_checkpoint(
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        #[cfg(quench_node_cares)]
-        if crate::modules::cares_channel_shared_vm::poll(runtime, program)? {
-            continue;
-        }
         if crate::modules::cares_binding::poll(runtime, program)? {
             continue;
         }
@@ -2576,7 +2690,6 @@ fn drain_checkpoint(
         if crate::modules::worker_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        #[cfg(not(quench_node_cares))]
         if crate::modules::dns_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
@@ -2686,8 +2799,6 @@ fn drain_checkpoint(
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
-                #[cfg(quench_node_cares)]
-                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
                 let wait = match until_timer {
@@ -2760,8 +2871,6 @@ fn drain_checkpoint(
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
-                #[cfg(quench_node_cares)]
-                let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
                 let wait = match until_timer {
@@ -2828,9 +2937,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
 /// for at the subsystems' poll interval. Without it the loop sleeps until the next timer.
 fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
-    #[cfg(quench_node_cares)]
-    if shared_state.borrow().cares.has_work() { return true; }
-    #[cfg(not(quench_node_cares))]
     if crate::modules::dns_shared_vm::has_work(shared_state) { return true; }
     crate::modules::pipe_binding::has_work(&shared_state.borrow())
         || shared_state.borrow().udp.has_work()
@@ -3814,8 +3920,6 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     super::crypto_signature_shared_vm::cleanup(runtime);
     #[cfg(quench_openssl_provider)]
     super::crypto_hash_shared_vm::cleanup(runtime);
-    #[cfg(quench_node_cares)]
-    super::cares_channel_shared_vm::cleanup(runtime);
     super::cares_binding::cleanup(runtime);
     super::performance_binding_shared_vm::cleanup(runtime);
     super::pipe_binding::cleanup(runtime);
@@ -4438,79 +4542,12 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootI
             Ok(())
         })?;
     }
-    let factory = context.evaluate_script_rooted(ENV_PROXY_SOURCE, "node:process/env.js")?;
-    let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
-    let delete_env = context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
-    let undefined = context.undefined();
-    let env = context.call_rooted(factory, undefined, &[env, set_env, delete_env])?;
+    let env = super::process_env_shared_vm::wrap(context, env)?;
     let key = context.string_rooted("env");
     context.define_data_property_rooted(process, key, env, true, true, true)?;
     Ok(context.undefined())
 }
 
-/// Node's `process.env` over the copied environment: a stored value becomes a string and
-/// sets the OS variable, a deleted key unsets it, and keys take only plain data descriptors.
-const ENV_PROXY_SOURCE: &str = r#"(target, setEnv, deleteEnv) => new Proxy(target, {
-  set(target, key, value) {
-    if (typeof key === "symbol" || typeof value === "symbol") {
-      throw new TypeError("Cannot convert a Symbol value to a string");
-    }
-    if (key === "") return true;
-    if (typeof value !== "string" && typeof value !== "number" &&
-        typeof value !== "boolean" &&
-        globalThis.process.execArgv.includes("--pending-deprecation")) {
-      globalThis.process.emitWarning(
-        "Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it.",
-        { type: "DeprecationWarning", code: "DEP0104" }
-      );
-    }
-    const text = String(value);
-    // A data property, as Node's environment stores every key: `Reflect.set` would reach an
-    // inherited setter such as `__proto__`'s.
-    const result = Reflect.defineProperty(target, key, {
-      value: text,
-      configurable: true,
-      writable: true,
-      enumerable: true
-    });
-    if (result && typeof key !== "symbol") setEnv(String(key), text);
-    return result;
-  },
-  defineProperty(target, key, descriptor) {
-    const invalid = (message) => {
-      const error = new TypeError(message);
-      error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
-      return error;
-    };
-    if (typeof key === "symbol") {
-      throw invalid("'process.env' does not accept symbol properties");
-    }
-    if (key === "") return true;
-    if ("get" in descriptor || "set" in descriptor) {
-      throw invalid("'process.env' does not accept an accessor(getter/setter) descriptor");
-    }
-    if (descriptor.configurable !== true || descriptor.writable !== true || descriptor.enumerable !== true) {
-      throw invalid("'process.env' only accepts a configurable, writable, and enumerable data descriptor");
-    }
-    if (typeof descriptor.value === "symbol") {
-      throw new TypeError("Cannot convert a Symbol value to a string");
-    }
-    const value = String(descriptor.value);
-    const result = Reflect.defineProperty(target, key, {
-      value,
-      configurable: true,
-      writable: true,
-      enumerable: true
-    });
-    if (result) setEnv(String(key), value);
-    return result;
-  },
-  deleteProperty(target, key) {
-    const result = Reflect.deleteProperty(target, key);
-    if (result && key !== "" && typeof key !== "symbol") deleteEnv(String(key));
-    return result;
-  }
-})"#;
 
 /// Defines `process.emitWarning` (`process_warning_shared_vm`).
 pub(crate) fn initialize_emit_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {

@@ -11,45 +11,6 @@ pub(crate) struct State {
     api: Option<RootId>,
     stats_warning_emitted: bool,
 }
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(statsConstruct, mode, checkMode, date, DateConstructor, NumberConstructor, round) => {
- 'use strict';
- function StatsBase(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks) {}
- StatsBase.prototype.isDirectory = function() { return mode(this, 'isDirectory'); };
- StatsBase.prototype.isFile = function() { return mode(this, 'isFile'); };
- StatsBase.prototype.isBlockDevice = function() { return mode(this, 'isBlockDevice'); };
- StatsBase.prototype.isCharacterDevice = function() { return mode(this, 'isCharacterDevice'); };
- StatsBase.prototype.isSymbolicLink = function() { return mode(this, 'isSymbolicLink'); };
- StatsBase.prototype.isFIFO = function() { return mode(this, 'isFIFO'); };
- StatsBase.prototype.isSocket = function() { return mode(this, 'isSocket'); };
- function Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeS, atimeNs, mtimeS, mtimeNs, ctimeS, ctimeNs, birthtimeS, birthtimeNs) {
-   return statsConstruct(this, arguments, false, false);
- }
- function deprecated(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeS, atimeNs, mtimeS, mtimeNs, ctimeS, ctimeNs, birthtimeS, birthtimeNs) {
-   return statsConstruct(this, arguments, false, true);
- }
- function BigIntStats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeNs, mtimeNs, ctimeNs, birthtimeNs) {
-   return statsConstruct(this, arguments, true);
- }
- Object.setPrototypeOf(Stats.prototype, StatsBase.prototype);
- Object.setPrototypeOf(Stats, StatsBase);
- deprecated.prototype = Stats.prototype;
- Object.setPrototypeOf(deprecated, Stats);
- Object.setPrototypeOf(BigIntStats.prototype, StatsBase.prototype);
- Object.setPrototypeOf(BigIntStats, StatsBase);
- Stats.prototype._checkModeProperty = function(property) { return checkMode(this, property, false); };
- BigIntStats.prototype._checkModeProperty = function(property) { return checkMode(this, property, true); };
- Object.defineProperties(Stats.prototype, {
-   atime: { enumerable: true, configurable: true, get() { return date(this, 'atime'); }, set(value) { Object.defineProperty(this, 'atime', { value, writable: true, configurable: true, enumerable: true }); } },
-   mtime: { enumerable: true, configurable: true, get() { return date(this, 'mtime'); }, set(value) { Object.defineProperty(this, 'mtime', { value, writable: true, configurable: true, enumerable: true }); } },
-   ctime: { enumerable: true, configurable: true, get() { return date(this, 'ctime'); }, set(value) { Object.defineProperty(this, 'ctime', { value, writable: true, configurable: true, enumerable: true }); } },
-   birthtime: { enumerable: true, configurable: true, get() { return date(this, 'birthtime'); }, set(value) { Object.defineProperty(this, 'birthtime', { value, writable: true, configurable: true, enumerable: true }); } }
- });
- for (const name of ['atime', 'mtime', 'ctime', 'birthtime']) Object.defineProperty(BigIntStats.prototype, name, Object.getOwnPropertyDescriptor(Stats.prototype, name));
- Object.defineProperty(BigIntStats.prototype, 'constructor', { value: BigIntStats, writable: true, configurable: true });
- return { Stats: deprecated, BigIntStats, DateConstructor, NumberConstructor, round };
-}"#
-);
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -86,7 +47,7 @@ pub(crate) fn install(
     arguments.push(get(context, global, "Number")?);
     let math = get(context, global, "Math")?;
     arguments.push(get(context, math, "round")?);
-    let factory = context.evaluate_script_rooted(FACTORY, "node:fs/stat-types-facade.js")?;
+    let factory = crate::host::removed_javascript("node:fs/stat-types-facade.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(factory, undefined, &arguments)?;
     let shared = context.host_mut().shared_state();

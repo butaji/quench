@@ -9,90 +9,6 @@ use std::sync::OnceLock;
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-const BINDING_JS: &str = quench_js_check::checked_js!(
-    r#"(native) => {
-  'use strict';
-  const BigIntConstructor = BigInt;
-  // src/node_v8.cc property orders.
-  const heapStatistics = ['kTotalHeapSizeIndex', 'kTotalHeapSizeExecutableIndex', 'kTotalPhysicalSizeIndex',
-    'kTotalAvailableSize', 'kUsedHeapSizeIndex', 'kHeapSizeLimitIndex', 'kMallocedMemoryIndex',
-    'kPeakMallocedMemoryIndex', 'kDoesZapGarbageIndex', 'kNumberOfNativeContextsIndex',
-    'kNumberOfDetachedContextsIndex', 'kTotalGlobalHandlesSizeIndex', 'kUsedGlobalHandlesSizeIndex',
-    'kExternalMemoryIndex', 'kTotalAllocatedBytes'];
-  const heapCodeStatistics = ['kCodeAndMetadataSizeIndex', 'kBytecodeAndMetadataSizeIndex',
-    'kExternalScriptSourceSizeIndex', 'kCPUProfilerMetaDataSizeIndex'];
-  const heapSpaceStatistics = ['kSpaceSizeIndex', 'kSpaceUsedSizeIndex', 'kSpaceAvailableSizeIndex',
-    'kPhysicalSpaceSizeIndex'];
-  const heapStatisticsBuffer = new Float64Array(heapStatistics.length);
-  const heapCodeStatisticsBuffer = new Float64Array(heapCodeStatistics.length);
-  const heapSpaceStatisticsBuffer = new Float64Array(heapSpaceStatistics.length);
-  const kHeapSpaces = native.heapSpaces();
-  const unavailable = (feature) => () => {
-    const error = new TypeError(`The feature ${feature} is unavailable on the current platform, which is being used to run Node.js`);
-    error.code = 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM';
-    throw error;
-  };
-  const kInitialized = 0, kStarted = 1, kStopped = 2;
-  class GCProfiler {
-    #state = kInitialized;
-    #startTime = 0;
-    start() {
-      if (this.#state !== kInitialized) return;
-      this.#startTime = Date.now();
-      this.#state = kStarted;
-    }
-    stop() {
-      if (this.#state !== kStarted) return;
-      this.#state = kStopped;
-      // Quench reports no collector events: the statistics list stays empty.
-      return `{\n  "version": 1,\n  "startTime": ${this.#startTime},\n  "statistics": [\n  ],\n  "endTime": ${Date.now()}\n}`;
-    }
-  }
-  const binding = {
-    heapStatisticsBuffer,
-    heapCodeStatisticsBuffer,
-    heapSpaceStatisticsBuffer,
-    cachedDataVersionTag: native.cachedDataVersionTag,
-    setHeapSnapshotNearHeapLimit() {},
-    setHeapProfileNearHeapLimit() {},
-    updateHeapStatisticsBuffer() { heapStatisticsBuffer.set(native.heapStatistics()); },
-    updateHeapCodeStatisticsBuffer() { heapCodeStatisticsBuffer.fill(0); },
-    getCppHeapStatistics() {
-      return { __proto__: null, committed_size_bytes: 0, resident_size_bytes: 0, used_size_bytes: 0, space_statistics: [], type_names: [] };
-    },
-    kHeapSpaces,
-    updateHeapSpaceStatisticsBuffer(index) { heapSpaceStatisticsBuffer.set(native.heapSpaceStatistics(index)); },
-  };
-  for (const names of [heapStatistics, heapCodeStatistics, heapSpaceStatistics]) {
-    names.forEach((name, index) => { binding[name] = index; });
-  }
-  Object.assign(binding, {
-    setFlagsFromString() {},
-    startCpuProfile: unavailable('CPU profiling'),
-    stopCpuProfile: unavailable('CPU profiling'),
-    startHeapProfile: unavailable('heap profiling'),
-    stopHeapProfile: unavailable('heap profiling'),
-    // v8::HeapProfiler::SamplingFlags.
-    kSamplingNoFlags: 0,
-    kSamplingForceGC: 1 << 0,
-    kSamplingIncludeObjectsCollectedByMajorGC: 1 << 1,
-    kSamplingIncludeObjectsCollectedByMinorGC: 1 << 2,
-    isStringOneByteRepresentation: native.isStringOneByteRepresentation,
-    getHashSeed() { return BigIntConstructor(native.hashSeed()); },
-    GCProfiler,
-  });
-  // cppgc::HeapStatistics::DetailLevel.
-  Object.defineProperty(binding, 'detailLevel', { value: { DETAILED: 1, BRIEF: 0 }, enumerable: true });
-  const heapUtils = {
-    buildEmbedderGraph: unavailable('heap snapshots'),
-    triggerHeapSnapshot: unavailable('heap snapshots'),
-    createHeapSnapshotStream: unavailable('heap snapshots'),
-  };
-  // src/internal_only_v8.cc: the live objects whose prototype is the given one.
-  const internalOnly = { queryObjects: native.queryObjects };
-  return { binding, heapUtils, internalOnly };
-}"#
-);
 
 /// V8's space names, in `kHeapSpaces` order; Quench's single heap reports as old space.
 const HEAP_SPACES: [&str; 13] = [
@@ -173,7 +89,7 @@ fn bindings(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let key = c.string_rooted(name);
             c.define_data_property_rooted(native, key, function, true, true, true)?;
         }
-        let factory = c.evaluate_script_rooted(BINDING_JS, "node:internal/v8_binding.js")?;
+        let factory = crate::host::removed_javascript("node:internal/v8_binding.js")?;
         let undefined = c.undefined();
         c.call_rooted(factory, undefined, &[native])
     })

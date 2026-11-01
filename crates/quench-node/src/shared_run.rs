@@ -1682,14 +1682,6 @@ pub(crate) fn print_eval_script(
     let source = context.string_text(source)?.ok_or_else(|| {
         quench_runtime::RootedError::host("print evaluation source must be a string")
     })?;
-    // Node's -p/-pe CommonJS evaluation resolves the bare `crypto` identifier
-    // to node:crypto even though globalThis.crypto is the WebCrypto Crypto
-    // object. Use a `with` object environment for that one colliding name so
-    // the lexical alias does not replace the public global property.
-    let source = serde_json::to_string(&source)
-        .map_err(|error| quench_runtime::RootedError::host(error.to_string()))?;
-    let wrapped = format!(
-        "let __quenchCryptoSet = false, __quenchCryptoValue; with ({{ get crypto() {{ return __quenchCryptoSet ? __quenchCryptoValue : globalThis[\"\\0quench:require\"]('crypto'); }}, set crypto(value) {{ __quenchCryptoSet = true; __quenchCryptoValue = value; }} }}) eval({source})"
-    );
-    context.evaluate_script_rooted(&wrapped, "[eval]")
+    let _ = source;
+    crate::host::removed_javascript("[eval]")
 }

@@ -15,8 +15,6 @@ pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
-#[cfg(quench_node_cares)]
-pub(crate) mod cares_channel_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
@@ -43,10 +41,8 @@ pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
-#[cfg(not(quench_node_cares))]
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
-pub(crate) mod domain_source;
 pub(crate) mod domain_trampoline;
 pub(crate) mod emitter_async_resource_shared_vm;
 pub(crate) mod eval_globals_shared_vm;
@@ -69,8 +65,6 @@ pub(crate) mod fs_stat_watch_shared_vm;
 pub(crate) mod fs_state;
 pub(crate) mod fs_watch_shared_vm;
 pub(crate) mod fs_write_shared_vm;
-pub(crate) mod http2_native;
-pub(crate) mod http2_shared_vm;
 pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
@@ -115,6 +109,11 @@ mod process_exception_route;
 pub(crate) mod process_fatal_exception_route;
 pub(crate) mod process_signals_state;
 pub(crate) mod process_state;
+pub(crate) mod process_surface;
+pub(crate) mod process_env_shared_vm;
+pub(crate) mod task_queues_shared_vm;
+pub(crate) mod lazy_binding_shared_vm;
+pub(crate) mod module_paths_shared_vm;
 pub(crate) mod process_stdin_shared_vm;
 pub(crate) mod promise_hooks_shared_vm;
 pub(crate) mod shared_event_loop;
@@ -193,7 +192,6 @@ pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
 #[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_hash_source;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_source_shared_vm;
 

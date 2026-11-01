@@ -156,7 +156,7 @@ impl<H: Host> Vm<H> {
         // shape holds no such accessor, and no indexed descriptor, has none.
         if let Some(object) = self.object_data(holder)
             && !object.has_indexed_descriptors()
-            && !self.shape_may_have_table_accessors(object.shape())
+            && !self.shape_may_have_accessor_pairs(object.shape())
         {
             return None;
         }

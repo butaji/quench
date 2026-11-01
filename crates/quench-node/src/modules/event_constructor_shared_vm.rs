@@ -67,6 +67,33 @@ fn validate_boolean(
     )?)
 }
 
+pub(crate) fn bootstrap(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<(), RootedError> {
+    // Both the callable constructor and its init operation close over the same configuration.
+    let constructor = context.host_constructor_named_with_data(
+        crate::host::shared_vm::operation("emitterConstruct"), "EventEmitter", data,
+    )?;
+    context.assign_named_property_rooted(data, "emitterCtor", constructor)?;
+    let init = context.host_function_named_with_data(crate::host::shared_vm::operation("emitterInitialize"), "", data)?;
+    context.assign_named_property_rooted(constructor, "init", init)?;
+    let prototype = get(context, constructor, "prototype")?;
+    let bridge = context.host_function_named_with_data(crate::host::shared_vm::operation("emitterBridge"), "emit", data)?;
+    let key = context.string_rooted("emit");
+    context.define_data_property_rooted(prototype, key, bridge, true, false, true)?;
+    let rejection = get(context, data, "rejectionKey")?;
+    context.assign_named_property_rooted(constructor, "captureRejectionSymbol", rejection)?;
+    let no = context.boolean(false);
+    context.assign_named_property_rooted(constructor, "usingDomains", no)?;
+    let global = context.global_root()?;
+    let symbol = get(context, global, "Symbol")?;
+    let registry = get(context, symbol, "for")?;
+    let description = context.string_rooted("quench.internal.streamOwner");
+    let owner = context.call_rooted(registry, symbol, &[description])?;
+    context.assign_named_property_rooted(data, "streamOwnerKey", owner)?;
+    let key = context.string_rooted("__nodeEventEmitter");
+    context.define_data_property_rooted(global, key, constructor, false, false, true)?;
+    Ok(())
+}
+
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let data = context
         .host_mut()
@@ -91,19 +118,18 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
     let key = get(context, data, "captureKey")?;
     let no = context.boolean(false);
     context.define_data_property_rooted(prototype, key, no, true, false, false)?;
-    let get_native = context.host_function_with_data(
+    let get_native = context.host_constructor_named_with_data(
         crate::host::shared_vm::operation("emitterCaptureDefaultGet"),
+        "get",
         data,
     )?;
-    let set_native = context.host_function_with_data(
+    let set_native = context.host_constructor_named_with_data(
         crate::host::shared_vm::operation("emitterCaptureDefaultSet"),
+        "set",
         data,
     )?;
-    let factory = context.evaluate_script_rooted("(getNative, setNative) => ({get: function get() { return getNative(); }, set: function set(value) { return setNative(value); }})", "node:events/capture-default.js")?;
-    let api = context.call_rooted(factory, undefined, &[get_native, set_native])?;
     let descriptor = context.null_object_rooted()?;
-    for name in ["get", "set"] {
-        let value = get(context, api, name)?;
+    for (name, value) in [("get", get_native), ("set", set_native)] {
         context.assign_named_property_rooted(descriptor, name, value)?;
     }
     let yes = context.boolean(true);
@@ -111,6 +137,52 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
     let key = context.string_rooted("captureRejections");
     context.define_property_descriptor_rooted(constructor, key, descriptor)?;
     Ok(())
+}
+
+pub(crate) fn construct(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let constructor = get(context, data, "emitterCtor")?;
+    let initialize = get(context, constructor, "init")?;
+    let undefined = context.undefined();
+    context.call_rooted(initialize, receiver, &[args.first().copied().unwrap_or(undefined)])?;
+    Ok(undefined)
+}
+
+pub(crate) fn init(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let events = get(context, receiver, "_events")?;
+    let undefined = context.undefined();
+    let reset = if context.strict_equal_rooted(events, undefined)? { true } else {
+        let events = get(context, receiver, "_events")?;
+        let prototype = context.prototype_rooted(receiver)?;
+        let inherited = get(context, prototype, "_events")?;
+        context.strict_equal_rooted(events, inherited)?
+    };
+    if reset {
+        let events = context.null_object_rooted()?;
+        context.assign_named_property_rooted(receiver, "_events", events)?;
+        let zero = context.number(0.0);
+        context.assign_named_property_rooted(receiver, "_eventsCount", zero)?;
+    }
+    let shape_key = get(context, data, "shapeKey")?;
+    let reused = context.boolean(!reset);
+    context.assign_property_rooted(receiver, shape_key, reused)?;
+    let maximum = get(context, receiver, "_maxListeners")?;
+    if !context.truthy_rooted(maximum)? {
+        context.assign_named_property_rooted(receiver, "_maxListeners", undefined)?;
+    }
+    let options = args.first().copied().unwrap_or(undefined);
+    let capture = if nullish(context, options) { undefined } else { get(context, options, "captureRejections")? };
+    let capture = if context.truthy_rooted(capture)? {
+        let value = get(context, options, "captureRejections")?;
+        validate_boolean(context, value, "options.captureRejections")?;
+        let value = get(context, options, "captureRejections")?;
+        let enabled = context.truthy_rooted(value)?;
+        context.boolean(enabled)
+    } else { capture_default(context, data)? };
+    let key = get(context, data, "captureKey")?;
+    context.assign_property_rooted(receiver, key, capture)?;
+    Ok(undefined)
 }
 
 /// The `options.captureRejections` check of `EventEmitter.init`: a non-boolean throws Node's

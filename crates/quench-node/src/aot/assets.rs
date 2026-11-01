@@ -128,10 +128,6 @@ impl EmbeddedModules {
         let source = self.modules.binary_search_by(|source| source.name.cmp(name)).ok()?;
         Some(&self.modules[source])
     }
-    pub(crate) fn view(&self, path: &Path, key: &str) -> Option<&'static str> {
-        self.views.binary_search_by(|view| Path::new(view.path).cmp(path).then_with(|| view.key.cmp(key)))
-            .ok().map(|index| self.views[index].source)
-    }
 
     pub(crate) fn file(&self, path: &Path) -> Option<&EmbeddedModuleFile> {
         self.files.binary_search_by(|file| Path::new(file.path).cmp(path)).ok().map(|index| &self.files[index])
@@ -219,14 +215,7 @@ impl crate::NodeHost {
                     format!("module source outside frozen image: {}", path.display()))
             });
         }
-        let bytes = std::fs::read(path).or_else(|error| {
-            #[cfg(feature = "aot")]
-            if matches!(self.module_assets, ModuleAssetState::Capture(_)) {
-                return crate::node_sources::source(path, &self.node_library_root)
-                    .map(|source| source.as_bytes().to_vec()).ok_or(error);
-            }
-            Err(error)
-        })?;
+        let bytes = std::fs::read(path)?;
         #[cfg(feature = "aot")]
         self.record_module_bytes(path, _kind, &bytes)?;
         Ok(bytes)
@@ -257,18 +246,6 @@ impl crate::NodeHost {
         Ok(())
     }
 
-    #[cfg(feature = "aot")]
-    pub(crate) fn record_source_view(&mut self, path: &Path, key: &str, source: &str) -> Result<(), String> {
-        if let ModuleAssetState::Capture(assets) = &self.module_assets {
-            let mut assets = assets.borrow_mut();
-            let key = (path.to_owned(), key.to_owned());
-            if assets.views.get(&key).is_some_and(|previous| previous.as_ref() != source) {
-                return Err(format!("SDK source view changed during capture: {} {}", path.display(), key.1));
-            }
-            assets.views.entry(key).or_insert_with(|| Rc::from(source));
-        }
-        Ok(())
-    }
 
     #[cfg(feature = "aot")]
     pub(crate) fn record_prepared_module(&mut self, path: &Path, text: &str) -> Result<(), String> {

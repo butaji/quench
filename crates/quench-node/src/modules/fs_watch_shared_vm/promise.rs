@@ -6,16 +6,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 const DEFAULT_MAX_QUEUE: f64 = 2048.0;
 const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(next, finish, PromiseConstructor, push, shift, ErrorConstructor) => {
- 'use strict';
- class AbortError extends ErrorConstructor {}
- return { PromiseConstructor, push, shift, AbortError,
-   makeIterator: state => ({ next: () => next(state), return: () => finish(state), [Symbol.asyncIterator]() { return this; } })
- };
-}"#
-);
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     parent: RootId,
@@ -30,7 +20,7 @@ pub(super) fn install(
     let push = get(context, prototype, "push")?;
     let shift = get(context, prototype, "shift")?;
     let error = get(context, global, "Error")?;
-    let factory = context.evaluate_script_rooted(FACTORY, "node:fs/promise-watch-facade.js")?;
+    let factory = crate::host::removed_javascript("node:fs/promise-watch-facade.js")?;
     let undefined = context.undefined();
     let api = context.call_rooted(
         factory,

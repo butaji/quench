@@ -64,7 +64,6 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 libz-rs-sys = "0.6.8"
 
 [build-dependencies]
-cc = "1"
 pkg-config = "0.3"
 
 # The global allocator on unix; the memory policy decides whether it serves small requests

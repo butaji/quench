@@ -14,64 +14,6 @@ use std::rc::Rc;
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-const BINDING_JS: &str = quench_js_check::checked_js!(
-    r#"(native) => {
-  'use strict';
-  const handles = new WeakMap();
-  const released = new FinalizationRegistry((id) => native.release(id));
-  const handle = (object) => {
-    const id = handles.get(object);
-    if (id === undefined) throw new TypeError('Illegal invocation');
-    return id;
-  };
-  const register = (object, id) => {
-    handles.set(object, id);
-    released.register(object, id);
-  };
-  const invalidArgument = (message) => {
-    const error = new TypeError(message);
-    error.code = 'ERR_INVALID_ARG_TYPE';
-    return error;
-  };
-  class Serializer {
-    constructor() { register(this, native.serializer()); }
-    writeHeader() { native.writeHeader(handle(this)); }
-    writeValue(value) { return native.writeValue(handle(this), this, value); }
-    releaseBuffer() { return native.releaseBuffer(handle(this)); }
-    transferArrayBuffer(id, arrayBuffer) {
-      if (!native.transferArrayBuffer(handle(this), id, arrayBuffer)) throw invalidArgument('arrayBuffer must be an ArrayBuffer');
-    }
-    writeUint32(value) { native.writeUint32(handle(this), value); }
-    writeUint64(hi, lo) { native.writeUint64(handle(this), hi, lo); }
-    writeDouble(value) { native.writeDouble(handle(this), value); }
-    writeRawBytes(source) {
-      if (!ArrayBuffer.isView(source)) throw invalidArgument('source must be a TypedArray or a DataView');
-      native.writeRawBytes(handle(this), source);
-    }
-    _setTreatArrayBufferViewsAsHostObjects(value) { native.treatViewsAsHostObjects(handle(this), !!value); }
-  }
-  class Deserializer {
-    constructor(buffer) {
-      if (!ArrayBuffer.isView(buffer)) throw invalidArgument('buffer must be a TypedArray or a DataView');
-      register(this, native.deserializer(buffer));
-      this.buffer = buffer;
-    }
-    readHeader() { return native.readHeader(handle(this)); }
-    readValue() { return native.readValue(handle(this), this); }
-    transferArrayBuffer(id, arrayBuffer) {
-      if (!native.receiveArrayBuffer(handle(this), id, arrayBuffer)) {
-        throw invalidArgument('arrayBuffer must be an ArrayBuffer or SharedArrayBuffer');
-      }
-    }
-    getWireFormatVersion() { return native.wireFormatVersion(handle(this)); }
-    readUint32() { return native.readUint32(handle(this)); }
-    readUint64() { return native.readUint64(handle(this)); }
-    readDouble() { return native.readDouble(handle(this)); }
-    _readRawBytes(length) { return native.readRawBytes(handle(this), length); }
-  }
-  return { Serializer, Deserializer };
-}"#
-);
 
 /// One serializer: the runtime state, absent while a `writeValue` runs, and its output.
 struct SerializerEntry {
@@ -251,7 +193,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(native, key, function, true, true, true)?;
     }
-    let factory = c.evaluate_script_rooted(BINDING_JS, "node:internal/serdes.js")?;
+    let factory = crate::host::removed_javascript("node:internal/serdes.js")?;
     let undefined = c.undefined();
     c.call_rooted(factory, undefined, &[native])
 }

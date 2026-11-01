@@ -1626,6 +1626,20 @@ impl<H: Host> Vm<H> {
         self.set_index_mode(&program, object, key, value, true)
     }
 
+    pub(crate) fn delete_property_strict_rooted(&mut self, object: RootId, key: RootId) -> Result<(), JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        self.delete_reference_property_mode(&program, object, key, true).map(|_| ())
+    }
+
+    pub(crate) fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        self.delete_reference_property_mode(&program, object, key, false).map(|value| value == Value::TRUE)
+    }
+
     pub(crate) fn evaluate_module_sync(
         &mut self,
         module: &crate::ModuleSource,

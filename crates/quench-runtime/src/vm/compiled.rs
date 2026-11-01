@@ -6912,16 +6912,14 @@ impl<H: Host> Vm<H> {
             dispatch.captures = captures as usize;
             dispatch.vm = (self as *mut Self).addr();
             dispatch.residual = residual as *const ResidualProgram as usize;
-            dispatch.refresh_heap_bases(self);
+            dispatch.refresh_object_bases(self);
+            dispatch.stores_specialized = usize::from(self.specialized && residual.specialized);
             let context = &mut frame.context;
             context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
             context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
-            let constants = self.programs.constants(program);
-            context.js_constants = constants.as_ptr();
-            context.js_constant_count = constants.len();
             let mut word = 0_u64;
             // SAFETY: the body was compiled for this function, never allocates or
-            // collects, and reads only the registers, constants and heap bases set above.
+            // collects, and reads only the registers and heap bases set above.
             let status = unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) };
             (status, word)
         });
@@ -7107,9 +7105,21 @@ impl JsStepDispatch {
         dispatch.refresh_heap_bases(vm);
         dispatch
     }
-    /// Reads the heap bases generated code uses again, after anything that may have grown,
-    /// compacted or replaced them.
+    /// Object loads, stores and barriers share these bases in lane and general code.
+    /// Allocation or collection between native entries may move any of them.
+    fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        let (blocks, count) = vm.heap.native_object_mark_blocks();
+        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        let (values, len) = vm.heap.native_property_values();
+        (self.property_values, self.property_len) = (values as usize, len);
+        let atoms = vm.method_cache_atoms.words();
+        (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+    }
+
+    /// Refresh the additional frame and array views read by the general tier.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.refresh_object_bases(vm);
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
             .map_or(std::ptr::null(), |frame| &frame.this as *const Value);
@@ -7123,14 +7133,7 @@ impl JsStepDispatch {
             })
             .unwrap_or((std::ptr::null(), 0));
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
-        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
-        let (blocks, count) = vm.heap.native_object_mark_blocks();
-        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
-        let (values, len) = vm.heap.native_property_values();
-        (self.property_values, self.property_len) = (values as usize, len);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
-        let atoms = vm.method_cache_atoms.words();
-        (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
         self.stores_specialized = usize::from(
             vm.specialized && vm.programs.residual(self.program_id).is_some_and(|program| program.specialized),
         );

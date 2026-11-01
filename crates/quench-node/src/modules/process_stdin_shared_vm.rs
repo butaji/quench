@@ -35,16 +35,11 @@ mod platform {
         context: &mut NativeContext<'_, NodeHost>,
         process: RootId,
     ) -> Result<(), RootedError> {
-        let open = context.host_function_with_data(
+        let open = context.host_function_named_with_data(
             crate::host::shared_vm::operation("processOpenStdin"),
+            "openStdin",
             process,
         )?;
-        let factory = context.evaluate_script_rooted(
-            "operation => function() { return operation(); }",
-            "node:process/open-stdin.js",
-        )?;
-        let undefined = context.undefined();
-        let open = context.call_rooted(factory, undefined, &[open])?;
         set(context, process, "openStdin", open)?;
         let getter = context.host_function(crate::host::shared_vm::operation("processStdin"))?;
         let global = context.global_root()?;

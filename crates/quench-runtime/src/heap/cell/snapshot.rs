@@ -50,6 +50,7 @@ mod tag {
     pub(super) const ERROR: u8 = 22;
     pub(super) const PROMISE: u8 = 23;
     pub(super) const PROMISE_RESOLVING_STATE: u8 = 24;
+    pub(super) const ACCESSOR_PAIR: u8 = 25;
 }
 
 impl Native {
@@ -701,6 +702,11 @@ impl Cell {
                 writer.value(*promise);
                 writer.bool(*already_resolved);
             }
+            Self::AccessorPair { getter, setter } => {
+                writer.u8(tag::ACCESSOR_PAIR);
+                writer.value(*getter);
+                writer.value(*setter);
+            }
             Self::ArrayFromAsyncState(_) | Self::AwaitState(_) => {
                 return Err(SnapshotError::unsupported("a suspended async operation"));
             }
@@ -857,6 +863,7 @@ impl Cell {
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),
             tag::PROMISE_RESOLVING_STATE => Self::PromiseResolvingState { promise: reader.value()?, already_resolved: reader.bool()? },
+            tag::ACCESSOR_PAIR => Self::AccessorPair { getter: reader.value()?, setter: reader.value()? },
             _ => return Err(SnapshotError("invalid snapshot cell".into())),
         })
     }

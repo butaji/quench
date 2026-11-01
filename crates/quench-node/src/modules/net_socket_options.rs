@@ -86,9 +86,7 @@ pub(crate) fn install(
         crate::host::shared_vm::operation("netSocketSetKeepAlive"),
         data,
     )?;
-    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "(noDelay,keepAlive)=>[function(enable){'use strict';return noDelay(this,enable);},function(enable,initialDelayMsecs,intervalMsecs,count){'use strict';return keepAlive(this,enable,initialDelayMsecs,intervalMsecs,count);}]"
-    ), "node:net/socket-options.js")?;
+    let factory = crate::host::removed_javascript("node:net/socket-options.js")?;
     let undefined = context.undefined();
     let methods = context.call_rooted(factory, undefined, &[no_delay, keep_alive])?;
     let server = context.host_function_with_data(

@@ -150,6 +150,7 @@ impl<H: Host> Vm<H> {
             string_atoms: None,
             recent_atom_strings: None,
             ascii_unit_strings: None,
+            bound_parts_layout: std::cell::Cell::new(None),
             call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
             field_caches: Default::default(),
             inherited_field_indices: Default::default(),

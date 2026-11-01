@@ -1,5 +1,5 @@
 //! Parsed startup values for implemented Node feature switches.
-include!(concat!(env!("OUT_DIR"), "/node_option_defaults.rs"));
+include!("node_option_tables.rs");
 const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     // The default Node condition includes native addon exports. Workers can
     // opt out with --no-addons, which is also a valid boolean negation.
@@ -354,10 +354,7 @@ impl CliOptions {
 /// `flag`, when it is one of Node's own CLI options (`process.allowedNodeEnvironmentFlags`'s
 /// source list), which Node accepts even where this host keeps no value for it.
 fn node_listed_flag(flag: &str) -> Option<&'static str> {
-    const LIST_START: &str = "const availableFlags = \"";
-    let surface: &'static str = crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS;
-    let start = surface.find(LIST_START)? + LIST_START.len();
-    surface[start..].split('"').next()?.split(' ').find(|listed| *listed == flag)
+    crate::modules::process_surface::NODE_FLAGS.iter().copied().find(|listed| *listed == flag)
 }
 
 /// Node's double-quote tokenizer; only unquoted ASCII spaces separate arguments.

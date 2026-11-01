@@ -107,16 +107,10 @@ pub(crate) fn construct(
     // its shared SecureContext. The SecureContext operation is already backed
     // by OpenSSL; installing the forwarding method here makes that session
     // control reachable through tls.Server/https.Server as expected.
-    let ticket_keys_factory = context.evaluate_script_rooted(
-        "server => function setTicketKeys(keys) { return server._sharedCreds.context.setTicketKeys(keys); }",
-        "node:tls/server-ticket-keys.js",
-    )?;
+    let ticket_keys_factory = crate::host::removed_javascript("node:tls/server-ticket-keys.js")?;
     let ticket_keys = context.call_rooted(ticket_keys_factory, undefined, &[receiver])?;
     set(context, receiver, "setTicketKeys", ticket_keys)?;
-    let get_ticket_keys_factory = context.evaluate_script_rooted(
-        "server => function getTicketKeys() { return server._sharedCreds.context.getTicketKeys(); }",
-        "node:tls/server-get-ticket-keys.js",
-    )?;
+    let get_ticket_keys_factory = crate::host::removed_javascript("node:tls/server-get-ticket-keys.js")?;
     let get_ticket_keys = context.call_rooted(get_ticket_keys_factory, undefined, &[receiver])?;
     set(context, receiver, "getTicketKeys", get_ticket_keys)?;
     if context.truthy_rooted(listener)? {

@@ -3,97 +3,41 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(namesNative, listenersNative, rawNative, countNative, addNative, onceNative, removeNative, allNative, emitNative, emitListenersNative, captureNative, apply, call, shapeKey) => {
-  'use strict';
-  // The most listener arguments `emit` passes to a lone listener without gathering them.
-  const DIRECT_ARGUMENTS = 2;
-  return {
-    eventNames: function eventNames() { return namesNative(this); },
-    listeners: function listeners(type) { return listenersNative(this, type); },
-    rawListeners: function rawListeners(type) { return rawNative(this, type); },
-    listenerCount: function listenerCount(type, listener) { return countNative(this, type, listener); },
-    // The first listener of a type, with no "newListener" subscriber, is stored and counted
-    // here as `addNative` stores and counts it; any other registration takes the native store.
-    addListener: function addListener(type, listener) {
-      if (typeof listener === "function") {
-        const events = this._events;
-        if (events !== undefined && events.newListener === undefined && events[type] === undefined) {
-          events[type] = listener;
-          this._eventsCount++;
-          return this;
+macro_rules! receiver_method {
+    ($name:ident, $operation:ident, $count:literal $(, $prepend:literal)?) => {
+        pub(crate) fn $name(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+            let missing = context.undefined();
+            let mut values = [missing; $count + 1 $(+ { let _ = $prepend; 1 })?];
+            values[0] = receiver;
+            for index in 0..$count { values[index + 1] = args.get(index).copied().unwrap_or(missing); }
+            $(values[$count + 1] = context.boolean($prepend);)?
+            $operation(context, missing, &values)
         }
-      }
-      return addNative(this, type, listener, false);
-    },
-    prependListener: function prependListener(type, listener) { return addNative(this, type, listener, true); },
-    once: function once(type, listener) { return onceNative(this, type, listener, false); },
-    prependOnceListener: function prependOnceListener(type, listener) { return onceNative(this, type, listener, true); },
-    // Removing a type's lone listener (or the once wrapper of it) retires the type here as
-    // `removeNative` retires it (`event_removed`, then the "removeListener" notification);
-    // a listener array and every other case take the native store.
-    removeListener: function removeListener(type, listener) {
-      if (typeof listener === "function") {
-        const events = this._events;
-        if (events === undefined) return this;
-        const record = events[type];
-        if (record === undefined) return this;
-        if (typeof record === "function" && (record === listener || record.listener === listener)) {
-          const count = this._eventsCount - 1;
-          this._eventsCount = count;
-          if (this[shapeKey]) events[type] = undefined;
-          else if (count === 0) this._events = { __proto__: null };
-          else delete events[type];
-          if (events.removeListener !== undefined) {
-            const original = record.listener;
-            this.emit("removeListener", type, original ? original : listener);
-          }
-          return this;
-        }
-      }
-      return removeNative(this, type, listener);
-    },
-    removeAllListeners: function removeAllListeners(type) { return allNative(this, type, arguments.length > 0); },
-    // Any event but "error" with one function listener calls it here, as `emitListenersNative`
-    // would, so the listener runs without a native boundary; a listener array, the "error"
-    // event and every other case take the native store's dispatch. The listener arguments
-    // come from `arguments`, which a body that only reads it keeps as the values passed, so
-    // the call runs without a frame where a rest parameter's would take one. An event without
-    // a listener returns before they are gathered, and a lone listener of up to two takes
-    // them from `arguments` directly: a server emits several events per request, and each
-    // argument array was one more young allocation in flight.
-    emit: function emit(type) {
-      const count = arguments.length;
-      let handler;
-      if (type !== "error") {
-        const events = this._events;
-        if (events === undefined) return false;
-        handler = events[type];
-        if (handler === undefined) return false;
-      }
-      const direct = typeof handler === "function" && count <= DIRECT_ARGUMENTS + 1;
-      let result;
-      if (direct) {
-        result = count === 1 ? call(handler, this)
-          : count === 2 ? call(handler, this, arguments[1])
-          : call(handler, this, arguments[1], arguments[2]);
-        if (result === undefined || result === null) return true;
-      }
-      const args = [];
-      for (let index = 1; index < count; index++) args[index - 1] = arguments[index];
-      if (direct) {
-        captureNative(this, result, type, args);
-        return true;
-      }
-      if (type === "error") return emitNative(this, type, args);
-      if (typeof handler !== "function") return emitListenersNative(this, type, args, handler);
-      result = apply(handler, this, args);
-      if (result !== undefined && result !== null) captureNative(this, result, type, args);
-      return true;
-    }
-  };
-}"#
-);
+    };
+}
+receiver_method!(public_names, names, 0);
+receiver_method!(public_listeners, listeners, 1);
+receiver_method!(public_raw_listeners, raw_listeners, 1);
+receiver_method!(public_count, count, 2);
+receiver_method!(public_add, add_listener, 2, false);
+receiver_method!(public_prepend, add_listener, 2, true);
+receiver_method!(public_once, once, 2, false);
+receiver_method!(public_prepend_once, once, 2, true);
+receiver_method!(public_remove, remove_listener, 2);
+
+pub(crate) fn public_remove_all(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let provided = context.boolean(!args.is_empty());
+    remove_all_listeners(context, missing, &[receiver, args.first().copied().unwrap_or(missing), provided])
+}
+
+pub(crate) fn public_emit(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let event = args.first().copied().unwrap_or(missing);
+    let values = context.array_rooted(args.get(1..).unwrap_or_default())?;
+    emit(context, missing, &[receiver, event, values])
+}
+
 
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
@@ -159,62 +103,22 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
-    let once_factory = context.evaluate_script_rooted(
-        "(invoke) => function wrapper(...args) { return invoke(...args); }",
-        "node:events/once-wrapper.js",
-    )?;
-    context.assign_named_property_rooted(data,
-        "onceFactory",
-        once_factory,
-    )?;
     let emit_bridge = get(context, prototype, "emit")?;
     context.assign_named_property_rooted(data, "emitBridge", emit_bridge)?;
-    let mut operations = [
-        "emitterEventNames",
-        "emitterListeners",
-        "emitterRawListeners",
-        "emitterListenerCount",
-    ]
-    .into_iter()
-    .map(|name| context.host_function(crate::host::shared_vm::operation(name)))
-    .collect::<Result<Vec<_>, _>>()?;
-    for operation in [
-        "emitterAddListener",
-        "emitterOnce",
-        "emitterRemoveListener",
-        "emitterRemoveAllListeners",
-        "emitterEmit",
-        "emitterEmitListeners",
-        "emitterCaptureResult",
+    for (name, operation) in [
+        ("eventNames", "emitterPublicNames"),
+        ("listeners", "emitterPublicListeners"),
+        ("rawListeners", "emitterPublicRawListeners"),
+        ("listenerCount", "emitterPublicCount"),
+        ("addListener", "emitterPublicAdd"),
+        ("prependListener", "emitterPublicPrepend"),
+        ("once", "emitterPublicOnce"),
+        ("prependOnceListener", "emitterPublicPrependOnce"),
+        ("removeListener", "emitterPublicRemove"),
+        ("removeAllListeners", "emitterPublicRemoveAll"),
+        ("emit", "emitterPublicEmit"),
     ] {
-        operations.push(
-            context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?,
-        );
-    }
-    let reflect = get(context, global, "Reflect")?;
-    operations.push(get(context, reflect, "apply")?);
-    operations.push(context.evaluate_script_rooted(
-        "Function.prototype.call.bind(Function.prototype.call)",
-        "node:events/call.js",
-    )?);
-    operations.push(get(context, data, "shapeKey")?);
-    let factory = context.evaluate_script_rooted(FACTORY, "node:events/inspection.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &operations)?;
-    for name in [
-        "eventNames",
-        "listeners",
-        "rawListeners",
-        "listenerCount",
-        "addListener",
-        "prependListener",
-        "once",
-        "prependOnceListener",
-        "removeListener",
-        "removeAllListeners",
-        "emit",
-    ] {
-        let value = get(context, api, name)?;
+        let value = context.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
         let key = context.string_rooted(name);
         context.define_data_property_rooted(prototype, key, value, true, true, true)?;
     }
@@ -224,6 +128,70 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.define_data_property_rooted(prototype, key, value, true, true, true)?;
     }
     Ok(())
+}
+
+pub(crate) fn bridge(context: &mut NativeContext<'_, NodeHost>, target: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let event = args.first().copied().unwrap_or(missing);
+    let arguments = args.get(1).copied().unwrap_or(missing);
+    let listeners = args.get(2).copied().unwrap_or(missing);
+    let values = if undefined(context, listeners) { Vec::new() }
+        else if context.is_array_rooted(listeners)? { entries(context, listeners)? }
+        else { vec![listeners] };
+    let error_name = context.string_rooted("error");
+    let is_error = context.strict_equal_rooted(event, error_name)?;
+    let mut internal = is_error && !values.is_empty();
+    if internal {
+        let yes = context.boolean(true);
+        for listener in &values {
+            let marker = get(context, *listener, "__quenchInternal")?;
+            if !context.strict_equal_rooted(marker, yes)? { internal = false; break; }
+        }
+    }
+    let data = context.host_function_data()?;
+    let key = get(context, data, "streamOwnerKey")?;
+    let owner = context.get_property_rooted(target, key)?;
+    let destroyed = if context.rooted_value(owner).is_some_and(|value| value.is_null() || value.is_undefined()) { false }
+        else {
+            let value = get(context, owner, "destroyed")?;
+            let yes = context.boolean(true);
+            context.strict_equal_rooted(value, yes)?
+        };
+    if is_error && (values.is_empty() || (internal && destroyed)) {
+        if internal {
+            let arguments = listener_arguments(context, arguments)?;
+            for listener in values {
+                if context.is_callable_rooted(listener)? { context.call_rooted(listener, target, &arguments)?; }
+            }
+        }
+        let first = context.string_rooted("0");
+        let error = context.get_property_rooted(arguments, first)?;
+        let global = context.global_root()?;
+        let constructor = get(context, global, "Error")?;
+        if context.instance_of_rooted(error, constructor)? { return Err(context.throw(error)); }
+        let inspected = (|| {
+            let inspector = super::events_shared_vm::error_inspector(context, missing, &[])?;
+            context.call_rooted(inspector, missing, &[error])
+        })();
+        let detail = match inspected {
+            Ok(detail) => detail,
+            Err(_) => {
+                let string = get(context, global, "String")?;
+                context.call_rooted(string, missing, &[error])?
+            }
+        };
+        let mut message: Vec<u16> = "Unhandled error. (".encode_utf16().collect();
+        message.extend(context.to_string_code_units(detail)?);
+        message.push(u16::from(b')'));
+        let message = context.string_units_rooted(&message);
+        let constructor = get(context, global, "Error")?;
+        let unhandled = context.construct_rooted(constructor, constructor, &[message])?;
+        let code = context.string_rooted("ERR_UNHANDLED_ERROR");
+        context.assign_named_property_rooted(unhandled, "code", code)?;
+        context.assign_named_property_rooted(unhandled, "context", error)?;
+        return Err(context.throw(unhandled));
+    }
+    emit_listeners(context, missing, &[target, event, arguments, listeners])
 }
 
 pub(crate) fn names(
@@ -779,12 +747,11 @@ pub(crate) fn once(
     ] {
         context.assign_named_property_rooted(state, name, value)?;
     }
-    let invoke = context.host_function_with_data(
+    let wrapper = context.host_constructor_named_with_data(
         crate::host::shared_vm::operation("emitterOnceInvoke"),
+        "wrapper",
         state,
     )?;
-    let factory = get(context, data, "onceFactory")?;
-    let wrapper = context.call_rooted(factory, missing, &[invoke])?;
     context.assign_named_property_rooted(state, "wrapper", wrapper)?;
     context.assign_named_property_rooted(wrapper, "listener", listener)?;
     let add = get(

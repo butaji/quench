@@ -41,7 +41,7 @@ use cranelift_codegen::ir::{
     types, Signature,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use super::typed_ir::{BindingTime, Fact as ValueFact, Projection, Proof, Representation, Type};
+use super::typed_ir::{BindingTime, Fact as ValueFact, Projection, Proof, Representation, Type, VerifiedFact};
 use super::{NativeFieldLoad, object_slots::{CheckedObject, ObjectHeader, PackedAccess}};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
@@ -2235,10 +2235,11 @@ fn admit_register_roles(
             };
             let atom = instruction.atom_index();
             let cache_site = instruction.cache_site_index();
-            // The slot pointer is captured at entry. The receiver must therefore stay in its
-            // tagged register for the entire region.
-            if instructions.iter().any(|candidate| matches!(receiver, FieldReceiver::Register(register)
-                if candidate.defined_register() == Some(register))) {
+            // A receiver the region redefines stores through the VM's cached store at the
+            // instruction; every read of its name must then read the current slot too.
+            if let FieldReceiver::Register(register) = receiver
+                && defined_registers.contains(&register)
+            {
                 let current = |candidate: &WideInstruction| {
                     field_path(*candidate, sites, &paths).is_some_and(|path| {
                         path.steps.len() == 1
@@ -3111,10 +3112,10 @@ fn representations(
 pub(super) struct VerifiedRegion<'a> {
     region: &'a LoopRegion,
     webs: Webs,
-    values: Vec<ValueFact>,
-    captures: Vec<ValueFact>,
-    fields: Vec<ValueFact>,
-    registers: Vec<Option<ValueFact>>,
+    values: Vec<Option<VerifiedFact>>,
+    captures: Vec<VerifiedFact>,
+    fields: Vec<VerifiedFact>,
+    registers: Vec<Option<VerifiedFact>>,
     obligations: Vec<DefinitionObligation>,
 }
 
@@ -3127,6 +3128,7 @@ impl VerifiedRegion<'_> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TypeError {
+    InvalidInputFact { kind: &'static str, index: usize },
     MissingDefinition { pc: u32, register: Register },
     InvalidRepresentation { definition: Definition },
     NonNumberOperand { pc: u32, register: Register },
@@ -3258,7 +3260,7 @@ pub(super) fn verify_region<'a>(
             let definition = webs.checked_read(region, pc, register)
                 .ok_or(TypeError::MissingDefinition { pc, register })?;
             let fact = values[definition];
-            if !fact.verify() { return Err(TypeError::InvalidRepresentation { definition }); }
+            if fact.ty == Type::NEVER { return Err(TypeError::InvalidRepresentation { definition }); }
             if matches!(instruction.op(), Op::JumpFalse | Op::JumpTrue)
                 && fact.representation == Representation::Tagged
                 && !fact.ty.is_subtype(Type::language(crate::ValueType::Boolean))
@@ -3279,12 +3281,23 @@ pub(super) fn verify_region<'a>(
         }
         if number_definition(instruction).is_some() {
             let definition = webs.defined(region, pc);
-            if !values[definition].verify() { return Err(TypeError::InvalidRepresentation { definition }); }
+            if values[definition].ty == Type::NEVER { return Err(TypeError::InvalidRepresentation { definition }); }
         }
     }
     for definition in webs.leaves.values().copied().map(|definition| webs.find(definition)) {
-        if !values[definition].verify() { return Err(TypeError::InvalidRepresentation { definition }); }
+        if values[definition].ty == Type::NEVER { return Err(TypeError::InvalidRepresentation { definition }); }
     }
+    let values = values.into_iter().enumerate().map(|(definition, fact)| {
+        if fact.ty == Type::NEVER { Ok(None) }
+        else { fact.verified().map(Some).ok_or(TypeError::InvalidRepresentation { definition }) }
+    }).collect::<Result<_, _>>()?;
+    let verify_inputs = |facts: Vec<ValueFact>, kind| facts.into_iter().enumerate().map(|(index, fact)|
+        fact.verified().ok_or(TypeError::InvalidInputFact { kind, index })).collect::<Result<Vec<_>, _>>();
+    let captures = verify_inputs(captures, "capture")?;
+    let fields = verify_inputs(fields, "field")?;
+    let registers = registers.into_iter().enumerate().map(|(index, fact)|
+        fact.map(|fact| fact.verified().ok_or(TypeError::InvalidInputFact { kind: "register", index })).transpose()
+    ).collect::<Result<_, _>>()?;
     Ok(VerifiedRegion { region, webs, values, captures, fields, registers, obligations })
 }
 
@@ -4221,7 +4234,7 @@ pub(super) fn lower_verified(
         signature,
     );
     // Range analyses consume a projection of the verified representation facts.
-    let representations: Vec<_> = verified.values.iter().map(|value| value.representation).collect();
+    let representations: Vec<_> = verified.values.iter().map(|value| value.map_or(Representation::Tagged, |value| value.representation)).collect();
     let captures: Vec<_> = verified.captures.iter().map(|value| value.representation).collect();
     let counted = counted_loops(region, &verified.webs, &representations, &captures);
     let unbounded = int32_facts(region, &verified.webs, &representations, &std::collections::BTreeMap::new());
@@ -4286,7 +4299,7 @@ struct Lowering<'a, 'b> {
     callout_signature: ir::SigRef,
     webs: Webs,
     /// Each web's representation, at its root definition.
-    values: Vec<ValueFact>,
+    values: Vec<Option<VerifiedFact>>,
     /// The instruction being lowered, whose reads and result name webs.
     pc: u32,
     /// The entry registers the region never writes that held exactly 1 when it compiled:
@@ -4298,9 +4311,9 @@ struct Lowering<'a, 'b> {
     captures: Vec<Typed>,
     /// Entry-pinned fields: snapshots or SSA cells updated by admitted stores.
     fields: Vec<FieldValue>,
-    capture_facts: Vec<ValueFact>,
-    field_facts: Vec<ValueFact>,
-    register_facts: Vec<Option<ValueFact>>,
+    capture_facts: Vec<VerifiedFact>,
+    field_facts: Vec<VerifiedFact>,
+    register_facts: Vec<Option<VerifiedFact>>,
     obligations: Vec<DefinitionObligation>,
     result_proof: NodeProof,
     /// The `i32` arithmetic that needs no guard (`int32_facts`).
@@ -4917,7 +4930,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let instruction = region.instructions[(pc - region.header) as usize];
             instruction.op() != Op::SetIndex || {
                 let web = self.webs.read(region, pc, instruction.register_a());
-                self.values[web].representation == Representation::Int32
+                self.values[web].expect("verified SSA definition").representation == Representation::Int32
             }
         });
         if !stores_int32 {
@@ -5140,9 +5153,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
             + ARRAY_WORDS * self.region.arrays.len();
         // Admission fixes the slot for this synchronous run. No native store
         // targets the entry record, so its pointer can be hoisted past writes.
-        let entry = self.entry;
         self.body.builder.ins().load(
-            types::I64, super::invariant(), entry, (start + index) as i32 * WORD_BYTES,
+            types::I64, super::invariant(), self.entry, (start + index) as i32 * WORD_BYTES,
         )
     }
 
@@ -5263,7 +5275,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
         }
         // Only an entry value some read reaches is loaded and guarded.
-        let registers: Vec<(Register, ValueFact)> = self.register_facts.iter().enumerate()
+        let registers: Vec<(Register, VerifiedFact)> = self.register_facts.iter().enumerate()
             .filter_map(|(entry, fact)| Some((self.region.entry_register(entry)?, (*fact)?)))
             .collect();
         // An inlined callee's register holds nothing at entry: one read before written there
@@ -5489,7 +5501,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// The value parked register `register` holds through counted loop `index`, as its
     /// preheader stored it (`Parking`).
     fn parked_value(&mut self, index: usize, register: Register, web: Definition) -> Typed {
-        let representation = self.values[web].representation;
+        let representation = self.values[web].expect("verified SSA definition").representation;
         let ty = super::scalar_ir(view_type(representation));
         let slot = self.parking.slot.expect("a parking slot");
         let offset = self.parking.offset(index, register);
@@ -5587,7 +5599,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// exact unary instruction for them.
     fn typeof_index(&mut self, pc: u32, value: Typed) -> Option<Typed> {
         let source = self.region.instructions[(pc - self.region.header) as usize].register_b();
-        let ty = self.values[self.webs.read(self.region, pc, source)].ty;
+        let ty = self.values[self.webs.read(self.region, pc, source)].expect("verified SSA operand").ty;
         for kind in [crate::ValueType::Number, crate::ValueType::Boolean, crate::ValueType::Null,
             crate::ValueType::Undefined, crate::ValueType::String, crate::ValueType::BigInt, crate::ValueType::Symbol]
         {
@@ -5867,7 +5879,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// The value of the web rooted at `web`, which its register's view holds where the web
     /// is live.
     fn web(&mut self, web: Definition) -> Typed {
-        let representation = self.values[web].representation;
+        let representation = self.values[web].expect("verified SSA definition").representation;
         let register = self.webs.register(self.region, web);
         Typed { value: self.body.read(register, view_type(representation)), representation }
     }
@@ -5880,7 +5892,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
 
     /// The representation of the instruction being lowered's result.
     fn result_representation(&self) -> Representation {
-        self.values[self.webs.defined(self.region, self.pc)].representation
+        self.values[self.webs.defined(self.region, self.pc)].expect("verified SSA result").representation
     }
 
     fn read(&mut self, source: Source) -> Typed {
@@ -5949,7 +5961,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.guard(self.pc, changed);
         }
         let web = self.webs.defined(self.region, self.pc);
-        let representation = self.values[web].representation;
+        let representation = self.values[web].expect("verified SSA definition").representation;
         if !representation.can_receive(value.representation) {
             self.result_proof = NodeProof::InvalidConversion;
             return;
@@ -7057,7 +7069,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     Representation::Tagged => {
                         let yes = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::TRUE.to_bits() as i64);
                         let web = self.webs.read(self.region, pc, instruction.register_a());
-                        if !self.values[web].ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
+                        if !self.values[web].expect("verified SSA condition").ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
                             let truthy = self.tagged_truthiness(pc, value.value);
                             self.discharge(DefinitionObligation::BooleanTest);
                             truthy
@@ -7290,7 +7302,7 @@ mod tests {
         };
         let verified = verify_region(&region, &observation).unwrap();
         let comparison = verified.webs.defined(&region, 0);
-        assert_eq!(verified.values[comparison].ty, Type::language(crate::ValueType::Boolean));
+        assert_eq!(verified.values[comparison].unwrap().ty, Type::language(crate::ValueType::Boolean));
         assert_eq!(verified.obligations[1], DefinitionObligation::None);
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
