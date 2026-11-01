@@ -1467,11 +1467,35 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoPublicEncrypt" (2) => crate::modules::crypto_node::sign::public_encrypt,
         #[cfg(quench_openssl_provider)]
-        method "cryptoLazyTransform" (1) => crate::modules::crypto_node::hash::lazy_transform_constructor,
+        method "cryptoPublicHash" (2) => crate::modules::crypto_hash_source_shared_vm::hash,
         #[cfg(quench_openssl_provider)]
-        method "cryptoLazyTransformGet" (0) => crate::modules::crypto_node::hash::lazy_transform_get,
+        method "cryptoPublicOneShot" (3) => crate::modules::crypto_hash_source_shared_vm::one_shot,
         #[cfg(quench_openssl_provider)]
-        method "cryptoLazyTransformSet" (1) => crate::modules::crypto_node::hash::lazy_transform_set,
+        method "cryptoPublicHmac" (3) => crate::modules::crypto_hash_source_shared_vm::hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicCreateHash" (2) => crate::modules::crypto_hash_source_shared_vm::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicCreateHmac" (3) => crate::modules::crypto_hash_source_shared_vm::create_hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashCopy" (1) => crate::modules::crypto_hash_source_shared_vm::copy,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashUpdate" (2) => crate::modules::crypto_hash_source_shared_vm::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashDigest" (1) => crate::modules::crypto_hash_source_shared_vm::hash_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmacDigest" (1) => crate::modules::crypto_hash_source_shared_vm::hmac_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashTransform" (3) => crate::modules::crypto_hash_source_shared_vm::transform,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHashFlush" (1) => crate::modules::crypto_hash_source_shared_vm::hash_flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicHmacFlush" (1) => crate::modules::crypto_hash_source_shared_vm::hmac_flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransform" (1) => crate::modules::crypto_lazy_transform::construct,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyStateGet" (0) => crate::modules::crypto_lazy_transform::get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyStateSet" (1) => crate::modules::crypto_lazy_transform::set,
         method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
         #[cfg(quench_openssl_provider)]
         method "get crypto" (0) => crate::modules::crypto_node::webcrypto_getter,
@@ -1489,10 +1513,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoCreateDiffieHellmanGroup" (1) => crate::modules::crypto_node::dh::create_diffie_hellman_group,
         #[cfg(quench_openssl_provider)]
         method "cryptoCreateEcdh" (1) => crate::modules::crypto_node::dh::create_ecdh,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoCreateHash" (2) => crate::modules::crypto_node::hash::create_hash,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoCreateHmac" (3) => crate::modules::crypto_node::hash::create_hmac,
         #[cfg(quench_openssl_provider)]
         method "cryptoCreatePrivateKey" (1) => crate::modules::crypto_node::keys::create_private_key,
         #[cfg(quench_openssl_provider)]
@@ -1564,8 +1584,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoVerifyOneShot" (5) => crate::modules::crypto_node::sign::verify_one_shot,
         #[cfg(quench_openssl_provider)]
-        method "cryptoHashOneShot" (2) => crate::modules::crypto_node::hash::one_shot,
-        #[cfg(quench_openssl_provider)]
         method "cryptoSecureHeapUsed" (0) => crate::modules::crypto_node::secure_heap_used,
         #[cfg(quench_openssl_provider)]
         method "cryptoAliasGet" (0) => crate::modules::crypto_node::alias_get,
@@ -1581,20 +1599,6 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoGetRandomValuesUnbound" (1) => crate::modules::crypto_node::random::get_random_values_unbound,
         #[cfg(quench_openssl_provider)]
         method "cryptoWebClassGlobals" (0) => crate::modules::crypto_node::web_class_globals,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashConstructor" (2) => crate::modules::crypto_node::hash::hash_constructor,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHmacConstructor" (3) => crate::modules::crypto_node::hash::hmac_constructor,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashCopy" (1) => crate::modules::crypto_node::hash::copy,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashTransform" (3) => crate::modules::crypto_node::hash::transform,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashFlush" (1) => crate::modules::crypto_node::hash::flush,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashUpdate" (2) => crate::modules::crypto_node::hash::update,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoHashDigest" (1) => crate::modules::crypto_node::hash::digest,
         #[cfg(quench_openssl_provider)]
         method "cryptoCipheriv" (4) => crate::modules::crypto_node::cipher::cipheriv,
         #[cfg(quench_openssl_provider)]

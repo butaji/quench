@@ -213,6 +213,10 @@ pub(crate) mod crypto_digest_cache;
 pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_hash_source_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_lazy_transform;
 
 pub(crate) mod abort_controller_shared_vm;
 
