@@ -7167,7 +7167,14 @@ fn lane_loop_entry<H: Host>(
                 let vm = unsafe { vm(cx) };
                 // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
                 let env = unsafe { &*vm.script_call_entry(callee)? }.env;
-                let value = vm.environment_capture(env, callee_slot)?;
+                // A top-level binding the global object projects is its property, which the
+                // region keeps only while it stores no field (as the caller's own captures).
+                let value = vm.environment_capture(env, callee_slot).or_else(|| {
+                    region.field_store_sites.is_empty()
+                        .then(|| vm.environment_capture_env(env, false, 0)
+                            .and_then(|env| vm.plain_projected_root_binding(env, callee_slot)))
+                        .flatten()
+                })?;
                 entry.push_capture(value);
                 continue;
             }
