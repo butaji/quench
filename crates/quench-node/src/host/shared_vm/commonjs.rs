@@ -2188,12 +2188,6 @@ fn cached_builtin(
     // Source-owned CommonJS modules keep their live exports on the module record.
     // Reentrant requires must observe module.exports reassignment during loading,
     // rather than a second cache retaining an earlier partial export object.
-    if matches!(
-        builtin,
-        BuiltinModule::Stream | BuiltinModule::StreamPromises
-    ) {
-        return context.with_startup_intrinsics(|context| build_builtin(context, builtin));
-    }
     let canonical = builtin
         .cache_key()
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
@@ -2400,6 +2394,9 @@ pub(crate) fn node_library_module(
 ) -> Result<RootId, RootedError> {
     if relative == "internal/histogram.js" {
         return cached_builtin(context, BuiltinModule::PerfHooks);
+    }
+    if let Some(module) = crate::modules::stream_shared_vm::library_module(context, relative)? {
+        return Ok(module);
     }
     crate::host::removed_javascript(format!("node:{}", relative.trim_end_matches(".js")))
 }
@@ -2915,8 +2912,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         #[cfg(not(unix))]
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
-        BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
-        BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
+        BuiltinModule::Stream => crate::modules::stream_shared_vm::module(context),
+        BuiltinModule::StreamPromises => crate::modules::stream_shared_vm::promises(context),
         BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
         BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
