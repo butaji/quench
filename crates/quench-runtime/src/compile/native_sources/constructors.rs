@@ -60,7 +60,7 @@ impl Term {
 }
 
 struct Constraint { binding: SymbolId, value: Term }
-struct Request { callee: Term, parameters: String, body: String }
+struct Request { callee: Term, source: Option<(String, String)>, offset: u32 }
 struct Discovery<'s> { scoping: &'s Scoping, constraints: Vec<Constraint>, requests: Vec<Request> }
 impl Discovery<'_> {
     fn symbol(&self, name: &IdentifierReference<'_>) -> Option<SymbolId> {
@@ -101,15 +101,18 @@ impl Discovery<'_> {
             _ => None,
         }
     }
-    fn request(&mut self, callee: &Expression<'_>, arguments: &[Argument<'_>]) {
+    fn request(&mut self, callee: &Expression<'_>, arguments: &[Argument<'_>], offset: u32) {
         let Some(callee) = self.expression(callee) else { return; };
-        let Some(mut strings) = arguments.iter().map(|argument| {
+        let strings = arguments.iter().map(|argument| {
             match argument.as_expression()?.get_inner_expression() {
                 Expression::StringLiteral(text) => Some(text.value.as_str()), _ => None,
             }
-        }).collect::<Option<Vec<_>>>() else { return; };
-        let body = strings.pop().unwrap_or_default().to_owned();
-        self.requests.push(Request { callee, parameters: strings.join(","), body });
+        }).collect::<Option<Vec<_>>>();
+        let source = strings.map(|mut strings| {
+            let body = strings.pop().unwrap_or_default().to_owned();
+            (strings.join(","), body)
+        });
+        self.requests.push(Request { callee, source, offset });
     }
     fn solve(&self) -> BTreeMap<SymbolId, Flow> {
         let mut dependents: BTreeMap<SymbolId, Vec<usize>> = BTreeMap::new();
@@ -169,24 +172,28 @@ impl<'a> Visit<'a> for Discovery<'_> {
         walk::walk_for_of_statement(self, statement);
     }
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        self.request(&call.callee, &call.arguments);
+        self.request(&call.callee, &call.arguments, call.span.start);
         walk::walk_call_expression(self, call);
     }
     fn visit_new_expression(&mut self, call: &NewExpression<'a>) {
-        self.request(&call.callee, &call.arguments);
+        self.request(&call.callee, &call.arguments, call.span.start);
         walk::walk_new_expression(self, call);
     }
 }
 
-pub(super) fn sources(program: &Program<'_>, scoping: &Scoping, specialized: bool) -> Vec<NativeSourceKey> {
+pub(super) fn analyze(program: &Program<'_>, scoping: &Scoping, specialized: bool) -> (Vec<NativeSourceKey>, Vec<u32>) {
     let mut discovery = Discovery { scoping, constraints: Vec::new(), requests: Vec::new() };
     discovery.visit_program(program);
     let bindings = discovery.solve();
     let mut sources = BTreeSet::new();
+    let mut dynamic = BTreeSet::new();
     for request in discovery.requests {
         for kind in request.callee.value(&bindings).callable.iter() {
-            sources.insert(NativeSourceKey::function_constructor(specialized, kind, &request.parameters, &request.body));
+            match &request.source {
+                Some((parameters, body)) => { sources.insert(NativeSourceKey::function_constructor(specialized, kind, parameters, body)); },
+                None => { dynamic.insert(request.offset); },
+            }
         }
     }
-    sources.into_iter().collect()
+    (sources.into_iter().collect(), dynamic.into_iter().collect())
 }

@@ -1320,7 +1320,7 @@ fn qualify_literal_function_constructors(profile: &str, support: Option<String>)
         let binary = directory.join(format!("{extension}-native"));
         let report = directory.join(format!("{extension}.json"));
         let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        compiler.arg("compile").arg(&entry).arg("-o").arg(&binary).args(["--profile", profile])
+        compiler.arg("compile").arg(&entry).arg("-o").arg(&binary).args(["--profile", profile, "--static-source"])
             .arg("--report").arg(&report);
         if support.is_some() { compiler.arg("--sdk-report").arg(&sdk); }
         let compiled = compiler.output().unwrap();
@@ -1332,6 +1332,7 @@ fn qualify_literal_function_constructors(profile: &str, support: Option<String>)
         assert_eq!(native.stderr, oracle.stderr);
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
         assert_eq!(report["deferred_syntax_errors"], 2);
+        assert_eq!(report["source_support_selection"], "static");
         assert_eq!(report["requested_support_profile"], profile);
         assert_reduced_payload(&report, &binary);
         eprintln!("Function constructors ({extension}, {profile}) matched Node after source removal: {}", binary.display());
@@ -1365,7 +1366,7 @@ fn compile_command_rejects_guest_caught_native_capability_errors() {
     let binary = directory.join("native");
     let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
         .arg("compile").arg(&entry).arg("-o").arg(&binary)
-        .arg("--sdk-report").arg(&sdk).args(["--profile", "iteration"]).output().unwrap();
+        .arg("--sdk-report").arg(&sdk).args(["--profile", "iteration", "--static-source"]).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     for mode in ["ordinary", "syntax", "sync", "job", "exit"] {
         let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
@@ -1730,7 +1731,7 @@ fn compile_command_preserves_dynamic_source_scope_coercion_and_jobs() {
         let report = directory.join(format!("{extension}.json"));
         let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
             .arg("compile").arg(&entry).arg("-o").arg(&binary)
-            .args(["--profile", "iteration", "--dynamic-source"])
+            .args(["--profile", "iteration"])
             .arg("--sdk-report").arg(&sdk).arg("--report").arg(&report).output().unwrap();
         assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
         fs::remove_dir_all(&sources).unwrap();
@@ -1742,12 +1743,69 @@ fn compile_command_preserves_dynamic_source_scope_coercion_and_jobs() {
         }
         let report: serde_json::Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
         assert_eq!(report["execution_mode"], "native_with_dynamic_source");
+        assert!(!report["dynamic_eval_sites"].as_array().unwrap().is_empty());
         for capability in ["source_compilation", "js_source_frontend", "bytecode_interpreter", "jit"] {
             assert_eq!(report[capability], true, "{capability}");
         }
         assert_eq!(report["support_artifacts"]["dynamic_source"], true);
         assert_reduced_payload(&report, &binary);
         eprintln!("dynamic sources ({extension}) matched Node after source removal: {}", binary.display());
+    }
+}
+
+#[test]
+#[ignore = "explicit source-deleted runtime Function constructor qualification"]
+fn compile_command_selects_dynamic_function_without_eval() {
+    use std::{fs, io::Write, process::{Command, Stdio}};
+    let directory = std::env::temp_dir().join(format!("quench dynamic constructors, {}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let sdk = std::env::var_os("QUENCH_NATIVE_DYNAMIC_BUILD_REPORT").expect("hybrid Cargo artifact report");
+    for extension in ["cjs", "cts"] {
+        let sources = directory.join(extension);
+        fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        let source = if extension == "cts" { "(JSON.parse(require('node:fs').readFileSync(0, 'utf8')) as unknown as { body: number, generator: number })" }
+            else { "JSON.parse(require('node:fs').readFileSync(0, 'utf8'))" };
+        fs::write(&entry, format!(r#"
+            const input = {source};
+            const body = input.body;
+            const Alias = Function;
+            const Generator = (function*() {{}}).constructor;
+            const Async = (async function() {{}}).constructor;
+            const AsyncGenerator = (async function*() {{}}).constructor;
+            const first = Alias('x', body);
+            const second = new Function('x', body);
+            const generated = Generator('x', input.generator);
+            const asyncFn = Async('x', body);
+            const asyncGenerator = AsyncGenerator('x', input.generator);
+            async function main() {{ console.log(JSON.stringify([first(40), second(40), typeof body,
+                first !== second, generated(40).next(), await asyncFn(40), await asyncGenerator(40).next()])); }}
+            main();
+        "#)).unwrap();
+        let run = |command: &mut Command| {
+            let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+            child.stdin.take().unwrap().write_all(br#"{"body":"return x + 2;","generator":"yield x + 2;"}"#).unwrap();
+            child.wait_with_output().unwrap()
+        };
+        let expected = run(Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into())).arg(&entry));
+        assert!(expected.status.success(), "{}", String::from_utf8_lossy(&expected.stderr));
+        let binary = directory.join(format!("native-{extension}"));
+        let report = directory.join(format!("{extension}.json"));
+        let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+            .arg("compile").arg(&entry).arg("-o").arg(&binary)
+            .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk).arg("--report").arg(&report).output().unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        fs::remove_dir_all(&sources).unwrap();
+        let actual = run(Command::new(&binary).env_clear().current_dir(&directory));
+        assert_eq!(actual.status.code(), expected.status.code(), "{}", String::from_utf8_lossy(&actual.stderr));
+        assert_eq!(actual.stdout, expected.stdout);
+        assert_eq!(actual.stderr, expected.stderr);
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert!(report["dynamic_eval_sites"].as_array().unwrap().is_empty());
+        assert!(!report["dynamic_function_sites"].as_array().unwrap().is_empty());
+        assert_eq!(report["source_support_selection"], "automatic");
+        assert_eq!(report["execution_mode"], "native_with_dynamic_source");
+        assert_reduced_payload(&report, &binary);
     }
 }
 

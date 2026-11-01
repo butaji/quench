@@ -44,6 +44,10 @@ pub struct DependencyGraph {
     pub esm_builtins: BTreeSet<String>,
     pub host_globals: BTreeSet<String>,
     pub requirements: Vec<GraphRequirement>,
+    /// Unshadowed eval references may receive source first known at execution.
+    pub dynamic_eval_sites: Vec<(PathBuf, u32)>,
+    /// Calls whose possible Function-constructor identity receives nonliteral source.
+    pub dynamic_function_sites: Vec<(PathBuf, u32)>,
 }
 
 struct Requests<'s> {
@@ -55,13 +59,14 @@ struct Requests<'s> {
     dynamic_imports: BTreeSet<u32>,
     literal_imports: BTreeSet<String>,
     host_globals: BTreeSet<String>,
+    dynamic_eval_sites: BTreeSet<u32>,
 }
 
 impl<'s> Requests<'s> {
     fn new(scoping: &'s oxc_semantic::Scoping, loaders: &'s LoaderBindings<'s>) -> Self {
         Self { scoping, loaders, specifiers: BTreeMap::new(), classified_requires: loaders.transfers(),
             dynamic_requires: BTreeSet::new(), dynamic_imports: BTreeSet::new(),
-            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new() }
+            literal_imports: BTreeSet::new(), host_globals: BTreeSet::new(), dynamic_eval_sites: BTreeSet::new() }
     }
 
     fn request(&mut self, specifier: String, kind: RequestKind) {
@@ -118,13 +123,17 @@ impl<'a> Visit<'a> for Requests<'_> {
         let Some(reference) = self.runtime_reference(name) else { return };
         let global = reference.symbol_id().is_none();
         if global { self.record_host_global(name.name.as_str()); }
+        if global && name.name == "eval" { self.dynamic_eval_sites.insert(name.span.start); }
         if self.loaders.is_require_reference(name) && !self.classified_requires.contains(&name.span.start) {
             self.dynamic_requires.insert(name.span.start);
         }
     }
 
     fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
-        if self.is_global_object(&member.object) { self.record_host_global(member.property.name.as_str()); }
+        if self.is_global_object(&member.object) {
+            self.record_host_global(member.property.name.as_str());
+            if member.property.name == "eval" { self.dynamic_eval_sites.insert(member.span.start); }
+        }
         walk::walk_static_member_expression(self, member);
     }
 
@@ -132,6 +141,7 @@ impl<'a> Visit<'a> for Requests<'_> {
         if let (true, Expression::StringLiteral(name)) =
             (self.is_global_object(&member.object), member.expression.get_inner_expression()) {
             self.record_host_global(name.value.as_str());
+            if name.value == "eval" { self.dynamic_eval_sites.insert(member.span.start); }
         }
         walk::walk_computed_member_expression(self, member);
     }
@@ -229,14 +239,17 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         quench_runtime::Engine::erase_type_only_module_syntax(&mut parsed.program);
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
         let scoping = semantic.semantic.scoping();
-        for key in quench_runtime::Engine::function_constructor_sources(&parsed.program, scoping, true) {
+        let (constructor_sources, dynamic_functions) = quench_runtime::Engine::function_constructor_source_demands(&parsed.program, scoping, true);
+        for key in constructor_sources {
             manifest.insert_key(key);
         }
         let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
+        graph.dynamic_function_sites.extend(dynamic_functions.into_iter().map(|offset| (path.clone(), offset + base)));
         let loaders = LoaderBindings::discover(&parsed.program, scoping, &path);
         let mut requests = Requests::new(scoping, &loaders);
         requests.visit_program(&parsed.program);
         graph.host_globals.extend(std::mem::take(&mut requests.host_globals));
+        graph.dynamic_eval_sites.extend(requests.dynamic_eval_sites.into_iter().map(|offset| (path.clone(), offset + base)));
         for offset in requests.dynamic_requires {
             graph.requirements.push(GraphRequirement::DynamicRequire { from: name.clone().into(), offset: offset + base });
         }
