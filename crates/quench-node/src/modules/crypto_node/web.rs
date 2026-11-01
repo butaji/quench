@@ -372,8 +372,11 @@ fn algorithm_object(c: &mut Context<'_>, algorithm: &KeyAlgorithm) -> Outcome {
     Ok(result)
 }
 
-/// A new CryptoKey over `key`.
+/// A new CryptoKey over `key`; a secret or private key must have a usage.
 fn crypto_key(c: &mut Context<'_>, key: Arc<Key>, algorithm: KeyAlgorithm, extractable: bool, usages: Vec<Usage>) -> Outcome {
+    if usages.is_empty() && key.type_name() != "public" {
+        return Err(errors::dom(c, "Usages cannot be empty when creating a key.", "SyntaxError"));
+    }
     let constructor = super::class(c, Class::CryptoKey)?;
     let prototype = get(c, constructor, "prototype")?;
     let object = c.object_rooted()?;
@@ -711,9 +714,31 @@ fn algorithm_name(c: &mut Context<'_>, value: RootId) -> Result<(String, RootId)
 fn normalize(c: &mut Context<'_>, value: RootId, operation: Operation) -> Result<Normalized, RootedError> {
     let (name, dictionary) = algorithm_name(c, value)?;
     match Algorithm::by_name(&name).filter(|algorithm| supports(operation, *algorithm)) {
-        Some(algorithm) => Ok(Normalized { algorithm, dictionary }),
+        Some(algorithm) => {
+            if EXPERIMENTAL_ALGORITHMS.contains(&algorithm) {
+                warn_experimental(c, algorithm)?;
+            }
+            Ok(Normalized { algorithm, dictionary })
+        }
         None => Err(unrecognized(c)),
     }
+}
+
+/// The algorithms Node marks experimental, each warned about once.
+const EXPERIMENTAL_ALGORITHMS: [Algorithm; 2] = [Algorithm::Ed448, Algorithm::X448];
+
+fn warn_experimental(c: &mut Context<'_>, algorithm: Algorithm) -> Result<(), RootedError> {
+    let shared = c.host_mut().shared_state();
+    if shared.borrow().crypto.experimental_warned.contains(&algorithm) {
+        return Ok(());
+    }
+    shared.borrow_mut().crypto.experimental_warned.push(algorithm);
+    let process = shared.borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let message = format!("The {} Web Crypto API algorithm is an experimental feature and might change at any time", algorithm.name());
+    let message = c.string_rooted(&message);
+    let kind = c.string_rooted("ExperimentalWarning");
+    super::call_method(c, process, "emitWarning", &[message, kind])?;
+    Ok(())
 }
 
 fn normalize_hash(c: &mut Context<'_>, value: RootId) -> Result<Hash, RootedError> {
@@ -794,15 +819,11 @@ fn data_error(c: &mut Context<'_>, message: &str) -> RootedError {
     errors::dom(c, message, "DataError")
 }
 
-/// The usages a new key may have: a subset of `allowed`, and not empty for secret and
-/// private keys.
-fn check_usages(c: &mut Context<'_>, algorithm: Algorithm, usages: &[Usage], allowed: &[Usage], may_be_empty: bool) -> Result<(), RootedError> {
+/// The usages a new key may have: a subset of `allowed`.
+fn check_usages(c: &mut Context<'_>, algorithm: Algorithm, usages: &[Usage], allowed: &[Usage]) -> Result<(), RootedError> {
     if usages.iter().any(|usage| !allowed.contains(usage)) {
         let message = format!("Unsupported key usage for {} key", article_name(algorithm));
         return Err(errors::dom(c, &message, "SyntaxError"));
-    }
-    if usages.is_empty() && !may_be_empty {
-        return Err(errors::dom(c, "Usages cannot be empty when creating a key.", "SyntaxError"));
     }
     Ok(())
 }
@@ -889,7 +910,7 @@ fn generate_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcom
         Algorithm::Hmac => {
             let hash = hash_member(c, &normalized, "HmacKeyGenParams")?;
             let length = optional_number_member(c, &normalized, "length")?.map(|length| length as u32).unwrap_or(hash.block_bits());
-            check_usages(c, kind, &usages, kind.usages().0, false)?;
+            check_usages(c, kind, &usages, kind.usages().0)?;
             if length == 0 {
                 return Err(operation_failed(c));
             }
@@ -904,7 +925,7 @@ fn generate_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcom
             if !AES_KEY_BITS.contains(&length) {
                 return Err(errors::dom(c, "AES key length must be 128, 192, or 256 bits", "OperationError"));
             }
-            check_usages(c, kind, &usages, kind.usages().0, false)?;
+            check_usages(c, kind, &usages, kind.usages().0)?;
             let mut algorithm = KeyAlgorithm::new(kind);
             algorithm.length = Some(length);
             let bytes = random_secret(c, (length / BITS_PER_BYTE) as usize)?;
@@ -950,11 +971,8 @@ fn generate_pair(c: &mut Context<'_>, normalized: &Normalized, extractable: bool
             _ => "X448",
         })
     };
-    check_usages(c, kind, &usages, &allowed, true)?;
+    check_usages(c, kind, &usages, &allowed)?;
     let private_usage = filter_usages(&usages, private_usages);
-    if private_usage.is_empty() {
-        return Err(errors::dom(c, "Usages cannot be empty when creating a key.", "SyntaxError"));
-    }
     let key = OwnedKey::generate(generation).map_err(|error| keys::key_error(c, error))?;
     let public = key.to_public().map_err(|error| keys::key_error(c, error))?;
     let public = crypto_key(c, Arc::new(Key::Asymmetric(public)), algorithm.clone(), true, filter_usages(&usages, public_usages))?;
@@ -979,7 +997,7 @@ fn import_key_body(c: &mut Context<'_>, call: Call, args: &[RootId]) -> Outcome 
     let key_data = arg(c, args, 1);
     let data = if format == KeyFormat::Jwk {
         if !c.is_object_rooted(key_data)? {
-            let message = format!("{}: 2nd argument is not of type JsonWebKey.", call.prefix());
+            let message = format!("{}: 2nd argument can not be converted to a dictionary", call.prefix());
             return Err(errors::throw(c, CryptoError::InvalidArgTypeMessage(message)));
         }
         None
@@ -999,7 +1017,7 @@ fn import_key(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, jwk
     let imported = match kind {
         Algorithm::Hmac => {
             let hash = hash_member(c, normalized, "HmacImportParams")?;
-            check_usages(c, kind, &usages, public_usages, false)?;
+            check_usages(c, kind, &usages, public_usages)?;
             let bytes = secret_input(c, format, data, jwk, kind)?;
             if bytes.is_empty() {
                 return Err(data_error(c, "Zero-length key is not supported"));
@@ -1018,7 +1036,7 @@ fn import_key(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, jwk
             Imported { key: Arc::new(Key::Secret(Material::new(bytes))), algorithm }
         }
         kind if kind.is_aes() => {
-            check_usages(c, kind, &usages, public_usages, false)?;
+            check_usages(c, kind, &usages, public_usages)?;
             let bytes = secret_input(c, format, data, jwk, kind)?;
             if !AES_KEY_BITS.contains(&(bytes.len() as u32 * BITS_PER_BYTE)) {
                 return Err(data_error(c, "Invalid key length"));
@@ -1029,9 +1047,9 @@ fn import_key(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, jwk
         }
         Algorithm::Pbkdf2 | Algorithm::Hkdf => {
             if format != KeyFormat::Raw {
-                return Err(errors::dom(c, &format!("Unable to import {} key with format {}", kind.name(), format_name(format)), "NotSupportedError"));
+                return Err(errors::dom(c, &unimportable(kind, format), "NotSupportedError"));
             }
-            check_usages(c, kind, &usages, public_usages, false)?;
+            check_usages(c, kind, &usages, public_usages)?;
             if extractable {
                 return Err(errors::dom(c, &format!("{} keys are not extractable", kind.name()), "SyntaxError"));
             }
@@ -1044,9 +1062,75 @@ fn import_key(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, jwk
         "private" => private_usages,
         _ => public_usages,
     };
-    let may_be_empty = imported.key.type_name() == "public";
-    check_usages(c, kind, &usages, allowed, may_be_empty)?;
+    check_usages(c, kind, &usages, allowed)?;
+    if format == KeyFormat::Jwk {
+        check_jwk(c, jwk, &imported.algorithm, extractable, &usages)?;
+    }
     crypto_key(c, imported.key, imported.algorithm, extractable, usages)
+}
+
+/// The JWK `use` an algorithm's keys declare.
+fn jwk_use(algorithm: Algorithm) -> &'static str {
+    match algorithm {
+        Algorithm::RsaOaep | Algorithm::Ecdh | Algorithm::X25519 | Algorithm::X448 => "enc",
+        algorithm if algorithm.is_aes() => "enc",
+        _ => "sig",
+    }
+}
+
+/// The JWK `alg` an imported key must declare when it declares one; `None` when any is
+/// accepted.
+fn expected_jwk_alg(algorithm: &KeyAlgorithm) -> Option<Vec<String>> {
+    Some(match algorithm.algorithm {
+        Algorithm::Ecdsa => vec![match algorithm.curve {
+            Some("P-384") => "ES384".to_owned(),
+            Some("P-521") => "ES512".to_owned(),
+            _ => "ES256".to_owned(),
+        }],
+        Algorithm::Ed25519 | Algorithm::Ed448 => vec![algorithm.algorithm.name().to_owned(), "EdDSA".to_owned()],
+        Algorithm::Ecdh | Algorithm::X25519 | Algorithm::X448 | Algorithm::Pbkdf2 | Algorithm::Hkdf => return None,
+        _ => vec![jwk_alg(algorithm)?],
+    })
+}
+
+/// The JWK members every import checks: `use`, `key_ops`, `ext` and `alg`.
+fn check_jwk(c: &mut Context<'_>, jwk: RootId, algorithm: &KeyAlgorithm, extractable: bool, usages: &[Usage]) -> Result<(), RootedError> {
+    let declared_use = get(c, jwk, "use")?;
+    if !is_undefined(c, declared_use) && c.string_text(declared_use)?.as_deref() != Some(jwk_use(algorithm.algorithm)) {
+        return Err(data_error(c, "Invalid JWK \"use\" Parameter"));
+    }
+    let operations = get(c, jwk, "key_ops")?;
+    if !is_undefined(c, operations) {
+        let mut declared = Vec::new();
+        for operation in c.array_like_values_rooted(operations)? {
+            let operation = c.to_string(operation)?;
+            if declared.contains(&operation) {
+                return Err(data_error(c, "Duplicate key operation"));
+            }
+            declared.push(operation);
+        }
+        if usages.iter().any(|usage| !declared.iter().any(|operation| operation == usage.name())) {
+            return Err(data_error(c, "Key operations and usage mismatch"));
+        }
+    }
+    let ext = get(c, jwk, "ext")?;
+    if !is_undefined(c, ext) && !c.truthy_rooted(ext)? && extractable {
+        return Err(data_error(c, "JWK \"ext\" Parameter and extractable mismatch"));
+    }
+    let alg = get(c, jwk, "alg")?;
+    if !is_undefined(c, alg) {
+        if let Some(expected) = expected_jwk_alg(algorithm) {
+            let alg = c.to_string(alg)?;
+            if !expected.contains(&alg) {
+                return Err(data_error(c, "JWK \"alg\" does not match the requested algorithm"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn unimportable(kind: Algorithm, format: KeyFormat) -> String {
+    format!("Unable to import {} using {} format", kind.name(), format_name(format))
 }
 
 fn format_name(format: KeyFormat) -> &'static str {
@@ -1073,7 +1157,7 @@ fn secret_input(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8>>, j
                 None => Err(data_error(c, "Invalid JWK secret key format")),
             }
         }
-        _ => Err(errors::dom(c, &format!("Unable to import {} key with format {}", kind.name(), format_name(format)), "NotSupportedError")),
+        _ => Err(errors::dom(c, &unimportable(kind, format), "NotSupportedError")),
     }
 }
 
@@ -1105,7 +1189,7 @@ fn import_asymmetric(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8
                 let key = openssl::pkey::PKey::public_key_from_raw_bytes(&bytes, id).map_err(|_| failed(c))?;
                 OwnedKey::Public(key)
             } else {
-                return Err(errors::dom(c, &format!("Unable to import {} key with format raw", kind.name()), "NotSupportedError"));
+                return Err(errors::dom(c, &unimportable(kind, KeyFormat::Raw), "NotSupportedError"));
             }
         }
         KeyFormat::Jwk => {
@@ -1120,7 +1204,7 @@ fn import_asymmetric(c: &mut Context<'_>, format: KeyFormat, data: Option<Vec<u8
     };
     let actual = owned.key_type().unwrap_or_default();
     if actual != kind.key_type() && !(kind == Algorithm::RsaPss && actual == "rsa-pss") {
-        return Err(failed(c));
+        return Err(data_error(c, "Invalid key type"));
     }
     if let Some(curve) = curve {
         let details = owned.details().map_err(|error| keys::key_error(c, error))?;
@@ -1322,27 +1406,38 @@ fn cipher_usable(c: &mut Context<'_>, usages: &[Usage], usage: Usage, normalized
     Ok(())
 }
 
-/// The OpenSSL cipher name of an AES key in a mode.
-fn aes_cipher(algorithm: Algorithm, bits: u32) -> String {
-    let mode = match algorithm {
-        Algorithm::AesCtr => "ctr",
-        Algorithm::AesCbc => "cbc",
-        Algorithm::AesGcm => "gcm",
-        _ => "wrap",
-    };
-    if mode == "wrap" {
-        format!("id-aes{bits}-wrap")
-    } else {
-        format!("aes-{bits}-{mode}")
+/// The AES modes WebCrypto runs, and the raw block mode AES-CTR's wrapping counter needs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AesMode {
+    Ecb,
+    Cbc,
+    Ctr,
+    Gcm,
+    Wrap,
+}
+
+impl AesMode {
+    /// The OpenSSL cipher for a key of `bits`.
+    fn cipher(self, bits: u32) -> String {
+        match self {
+            Self::Ecb => format!("aes-{bits}-ecb"),
+            Self::Cbc => format!("aes-{bits}-cbc"),
+            Self::Ctr => format!("aes-{bits}-ctr"),
+            Self::Gcm => format!("aes-{bits}-gcm"),
+            Self::Wrap => format!("id-aes{bits}-wrap"),
+        }
     }
 }
 
-fn run_cipher(name: &str, key: &[u8], iv: Option<&[u8]>, data: &[u8], decrypt: bool, padding: bool) -> Result<Vec<u8>, openssl::error::ErrorStack> {
-    let cipher = openssl::cipher::Cipher::fetch(None, name, None)?;
+fn key_bits(key: &[u8]) -> u32 {
+    key.len() as u32 * BITS_PER_BYTE
+}
+
+/// One whole AES operation in a non-AEAD mode.
+fn run_cipher(mode: AesMode, key: &[u8], iv: Option<&[u8]>, data: &[u8], decrypt: bool) -> Result<Vec<u8>, openssl::error::ErrorStack> {
+    let cipher = openssl::cipher::Cipher::fetch(None, &mode.cipher(key_bits(key)), None)?;
     let mut context = openssl::cipher_ctx::CipherCtx::new()?;
-    if cipher.nid() == openssl::nid::Nid::from_raw(openssl_sys::NID_id_aes128_wrap)
-        || name.ends_with("-wrap")
-    {
+    if mode == AesMode::Wrap {
         // SAFETY: the context is live; key wrap must be allowed before use.
         unsafe { openssl_sys::EVP_CIPHER_CTX_set_flags(foreign_types::ForeignTypeRef::as_ptr(&*context), openssl_sys::EVP_CIPHER_CTX_FLAG_WRAP_ALLOW) };
     }
@@ -1351,7 +1446,7 @@ fn run_cipher(name: &str, key: &[u8], iv: Option<&[u8]>, data: &[u8], decrypt: b
     } else {
         context.encrypt_init(Some(&cipher), Some(key), iv)?;
     }
-    context.set_padding(padding);
+    context.set_padding(mode == AesMode::Cbc);
     let mut output = Vec::new();
     context.cipher_update_vec(data, &mut output)?;
     context.cipher_final_vec(&mut output)?;
@@ -1359,8 +1454,7 @@ fn run_cipher(name: &str, key: &[u8], iv: Option<&[u8]>, data: &[u8], decrypt: b
 }
 
 fn aes_gcm(key: &[u8], iv: &[u8], aad: Option<&[u8]>, tag_bytes: usize, data: &[u8], decrypt: bool) -> Result<Vec<u8>, openssl::error::ErrorStack> {
-    let bits = key.len() as u32 * BITS_PER_BYTE;
-    let cipher = openssl::cipher::Cipher::fetch(None, &aes_cipher(Algorithm::AesGcm, bits), None)?;
+    let cipher = openssl::cipher::Cipher::fetch(None, &AesMode::Gcm.cipher(key_bits(key)), None)?;
     let mut context = openssl::cipher_ctx::CipherCtx::new()?;
     if decrypt {
         context.decrypt_init(Some(&cipher), None, None)?;
@@ -1397,16 +1491,14 @@ fn aes_gcm(key: &[u8], iv: &[u8], aad: Option<&[u8]>, tag_bytes: usize, data: &[
 
 /// AES-CTR with a counter of `length` bits: the counter block wraps within those bits.
 fn aes_ctr(key: &[u8], counter: &[u8], length: u32, data: &[u8]) -> Result<Vec<u8>, openssl::error::ErrorStack> {
-    let bits = key.len() as u32 * BITS_PER_BYTE;
-    let name = aes_cipher(Algorithm::AesCtr, bits);
     if length >= CTR_MAX_LENGTH_BITS {
-        return run_cipher(&name, key, Some(counter), data, false, false);
+        return run_cipher(AesMode::Ctr, key, Some(counter), data, false);
     }
     // Encrypt block by block so the low `length` bits wrap instead of carrying.
     let mut block = counter.to_vec();
     let mut output = Vec::with_capacity(data.len());
     for chunk in data.chunks(AES_BLOCK_BYTES) {
-        let stream = run_cipher(&aes_cipher(Algorithm::AesCbc, bits).replace("cbc", "ecb"), key, None, &block, false, false)?;
+        let stream = run_cipher(AesMode::Ecb, key, None, &block, false)?;
         output.extend(chunk.iter().zip(stream).map(|(byte, key)| byte ^ key));
         increment_counter(&mut block, length);
     }
@@ -1447,9 +1539,7 @@ fn cipher_operation(c: &mut Context<'_>, normalized: &Normalized, key: &Key, alg
             if iv.len() != AES_BLOCK_BYTES {
                 return Err(errors::dom(c, "algorithm.iv must contain exactly 16 bytes", "OperationError"));
             }
-            let secret = key.secret().unwrap_or_default();
-            let name = aes_cipher(Algorithm::AesCbc, secret.len() as u32 * BITS_PER_BYTE);
-            run_cipher(&name, secret, Some(&iv), data, decrypt, true).map_err(|_| operation_failed(c))
+            run_cipher(AesMode::Cbc, key.secret().unwrap_or_default(), Some(&iv), data, decrypt).map_err(|_| operation_failed(c))
         }
         Algorithm::AesCtr => {
             let counter = bytes_member(c, normalized, "AesCtrParams", "counter")?;
@@ -1474,9 +1564,7 @@ fn cipher_operation(c: &mut Context<'_>, normalized: &Normalized, key: &Key, alg
             aes_gcm(key.secret().unwrap_or_default(), &iv, aad.as_deref(), tag_bytes, data, decrypt).map_err(|_| operation_failed(c))
         }
         Algorithm::AesKw => {
-            let secret = key.secret().unwrap_or_default();
-            let name = aes_cipher(Algorithm::AesKw, secret.len() as u32 * BITS_PER_BYTE);
-            run_cipher(&name, secret, None, data, decrypt, true).map_err(|_| operation_failed(c))
+            run_cipher(AesMode::Wrap, key.secret().unwrap_or_default(), None, data, decrypt).map_err(|_| operation_failed(c))
         }
         _ => Err(unrecognized(c)),
     }
@@ -1542,8 +1630,11 @@ fn derive_bits(c: &mut Context<'_>, normalized: &Normalized, key: &Key, algorith
             if public_key.type_name() != "public" {
                 return Err(errors::dom(c, "algorithm.public must be a public key", "InvalidAccessError"));
             }
-            if public_algorithm.algorithm != algorithm.algorithm || public_algorithm.curve != algorithm.curve {
+            if public_algorithm.algorithm != algorithm.algorithm {
                 return Err(errors::dom(c, "The public and private keys must be of the same type", "InvalidAccessError"));
+            }
+            if public_algorithm.curve != algorithm.curve {
+                return Err(errors::dom(c, "Named curve mismatch", "InvalidAccessError"));
             }
             let (Some(private), Some(public)) = (key.asymmetric(), public_key.asymmetric()) else {
                 return Err(operation_failed(c));

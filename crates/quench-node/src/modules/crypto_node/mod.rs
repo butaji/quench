@@ -92,6 +92,8 @@ pub(crate) struct State {
     live_after_sweep: usize,
     intrinsics: Option<Intrinsics>,
     pub(crate) digests: hash::DigestCache,
+    /// The experimental WebCrypto algorithms already warned about.
+    pub(crate) experimental_warned: Vec<web::Algorithm>,
 }
 
 /// The table sweeps no earlier than this many live handles.
