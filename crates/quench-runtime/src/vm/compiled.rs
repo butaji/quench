@@ -6665,8 +6665,7 @@ impl<H: Host> Vm<H> {
                 let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
                 let site = match instruction.op() {
                     Op::GetField => match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { base, cache_site, .. })
-                            if base == crate::bytecode::FieldBase::THIS => cache_site,
+                        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
                         _ => return None,
                     },
                     Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),

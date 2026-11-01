@@ -39,13 +39,16 @@ struct Registers {
 #[derive(Clone)]
 struct State {
     known: Vec<Known>,
-    /// Registers proved to hold a direct object of the shape (`field shape`), this block.
-    shapes: BTreeMap<Register, u32>,
+    /// Registers proved to hold a direct object of the shape (`field shape`), this block,
+    /// with the object's record address.
+    shapes: BTreeMap<Register, (u32, ir::Value)>,
+    /// Registers holding the receiver, whose facts the entry proved.
+    receivers: BTreeSet<Register>,
 }
 
 impl State {
     fn canonical(registers: usize) -> Self {
-        Self { known: vec![Known::Tagged; registers], shapes: BTreeMap::new() }
+        Self { known: vec![Known::Tagged; registers], shapes: BTreeMap::new(), receivers: BTreeSet::new() }
     }
 }
 
@@ -143,6 +146,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.builder.def_var(self.registers.tagged[index], bits);
         state.known[index] = Known::Tagged;
         state.shapes.remove(&register);
+        state.receivers.remove(&register);
     }
 
     fn set_int(&mut self, state: &mut State, register: Register, int: ir::Value) {
@@ -150,6 +154,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.builder.def_var(self.registers.int[index], int);
         state.known[index] = Known::Int { boxed: false };
         state.shapes.remove(&register);
+        state.receivers.remove(&register);
     }
 
     /// The register's int32 view, proving it from the tag once; `None` where it is not
@@ -534,6 +539,9 @@ impl Lowering<'_, '_> {
                 if let Some(shape) = state.shapes.get(&source).copied() {
                     state.shapes.insert(destination, shape);
                 }
+                if state.receivers.contains(&source) {
+                    state.receivers.insert(destination);
+                }
                 Some(true)
             }
             Op::LoadThis if plain && !instruction.writes_current_this() => {
@@ -543,6 +551,7 @@ impl Lowering<'_, '_> {
                 let bound = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, bound, exit);
                 self.set_tagged(state, instruction.result_register(), this);
+                state.receivers.insert(instruction.result_register());
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
@@ -700,10 +709,64 @@ impl Lowering<'_, '_> {
         if register >= self.function.registers {
             return None;
         }
+        if let Some(field) = folded {
+            if state.receivers.contains(&register) {
+                let entry = self.entry.as_ref().expect("entry facts");
+                let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
+                let object = self.builder.use_var(entry.receiver.object);
+                let inline = self.builder.use_var(entry.receiver.inline);
+                let properties = self.builder.use_var(entry.receiver.properties);
+                let properties_len = self.builder.use_var(entry.receiver.properties_len);
+                emit_js_guard(&mut self.builder, same, exit);
+                let value = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
+                self.set_tagged(state, destination, value);
+                return Some(true);
+            }
+            let (object, inline) = self.object_of_shape(state, register, field.shape, exit);
+            let entry = self.entry.as_ref().expect("entry facts");
+            let properties = self.builder.use_var(entry.receiver.properties);
+            let properties_len = self.builder.use_var(entry.receiver.properties_len);
+            let value = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
+            self.set_tagged(state, destination, value);
+            return Some(true);
+        }
         let object_bits = self.tagged(state, register);
         let value = self.field_probe(object_bits, cache_site, exit);
         self.set_tagged(state, destination, value);
         Some(true)
+    }
+
+    /// The record of the direct object in `register`, proved to have `shape` once per block
+    /// (`State::shapes`), and its meta's inline-storage bits.
+    fn object_of_shape(&mut self, state: &mut State, register: Register, shape: u32, exit: ir::Block) -> (ir::Value, ir::Value) {
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        if let Some((known, object)) = state.shapes.get(&register).copied()
+            && known == shape
+        {
+            let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.meta_offset as i32);
+            let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+            return (object, inline);
+        }
+        let bits = self.tagged(state, register);
+        let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let is_object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        emit_js_guard(&mut self.builder, is_object, exit);
+        let record_id = self.ins().ireduce(types::I32, bits);
+        let in_range = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
+        emit_js_guard(&mut self.builder, in_range, exit);
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+        emit_js_guard(&mut self.builder, present, exit);
+        let record_id = self.ins().uextend(types::I64, record_id);
+        let offset = self.ins().imul_imm_u(record_id, layout.record_size as i64);
+        let object = self.ins().iadd(records, offset);
+        let actual = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.auxiliary_offset as i32);
+        let same = self.ins().icmp_imm_u(IntCC::Equal, actual, i64::from(shape));
+        emit_js_guard(&mut self.builder, same, exit);
+        state.shapes.insert(register, (shape, object));
+        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.meta_offset as i32);
+        let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
+        (object, inline)
     }
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included;
