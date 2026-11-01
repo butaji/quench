@@ -399,6 +399,18 @@ gate together with Test262 and Wasm.
 See
 [task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
 
+quench-node runs Node's own JavaScript library as guest code, embedded at build time
+from the pinned Node source set in `crates/quench-node/node` (`node_source_set.rs`): the
+`lib/` tree and its bundled dependencies, the headers the build derives its version,
+option and protocol tables from, libuv's error header (probed for the target's values)
+and the nghttp2 sources. Its `SOURCE` file names the Node version and commit; `LICENSE`
+is Node's. Building quench-node never reads `tests/node`, which stays a test fixture
+checkout. When the `tests/node` pin moves, refresh the set from it and commit both:
+
+```sh
+cargo run -p quench-node-test --bin sync-node-sources -- tests/node
+```
+
 For local Node oracle checks, put a Node executable matching the pinned
 checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
 checkout targets Node 26 (26.12.0); other majors can differ on API contracts such as

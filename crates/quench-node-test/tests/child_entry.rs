@@ -6263,8 +6263,13 @@ const marker={};assert.throws(()=>tls.createSecureContext({get ca(){throw marker
 
 #[test]
 fn native_tls_context_retains_real_certificate_material_and_view_offsets_match_node() {
-    let cert = include_str!("../../../tests/node/test/fixtures/keys/agent1-cert.pem");
-    let key = include_str!("../../../tests/node/test/fixtures/keys/agent1-key.pem");
+    // Node's own fixture keys, read from the pinned checkout the oracle tests run against.
+    let fixture_key = |name: &str| {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node/test/fixtures/keys").join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+    };
+    let cert = fixture_key("agent1-cert.pem");
+    let key = fixture_key("agent1-key.pem");
     let source = format!(
         r#"
 const assert=require('assert'),tls=require('tls'),OriginalBuffer=Buffer,originalFrom=Buffer.from;
@@ -6280,8 +6285,8 @@ function view(text){{const bytes=Buffer.from(text);const prefix=Buffer.from('pre
 for(const options of [{{cert,key}},{{cert:[cert],key:[key]}},{{cert:view(cert),key:view(key)}},{{ca:cert,cert,key}}]){{const ctx=tls.createSecureContext(options);assert.deepStrictEqual(ctx.context.getCertificate(),expected);console.log(ctx.context.getCertificate().length);}}
 const ctx=tls.createSecureContext();assert.strictEqual(ctx.context.getCertificate(),null);ctx.context.setCert(cert);assert.deepStrictEqual(ctx.context.getCertificate(),expected);console.log('retained-native-certificate');
 "#,
-        serde_json::to_string(cert).unwrap(),
-        serde_json::to_string(key).unwrap()
+        serde_json::to_string(&cert).unwrap(),
+        serde_json::to_string(&key).unwrap()
     );
     compare_node_stream_source(&source);
 }

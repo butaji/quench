@@ -123,11 +123,7 @@ fn main() {
 /// Build the pinned Node nghttp2 implementation into Quench. Keeping this
 /// static and vendored makes HTTP/2 available on hosts without a system lib.
 fn configure_native_nghttp2() {
-    let root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("manifest directory"))
-        .join("../../tests/node/deps/nghttp2")
-        .canonicalize()
-        .expect("initialize pinned nghttp2 sources");
-    let lib = root.join("lib");
+    let lib = node_source_root().join("deps/nghttp2/lib");
     let includes = lib.join("includes");
     let sources = [
         "nghttp2_buf.c",
@@ -221,16 +217,21 @@ fn configure_node_compat_version(root: &std::path::Path) {
 }
 
 include!("src/node_source_dependencies.rs");
+include!("src/node_source_set.rs");
+
+/// The pinned Node source set (`NODE_SOURCE_DIR`), which is all of Node the build reads.
+fn node_source_root() -> std::path::PathBuf {
+    let root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("manifest directory")).join(NODE_SOURCE_DIR);
+    println!("cargo:rerun-if-changed={}", root.join(NODE_SOURCE_RECORD).display());
+    root
+}
 include!("src/undici_bindings.rs");
 include!("src/node_source_patches.rs");
 
 /// Node's pinned library runs as guest JavaScript in the shared VM. Embedding
 /// its immutable sources makes built-ins independent of a development checkout.
 fn embed_node_sources() {
-    let root = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-        .join("../../tests/node")
-        .canonicalize()
-        .expect("initialize tests/node submodule");
+    let root = node_source_root();
     configure_node_compat_version(&root);
     embed_node_protocol_constants(&root);
     embed_uv_error_constants(&root);
