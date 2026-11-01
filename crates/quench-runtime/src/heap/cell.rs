@@ -1975,7 +1975,8 @@ impl Object {
     /// word that held an inline value, so callers move inline values out first.
     pub(crate) fn set_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
-        self.auxiliary = auxiliary;
+        // Exotic access is a fact of the object, not of the storage that replaces its own.
+        self.auxiliary = auxiliary | (self.auxiliary & crate::value_vec::EXOTIC_ACCESS);
         let flags = self.meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
         let position = start & VALUE_VEC_START_BITS;
         if properties.has_inline_property_storage() {
@@ -2438,12 +2439,19 @@ impl Object {
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
-    /// The shape with its dictionary bit (`ValueVec::exact_auxiliary`): a cache entry,
-    /// which records only non-dictionary shapes, matches it exactly when it matches the
-    /// shape of an object outside dictionary storage.
+    /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
+    /// entry, which records only shapes, matches it exactly when it matches the shape of an
+    /// ordinary object outside dictionary storage.
     #[inline(always)]
     pub(crate) fn exact_shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).exact_auxiliary()
+    }
+    /// The shape with its exotic bit and without its dictionary bit: a recorded shape
+    /// matches it exactly when it matches the shape of an ordinary object, in whatever
+    /// storage (`ValueVec::EXOTIC_ACCESS`).
+    #[inline(always)]
+    pub(crate) fn ordinary_shape(&self) -> u32 {
+        self.auxiliary & !crate::value_vec::DICTIONARY_STORAGE
     }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32) {
@@ -2495,6 +2503,7 @@ impl Object {
     }
     pub(crate) fn set_arguments_object(&mut self) {
         self.extras_mut().arguments_object = true;
+        self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     /// Whether the object's elements are ordinary, as `dense_array_length` needs them: it
     /// is extensible and not frozen, and holds no indexed or `length` descriptor and no
@@ -2556,6 +2565,7 @@ impl Object {
     }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
+        self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
         self.extras().map_or(&[], |extras| &extras.module_bindings)

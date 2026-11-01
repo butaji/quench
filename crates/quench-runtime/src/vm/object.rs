@@ -1520,9 +1520,6 @@ impl<H: Host> Vm<H> {
             return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.is_module_namespace() || receiver.is_arguments_object() {
-            return false;
-        }
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
@@ -1570,9 +1567,6 @@ impl<H: Host> Vm<H> {
         }
         let record_id = object.direct_object_index()?;
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.is_module_namespace() || receiver.is_arguments_object() {
-            return None;
-        }
         let (index, shape) = (self.field_cache_index(site), receiver.exact_shape());
         let slot = self
             .inline_megamorphic_field_slot(index, shape)
@@ -1598,7 +1592,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.exact_shape() != hint.receiver || receiver.is_module_namespace() || receiver.is_arguments_object() {
+        if receiver.exact_shape() != hint.receiver {
             return false;
         }
         // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
@@ -2830,7 +2824,7 @@ impl<H: Host> Vm<H> {
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
             let data = self.inherited_chain_link(prototype, cache.atom, cache.function_links)?;
-            if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
+            if data.ordinary_shape() != shape {
                 return None;
             }
             holder_value = prototype;
@@ -3533,15 +3527,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let data = self.heap.object(object)?;
-        if data.is_module_namespace() || data.is_arguments_object() {
-            return None;
-        }
         let properties = data.properties();
         if properties.has_inline_property_storage() || properties.is_dictionary() {
             return None;
         }
         let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER || cache.receiver != data.shape() {
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver != data.exact_shape() {
             return None;
         }
         let slot = cache.slot as usize;
