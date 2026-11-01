@@ -1774,6 +1774,10 @@ pub(crate) fn key_object_to_crypto_key(c: &mut Context<'_>, object: RootId, algo
     let extractable = c.truthy_rooted(extractable)?;
     let usages = call.usages(c, &[usages], 0)?;
     let normalized = normalize(c, algorithm, Operation::ImportKey)?;
+    if usages.is_empty() && key.type_name() != "public" {
+        let message = format!("Usages cannot be empty when importing a {} key.", key.type_name());
+        return Err(errors::dom(c, &message, "SyntaxError"));
+    }
     let undefined = c.undefined();
     match &*key {
         Key::Secret(bytes) => import_key(c, KeyFormat::Raw, Some(bytes.to_vec()), undefined, &normalized, extractable, usages),

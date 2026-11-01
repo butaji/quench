@@ -1064,11 +1064,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoDiffieHellman" (2) => crate::modules::crypto_asymmetric_shared_vm::diffie_hellman,
         #[cfg(quench_openssl_provider)]
-        method "cryptoWebNamespace" (0) => crate::modules::crypto_provider_shared_vm::webcrypto,
-        #[cfg(quench_openssl_provider)]
         method "webDomExceptionInitialize" (0) => crate::modules::dom_exception_shared_vm::initialize,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoWebClasses" (0) => crate::modules::crypto_provider_shared_vm::install_classes,
         method "cryptoKeySlots" (0) => crate::modules::crypto_key_shared_vm::operation,
         method "nodeEvalBuiltinGet" (0) => crate::modules::eval_globals_shared_vm::load,
         method "nodeEvalBuiltinCachedGet" (0) => crate::modules::eval_globals_shared_vm::cached,
