@@ -35,28 +35,50 @@ const CONTROL_ESCAPES: [&str; 32] = [
 const DELETE: char = '\u{7f}';
 
 /// The options of one inspection.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Options {
     /// Containers deeper than this are written as `[Type]`; `None` is unlimited.
     pub(crate) depth: Option<f64>,
     pub(crate) max_array_length: usize,
-    /// Never break containers over lines (`breakLength: Infinity`).
-    pub(crate) single_line: bool,
+    pub(crate) layout: Layout,
     /// Calls `[util.inspect.custom]` methods.
     pub(crate) custom_inspect: bool,
     /// Writes hidden members: an array's `[length]`.
     pub(crate) show_hidden: bool,
+    /// Writes a container's entries sorted.
+    pub(crate) sorted: bool,
+    /// Writes an error as its stack; otherwise as `[Name: message]`.
+    pub(crate) error_stacks: bool,
+}
+
+/// How containers break over lines.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Layout {
+    /// On one line when they fit `breakLength` (the default `compact: 3`).
+    Fitted,
+    /// Never broken (`breakLength: Infinity`).
+    SingleLine,
+    /// Every non-empty container one entry per line (`compact: false`).
+    Expanded,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { depth: Some(DEFAULT_DEPTH), max_array_length: DEFAULT_MAX_ARRAY_LENGTH, single_line: false, custom_inspect: true, show_hidden: false }
+        Self {
+            depth: Some(DEFAULT_DEPTH),
+            max_array_length: DEFAULT_MAX_ARRAY_LENGTH,
+            layout: Layout::Fitted,
+            custom_inspect: true,
+            show_hidden: false,
+            sorted: false,
+            error_stacks: true,
+        }
     }
 }
 
 impl Options {
     fn is_default(&self) -> bool {
-        self.depth == Some(DEFAULT_DEPTH) && self.max_array_length == DEFAULT_MAX_ARRAY_LENGTH && !self.single_line && self.custom_inspect && !self.show_hidden
+        *self == Self::default()
     }
 
     fn with_depth(depth: f64) -> Self {
@@ -73,14 +95,21 @@ impl Options {
         c.assign_named_property_rooted(options, "depth", depth)?;
         let maximum = c.number(self.max_array_length as f64);
         c.assign_named_property_rooted(options, "maxArrayLength", maximum)?;
-        if self.single_line {
-            let infinity = c.number(f64::INFINITY);
-            c.assign_named_property_rooted(options, "breakLength", infinity)?;
+        match self.layout {
+            Layout::Fitted => {}
+            Layout::SingleLine => {
+                let infinity = c.number(f64::INFINITY);
+                c.assign_named_property_rooted(options, "breakLength", infinity)?;
+            }
+            Layout::Expanded => {
+                let no = c.boolean(false);
+                c.assign_named_property_rooted(options, "compact", no)?;
+            }
         }
-        let custom = c.boolean(self.custom_inspect);
-        c.assign_named_property_rooted(options, "customInspect", custom)?;
-        let hidden = c.boolean(self.show_hidden);
-        c.assign_named_property_rooted(options, "showHidden", hidden)?;
+        for (name, value) in [("customInspect", self.custom_inspect), ("showHidden", self.show_hidden), ("sorted", self.sorted)] {
+            let value = c.boolean(value);
+            c.assign_named_property_rooted(options, name, value)?;
+        }
         Ok(options)
     }
 }
@@ -173,6 +202,9 @@ impl Inspection {
         if c.is_callable_rooted(value)? {
             return function_text(c, value);
         }
+        if c.is_error_rooted(value)? && !self.options.error_stacks {
+            return error_header(c, value);
+        }
         if c.is_error_rooted(value)? {
             let stack = get(c, value, "stack")?;
             return match c.string_text(stack)? {
@@ -196,10 +228,18 @@ impl Inspection {
                 return Ok("[Circular *1]".to_owned());
             }
         }
-        let array = c.is_array_rooted(value)?;
+        if c.has_builtin_brand_rooted(value, BuiltinBrand::BoxedPrimitive)? {
+            if let Some(quench_runtime::BuiltinData::Primitive { value: primitive, .. }) = c.builtin_data_rooted(value)? {
+                let name = constructor_name(c, value)?.unwrap_or_else(|| "Object".to_owned());
+                let inner = self.value(c, primitive, depth)?;
+                return Ok(format!("[{name}: {inner}]"));
+            }
+        }
+        let typed = c.has_builtin_brand_rooted(value, BuiltinBrand::TypedArray)?;
+        let array = typed || c.is_array_rooted(value)?;
         let name = constructor_name(c, value)?;
         let collection = c.collection_preview_rooted(value)?;
-        let kind = if array { "Array".to_owned() } else { name.clone().unwrap_or_else(|| "Object".to_owned()) };
+        let kind = if array && !typed { "Array".to_owned() } else { name.clone().unwrap_or_else(|| "Object".to_owned()) };
         if self.options.depth.is_some_and(|limit| depth as f64 > limit) {
             return Ok(format!("[{kind}]"));
         }
@@ -223,8 +263,21 @@ impl Inspection {
         } else if array {
             let values = c.array_like_values_rooted(value)?;
             let shown = values.len().min(self.options.max_array_length);
-            for &entry in &values[..shown] {
+            let mut holes = 0;
+            for (index, &entry) in values[..shown].iter().enumerate() {
+                let key = c.number(index as f64);
+                if !typed && c.own_property_fields_rooted(value, key)?.is_none() {
+                    holes += 1;
+                    continue;
+                }
+                if holes > 0 {
+                    entries.push(empty_items(holes));
+                    holes = 0;
+                }
                 entries.push(self.value(c, entry, depth + 1)?);
+            }
+            if holes > 0 {
+                entries.push(empty_items(holes));
             }
             if values.len() > shown {
                 let more = values.len() - shown;
@@ -260,10 +313,18 @@ impl Inspection {
         if entries.is_empty() {
             return Ok(format!("{prefix}{open}{close}"));
         }
+        if self.options.sorted && !array {
+            entries.sort();
+        }
         let start = entries.len() + self.indentation + open.len() + prefix.len() + SINGLE_LINE_START;
         let total = entries.iter().map(String::len).sum::<usize>() + entries.len() + start;
         let joined = entries.join(", ");
-        if self.options.single_line || (total <= BREAK_LENGTH && !joined.contains('\n')) {
+        let single = match self.options.layout {
+            Layout::SingleLine => true,
+            Layout::Fitted => total <= BREAK_LENGTH && !joined.contains('\n'),
+            Layout::Expanded => false,
+        };
+        if single {
             return Ok(format!("{prefix}{open} {joined} {close}"));
         }
         let indentation = format!("\n{}", " ".repeat(self.indentation));
@@ -301,6 +362,11 @@ impl Inspection {
         }
         self.value(c, result, depth).map(Some)
     }
+}
+
+/// `<n empty items>`: a run of array holes.
+fn empty_items(count: usize) -> String {
+    format!("<{count} empty item{}>", if count == 1 { "" } else { "s" })
 }
 
 /// `inspect(value, options)` handed to custom inspectors.

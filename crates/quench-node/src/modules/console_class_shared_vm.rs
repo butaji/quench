@@ -476,9 +476,8 @@ fn cell(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
     let options = Options {
         depth: Some(if shallow { -1.0 } else { 0.0 }),
         max_array_length: TABLE_MAX_ARRAY_LENGTH,
-        single_line: true,
-        custom_inspect: true,
-        show_hidden: false,
+        layout: format::Layout::SingleLine,
+        ..Options::default()
     };
     format::inspect(c, value, options)
 }

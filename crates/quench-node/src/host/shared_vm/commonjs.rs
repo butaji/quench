@@ -1323,13 +1323,10 @@ fn require_for_module_inner(
             return Ok(module);
         }
         Some(BuiltinModule::Assert) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            return crate::modules::assert_shared_vm::module(context, util);
+            return crate::modules::assert_shared_vm::module(context);
         }
         Some(BuiltinModule::AssertStrict) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            let module = crate::modules::assert_shared_vm::module(context, util)?;
-            return get(context, module, "strict");
+            return crate::modules::assert_shared_vm::strict_module(context);
         }
         Some(BuiltinModule::Path) => {
             return crate::modules::path_shared_vm::module(context);
