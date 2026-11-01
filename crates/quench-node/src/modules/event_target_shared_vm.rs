@@ -990,7 +990,8 @@ fn report_rejection(c: &mut Context<'_>, result: RootId) -> Result<(), RootedErr
     Ok(())
 }
 
-fn queue_uncaught(c: &mut Context<'_>, reason: RootId) -> Result<(), RootedError> {
+/// `process.nextTick(() => { throw reason; })`: `reason` reaches the uncaught-exception path.
+pub(super) fn queue_uncaught(c: &mut Context<'_>, reason: RootId) -> Result<(), RootedError> {
     let callback = c.host_function_named_with_data(crate::host::shared_vm::operation("eventTargetRethrow"), "", reason)?;
     let undefined = c.undefined();
     super::shared_event_loop::queue_next_tick(c, callback, undefined, &[])
