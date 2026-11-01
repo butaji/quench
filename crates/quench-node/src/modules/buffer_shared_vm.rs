@@ -159,6 +159,12 @@ pub(crate) fn buffer_pool_request(c: &mut Context<'_>) -> Result<RootId, RootedE
 
 
 
+/// Whether `Buffer.allocUnsafe(size)` takes its bytes from the shared pool
+/// (`size < Buffer.poolSize >>> 1`); a larger buffer has a backing store of its own.
+pub(crate) fn is_pooled(size: usize) -> bool {
+    size < POOL_SIZE >> 1
+}
+
 /// `Buffer.allocUnsafe(size)` before `buffer.js` has loaded: Node's `allocate(size)` over a pool
 /// the host holds for the library to adopt. `None` once the library owns the pool.
 pub(crate) fn allocate_before_library(c: &mut Context<'_>, size: usize) -> Result<Option<RootId>, RootedError> {
@@ -167,7 +173,7 @@ pub(crate) fn allocate_before_library(c: &mut Context<'_>, size: usize) -> Resul
     }
     let fast = fast_buffer_class(c)?;
     c.with_startup_intrinsics(|c| {
-        if size < POOL_SIZE >> 1 {
+        if is_pooled(size) {
             let state = match c.host_mut().shared_state().borrow().buffer_pool {
                 PoolOwner::Host(state) => Some(state),
                 _ => None,

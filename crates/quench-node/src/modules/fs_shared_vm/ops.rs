@@ -1058,8 +1058,8 @@ fn read_file(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> Call {
     let bytes = read_whole(c, &file, flags);
     Ok(bytes
         .and_then(|bytes| match encoding {
-            Encoding::Buffer => unsafe_buffer(c, &bytes),
-            Encoding::Text(_) => encoding.project(c, bytes),
+            Encoding::Buffer if crate::modules::buffer_shared_vm::is_pooled(bytes.len()) => unsafe_buffer(c, &bytes),
+            _ => encoding.project(c, bytes),
         })
         .map(|value| abortable(c, value, signal)))
 }
@@ -1069,8 +1069,8 @@ fn abortable(c: &mut Context<'_>, value: RootId, signal: RootId) -> Reply {
     if is_undefined(c, signal) { Reply::Value(value) } else { Reply::Abortable { value, signal } }
 }
 
-/// `Buffer.allocUnsafe(bytes.length)` holding `bytes`: the buffer Node's `readFile` returns,
-/// a slice of the shared pool when it is small.
+/// `Buffer.allocUnsafe(bytes.length)` holding `bytes`, a slice of the shared pool: the buffer
+/// Node's `readFile` returns for a small file.
 fn unsafe_buffer(c: &mut Context<'_>, bytes: &[u8]) -> Result<RootId, RootedError> {
     let buffer = match crate::modules::buffer_shared_vm::allocate_before_library(c, bytes.len())? {
         Some(buffer) => buffer,
