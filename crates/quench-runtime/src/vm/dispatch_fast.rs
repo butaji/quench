@@ -526,9 +526,25 @@ enum LaneBody {
     Unspecialized { entries: u16 },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires.
-    Specialized { method: super::compiled::LaneMethod, tier_prologue: *const (), room: u16 },
+    Specialized {
+        method: super::compiled::LaneMethod,
+        tier_prologue: *const (),
+        room: u16,
+        /// Its runs from the prologue and those that left before completing, counted up to
+        /// `LANE_BODY_TRIAL_RUNS` (`LaneView::note_lane_body_run`).
+        runs: std::cell::Cell<u16>,
+        leaves: std::cell::Cell<u16>,
+    },
+    /// A body whose runs mostly left: its function runs in the lane again, and its code stays
+    /// for the direct callers that name it until they retire with it at a shape compaction.
+    Retired { _method: super::compiled::LaneMethod },
     Declined,
 }
+
+/// The runs over which a specialized body proves it completes more often than it leaves:
+/// a body whose runs mostly leave pays its entry and the lane's resumption for work the
+/// lane does anyway (`LaneView::note_lane_body_run`).
+const LANE_BODY_TRIAL_RUNS: u16 = 1024;
 
 /// The entries a function makes before its lane body specializes: enough that its call
 /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
@@ -542,7 +558,7 @@ impl LaneView {
         // no body of this view runs and no reference into it is held.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { method, .. } => Some(method),
-            LaneBody::Unspecialized { .. } | LaneBody::Declined => None,
+            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => None,
         }
     }
 
@@ -567,7 +583,13 @@ impl LaneView {
                         let prologue = self.prologue.get();
                         // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
                         let tier_prologue = unsafe { std::mem::replace(&mut (*prologue).handler, entry as *const ()) };
-                        LaneBody::Specialized { method, tier_prologue, room: u16::try_from(room).unwrap_or(u16::MAX) }
+                        LaneBody::Specialized {
+                            method,
+                            tier_prologue,
+                            room: u16::try_from(room).unwrap_or(u16::MAX),
+                            runs: std::cell::Cell::new(0),
+                            leaves: std::cell::Cell::new(0),
+                        }
                     }
                     None => LaneBody::Declined,
                 };
@@ -586,12 +608,34 @@ impl LaneView {
         self.specialize_lane_body(entry, specialize);
     }
 
+    /// Counts a run of the specialized body from its prologue, and whether it `left` before
+    /// completing; at `LANE_BODY_TRIAL_RUNS`, a body whose runs mostly left retires
+    /// (`LaneBody::Retired`), its prologue taking back the tier's handler.
+    fn note_lane_body_run(&self, left: bool) {
+        // SAFETY: as `lane_body`; the run that counts has finished.
+        let body = unsafe { &mut *self.tier_lane.get() };
+        let LaneBody::Specialized { runs, leaves, tier_prologue, .. } = body else { return };
+        if runs.get() >= LANE_BODY_TRIAL_RUNS {
+            return;
+        }
+        runs.set(runs.get() + 1);
+        leaves.set(leaves.get() + u16::from(left));
+        if runs.get() < LANE_BODY_TRIAL_RUNS || leaves.get() <= LANE_BODY_TRIAL_RUNS / 2 {
+            return;
+        }
+        // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
+        unsafe { (*self.prologue.get()).handler = *tier_prologue };
+        let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Declined) else { unreachable!() };
+        *body = LaneBody::Retired { _method: method };
+        self.release_from_tier();
+    }
+
     /// The stack room an entry of the specialized body proves (`LaneBody::Specialized`).
     fn lane_body_room(&self) -> u16 {
         // SAFETY: as `lane_body`.
         match unsafe { &*self.tier_lane.get() } {
             LaneBody::Specialized { room, .. } => *room,
-            LaneBody::Unspecialized { .. } | LaneBody::Declined => 0,
+            LaneBody::Unspecialized { .. } | LaneBody::Retired { .. } | LaneBody::Declined => 0,
         }
     }
 
@@ -606,6 +650,10 @@ impl LaneView {
             // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
             *body = LaneBody::Unspecialized { entries: 0 };
+        }
+        // Its direct callers name shapes too, so they retire with this compaction.
+        if matches!(body, LaneBody::Retired { .. }) {
+            *body = LaneBody::Declined;
         }
         for &pc in &self.field_records {
             let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
@@ -13864,7 +13912,11 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        match lane_body_left(cx, r, own, method, exit) {
+        let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
+        let resumed = lane_body_left(cx, r, own, method, exit);
+        // Counted once nothing reads the body: a retirement moves it.
+        own.note_lane_body_run(left);
+        match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
         }
