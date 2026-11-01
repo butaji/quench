@@ -302,6 +302,12 @@ pub(crate) fn async_dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> 
 /// directory once it is exhausted.
 pub(crate) fn iterate(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     let state = state(c, this)?;
+    iterate_state(c, state)
+}
+
+/// An async iterator over the `entries` of `state` from its `index`, ending (and
+/// forgetting them) at the last.
+pub(crate) fn iterate_state(c: &mut Context<'_>, state: RootId) -> Outcome {
     let iterator = c.object_rooted()?;
     for (name, operation) in [("next", "fsDirIteratorNext"), ("return", "fsDirIteratorReturn")] {
         let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, state)?;

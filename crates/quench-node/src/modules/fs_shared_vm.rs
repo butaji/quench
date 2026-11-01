@@ -11,6 +11,7 @@ pub(crate) mod copy;
 pub(crate) mod dir;
 pub(crate) mod failure;
 pub(crate) mod file_handle;
+pub(crate) mod glob;
 pub(crate) mod ops;
 pub(crate) mod stats;
 pub(crate) mod streams;
@@ -216,6 +217,7 @@ const MODULE_MEMBERS: &[Member] = &[
     Call("fsync", 2, Op::Fsync, Cb), Call("fsyncSync", 1, Op::Fsync, Sy),
     Call("ftruncate", 1, Op::Ftruncate, Cb), Call("ftruncateSync", 1, Op::Ftruncate, Sy),
     Call("futimes", 4, Op::Futimes, Cb), Call("futimesSync", 3, Op::Futimes, Sy),
+    Call("glob", 3, Op::Glob, Cb), Call("globSync", 2, Op::Glob, Sy),
     Call("lchown", 4, Op::Lchown, Cb), Call("lchownSync", 3, Op::Lchown, Sy),
     Other("lchmod"), Other("lchmodSync"),
     Call("link", 3, Op::Link, Cb), Call("linkSync", 2, Op::Link, Sy),
@@ -254,7 +256,7 @@ const MODULE_MEMBERS: &[Member] = &[
 
 const PROMISES_MEMBERS: &[Member] = &[
     Call("access", 1, Op::Access, Pr), Call("copyFile", 3, Op::CopyFile, Pr),
-    Call("cp", 3, Op::Cp, Pr), Call("open", 3, Op::Open, Pr),
+    Call("cp", 3, Op::Cp, Pr), Other("glob"), Call("open", 3, Op::Open, Pr),
     Call("opendir", 3, Op::Opendir, Pr), Call("rename", 2, Op::Rename, Pr),
     Call("truncate", 1, Op::Truncate, Pr), Call("rm", 2, Op::Rm, Pr),
     Call("rmdir", 2, Op::Rmdir, Pr), Call("mkdir", 2, Op::Mkdir, Pr),
@@ -278,6 +280,9 @@ const PROMISIFY_ARGUMENTS: [(&str, [&str; 2]); 4] = [
     ("readv", ["bytesRead", "buffers"]),
     ("writev", ["bytesWritten", "buffers"]),
 ];
+
+/// `fsPromises.glob(pattern, options)`'s length.
+const PROMISES_GLOB_LENGTH: f64 = 2.0;
 
 /// The access constants `fs` also exposes at its top level.
 const ACCESS_CONSTANTS: [(&str, i32); 4] = [("F_OK", libc::F_OK), ("R_OK", libc::R_OK), ("W_OK", libc::W_OK), ("X_OK", libc::X_OK)];
@@ -368,6 +373,13 @@ fn promises_module(c: &mut Context<'_>) -> Outcome {
     let mut other = |c: &mut Context<'_>, name: &str| -> Result<(), RootedError> {
         let value = match name {
             "watch" => super::fs_watch_shared_vm::promise_watch_function(c)?,
+            "glob" => {
+                let glob = c.host_function_named(crate::host::shared_vm::operation("fsPromisesGlob"), "glob")?;
+                let key = c.string_rooted("length");
+                let length = c.number(PROMISES_GLOB_LENGTH);
+                c.define_data_property_rooted(glob, key, length, false, false, true)?;
+                glob
+            }
             _ => fs_constants(c)?,
         };
         define(c, promises, name, value, true, true)

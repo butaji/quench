@@ -79,10 +79,11 @@ pub(crate) enum Op {
     WriteFile,
     AppendFile,
     Opendir,
+    Glob,
 }
 
 impl Op {
-    pub(crate) const ALL: [Self; 43] = [
+    pub(crate) const ALL: [Self; 44] = [
         Self::Access, Self::Exists, Self::Chmod, Self::Fchmod, Self::Lchmod, Self::Chown,
         Self::Fchown, Self::Lchown, Self::Utimes, Self::Futimes, Self::Lutimes, Self::Stat,
         Self::Fstat, Self::Lstat, Self::Statfs, Self::Readdir, Self::Mkdir, Self::Rmdir, Self::Rm,
@@ -90,7 +91,7 @@ impl Op {
         Self::Unlink, Self::Readlink, Self::Realpath, Self::RealpathNative, Self::Truncate,
         Self::Ftruncate, Self::Open, Self::Close, Self::Read, Self::Write, Self::Readv,
         Self::Writev, Self::Fsync, Self::Fdatasync, Self::ReadFile, Self::WriteFile,
-        Self::AppendFile, Self::Opendir,
+        Self::AppendFile, Self::Opendir, Self::Glob,
     ];
 
     /// The callback API's positional parameters: how many come before the earliest the
@@ -117,8 +118,8 @@ impl Op {
         match self {
             Self::Access => access(c, args),
             Self::Exists => exists(c, args),
-            Self::Chmod => chmod(c, args, Follow::Yes),
-            Self::Lchmod => chmod(c, args, Follow::No),
+            Self::Chmod => chmod(c, args),
+            Self::Lchmod => Err(failure::plain(c, "ERR_METHOD_NOT_IMPLEMENTED", "The lchmod() method is not implemented", false)),
             Self::Fchmod => fchmod(c, args),
             Self::Chown => chown(c, args, Some(Follow::Yes)),
             Self::Lchown => chown(c, args, Some(Follow::No)),
@@ -158,6 +159,7 @@ impl Op {
             Self::WriteFile => write_file(c, args, false),
             Self::AppendFile => write_file(c, args, true),
             Self::Opendir => super::dir::opendir(c, args),
+            Self::Glob => super::glob::glob(c, args),
         }
     }
 }
@@ -234,12 +236,9 @@ fn exists(c: &mut Context<'_>, args: &[RootId]) -> Call {
     Ok(Ok(Reply::Exists(exists)))
 }
 
-fn chmod(c: &mut Context<'_>, args: &[RootId], follow: Follow) -> Call {
+fn chmod(c: &mut Context<'_>, args: &[RootId]) -> Call {
     let path = args::path(c, args[0], "path")?;
     let mode = args::mode(c, args[1], "mode", None)?;
-    if follow == Follow::No {
-        return Err(failure::plain(c, "ERR_METHOD_NOT_IMPLEMENTED", "The lchmod() method is not implemented", false));
-    }
     let result = std::fs::set_permissions(&path.io, std::fs::Permissions::from_mode(mode));
     Ok(completed(c, result, Syscall::at("chmod", &path.shown)))
 }
@@ -756,9 +755,8 @@ fn position(c: &mut Context<'_>, value: RootId, length: f64) -> Result<Option<u6
     if is_nullish(c, value) {
         return Ok(None);
     }
-    if let Some(number) = c.rooted_value(value).and_then(|value| value.as_number()) {
+    if c.rooted_value(value).is_some_and(|value| value.as_number().is_some()) {
         let position = args::integer(c, value, "position", CURRENT_POSITION, args::MAX_SAFE_INTEGER)?;
-        let _ = number;
         return Ok((position >= 0.0).then_some(position as u64));
     }
     if matches!(c.value_type_rooted(value), Some(quench_runtime::ValueType::BigInt)) {
