@@ -16,6 +16,8 @@ pub(crate) mod stat;
 pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
+#[path = "fs_shared_vm/streams.rs"]
+pub(crate) mod streams;
 
 #[path = "fs_shared_vm/write_public.rs"]
 pub(crate) mod write_public;
@@ -347,6 +349,16 @@ pub(crate) fn initialize_module(
 }
 
 fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
+    // The streams extend `stream.Readable` and `stream.Writable`, whose module graph is most of
+    // what loading `fs` would otherwise build: each is created when a script first observes
+    // one of its names. They depend on no other member.
+    let initialize_read_stream = context.host_function_with_data(
+        crate::host::shared_vm::operation("fsReadStreamInitialize"), module,
+    )?;
+    context.define_lazy_data_properties_rooted(
+        module, READ_STREAM_MEMBERS, true, initialize_read_stream,
+    )?;
+    write_stream::install(context, module)?;
     super::fs_watch_shared_vm::install(context, module)?;
     
     let read_file = get(context, module, "readFileSync")?;
@@ -684,14 +696,6 @@ fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Re
     let append_file =
         context.call_rooted(append_file_factory, undefined, &[append_file_sync, module])?;
     set(context, module, "appendFile", append_file)?;
-    // The read stream extends `stream.Readable`, whose module graph is most of what loading
-    // `fs` would otherwise build: it is created when a script first observes either name.
-    let initialize_read_stream = context.host_function_with_data(
-        crate::host::shared_vm::operation("fsReadStreamInitialize"), module,
-    )?;
-    context.define_lazy_data_properties_rooted(
-        module, READ_STREAM_MEMBERS, true, initialize_read_stream,
-    )?;
     let rm_sync = get(context, module, "rmSync")?;
     let promises = promises_module(
         context,
@@ -781,7 +785,6 @@ fn build_module(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Re
     promise_public::install(context, promises)?;
     set(context, module, "promises", promises)?;
 
-    write_stream::install(context, module)?;
 
     let install_missing_fs_methods = crate::host::removed_javascript("node:bootstrap/vfs-fs-methods.js")?;
     let undefined = context.undefined();
@@ -1366,35 +1369,26 @@ pub(crate) fn initialize_read_stream(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let module = context.host_function_data()?;
-    let undefined = context.undefined();
-    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let readable = get(context, streams, "Readable")?;
-    let read_stream_factory = crate::host::removed_javascript("node:fs/shared-create-read-stream.js")?;
-    let read_stream_open =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
-    let read_stream_read =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
-    let read_stream_close =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
-    let read_stream_api = context.call_rooted(
-        read_stream_factory,
-        undefined,
-        &[
-            read_stream_open,
-            read_stream_read,
-            read_stream_close,
-            readable,
-            module,
-        ],
+    let read_stream = streams::read_stream_class(context)?;
+    let create_read_stream = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("fsCreateStream"), "createReadStream", read_stream,
     )?;
-    let create_read_stream = get(context, read_stream_api, "createReadStream")?;
     let create_read_stream = metadata_public::wrap(context, create_read_stream, "createReadStream")?;
-    let read_stream = get(context, read_stream_api, "ReadStream")?;
     set(context, module, "createReadStream", create_read_stream)?;
     set(context, module, "ReadStream", read_stream)?;
     define_legacy_alias(context, module, "FileReadStream", read_stream)?;
-    guard_permissions(context, module, Some(&["createReadStream"]))?;
+    if permission_model_enabled(context) {
+        guard_permissions(context, module, Some(&["createReadStream"]))?;
+    }
     Ok(context.undefined())
+}
+
+/// Whether Node's permission model (`--permission`, `--permission-audit`) is on: only then
+/// does `PERMISSION_GUARD` wrap a lazy group's members.
+pub(super) fn permission_model_enabled(context: &mut NativeContext<'_, NodeHost>) -> bool {
+    let shared = context.host_mut().shared_state();
+    let state = shared.borrow();
+    state.cli_options.enabled("--permission") || state.cli_options.enabled("--permission-audit")
 }
 
 /// Node's non-enumerable legacy name for a stream constructor (`FileReadStream`,
