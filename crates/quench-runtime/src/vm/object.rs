@@ -1465,7 +1465,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
-            return self.native_field_load_descriptor(site).into_iter().collect();
+            return self.native_field_load_descriptor(site).unwrap_or_default();
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
