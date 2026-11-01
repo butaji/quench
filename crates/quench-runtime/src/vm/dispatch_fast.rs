@@ -582,7 +582,8 @@ impl LaneView {
             .count()
     }
 
-    /// The address range its records span (`lane_exits::register_view`, `lane_header_site`).
+    /// The address range its records span (`lane_exits::register_view`).
+    #[cfg(feature = "profile-lane-exits")]
     pub(super) fn record_range(&self) -> (usize, usize) {
         let start = self.records().addr();
         (start, start + self.records.len() * std::mem::size_of::<LaneInstruction>())
@@ -634,9 +635,8 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
     // lane runs on the view's thread, and no reference to the handler field is live. A
     // header record a loop site holds keeps `lane_loop_header`, and the site the handler.
     unsafe {
-        if (*ip).handler == lane_loop_header::<H> as Handler as *const ()
-            && let Some(site) = lane_header_site::<H>(lane_context::<H>(), ip)
-        {
+        if (*ip).handler == lane_loop_header::<H> as Handler as *const () {
+            let site = lane_header_site(ip);
             (*site).header_handler.set(handler as *const ());
             return;
         }
@@ -6794,27 +6794,17 @@ fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
     }
 }
 
-/// The site whose header record is at `ip` (`LoopSite::hookable`), in the view that holds
-/// the record: the running activation's, else another of the program's.
-unsafe fn lane_header_site<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<*const LoopSite> {
-    // SAFETY: the context's VM and views are live while the lane runs.
-    let (machine, views) = unsafe { (vm(cx), &*(*cx).views) };
-    let function = machine
-        .lane_stack
-        .activations
-        .last()
-        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
-    let holds = |view: &&LaneView| {
-        let (start, end) = view.record_range();
-        (start..end).contains(&ip.addr())
-    };
-    let view = views
-        .get(function as usize)
-        .and_then(super::program_store::derived_lane_view)
-        .filter(holds)
-        .or_else(|| views.iter().filter_map(super::program_store::derived_lane_view).find(holds))?;
-    // SAFETY: a record of the view; a held header's `call_link` names its site.
-    view.loops.get(usize::from(unsafe { (*ip).call_link.get() })).map(std::ptr::from_ref)
+/// The site whose header record is at `ip` (`LoopSite::hookable`): the header's `call_link`
+/// is the distance, in records, to the site's backward jump, whose operand is the site
+/// (`install_loop_sites`). A held header's jump still holds it: retiring the site gives the
+/// header its own handler back first (`lane_loop_retire`).
+///
+/// # Safety
+/// `ip` is a held header record of a live view.
+#[inline(always)]
+unsafe fn lane_header_site(ip: Ip) -> *const LoopSite {
+    // SAFETY: the jump lies `call_link` records past its header in the same view.
+    unsafe { (*ip.add(usize::from((*ip).call_link.get()))).loop_site() }
 }
 
 script_handler! {
@@ -6823,7 +6813,7 @@ script_handler! {
     /// runs the record's own handler.
     fn lane_loop_header<>(cx, r, ip, i, view) {
         // SAFETY: a record runs this handler only while a site holds it.
-        let site = unsafe { &*lane_header_site::<H>(cx, ip).expect("a held header names its site") };
+        let site = unsafe { &*lane_header_site(ip) };
         if !below_floor()
             && site.exits.get() < LOOP_TIER_MAX_EXITS
             && site.declines.get() < LOOP_TIER_MAX_DECLINES
@@ -18002,17 +17992,18 @@ fn install_loop_sites<'live, H: Host>(
         .collect();
     let mut sites = sites;
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
-    for (_, site) in &mut sites {
+    for (pc, site) in &mut sites {
+        // The header names its site by the distance to the site's jump (`lane_header_site`).
         site.hookable &= headers.iter().filter(|header| **header == site.header).count() == 1
-            && u16::try_from(headers.len()).is_ok_and(|count| count < NO_CALL_LINK);
+            && u16::try_from(*pc - site.header as usize).is_ok_and(|distance| distance < NO_CALL_LINK);
     }
     let pcs: Vec<usize> = sites.iter().map(|(pc, _)| *pc).collect();
     let sites: Box<[LoopSite]> = sites.into_iter().map(|(_, site)| site).collect();
-    for (index, (pc, site)) in pcs.into_iter().zip(sites.iter()).enumerate() {
+    for (pc, site) in pcs.into_iter().zip(sites.iter()) {
         records[pc].handler = lane_loop_jump::<H> as Handler as *const ();
         records[pc].operand = LaneOperand { site };
         if site.hookable {
-            records[site.header as usize].call_link.set(index as u16);
+            records[site.header as usize].call_link.set((pc - site.header as usize) as u16);
         }
     }
     (sites, rejections)
