@@ -3683,6 +3683,11 @@ struct Lowering<'a, 'b> {
     track_backedges: bool,
     /// Each array as native code indexes it, by register.
     arrays: std::collections::BTreeMap<Register, ArrayView>,
+    /// Per entry array word of a region that writes an array, the variable holding the
+    /// backing's element pointer: defined at entry and again past each append's capacity
+    /// helper, which alone may relocate a backing (`Lowering::store_index`), so no other
+    /// access reloads the entry word.
+    elements: std::collections::BTreeMap<usize, cranelift_frontend::Variable>,
     /// The entry values native code reads from memory at each use instead of holding
     /// them (`Resident`).
     resident: Resident,
@@ -3974,6 +3979,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             result,
             track_backedges,
             arrays: std::collections::BTreeMap::new(),
+            elements: std::collections::BTreeMap::new(),
             resident: Resident::default(),
             parking: Parking::default(),
             int32_arrays: std::collections::BTreeSet::new(),
@@ -4466,6 +4472,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             let base = arrays_start + ARRAY_WORDS * index;
             let elements = self.word(base);
+            if self.region.arrays.iter().any(|array| array.written) {
+                let variable = self.body.builder.declare_var(self.pointer);
+                self.body.builder.def_var(variable, elements);
+                self.elements.insert(base, variable);
+            }
             let access = if array.written {
                 ArrayAccess::Written
             } else {
@@ -5429,6 +5440,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// the authoritative entry word across calls; read-only regions keep their old fast path.
     fn array_elements(&mut self, array: ArrayView) -> ir::Value {
         match array.entry_index {
+            Some(entry_index) if let Some(variable) = self.elements.get(&entry_index) => self.body.builder.use_var(*variable),
             Some(entry_index) if self.region.arrays.iter().any(|array| array.written) => self.word(entry_index),
             _ => array.elements,
         }
@@ -5490,6 +5502,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let status = self.body.builder.inst_results(call)[0];
         let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
         self.guard(pc, miss);
+        for (entry_index, variable) in self.elements.clone() {
+            let elements = self.word(entry_index);
+            self.body.builder.def_var(variable, elements);
+        }
         self.body.builder.ins().jump(ready, &[]);
         self.body.builder.switch_to_block(ready);
         self.body.builder.seal_block(ready);
