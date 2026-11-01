@@ -433,7 +433,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     context.scoped(install_performance_global)?;
-    context.scoped(crate::modules::crypto_shared_vm::install_global)?;
+    #[cfg(quench_openssl_provider)]
+    context.scoped(crate::modules::crypto_node::install_global)?;
     if node_primordials_source(context).is_some() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
@@ -2203,19 +2204,6 @@ fn cached_builtin(
     let retained = context.retain(module)?;
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
-    // `fs` installs its library policy with the rest of its members (`initialize_module`).
-    if matches!(builtin, BuiltinModule::Crypto) {
-        let policy = context.with_startup_intrinsics(|context| {
-            let setter =
-                node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
-            set(context, module, "setEngine", setter)
-        });
-        if let Err(error) = policy {
-            roots.borrow_mut().builtin_cache.remove(&key);
-            context.release_root(retained);
-            return Err(error);
-        }
-    }
     Ok(module)
 }
 
@@ -2926,12 +2914,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             context.call_rooted(freeze, object, &[constants])?;
             Ok(module)
         }
-        BuiltinModule::Crypto => {
-            let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            let transform_key = context.string_rooted("Transform");
-            let transform = context.get_property_rooted(stream, transform_key)?;
-            crate::modules::crypto_shared_vm::module(context, transform)
-        }
+        #[cfg(quench_openssl_provider)]
+        BuiltinModule::Crypto => crate::modules::crypto_node::module(context),
+        #[cfg(not(quench_openssl_provider))]
+        BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
         BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
