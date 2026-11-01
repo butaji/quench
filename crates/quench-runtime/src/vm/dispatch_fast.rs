@@ -208,7 +208,8 @@ impl LoopTier {
 /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
 /// which run briefly never pay the compilation.
 pub(super) const LOOP_TIER_THRESHOLD: u32 = 1000;
-/// Native runs that may leave at a general-path instruction before the site stops entering
+/// Native runs in a row (no run leaving through the loop's own exit between them) that may leave at
+/// a general-path instruction before the site stops entering
 /// native code: a loop whose values keep leaving the subset is the interpreter's.
 const LOOP_TIER_MAX_EXITS: u32 = 1000;
 /// Entries a site's guards may decline in a row before it stops trying: a field whose cache
@@ -6866,10 +6867,14 @@ fn lane_loop_run<H: Host>(
                 (native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index))
                     .then(|| machine.native_field_load_descriptor(field.cache_site))
                     .flatten()
-                    .map(|(shape, slot)| super::compiled::NativeFieldLoad {
-                        shape,
-                        slot,
-                        epoch: crate::heap::prototype_layout_epoch(),
+                    .map(|shapes| {
+                        let mut load = super::compiled::NativeFieldLoad {
+                            shapes: [(0, 0); super::compiled::NATIVE_FIELD_SHAPES],
+                            count: shapes.len() as u8,
+                            epoch: crate::heap::prototype_layout_epoch(),
+                        };
+                        load.shapes[..shapes.len()].copy_from_slice(&shapes);
+                        load
                     })
             })
             .collect::<Vec<_>>();
@@ -7061,7 +7066,12 @@ fn lane_loop_run<H: Host>(
             }
             LoopContinuation::Jump
         }
-        LoopOutcome::Resume(pc) => LoopContinuation::Resume(pc),
+        // A run that leaves the loop through its own exit did the loop's work natively: the
+        // exits counted against the site are the ones in a row since such a run.
+        LoopOutcome::Resume(pc) => {
+            site.exits.set(0);
+            LoopContinuation::Resume(pc)
+        }
         LoopOutcome::Exit(pc) => {
             site.exits.set(site.exits.get() + 1);
             LoopContinuation::Exit(pc)
@@ -7117,8 +7127,13 @@ fn lane_loop_entry<H: Host>(
     // data field stays valid for the whole native run. Any miss, accessor, private name, or
     // non-Number exits before native code can alter a register. A field read through
     // another's value follows it.
-    for field in &region.fields {
-        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index))?;
+    for (index, field) in region.fields.iter().enumerate() {
+        // A field native code reads at its instruction (`LoopRegion::is_dynamic_field`) takes
+        // its entry value only to seed its representation: a receiver it does not answer for
+        // now (a null child, another shape) seeds the representation's own placeholder.
+        let value = lane_region_field(cx, r, field, |index| entry.field_value(region, index)).or_else(|| {
+            region.is_dynamic_field(index).then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
+        })?;
         entry.push_field(value, field.tagged)?;
     }
     for array in &region.arrays {
@@ -7202,7 +7217,9 @@ fn lane_region_field<H: Host>(
     }
     match vm.cached_field_hit(code, receiver, field.cache_site) {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
-        _ => None,
+        // A site of several shapes answers from its polymorphic entries, own or of the
+        // immediate prototype, as the lane's polymorphic read does (`lane_get_field_polymorphic`).
+        _ => vm.polymorphic_field_hit(code, receiver, field.cache_site),
     }
 }
 

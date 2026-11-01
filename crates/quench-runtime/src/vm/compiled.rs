@@ -50,7 +50,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod wavefront;
-pub(super) use osr_loop::{
+pub(super) use osr_loop::{NATIVE_FIELD_SHAPES, 
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
@@ -3809,8 +3809,10 @@ unsafe extern "C" fn osr_probe<H: Host>(
         }
         match probe {
             super::object::FieldCacheProbe::Hit(value) => Some(value),
+            // A site of several shapes answers from its polymorphic entries, as the lane's
+            // polymorphic read does; neither probe runs guest code.
             super::object::FieldCacheProbe::OrdinaryMiss
-            | super::object::FieldCacheProbe::Ineligible => None,
+            | super::object::FieldCacheProbe::Ineligible => vm.polymorphic_field_hit(program, receiver, site),
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
