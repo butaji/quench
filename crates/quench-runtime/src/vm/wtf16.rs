@@ -1274,6 +1274,7 @@ impl JsString {
 }
 
 impl PartialEq for JsString {
+    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) =
             (&self.repr, &other.repr)
@@ -1281,7 +1282,15 @@ impl PartialEq for JsString {
             // Inline text pads its unused bytes with zero, so whole records compare.
             return left.length == right.length && left.bytes == right.bytes;
         }
-        // Strings of different lengths differ without flattening a rope or reading units.
+        self.equal_units(other)
+    }
+}
+
+impl JsString {
+    /// Keep content comparison out of short inline-string callers. Different lengths
+    /// differ without flattening a rope or reading its units.
+    #[inline(never)]
+    fn equal_units(&self, other: &Self) -> bool {
         self.len() == other.len() && self.units() == other.units()
     }
 }
