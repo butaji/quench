@@ -20305,6 +20305,11 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
         this.count = this.count + 0;
         return n + this.state + this.id + this.count;
       };
+      Task.prototype.spin = function (k) {
+        let a = k, b = 0;
+        for (let i = 0; i < 5; i++) { b = (b + i) | 0; a++; }
+        return a + b + this.id;
+      };
       let head = null;
       for (let i = 0; i < 8; i++) { const t = new Task(i); t.next = head; head = t; }
       let total = 0;
@@ -20312,6 +20317,7 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
         for (let t = head; t !== null; t = t.next) {
           total = (total + t.step(round & 15)) & 1048575;
           if (round % 50 === 0) total = (total + t.walk(round)) & 1048575;
+          total = (total + t.spin(round % 7 === 0 ? 0.5 : round & 7)) % 1048575;
           if (round === 1500) t.state = "odd";
           if (round === 1501) t.state = 0;
           if (round === 2000) t.sum = 0.5;

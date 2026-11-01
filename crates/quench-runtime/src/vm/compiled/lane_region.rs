@@ -87,6 +87,8 @@ struct Lowering<'a, 'f> {
     native: usize,
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
     pending: Vec<(ir::Block, State, u32)>,
+    /// The registers' types at each block leader (`facts::analyze`).
+    facts: super::facts::Facts,
 }
 
 fn register_offset(register: Register) -> i32 {
@@ -206,13 +208,50 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn continue_at(&mut self, state: &mut State, pc: usize) {
-        self.canonicalize(state);
         match self.blocks.get(pc).copied().flatten() {
             Some(block) => {
+                self.conform(state, pc);
                 self.ins().jump(block, &[]);
             }
             None => self.exit(state, pc as u32),
         }
+    }
+
+    /// Makes `state` the one the block at `target` begins in (`entry_state`): a register its
+    /// facts name int32 holds its int32 view, proved here if this edge has not (leaving at
+    /// `target` otherwise); every other one holds current tagged bits.
+    fn conform(&mut self, state: &mut State, target: usize) {
+        let Some(types) = self.facts.at(target).map(<[super::facts::Ty]>::to_vec) else {
+            self.canonicalize(state);
+            return;
+        };
+        for (index, ty) in types.iter().enumerate() {
+            let register = index as Register;
+            match (ty, state.known[index]) {
+                (super::facts::Ty::Int32, Known::Tagged) => {
+                    let exit = self.guard_exit(state, target as u32);
+                    self.int(state, register, exit);
+                }
+                (super::facts::Ty::Tagged, Known::Int { boxed: false }) => {
+                    self.tagged(state, register);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The state the block at `pc` begins in: its facts' int32 registers hold their views,
+    /// the rest only tagged bits.
+    fn entry_state(&self, pc: usize, registers: usize) -> State {
+        let mut state = State::canonical(registers);
+        if let Some(types) = self.facts.at(pc) {
+            for (index, ty) in types.iter().enumerate() {
+                if *ty == super::facts::Ty::Int32 {
+                    state.known[index] = Known::Int { boxed: false };
+                }
+            }
+        }
+        state
     }
 
     fn operand_tagged(&mut self, state: &mut State, operand: Operand) -> Option<ir::Value> {
@@ -357,12 +396,14 @@ pub(super) fn compile(
         entry: None,
         native: 0,
         pending: Vec::new(),
+        facts: super::facts::Facts::default(),
     };
     let instructions: Vec<_> = function
         .code
         .iter()
         .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
         .collect();
+    lowering.facts = super::facts::analyze(count, &instructions, &leaders, &program.constants, &writes);
     for instruction in &instructions {
         lowering.written.extend(writes(*instruction).into_iter().filter(|r| usize::from(*r) < count));
     }
@@ -375,11 +416,11 @@ pub(super) fn compile(
     for (pc, instruction) in instructions.iter().copied().enumerate() {
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
-                lowering.canonicalize(&mut state);
+                lowering.conform(&mut state, pc);
                 lowering.builder.ins().jump(block, &[]);
             }
             lowering.builder.switch_to_block(block);
-            state = State::canonical(count);
+            state = lowering.entry_state(pc, count);
             reachable = true;
         }
         if !reachable {
@@ -665,7 +706,6 @@ impl Lowering<'_, '_> {
     }
 
     fn branch(&mut self, state: &mut State, pc: usize, target: usize, taken: ir::Value) {
-        self.canonicalize(state);
         let taken_block = self.builder.create_block();
         let fall_block = self.builder.create_block();
         self.ins().brif(taken, taken_block, &[], fall_block, &[]);

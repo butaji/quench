@@ -49,6 +49,8 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+#[path = "compiled/facts.rs"]
+mod facts;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 mod wavefront;
