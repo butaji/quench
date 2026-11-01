@@ -259,6 +259,13 @@ pub(super) struct LaneView {
     /// The prologue's direct run of the compiled body, once the tier compiled it
     /// (`Vm::direct_tier_entry`).
     tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
+    /// The frameless body the prologue runs once the JavaScript tier declined the
+    /// function (`Vm::compile_lane_method`), specialized at most once.
+    tier_lane: std::cell::OnceCell<Option<std::rc::Rc<super::compiled::LaneMethod>>>,
+    /// Per record, the register whose value it reads as the carried accumulator
+    /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
+    /// with that register carried, as falling through from its producer would.
+    accumulator_registers: Box<[u16]>,
     plain_backward_jump_sites: usize,
     osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
     /// The `GetField` and `SetField` records past the loop headers its sites hold, whose
@@ -2166,6 +2173,8 @@ macro_rules! script_handler {
 /// field's register is the previous record's result register and control
 /// reaches the record only by falling through from it.
 const ACC_NONE: u8 = 0;
+/// `LaneView::accumulator_registers` of a record that reads no accumulator.
+const NO_ACCUMULATOR: u16 = u16::MAX;
 const ACC_A: u8 = 1;
 const ACC_B: u8 = 2;
 const ACC_C: u8 = 3;
@@ -13466,10 +13475,29 @@ script_handler! {
         let (function, params) = (i.imm(), usize::from(i.a));
         // SAFETY: the activation just set the context to its own function's.
         let (program, base) = unsafe { ((*cx).program, (*cx).base) };
-        // SAFETY: the activation's registers hold its parameters from its first.
-        let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         // SAFETY: the program's views outlive the lane run.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
+        if let Some(own) = own
+            && let Some(Some(method)) = own.tier_lane.get()
+        {
+            // SAFETY: the activation just set the context to its own receiver.
+            let this = unsafe { (*cx).this };
+            let receiver = if i.b != 0 && !this.is_deleted() { this } else { Value::DELETED };
+            // SAFETY: the activation just set the context to its own captures.
+            let captures = capture_reads(unsafe { (*cx).capture });
+            let pc = vm.run_lane_method(method, program, r.0, receiver, captures);
+            // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
+            let resume = unsafe { base.add(pc) };
+            let mut carried = Carried::script(cx);
+            if let Some(&register) = own.accumulator_registers.get(pc)
+                && register != NO_ACCUMULATOR
+            {
+                carried.acc = Slot::of(r.get(register));
+            }
+            next!(cx, r, resume, carried)
+        }
+        // SAFETY: the activation's registers hold its parameters from its first.
+        let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         let entered = own
             .and_then(|own| lane_tier_direct(vm, own, program, parameters))
             .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
@@ -13530,6 +13558,17 @@ fn lane_tier_enter<H: Host>(
     if let Some(own) = own
         && (vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
     {
+        // A declined function may still run natively on its lane activations: the
+        // prologue keeps the start once that body compiles. Frame entries keep whatever
+        // tier holds the function.
+        if vm.programs.js_jit_lane_methods_enabled()
+            && own
+                .tier_lane
+                .get_or_init(|| vm.compile_lane_method(code, function).map(std::rc::Rc::new))
+                .is_some()
+        {
+            return None;
+        }
         own.release_from_tier();
     }
     None
@@ -16675,6 +16714,9 @@ fn derive_lane_view<'live, H: Host>(
     // the accumulator.
     let mut exits = Vec::with_capacity(function.code.len());
     let mut reads_accumulator = Vec::with_capacity(function.code.len());
+    // Per instruction: the register whose value a record reading the accumulator reads
+    // there, `NO_ACCUMULATOR` for a record that reads none.
+    let mut accumulator_registers = Vec::with_capacity(function.code.len());
     // Per instruction: the register its selected record carries as the
     // accumulator to the record after it.
     let mut produced = Vec::with_capacity(function.code.len());
@@ -16811,6 +16853,9 @@ fn derive_lane_view<'live, H: Host>(
             produced.push(producer);
             exits.push(selected.is_none());
             reads_accumulator.push(selected.is_some() && acc != ACC_NONE);
+            accumulator_registers.push(
+                carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
+            );
             LaneInstruction {
                 handler: selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler)
                     as *const (),
@@ -16854,6 +16899,7 @@ fn derive_lane_view<'live, H: Host>(
                 records[pc].handler = lane_exit::<H> as Handler as *const ();
                 exits[pc] = true;
                 reads_accumulator[pc] = false;
+                accumulator_registers[pc] = NO_ACCUMULATOR;
             }
         }
         // An add of a constant whose sum the next record loads from runs with
@@ -17477,6 +17523,7 @@ fn derive_lane_view<'live, H: Host>(
             if let Some(carried) = load_table_handler::<H>(load.op(), ACC_C, true) {
                 records[pc].handler = carried as *const ();
                 reads_accumulator[pc] = true;
+                accumulator_registers[pc] = add.b();
                 for (jump, packed) in function.code.iter().enumerate() {
                     let instruction = decoded_instruction(function, *packed);
                     if instruction.op().immediate_role() == ImmediateRole::JumpTarget
@@ -17510,6 +17557,7 @@ fn derive_lane_view<'live, H: Host>(
             };
             records[pc].handler = carried as *const ();
             reads_accumulator[pc] = true;
+            accumulator_registers[pc] = moving.b();
             for (jump, packed) in function.code.iter().enumerate() {
                 let instruction = decoded_instruction(function, *packed);
                 if instruction.op().immediate_role() != ImmediateRole::JumpTarget
@@ -17540,6 +17588,7 @@ fn derive_lane_view<'live, H: Host>(
                 {
                     records[pc + 2].handler = latch as *const ();
                     reads_accumulator[pc + 2] = true;
+                    accumulator_registers[pc + 2] = moving.b();
                 }
             }
         }
@@ -17715,6 +17764,8 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
+        tier_lane: std::cell::OnceCell::new(),
+        accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
