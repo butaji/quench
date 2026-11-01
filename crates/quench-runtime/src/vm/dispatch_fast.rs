@@ -7075,9 +7075,8 @@ fn lane_loop_body_or_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &Loo
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*cx).code };
             own.specialize_lane_body_now(lane_body_entry::<H>, || {
-                let targets = code.function_get(site.function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
                 let direct = code.function_get(site.function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-                vm.compile_lane_method(code, site.function, &targets, direct, Some(site.header))
+                vm.compile_lane_method(code, site.function, &|function, pc| lane_unit_target(cx, function, pc), direct, Some(site.header))
             });
             own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
         });
@@ -13965,9 +13964,9 @@ fn lane_tier_enter<H: Host>(
         && let Some(own) = own
     {
         if !own.specialize_lane_body(lane_body_entry::<H>, || {
-            let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
             let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-            vm.compile_lane_method(code, function, &targets, direct, None).filter(super::compiled::LaneMethod::amortizes_entry)
+            vm.compile_lane_method(code, function, &|function, pc| lane_unit_target(cx, function, pc), direct, None)
+                .filter(super::compiled::LaneMethod::amortizes_entry)
         }) {
             own.release_from_tier();
         }
@@ -13995,25 +13994,25 @@ fn lane_tier_enter<H: Host>(
     None
 }
 
-/// Per PC of `body`, the script target its call record's inline cache links (`call_link`),
-/// where a plain call of it binds an ordinary `this` and activates in place: what a lane
-/// body inlines (`lane_unit::unit`).
-fn lane_call_targets<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecode::Function) -> Vec<Option<super::compiled::CallTarget>> {
-    body.code
-        .iter()
-        .enumerate()
-        .map(|(pc, packed)| {
-            (decoded_instruction(body, *packed).op() == Op::Call).then_some(())?;
-            // SAFETY: the view holds a record per PC; reading its link changes nothing.
-            let record = unsafe { &*view.records.get(pc)?.get() };
-            let target = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
-            (target.generation == vm.lane_stack.generation
-                && target.program == vm.active_program
-                && target.entry == CallEntry::Activates
-                && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
-            .then_some(super::compiled::CallTarget { callee: target.callee, function: target.function })
-        })
-        .collect()
+/// The script target the call record at `pc` of `view` links (`call_link`), where a plain
+/// call of it binds an ordinary `this` and activates in place: what a lane body inlines
+/// (`lane_unit::unit`).
+fn lane_site_target<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Option<super::compiled::CallTarget> {
+    // SAFETY: the view holds a record per PC; reading its link changes nothing.
+    let record = unsafe { &*view.records.get(pc as usize)?.get() };
+    let target = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
+    (target.generation == vm.lane_stack.generation
+        && target.program == vm.active_program
+        && target.entry == CallEntry::Activates
+        && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
+    .then_some(super::compiled::CallTarget { callee: target.callee, function: target.function })
+}
+
+/// `lane_site_target` of any function of the running program, by its view.
+fn lane_unit_target<H: Host>(cx: *mut LaneContext<H>, function: u32, pc: u32) -> Option<super::compiled::CallTarget> {
+    // SAFETY: the program's views outlive the lane run.
+    let view = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)?;
+    lane_site_target(unsafe { vm(cx) }, view, pc)
 }
 
 /// Per PC of `body`, the callee its call record links where the callee's own lane body
@@ -14112,41 +14111,55 @@ fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, own: &LaneView) -> bool {
             && !vm.with_scope_entered)
 }
 
-/// The activation a lane body that left inside inlined `call`, at its callee's PC `pc`,
-/// continues in: the one the call's record makes (`lane_push_activation`), holding the
-/// registers the body wrote to its scratch window. The body's guards proved the receiver
-/// a direct object, which the call binds as `this`.
-#[inline(never)]
+/// The activation a lane body that left inside inlined `frame` of `method`, at its callee's
+/// PC `pc`, continues in: the activations the calls of the frame and the frames around it
+/// make (`lane_push_activation`), outermost first, each holding the registers native code
+/// held for it (`Vm::lane_scratch`); the innermost's record at `pc`. Each frame's call
+/// guard proved its callee the inlined one, whose resolution is a function of it; a cache
+/// that dropped its entry resolves it again.
 fn lane_body_inlined_activation<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     base: Ip,
-    call: &super::compiled::InlinedCall,
+    method: &super::compiled::LaneMethod,
+    frame: usize,
     pc: u32,
 ) -> (Registers, Ip, Carried) {
-    let vm = unsafe { vm(cx) };
-    // The body's guard proved the callee the inlined one, whose resolution is a function of
-    // it; a cache that dropped its entry resolves it again.
-    let target = match vm.script_call_entry(call.target.callee) {
-        Some(target) => target,
-        None => {
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx).code };
-            vm.resolve_script_call_target(code, call.target.callee).expect("an inlined callee resolves");
-            vm.script_call_entry(call.target.callee).expect("a resolved target is cached")
-        }
-    };
-    // SAFETY: as `Vm::script_call_entry`; the record is the call's in the running view.
-    let (target, record) = unsafe { (&*target, base.add(call.call as usize)) };
-    let this = lane_call_this(vm, target, r.get(call.receiver)).expect("a direct-object receiver binds itself");
-    let (registers, _) = lane_push_activation::<H, false, false>(cx, r, record, target, call.window, this, false);
-    Vm::<H>::lane_scratch(usize::from(call.registers), |register, value| registers.set(register, value));
-    // The activation's records start at the context's base, past any tier prologue its
-    // entry record is. SAFETY: the callee's view holds a record for each of its PCs.
-    let resume = unsafe { (*cx).base.add(pc as usize) };
+    let frames = &method.inlined;
+    let mut chain = vec![frame];
+    while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
+        chain.push(parent);
+    }
+    let (mut registers, mut records) = (r, base);
+    let mut view = std::ptr::null::<LaneView>();
+    for &index in chain.iter().rev() {
+        let call = frames[index];
+        let vm = unsafe { vm(cx) };
+        let target = match vm.script_call_entry(call.target.callee) {
+            Some(target) => target,
+            None => {
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                vm.resolve_script_call_target(code, call.target.callee).expect("an inlined callee resolves");
+                vm.script_call_entry(call.target.callee).expect("a resolved target is cached")
+            }
+        };
+        // SAFETY: as `Vm::script_call_entry`; the record is the call's in its parent's view.
+        let (target, record) = unsafe { (&*target, records.add(call.call as usize)) };
+        let parent = call.parent_base(frames);
+        let this = lane_call_this(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
+        let (callee, _) = lane_push_activation::<H, false, false>(cx, registers, record, target, call.window - parent, this, false);
+        let scratch = usize::from(call.base - method.caller_registers());
+        Vm::<H>::lane_scratch(scratch, usize::from(call.registers), |register, value| callee.set(register, value));
+        // The activation's records start at the context's base, past any tier prologue its
+        // entry record is.
+        (registers, records, view) = (callee, unsafe { (*cx).base }, target.view);
+    }
+    // SAFETY: the innermost activation's view holds a record for each of its function's PCs.
+    let resume = unsafe { records.add(pc as usize) };
     let mut carried = Carried::script(cx);
     // SAFETY: a resolved target's view outlives the lane run.
-    if let Some(&register) = unsafe { &*target.view }.accumulator_registers.get(pc as usize)
+    if let Some(&register) = unsafe { &*view }.accumulator_registers.get(pc as usize)
         && register != NO_ACCUMULATOR
     {
         carried.acc = Slot::of(registers.get(register));
@@ -14259,7 +14272,7 @@ fn lane_body_left<H: Host>(
             LaneBodyLeft::Resume(r, unsafe { base.add(pc) }, carried)
         }
         super::compiled::LaneExit::Inlined { frame, pc } => {
-            let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, &method.inlined[frame], pc);
+            let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, method, frame, pc);
             LaneBodyLeft::Resume(registers, resume, carried)
         }
         // A native call made its callee's activation and left the lane there.

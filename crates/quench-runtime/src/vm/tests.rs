@@ -21394,7 +21394,7 @@ fn lane_bodies_leave_before_a_store_changes_property_storage() {
         let instructions: Vec<_> = body.instructions().collect();
         let store_pc = instructions.iter().position(|instruction|
             matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)).unwrap();
-        let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).expect("warmed lane method");
+        let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).expect("warmed lane method");
         let atom = vm.intern_atom(object_name);
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -21442,7 +21442,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).expect("typed lane method");
+            let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).expect("typed lane method");
             let atom = vm.intern_atom(name);
             let function = vm.own_property(vm.realm.globals, atom).unwrap();
             for input in inputs {
@@ -21530,7 +21530,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let body = program.function(id);
         let instructions: Vec<_> = body.instructions().collect();
-        let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).expect("nullish lane method");
+        let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).expect("nullish lane method");
         let atom = vm.intern_atom(name);
         let function = vm.own_property(vm.realm.globals, atom).unwrap();
         for value_name in ["nullValue", "undefinedValue", "zeroValue", "nanValue", "booleanValue",
@@ -21566,7 +21566,7 @@ fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "exposed")).unwrap();
     let body = program.function(id);
-    let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).expect("native prefix");
+    let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).expect("native prefix");
     let parameter = usize::from(body.promoted_register(0).expect("promoted parameter"));
     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
     registers[parameter] = Value::integer(111);
@@ -21605,7 +21605,7 @@ fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
             let body = program.function(id);
             let instructions: Vec<_> = body.instructions().collect();
-            let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).expect("own-slot native artifact");
+            let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).expect("own-slot native artifact");
             let function = global(&mut vm, name);
             let run = |vm: &mut Vm<TestHost>, receiver, arguments: &[Value]| {
                 let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -21704,7 +21704,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
                     &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
                 (pc, registers)
             };
-            let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None)
+            let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None)
                 .unwrap_or_else(|| panic!("native {name}: {instructions:?}"));
             for object_name in ["packed", "arena"] {
                 let object = global(&mut vm, object_name);
@@ -21735,7 +21735,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             vm.collect_now(&program);
             let object = global(&mut vm, "arena");
             vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
-            let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).unwrap();
+            let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).unwrap();
             let marked = |vm: &Vm<TestHost>, object: Value| {
                 let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
                 let id = object.direct_object_index().unwrap() as usize;
@@ -21780,7 +21780,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
         let body = program.function(id);
-        let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).unwrap();
+        let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).unwrap();
         let replacement = global(&mut vm, "replacement");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         for (index, value) in [object, replacement].into_iter().enumerate() {
@@ -21811,7 +21811,7 @@ fn native_chain_append_completes_without_a_store_handoff() {
     let body = program.function(id);
     let instructions: Vec<_> = body.instructions().collect();
     assert!(instructions.iter().any(|instruction| instruction.op() == Op::SetField));
-    let method = vm.compile_lane_method(&program, id as u32, &[], Vec::new(), None).unwrap();
+    let method = vm.compile_lane_method(&program, id as u32, &|_, _| None, Vec::new(), None).unwrap();
     let left = vm.intern_atom("left");
     for (head_name, item_name) in [("head", "item"), ("arenaHead", "arenaItem")] {
         let atom = vm.intern_atom(head_name);

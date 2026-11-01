@@ -6738,8 +6738,10 @@ pub(super) struct LaneMethod {
     pub(super) names_shapes: bool,
     /// The calls it runs inlined (`lane_unit::unit`), by frame.
     pub(super) inlined: Vec<InlinedCall>,
-    /// The scratch registers a leave inside its widest inlined call fills (`LaneFrame::scratch`).
+    /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
+    /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
+    caller_registers: u16,
     /// The loop header PC of its function a run may also start at (`Vm::run_lane_method`).
     pub(super) loop_header: Option<u32>,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
@@ -6753,6 +6755,11 @@ pub(super) struct LaneMethod {
 }
 
 impl LaneMethod {
+    /// The registers of the function it runs, which an inlined callee's follow.
+    pub(super) fn caller_registers(&self) -> u16 {
+        self.caller_registers
+    }
+
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
     pub(super) fn entry_address(&self) -> usize {
         self.entry as usize
@@ -6917,7 +6924,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
         function: u32,
-        targets: &[Option<CallTarget>],
+        targets: &dyn Fn(u32, u32) -> Option<CallTarget>,
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
     ) -> Option<LaneMethod> {
@@ -6928,7 +6935,7 @@ impl<H: Host> Vm<H> {
             call: super::dispatch_fast::lane_body_call::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
-        let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize))?;
+        let unit = lane_unit::unit(function, body, targets, &|callee| program.function_get(callee as usize))?;
         let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
             instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
                 && (instruction.imm() as usize) <= pc
@@ -6968,11 +6975,12 @@ impl<H: Host> Vm<H> {
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         // A body that names a callee's body retires with it (`DirectCallee::method`).
         let names_shapes = !fields.is_empty() || !direct.is_empty();
-        let scratch_width = unit.frames.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
+        let scratch_width = usize::from(unit.registers - unit.caller_registers);
+        let caller_registers = unit.caller_registers;
         let closed = unit.instructions.iter().enumerate()
             .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
         let _direct = direct.into_iter().map(|(_, callee)| callee).collect();
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes, _direct, closed })
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -7099,11 +7107,11 @@ impl<H: Host> Vm<H> {
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
-    pub(super) fn lane_scratch(count: usize, mut write: impl FnMut(u16, Value)) {
+    pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
         LANE_FRAME.with(|frame| {
             // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
             let Some(frame) = (unsafe { &*frame.get() }).as_ref() else { return };
-            for (register, value) in frame.scratch[..count].iter().enumerate() {
+            for (register, value) in frame.scratch[start..start + count].iter().enumerate() {
                 write(register as u16, *value);
             }
         });

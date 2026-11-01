@@ -613,11 +613,15 @@ fn lower(
         let word = match unit.origins.get(pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
             super::lane_unit::Origin::Caller(pc) => u64::from(pc),
             super::lane_unit::Origin::Inlined { frame, pc } => {
-                let inlined = unit.frames[frame];
+                // Each register of the frame and the frames around it, at its unit register
+                // past the caller's (`LaneMethod::scratch_width`).
                 let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
-                for register in 0..inlined.registers {
-                    let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)]);
-                    lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register));
+                for index in unit.chain(frame) {
+                    let inlined = unit.frames[index];
+                    for register in inlined.base..inlined.base + inlined.registers {
+                        let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
+                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register - unit.caller_registers));
+                    }
                 }
                 LaneExit::Inlined { frame, pc }.word()
             }
@@ -1548,7 +1552,7 @@ mod tests {
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
             &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &BTreeMap::new(), None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -1571,7 +1575,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
             &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), &BTreeMap::new(), None, &*isa).expect("typed Number residual");
         assert!(count > 0);
