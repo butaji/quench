@@ -1021,9 +1021,8 @@ complete -o filenames -o nospace -o bashdefault -F _node_complete node node_g
     );
 }
 
-/// Enter Node's test coordinator with the normal shared host. The coordinator
-/// owns test discovery, process isolation, reporters, and lifecycle; this
-/// boundary separates startup/test options from file patterns.
+/// Enter the test coordinator (`test_runner::cli`), separating startup/test options from
+/// file patterns.
 fn run_shared_test_cli(args: &[String]) -> Result<ExitCode, String> {
     let test_index = args
         .iter()
@@ -1056,31 +1055,8 @@ fn run_shared_test_cli(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    let node_library_root = std::env::var_os(NODE_LIBRARY_ROOT_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("node")))
-                .unwrap_or_else(|| PathBuf::from("node"))
-        });
-    let node_library_root = if node_library_root.is_absolute() {
-        node_library_root
-    } else {
-        std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .join(node_library_root)
-    };
-    let runner = node_library_root.join("lib/internal/main/test_runner.js");
-    let executable = executable_path().map_err(|error| error.to_string())?;
-    let mut argv = vec![executable.to_string_lossy().into_owned()];
-    argv.extend(patterns);
-    let input = SharedInput::File {
-        path: runner,
-        exec_argv,
-        goal: EntryGoal::CommonJs,
-    };
-    execute_shared(input, argv).map(SharedCompletion::exit_code)
+    let reporter = cli_option_value(&exec_argv, "--test-reporter");
+    Ok(crate::modules::test_runner::cli::run(&patterns, &exec_argv, reporter))
 }
 
 fn takes_cli_value(argument: &str) -> bool {

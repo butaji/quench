@@ -2526,7 +2526,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
         BuiltinModule::InternalTimers => crate::modules::timers_shared_vm::internal_module(context),
-        BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
+        BuiltinModule::NodeTest => crate::modules::test_runner::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => crate::modules::worker_shared_vm::module(context),
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
