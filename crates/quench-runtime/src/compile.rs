@@ -2206,6 +2206,7 @@ pub(crate) fn lower_settled<'a>(
     }
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
     // proof from the specialized code), so frame registers start from the same slots.
+    frame_registers::drop_unread_self_binding(function, superinstructions, &atom_name);
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
     frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
     if specialized {

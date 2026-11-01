@@ -515,6 +515,47 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn own_name_reads_load_the_callee() {
+    // A function expression reads its own name as `LoadCallee`; with no closure, eval or
+    // `with` able to reach the name's slot, the slot goes (`drop_unread_self_binding`) and
+    // the body runs as a registers-only activation. A captured, eval-visible, assigned or
+    // generator name keeps its slot and reads it as before.
+    let source = r#"
+const out = [];
+const api = {
+  from: function from(value, depth) { if (depth > 0) return from(value + 1, depth - 1); return { value, same: from === api.from }; },
+  parse: function _parse(x) { return [typeof _parse, _parse.name, x].join(":"); },
+};
+for (let i = 0; i < 3; i++) out.push(JSON.stringify(api.from(i, 2)), api.parse(i));
+const captured = function counter(n) { const again = () => counter.name + n; return again(); };
+out.push(captured(1), captured(2));
+const viaEval = function named(x) { return eval("typeof named + x"); };
+out.push(viaEval(5));
+const sloppy = function rebind() { rebind = 1; return typeof rebind; };
+out.push(sloppy());
+const strict = function locked() { "use strict"; try { locked = 1; } catch (e) { return e.constructor.name; } return "no"; };
+out.push(strict());
+const gen = function* g(n) { yield typeof g; yield n; };
+out.push([...gen(4)].join());
+const bound = api.from.bind(null);
+out.push(JSON.stringify(bound(7, 1)));
+out.push([1, 2].map(function m(x) { return m.length + x; }).join());
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "own-name.js").unwrap();
+    program.compile_released();
+    let from = program
+        .functions
+        .iter()
+        .find(|function| function.name.is_some_and(|atom| &program.atoms[atom as usize][..] == "from"))
+        .unwrap();
+    assert!(from.self_binding_slot.is_none());
+    assert!(from.call_plan(&program).registers_only);
+    program.validate().unwrap();
+    assert_eq!(output(source), ["{\"value\":2,\"same\":true}|function:_parse:0|{\"value\":3,\"same\":true}|function:_parse:1|{\"value\":4,\"same\":true}|function:_parse:2|counter1|counter2|function5|function|TypeError|function,4|{\"value\":8,\"same\":true}|2,3".to_string()]);
+}
+
+#[test]
 fn string_index_sites_read_units_before_array_probes() {
     // A `GetIndex` site that reads a string tries its unit first (`lane_get_index_string`),
     // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is

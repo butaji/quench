@@ -3460,6 +3460,21 @@ script_handler! {
 }
 
 script_handler! {
+    /// `LoadCallee`: the function the innermost script activation runs, or the frame's when
+    /// none does, as its activation filled its self binding (`Vm::initialize_frame_locals`).
+    fn lane_load_callee<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = match vm.lane_stack.activations.last() {
+            Some(Activation { kind: ActivationKind::Script(script), .. }) => script.callee,
+            Some(_) => return exit(ip),
+            None => vm.frames[unsafe { (*cx).frame }].context.callee().unwrap_or(Value::UNDEFINED),
+        };
+        r.set(i.a, callee);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
     /// `LoadThis` of the frame's `this` (`lane_this`).
     #[inline(never)]
     fn lane_load_frame_this<>(cx, r, ip, i, view) {
@@ -11105,6 +11120,8 @@ script_handler! {
         let target = unsafe { &*target };
         // A callee that needs a frame takes it as `lane_frame_call` pushes one.
         if !target.entry.activates_across() && target.entry != CallEntry::Environment {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
         #[cfg(feature = "profile-lane-exits")]
@@ -16312,6 +16329,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Op::StoreLocal | Op::StoreEnvLocal => Some(lane_store_local::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
+        Op::LoadCallee => Some(lane_load_callee::<H>),
         Op::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Op::CloneEnv => Some(lane_clone_env::<H>),
         Op::GetField => Some(lane_get_field_first::<H>),
