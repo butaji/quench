@@ -515,6 +515,113 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 }
 
 #[test]
+fn string_index_sites_read_units_before_array_probes() {
+    // A `GetIndex` site that reads a string tries its unit first (`lane_get_index_string`),
+    // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is
+    // no index, the read still finds `String.prototype`'s index property.
+    let source = r#"
+const out = [];
+String.prototype[6] = "proto";
+const read = (s, i) => s[i];
+const inputs = ["abc", "hé€\ud83d", new String("xy"), ""];
+for (let round = 0; round < 3; round++) {
+  const row = [];
+  for (const s of inputs) for (let i = 0; i < 7; i++) { const v = read(s, i); row.push(typeof v === "string" && v.length === 1 ? v.charCodeAt(0) : String(v)); }
+  row.push(read("abc", "1"), String(read("abc", -1)), String(read("abc", 1.5)));
+  out.push(row.join(" "));
+}
+let codes = 0;
+const text = "pino {\"msg\":\"request completed\"} ÿ";
+for (let i = 0; i < text.length; i++) codes += text[i].charCodeAt(0) + (text[i] === text.charAt(i) ? 1 : 0);
+out.push(codes, read("aa", 0) === read("ba", 1));
+delete String.prototype[6];
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|97 98 99 undefined undefined undefined proto 104 233 8364 55357 undefined undefined proto 120 121 undefined undefined undefined undefined proto undefined undefined undefined undefined undefined undefined proto b undefined undefined|3326|true".to_string()]);
+}
+
+#[test]
+fn typed_array_index_sites_read_elements_before_array_probes() {
+    // A `GetIndex` site that reads a typed array tries its element first
+    // (`lane_get_index_typed`): an element, or `undefined` past the end or at a
+    // non-integer canonical key, never the prototype's index property; a site that also
+    // reads ordinary arrays still finds their prototype's elements.
+    let source = r#"
+const out = [];
+class Bytes extends Uint8Array {}
+Object.defineProperty(Uint8Array.prototype, "7", { get() { return "proto"; }, configurable: true });
+Array.prototype[9] = "array-proto";
+const read = (view, index) => view[index];
+const views = [new Bytes([1, 2, 3]), new Float64Array([0.5, -1.25]), [10, 20], new Int16Array([-3, 4])];
+for (let round = 0; round < 3; round++) {
+  const row = [];
+  for (const view of views) for (let index = 0; index < 10; index++) row.push(String(read(view, index)));
+  row.push(String(read(views[0], "1")), String(read(views[0], "-0")), String(read(views[0], 1.5)));
+  out.push(row.join(" "));
+}
+let sum = 0;
+const mask = new Uint8Array([1, 2, 4, 8]);
+const data = new Bytes(64).map((_, i) => i);
+for (let i = 0; i < data.length; i++) sum += data[i] ^ mask[i & 3];
+out.push(sum);
+delete Uint8Array.prototype[7];
+delete Array.prototype[9];
+print(out.join("|"));
+"#;
+    let expected = [
+        "1 2 3 undefined undefined undefined undefined undefined undefined undefined 0.5 -1.25 undefined undefined undefined undefined undefined undefined undefined undefined 10 20 undefined undefined undefined undefined undefined undefined undefined array-proto -3 4 undefined undefined undefined undefined undefined undefined undefined undefined 2 undefined undefined";
+        3
+    ]
+    .join("|")
+        + "|2064";
+    assert_eq!(output(source), [expected]);
+}
+
+#[test]
+fn try_finally_without_return_keeps_registers_only_activations() {
+    // A `try`/`finally` whose protected blocks never return emits no return path through
+    // the finalizer (`finally_return_path`), so its body reaches no local and runs as a
+    // registers-only activation; returns, nested finalizers, `catch`, loop exits and a
+    // generator's `return()` still run each finalizer once.
+    let source = r#"
+const out = [];
+const desc = { value: undefined, configurable: true };
+function install(target, v) {
+  desc.value = v;
+  try { Object.defineProperty(target, "k", desc); } finally { desc.value = undefined; }
+  return target.k + (desc.value === undefined ? 1 : 0);
+}
+for (let i = 0; i < 3; i++) out.push(install({}, i));
+function early(x) { try { if (x) return "try" + x; } finally { out.push("fin" + x); } return "after" + x; }
+out.push(early(0), early(1));
+function nested(x) {
+  try { try { if (x > 1) return "inner"; } finally { out.push("a" + x); } if (x) return "outer"; } finally { out.push("b" + x); }
+  return "none";
+}
+out.push(nested(0), nested(1), nested(2));
+function caught(x) { try { if (x) throw new Error("e" + x); } catch (e) { return e.message; } finally { out.push("c" + x); } return "ok"; }
+out.push(caught(0), caught(1));
+function thrower() { try { throw new Error("t"); } finally { out.push("tf"); } }
+try { thrower(); } catch (e) { out.push(e.message); }
+function* gen() { try { yield 1; yield 2; } finally { out.push("gf"); } }
+const g = gen(); out.push(g.next().value, JSON.stringify(g.return(9)));
+function loop(n) { let s = 0; for (let i = 0; i < n; i++) { try { if (i === 2) continue; if (i === 4) break; s += i; } finally { s += 10; } } return s; }
+out.push(loop(6));
+print(out.join(","));
+"#;
+    let program = Engine::specialize(source, "finally-paths.js").unwrap();
+    program.compile_released();
+    let install = &program.functions[1];
+    assert!(!install.handlers.is_empty());
+    assert!(install.call_plan(&program).registers_only);
+    program.validate().unwrap();
+    assert_eq!(
+        output(source),
+        ["1,2,3,fin0,fin1,after0,try1,a0,b0,a1,b1,a2,b2,none,outer,inner,c0,c1,ok,e1,tf,t,gf,1,{\"value\":9,\"done\":true},54"]
+    );
+}
+
+#[test]
 fn iteration_copies_run_in_environment_activations() {
     // A loop whose block bindings a closure captures copies its environment each iteration
     // (`CloneEnv`); an arrow making such closures still runs as an environment activation

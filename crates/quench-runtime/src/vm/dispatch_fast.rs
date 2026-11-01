@@ -3685,10 +3685,10 @@ lane_handler! {
         let key = vm.canonical_index_key(key);
         let Some(value) = vm
             .dense_array_element(base, key)
-            .or_else(|| vm.absent_array_element(base, key))
-            .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.plain_typed_element(base, key))
             .or_else(|| lane_string_element(vm, base, key))
+            .or_else(|| vm.absent_array_element(base, key))
+            .or_else(|| vm.plain_keyed_get(base, key))
             .or_else(|| vm.keyed_array_length(base, key))
         else {
             return exit(ip);
@@ -3777,12 +3777,58 @@ fn lane_get_index_beside_activations<H: Host>(
 #[inline(never)]
 fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
     let key = vm.canonical_index_key(key);
+    // A typed array answers every index read itself, never its prototype chain, and a string
+    // every index inside its length, so their reads come before the ordinary array probes,
+    // which would only decline them.
     vm.dense_array_element(base, key)
+        .or_else(|| lane_typed_array_element(ip, vm, base, key))
+        .or_else(|| lane_string_index_element(ip, vm, base, key))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
-        .or_else(|| vm.plain_typed_element(base, key))
-        .or_else(|| lane_string_element(vm, base, key))
         .or_else(|| vm.keyed_array_length(base, key))
+}
+
+/// A string's unit at an index inside its length (`lane_string_element`): the site then
+/// tries it first (`lane_get_index_string`).
+fn lane_string_index_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    let value = lane_string_element(vm, base, key)?;
+    requicken::<H>(ip, lane_get_index_string::<H>);
+    Some(value)
+}
+
+script_handler! {
+    /// `lane_get_index_registers` at a site that read a string: its unit at an index inside
+    /// its length is the whole read; any other read takes the generic order.
+    fn lane_get_index_string<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = lane_string_element(vm, r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_registers::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// A typed array's element at an index key (`Vm::plain_typed_element`), which no dense array
+/// read before it serves: the site then tries it first (`lane_get_index_typed`), as a typed
+/// store's site does (`lane_typed_array_store`).
+fn lane_typed_array_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    let value = vm.plain_typed_element(base, key)?;
+    requicken::<H>(ip, lane_get_index_typed::<H>);
+    Some(value)
+}
+
+script_handler! {
+    /// `lane_get_index_registers` at a site that read a typed array: a non-BigInt typed
+    /// array's element at an integer index, or `undefined` past its end, is the whole read;
+    /// any other read takes the generic order (`lane_get_index_registers`).
+    fn lane_get_index_typed<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_registers::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
 }
 
 script_handler! {
