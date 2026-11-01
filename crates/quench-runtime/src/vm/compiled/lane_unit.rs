@@ -65,7 +65,8 @@ pub(crate) struct Unit {
 const MAX_INLINED_INSTRUCTIONS: usize = 48;
 
 /// Whether the lane-body lowering runs `instruction` of an inlined callee: no call (one level),
-/// no capture (its environment is the callee's), no returning fusion.
+/// no capture (its environment is the callee's), no fusion but a returning one, which splits
+/// into the computation and the return (`osr_loop::inlined_returning`).
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0;
     let value = plain || super::osr_loop::inlined_returning(instruction);
@@ -112,7 +113,7 @@ pub(crate) fn unit<'f>(
         if callee_code.len() > MAX_INLINED_INSTRUCTIONS
             || arguments > callee.registers
             || !callee_code.iter().all(|instruction| inlinable(*instruction))
-            || !callee_code.iter().any(|instruction| instruction.op() == Op::Return)
+            || !callee_code.iter().any(|instruction| expanded_len(*instruction) > 1)
         {
             continue;
         }
