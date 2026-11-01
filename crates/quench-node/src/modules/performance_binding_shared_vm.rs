@@ -1,4 +1,5 @@
-//! Genuine performance observer host state; original SDK owns observer policy.
+//! `internalBinding('performance')`: the milestones, observer counts and loop metrics, and
+//! the `perf_hooks` group's host state (its shared data and timeline).
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime, Value};
 include!("performance_constants.rs");
@@ -9,7 +10,9 @@ pub(crate) struct State {
     milestones: Option<RootId>,
     uv_metrics: Option<RootId>,
     uv_metrics_bigint: Option<RootId>,
-    callback: Option<RootId>,
+    /// The `perf_hooks` group's shared data (`perf_hooks::api`).
+    pub(crate) api: Option<RootId>,
+    pub(crate) timeline: super::perf_timeline::Timeline,
 }
 fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name);
@@ -92,7 +95,6 @@ fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         ("uvMetricsInfo", "performanceUvMetricsInfo"),
         ("now", "performanceNativeNow"),
         ("loopIdleTime", "performanceLoopIdleTime"),
-        ("setupObservers", "performanceSetupObservers"),
         ("updateGarbageCollectionTracking", "performanceGcTracking"),
         ("notify", "performanceNotify"),
         ("markBootstrapComplete", "performanceBootstrapMark"),
@@ -185,28 +187,6 @@ pub(crate) fn loop_idle_time(
     let idle_ms = control.event_loop_idle_ms();
     Ok(c.number(idle_ms))
 }
-pub(crate) fn setup(
-    c: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let callback = args.first().copied().unwrap_or_else(|| c.undefined());
-    if !c.is_callable_rooted(callback)? {
-        let error = c.type_error_rooted("Performance observer callback must be a function")?;
-        return Err(c.throw(error));
-    }
-    let retained = c.retain(callback)?;
-    let shared = c.host_mut().shared_state();
-    let previous = shared
-        .borrow_mut()
-        .performance_native
-        .callback
-        .replace(retained);
-    if let Some(previous) = previous {
-        c.release_root(previous);
-    }
-    Ok(c.undefined())
-}
 fn count(c: &mut Context<'_>, index: usize) -> Result<u32, RootedError> {
     let shared = c.host_mut().shared_state();
     let counts = shared
@@ -231,8 +211,8 @@ pub(crate) fn gc_tracking(
     Ok(c.undefined())
 }
 
-/// Report an explicit `global.gc()` call to Node's existing PerformanceObserver
-/// callback. This is the narrow compatibility path until runtime GC hooks exist.
+/// Report an explicit `global.gc()` call to `gc` observers. This is the narrow compatibility
+/// path until runtime GC hooks exist.
 pub(crate) fn notify_forced_gc(c: &mut Context<'_>, duration_ms: f64) -> Result<(), RootedError> {
     // Workers may expose global.gc() before Node's perf_hooks binding has
     // initialized the observer counters. With no counters there can be no GC
@@ -249,31 +229,47 @@ pub(crate) fn notify_forced_gc(c: &mut Context<'_>, duration_ms: f64) -> Result<
     if count(c, entry("gc").expect("SDK GC slot"))? == 0 {
         return Ok(());
     }
-    let shared = c.host_mut().shared_state();
-    let callback = shared
+    let name = c.string_rooted("gc");
+    let start_time = super::perf_hooks::elapsed_ms(c);
+    let detail = c.object_rooted()?;
+    for (field, constant) in [("kind", "NODE_PERFORMANCE_GC_MAJOR"), ("flags", "NODE_PERFORMANCE_GC_FLAGS_FORCED")] {
+        let value = c.number(f64::from(constant_value(constant)));
+        c.define_named_data_property_rooted(detail, field, value, true, true, true)?;
+    }
+    super::perf_timeline::observe_node_entry(c, name, "gc", start_time, duration_ms.max(0.0), detail)
+}
+
+fn constant_value(name: &str) -> u32 {
+    CONSTANTS.iter().find(|row| row.0 == name).expect("SDK performance constant").1
+}
+
+/// The observer count of entry type `kind`, which host reporters read, moved by `delta`;
+/// types the host does not report have none.
+pub(crate) fn adjust_observer_count(c: &mut Context<'_>, kind: &str, delta: f64) -> Result<(), RootedError> {
+    let (Some(index), Some(counts)) = (entry(kind), c.host_mut().shared_state().borrow().performance_native.counts) else {
+        return Ok(());
+    };
+    let current = f64::from(count(c, index)?);
+    let key = c.number(index as f64);
+    let value = c.number(current + delta);
+    c.set_property_rooted(counts, key, value, counts)?;
+    Ok(())
+}
+
+/// Milestone `label`'s reading: nanoseconds, the time origin timestamp in microseconds, or
+/// -1 when not reached.
+pub(crate) fn milestone_ns(c: &mut Context<'_>, label: &str) -> Result<f64, RootedError> {
+    binding(c)?;
+    let milestones = c
+        .host_mut()
+        .shared_state()
         .borrow()
         .performance_native
-        .callback
-        .ok_or_else(|| RootedError::host("Performance observer callback not registered"))?;
-    let name = c.string_rooted("gc");
-    let entry_type = c.string_rooted("gc");
-    let undefined = c.undefined();
-    let start_time = super::perf_hooks::now(c, undefined, &[])?;
-    let duration = c.number(duration_ms.max(0.0));
-    let detail = c.object_rooted()?;
-    let kind_key = c.string_rooted("kind");
-    let kind = c.number(4.0); // NODE_PERFORMANCE_GC_MAJOR
-    c.define_data_property_rooted(detail, kind_key, kind, true, true, true)?;
-    let flags_key = c.string_rooted("flags");
-    let flags = c.number(4.0); // NODE_PERFORMANCE_GC_FLAGS_FORCED
-    c.define_data_property_rooted(detail, flags_key, flags, true, true, true)?;
-    let undefined = c.undefined();
-    c.call_rooted(
-        callback,
-        undefined,
-        &[name, entry_type, start_time, duration, detail],
-    )?;
-    Ok(())
+        .milestones
+        .ok_or_else(|| RootedError::host("Performance milestones not initialized"))?;
+    let key = c.number(milestone(label) as f64);
+    let value = c.get_property_rooted(milestones, key)?;
+    Ok(c.rooted_value(value).and_then(Value::as_number).unwrap_or(-1.0))
 }
 pub(crate) fn notify(
     c: &mut Context<'_>,
@@ -284,14 +280,8 @@ pub(crate) fn notify(
     let name = c.to_string(type_root)?;
     if let Some(index) = entry(&name) {
         if count(c, index)? > 0 {
-            let shared = c.host_mut().shared_state();
-            let callback =
-                shared.borrow().performance_native.callback.ok_or_else(|| {
-                    RootedError::host("Performance observer callback not registered")
-                })?;
             let value = args.get(1).copied().unwrap_or_else(|| c.undefined());
-            let undefined = c.undefined();
-            c.call_rooted(callback, undefined, &[value])?;
+            super::perf_timeline::enqueue(c, value)?;
         }
     }
     Ok(c.undefined())
@@ -323,12 +313,13 @@ pub(crate) fn bootstrap_mark(
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     let shared = runtime.host_mut().shared_state();
     let state = std::mem::take(&mut shared.borrow_mut().performance_native);
+    super::perf_timeline::release(runtime, state.timeline);
     for root in [
         state.counts,
         state.milestones,
         state.uv_metrics,
         state.uv_metrics_bigint,
-        state.callback,
+        state.api,
     ]
     .into_iter()
     .flatten()
@@ -389,4 +380,4 @@ pub(crate) fn mark_loop_exit(runtime: &mut Runtime<NodeHost>) -> Result<(), Stri
     Ok(())
 }
 
-crate::host::startup_snapshot::host_snap_state!(State { counts, milestones, uv_metrics, uv_metrics_bigint, callback });
+crate::host::startup_snapshot::host_snap_state!(State { counts, milestones, uv_metrics, uv_metrics_bigint, api, timeline });

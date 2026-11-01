@@ -5,7 +5,7 @@
 //! marks the signal and every dependent aborted first, then dispatches each one's trusted
 //! `abort` event in that order.
 use super::event_target_shared_vm::{
-    api, argument, attach_slot, custom_inspect, flag, get, install_members, install_tag_and_inspect, is_nullish,
+    api, argument, attach_slot, custom_inspect, flag, get, install_members, install_tag_and_inspect,
     is_undefined, put, put_flag, receiver_slot, require_new, slot, Member, Shallow,
 };
 use crate::host::NodeHost;
@@ -211,45 +211,14 @@ pub(crate) fn signal_throw_if_aborted(c: &mut Context<'_>, receiver: RootId, _: 
 /// `get onabort`: the handler, or null.
 pub(crate) fn signal_get_onabort(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let state = signal_slot(c, receiver)?;
-    let holder = get(c, state, field::HANDLER)?;
-    let handler = if is_undefined(c, holder) { holder } else { get(c, holder, field::HANDLER)? };
-    Ok(if is_nullish(c, handler) { c.null() } else { handler })
+    super::event_target_shared_vm::event_handler(c, state, field::HANDLER)
 }
 
-/// `set onabort(value)` (`defineEventHandler`): the first assignment registers a wrapper
-/// listener that calls the current handler; a later one keeps the wrapper's position, and the
-/// listener count follows whether the handler is a function.
 pub(crate) fn signal_set_onabort(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let state = signal_slot(c, receiver)?;
     let value = argument(c, args, 0);
-    let holder = get(c, state, field::HANDLER)?;
-    if is_undefined(c, holder) {
-        let holder = c.null_object_rooted()?;
-        put(c, holder, field::HANDLER, value)?;
-        put(c, state, field::HANDLER, holder)?;
-        let wrapper = c.host_function_named_with_data(crate::host::shared_vm::operation("eventHandlerInvoke"), "eventHandler", holder)?;
-        super::event_target_shared_vm::add_host_listener(c, receiver, ABORT_EVENT, wrapper, false, false)?;
-    } else {
-        let previous = get(c, holder, field::HANDLER)?;
-        if c.is_callable_rooted(previous)? {
-            super::event_target_shared_vm::adjust_size(c, receiver, ABORT_EVENT, -1.0)?;
-        }
-        put(c, holder, field::HANDLER, value)?;
-        if c.is_callable_rooted(value)? {
-            super::event_target_shared_vm::adjust_size(c, receiver, ABORT_EVENT, 1.0)?;
-        }
-    }
+    super::event_target_shared_vm::set_event_handler(c, receiver, state, field::HANDLER, ABORT_EVENT, value)?;
     Ok(c.undefined())
-}
-
-/// The event handler attribute's listener: calls the current handler, if a function.
-pub(crate) fn event_handler_invoke(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let holder = c.host_function_data()?;
-    let handler = get(c, holder, field::HANDLER)?;
-    if !c.is_callable_rooted(handler)? {
-        return Ok(c.undefined());
-    }
-    c.call_rooted(handler, receiver, args)
 }
 
 /// `AbortSignal.abort(reason)`.
