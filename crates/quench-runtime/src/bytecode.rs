@@ -783,6 +783,10 @@ opcodes!(
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
+    // `a` = the position among the `b` string constants from `imm` of the first strictly equal
+    // to register `c`, or `b` when none is: a string `switch`'s case selector, which a
+    // `WasmBranchTable` follows.
+    StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Register),
     MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),

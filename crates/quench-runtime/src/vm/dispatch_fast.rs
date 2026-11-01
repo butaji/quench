@@ -6504,6 +6504,20 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `StringCaseIndex`: the case a string `switch` selects (`Vm::string_case_index`) among
+    /// the run of constants the record's immediate starts, which the view checked lies in
+    /// the program's constants (`lane_operand`).
+    fn lane_string_case_index<>(cx, r, ip, i, view) {
+        let start = i.imm() as usize;
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
+        let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + usize::from(i.b)) };
+        let index = unsafe { vm(cx) }.string_case_index(r.get(i.c), cases);
+        r.set(i.a, Value::integer(index as i32));
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The strict operators `lane_jump_strict_constant_false` decides.
 const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
 
@@ -16392,6 +16406,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
+        Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
@@ -16599,6 +16614,12 @@ fn lane_operand(
             LaneOperand {
                 jump: distance.checked_mul(record)?,
             }
+        }
+        // A case selector reads its run of constants from the context by index.
+        ImmediateRole::ConstantIndex if instruction.op() == Op::StringCaseIndex => {
+            let start = instruction.imm() as usize;
+            constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
+            LaneOperand { imm: instruction.imm() }
         }
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,

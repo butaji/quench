@@ -649,6 +649,50 @@ print(out.join("|"));
 }
 
 #[test]
+fn string_switches_select_the_first_strictly_equal_case() {
+    // A switch whose every test is a string literal selects its clause by one
+    // `StringCaseIndex` and a branch table: the first equal case wins, a default anywhere
+    // takes the rest, clauses fall through, and only a string primitive matches, by text
+    // (ropes, slices, wide units) as `===` decides.
+    let source = r#"
+function kind(t) {
+  switch (t) {
+    case "div": return 1;
+    case "span": return 2;
+    case "a": case "b": return 3;
+    default: return 9;
+    case "span": return 4;
+    case "é": return 5;
+    case "": return 6;
+    case "x\u{1F600}": return 7;
+  }
+}
+const inputs = ["div", "span", "a", "b", "nope", "é", "", "x\u{1F600}", 1, null, undefined, new String("div"), {toString(){return "div"}}, "d" + "iv".slice(0), ["di", "v"].join(""), "spa" + "n".repeat(1)];
+const out = inputs.map(kind);
+function fall(t) {
+  const seen = [];
+  switch (t) {
+    case "one": seen.push(1);
+    case "two": seen.push(2); break;
+    case "three": { let x = 3; seen.push(x); }
+    case "four": seen.push(4);
+  }
+  return seen.join(",");
+}
+out.push(...["one","two","three","four","five"].map(fall));
+function noDefault(t) { let r = "none"; switch (t) { case "p": r = "P"; break; case "q": r = "Q"; break; case "r": r = "R"; break; case "s": r = "S"; } return r; }
+out.push(...["p","q","r","s","t", 5].map(noDefault));
+let big = ""; for (let i = 0; i < 20; i++) big += "x";
+function long(t) { switch (t) { case "xxxxxxxxxxxxxxxxxxxx": return "L"; case "xxxxxxxxxxxxxxxxxxxy": return "M"; case "y": return "Y"; case "z": return "Z"; default: return "D"; } }
+out.push(long(big), long(big.slice(0, 19) + "y"), long("z"));
+let hits = 0; for (let i = 0; i < 1000; i++) hits += kind(["div","span","li","a"][i & 3]);
+out.push(hits);
+print(JSON.stringify(out));
+"#;
+    assert_eq!(output(source), [r#"[1,2,3,3,9,5,6,7,9,9,9,9,9,1,1,2,"1,2","2","3,4","4","","P","Q","R","S","none","none","L","M","Z",3750]"#.to_string()]);
+}
+
+#[test]
 fn integer_stores_into_typed_arrays_wrap_and_clamp() {
     // An integer stored into an integer typed array writes its low bytes, a Uint8Clamped
     // clamps it, a float view converts it, and a store past the end writes nothing

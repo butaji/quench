@@ -410,6 +410,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The position among `cases`, string constants, of the first strictly equal to
+    /// `value`, or `cases.len()` when none is (`StringCaseIndex`). A program's equal string
+    /// constants share one cell, so the first match by identity or by text is the first case
+    /// whose `===` test holds.
+    #[inline]
+    pub(super) fn string_case_index(&self, value: Value, cases: &[Value]) -> u32 {
+        let position = self.heap.string(value).and_then(|text| {
+            cases.iter().position(|case| {
+                *case == value || self.heap.string(*case).is_some_and(|case| case == text)
+            })
+        });
+        position.unwrap_or(cases.len()) as u32
+    }
+
     #[inline(always)]
     pub(super) fn truthy(&self, v: Value) -> bool {
         v.truthiness().unwrap_or_else(|| self.heap_cell_truthy(v))
