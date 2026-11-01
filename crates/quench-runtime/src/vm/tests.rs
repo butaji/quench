@@ -16058,6 +16058,51 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
+    let source = r#"
+      function outer() {
+        let value = { n: 1 };
+        function read(collect) {
+          let seen;
+          for (let i = 0; i < 32; i++) {
+            seen = value;
+            if (collect && i === 7) $262.gc();
+          }
+          return seen.n;
+        }
+        for (let i = 0; i < 64; i++) if (read(i === 63) !== 1) throw Error('capture');
+        value = { n: 2 };
+        if (read(true) !== 2) throw Error('capture mutation');
+      }
+      outer();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-capture.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("read should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::LoadCapture).then_some(pc)
+    }).expect("capture read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
     let source = r#"
       function readThis() { const value = this.x; if (value === null) return null; return value; }

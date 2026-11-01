@@ -262,6 +262,8 @@ pub(crate) struct ValueLayout;
 impl ValueLayout {
     pub(crate) const TAG_MASK: u64 = TAG_MASK;
     pub(crate) const INT_TAG: u64 = TAG_INT;
+    /// Tag shared by TDZ and internal environment-slot markers.
+    pub(crate) const INTERNAL_TAG: u64 = TAG_DELETED;
     /// The tag of every heap reference (`Value::heap_index`).
     pub(crate) const HEAP_TAG: u64 = TAG_HEAP;
     /// Tag and family bits that distinguish a direct ordinary-array record.

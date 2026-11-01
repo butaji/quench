@@ -2828,6 +2828,15 @@ const SPARSE_ENTRIES_START: usize = 2;
 const SPARSE_ENTRY_WORDS: usize = 2;
 
 impl EnvironmentSlots {
+    /// A dense slot view for native reads. The caller must keep the environment live and
+    /// discard the pointer at a safepoint, where collection or mutation can replace storage.
+    pub(crate) fn native_dense_view(&self) -> Option<(*const Value, usize)> {
+        let dense = self.dense()?;
+        const { assert!(std::mem::size_of::<EnvironmentSlot>() == std::mem::size_of::<Value>()) };
+        const { assert!(std::mem::align_of::<EnvironmentSlot>() == std::mem::align_of::<Value>()) };
+        Some((dense.0.as_ptr().cast::<Value>(), dense.0.len()))
+    }
+
     /// The logical length and default owner of sparse storage.
     #[inline(always)]
     fn sparse(&self) -> Option<(usize, Value)> {

@@ -2354,6 +2354,45 @@ pub(super) fn lower_js_general_dispatch(
                         false
                     }
                 }
+                JsDenotation::CapturedValue
+                    if instruction.capture_depth() == 0
+                        && instruction.result_flags() == 0
+                        && !instruction.returns_from_frame()
+                        && !instruction.writes_current_this()
+                        && instruction.numeric_local_target().is_none() =>
+                {
+                    if let Some(destination) = register_offset(instruction.result_register()) {
+                        use crate::value::ValueLayout;
+                        let fallback = builder.create_block();
+                        let values = emit_js_payload_word(
+                            &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values),
+                        );
+                        let len = emit_js_payload_word(
+                            &mut builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len),
+                        );
+                        let slot = usize::from(instruction.capture_slot());
+                        let in_bounds = builder.ins().icmp_imm_u(
+                            IntCC::UnsignedGreaterThan, len, i64::try_from(slot).expect("capture slot fits i64"),
+                        );
+                        emit_js_guard(&mut builder, in_bounds, fallback);
+                        let offset = i32::try_from(slot * std::mem::size_of::<Value>())
+                            .expect("capture slot offset fits i32");
+                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
+                        let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+                        let ordinary = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::INTERNAL_TAG as i64);
+                        emit_js_guard(&mut builder, ordinary, fallback);
+                        builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+                        builder.ins().jump(next, &[]);
+                        builder.switch_to_block(fallback);
+                        emit_js_step_fallback(
+                            &mut builder, context, callout, callout_signature, result_pointer,
+                            stopped_block, continue_block, pc,
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                }
                 JsDenotation::PlainLocalStore
                     if instruction.result_flags() == 0
                         && !instruction.returns_from_frame()
@@ -6075,6 +6114,10 @@ struct JsStepDispatch {
     /// may move frames or initialize a derived constructor, so refresh this before
     /// returning to generated code. Direct field reads do not cross a safepoint.
     fixed_this_slot: *const Value,
+    /// Dense, function-owned capture slots for this frame and collection epoch. Refresh
+    /// after every semantic callout; generated reads do not cross a safepoint.
+    capture_values: *const Value,
+    capture_len: usize,
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
@@ -6160,6 +6203,7 @@ impl JsStepDispatch {
             native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
+            capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
@@ -6178,6 +6222,15 @@ impl JsStepDispatch {
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
             .map_or(std::ptr::null(), |frame| &frame.this as *const Value);
+        (self.capture_values, self.capture_len) = vm.frames.get(self.frame)
+            .and_then(|_| vm.current_capture_slots(self.frame))
+            .and_then(|(slots, root)| {
+                if root.is_some() { return None; }
+                // SAFETY: the cache is valid for this frame and collection epoch. The view
+                // is discarded and rebuilt after any callout that can mutate or collect.
+                unsafe { &*slots }.native_dense_view()
+            })
+            .unwrap_or((std::ptr::null(), 0));
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         let (values, len) = vm.heap.native_property_values();
@@ -6263,7 +6316,31 @@ pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
 const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
-fn native_field_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
+fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
+    if instruction.op() == Op::LoadCapture {
+        if instruction.capture_depth() != 0 {
+            return "capture-outer-depth";
+        }
+        let Some((slots, root)) = vm.current_capture_slots(frame) else {
+            return "capture-cache-miss";
+        };
+        // SAFETY: current_capture_slots checked the frame and collection epoch.
+        let slots = unsafe { &*slots };
+        return match slots.state(usize::from(instruction.capture_slot())) {
+            Some(crate::heap::EnvironmentSlotState::Owned(value)) if !value.is_deleted() => {
+                if vm.owned_capture(slots, root, instruction.capture_slot()).is_none() {
+                    "capture-root-projection"
+                } else if root.is_some() {
+                    "capture-root-owned"
+                } else {
+                    "capture-function-owned"
+                }
+            }
+            Some(crate::heap::EnvironmentSlotState::Owned(_)) => "capture-tdz",
+            Some(crate::heap::EnvironmentSlotState::Shared(_)) => "capture-shared",
+            None => "capture-slot-miss",
+        };
+    }
     if instruction.op() != Op::GetField {
         return "other";
     }
@@ -6428,7 +6505,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                 dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
                 body.name.or(body.inferred_name)
                     .and_then(|atom| program.atoms.get(atom as usize)),
-                || native_field_fallback_kind(vm, dispatch.frame, source_instruction),
+                || native_operation_fallback_kind(vm, dispatch.frame, source_instruction),
             );
             // SAFETY: linked code supplies resolved operands under the entry's
             // ABI contract; the source opcode check precedes all guest effects.
@@ -15797,7 +15874,7 @@ mod tests {
     #[test]
     fn linked_native_capture_cache_preserves_tdz_mutation_and_collection() {
         let (native, counts, _) = linked_test_program(
-            "function outer() { const read = () => value; let caught = false; try { read(); } catch (e) { caught = e instanceof ReferenceError; } if (!caught) throw 'tdz'; let value = {n: 1}; if (read() !== value) throw 'identity'; $262.gc(); value = {n: 2}; return read().n; } throw outer();",
+            "function outer() { const read = () => { let result; for (let i = 0; i < 32; i++) { result = value; if (i === 7) $262.gc(); } return result; }; let caught = false; try { read(); } catch (e) { caught = e instanceof ReferenceError; } if (!caught) throw 'tdz'; let value = {n: 1}; if (read() !== value) throw 'identity'; value = {n: 2}; return read().n; } throw outer();",
             false,
         );
         let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
