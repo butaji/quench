@@ -663,8 +663,8 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let transform = stream_class(c, "Transform")?;
     let writable = stream_class(c, "Writable")?;
     let mut built: Vec<(Class, RootId)> = Vec::new();
-    let lazy = hash::lazy_transform(c, transform)?;
-    let (hash, hmac) = crate::modules::crypto_hash_source_shared_vm::install(c, module, transform)?;
+    let lazy = crate::modules::crypto_lazy_transform::constructor(c, transform)?;
+    let (hash, hmac) = crate::modules::crypto_hash_source_shared_vm::install(c, module, lazy)?;
     built.extend([(Class::Hash, hash), (Class::Hmac, hmac)]);
     built.extend(cipher::build(c, lazy)?);
     built.extend(sign::build(c, writable)?);

@@ -57,6 +57,7 @@
     }
   });
   observe('hmac callable', () => Hmac('sha256', 'secret').update('abc').digest('hex'));
+  observe('shared lazy base', () => Object.getPrototypeOf(Hash) === Object.getPrototypeOf(api.Cipheriv));
   observe('shared methods', () => [Hash.prototype.update === Hmac.prototype.update, Hash.prototype._transform === Hmac.prototype._transform]);
   observe('constructor metadata', () => [api.Hash.name, api.Hash.length, api.Hmac.name, api.Hmac.length, createHash.name, createHash.length, createHmac.name, createHmac.length]);
   observe('prototypes', () => [Object.getPrototypeOf(api.Hash).name, Object.getPrototypeOf(api.Hash.prototype).constructor.name,

@@ -49,7 +49,3 @@ pub(crate) fn get_hashes(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcom
     let names = super::registered_names(super::Registry::Digests, |name| Digest::fetch_preserving_errors(name).is_some());
     super::string_array(c, &names)
 }
-
-pub(crate) fn lazy_transform(c: &mut Context<'_>, transform: RootId) -> Outcome {
-    crate::modules::crypto_lazy_transform::constructor(c, transform)
-}

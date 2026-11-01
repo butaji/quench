@@ -172,11 +172,11 @@ fn warn_implicit_length(
     Ok(())
 }
 
-/// Builds this policy with the caller's canonical Transform constructor.
+/// Builds this policy with the module's canonical LazyTransform constructor.
 pub(crate) fn install(
     c: &mut Context<'_>,
     public: RootId,
-    transform: RootId,
+    lazy: RootId,
 ) -> Result<(RootId, RootId), RootedError> {
     let data = c.null_object_rooted()?;
     let native = super::crypto_hash_shared_vm::binding(c, public, &[])?;
@@ -194,7 +194,6 @@ pub(crate) fn install(
         let symbol = c.symbol_rooted(Some(description));
         put(c, data, name, symbol)?;
     }
-    let lazy = super::crypto_lazy_transform::constructor(c, transform)?;
     put(c, data, LAZY_TRANSFORM, lazy)?;
     let lazy_prototype = get(c, lazy, "prototype")?;
     let operation = crate::host::shared_vm::operation;
