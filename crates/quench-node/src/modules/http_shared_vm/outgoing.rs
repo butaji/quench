@@ -195,8 +195,8 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         Member::SetTimeout => set_timeout(c, this, args),
         Member::Destroy => destroy(c, this, at(0)),
         Member::Send => {
-            let (data, encoding, callback, length) = (at(0), at(1), at(2), at(3));
-            let written = send(c, this, data, encoding, callback, length)?;
+            let (data, encoding, callback) = (at(0), at(1), at(2));
+            let written = send(c, this, data, encoding, callback)?;
             Ok(c.boolean(written))
         }
         Member::WriteRaw => {
@@ -898,7 +898,7 @@ pub(crate) fn store_header(c: &mut Context<'_>, this: RootId, first_line: String
     if state.expect {
         let empty = c.string_rooted("");
         let undefined = c.undefined();
-        send(c, this, empty, undefined, undefined, undefined)?;
+        send(c, this, empty, undefined, undefined)?;
     }
     Ok(())
 }
@@ -925,7 +925,7 @@ fn on_pending_data(c: &mut Context<'_>, this: RootId, length: f64) -> Result<(),
 }
 
 /// `_send(data, encoding, callback, byteLength)`: the first send carries the head.
-pub(crate) fn send(c: &mut Context<'_>, this: RootId, data: RootId, encoding: RootId, callback: RootId, _length: RootId) -> Result<bool, RootedError> {
+pub(crate) fn send(c: &mut Context<'_>, this: RootId, data: RootId, encoding: RootId, callback: RootId) -> Result<bool, RootedError> {
     let mut data = data;
     let header = get(c, this, "_header")?;
     if !truthy_member(c, this, "_headerSent")? && !is_null(c, header) && !is_undefined(c, header) {
@@ -1046,7 +1046,7 @@ fn flush_headers(c: &mut Context<'_>, this: RootId) -> Result<(), RootedError> {
     }
     let empty = c.string_rooted("");
     let undefined = c.undefined();
-    send(c, this, empty, undefined, undefined, undefined).map(drop)
+    send(c, this, empty, undefined, undefined).map(drop)
 }
 
 /// `onError(msg, err, callback)`: `callback(err)` then `error`, on the next tick.
@@ -1152,12 +1152,12 @@ fn write_chunk(c: &mut Context<'_>, this: RootId, chunk: RootId, encoding: RootI
     if truthy_member(c, this, "chunkedEncoding")? && data_length(c, chunk)? != 0.0 {
         let size = c.string_rooted(&format!("{}{CRLF}", to_radix(length as u64, CHUNK_SIZE_RADIX)));
         let latin1 = c.string_rooted("latin1");
-        send(c, this, size, latin1, undefined, undefined)?;
-        send(c, this, chunk, encoding, undefined, undefined)?;
+        send(c, this, size, latin1, undefined)?;
+        send(c, this, chunk, encoding, undefined)?;
         let crlf = c.string_rooted(CRLF);
-        send(c, this, crlf, latin1, callback, undefined)
+        send(c, this, crlf, latin1, callback)
     } else {
-        send(c, this, chunk, encoding, callback, undefined)
+        send(c, this, chunk, encoding, callback)
     }
 }
 
@@ -1235,15 +1235,14 @@ fn end(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     }
     let finish = function(c, Member::OnFinish, "", &[this])?;
     let latin1 = c.string_rooted("latin1");
-    let undefined = c.undefined();
     if truthy_member(c, this, "_hasBody")? && truthy_member(c, this, "chunkedEncoding")? {
         let trailer = get(c, this, "_trailer")?;
         let trailer = c.to_string(trailer)?;
         let last = c.string_rooted(&format!("0{CRLF}{trailer}{CRLF}"));
-        send(c, this, last, latin1, finish, undefined)?;
+        send(c, this, last, latin1, finish)?;
     } else if !truthy_member(c, this, "_headerSent")? || number(c, this, "writableLength")? > 0.0 || has_chunk {
         let empty = c.string_rooted("");
-        send(c, this, empty, latin1, finish, undefined)?;
+        send(c, this, empty, latin1, finish)?;
     } else {
         next_tick(c, finish, &[])?;
     }

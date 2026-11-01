@@ -138,7 +138,7 @@ pub(crate) enum Class {
 }
 
 impl Class {
-    const COUNT: usize = 19;
+    const COUNT: usize = Class::FreeSocketError as usize + 1;
 }
 
 /// `Number.MAX_SAFE_INTEGER`, the bound of Node's integer option validation.

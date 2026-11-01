@@ -259,9 +259,10 @@ fn configure_secure_context(
             )?);
         };
         if bytes.len() != TICKET_KEYS_LENGTH {
+            let length = context.number(bytes.len() as f64);
             return Err(super::super::util_shared_vm::argument_value_error(
                 context,
-                ticket_keys,
+                length,
                 "options.ticketKeys",
                 "must be exactly 48 bytes",
             )?);

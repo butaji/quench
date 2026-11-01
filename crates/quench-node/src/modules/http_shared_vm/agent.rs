@@ -51,7 +51,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Outcome {
     super::inherit(c, class, emitter)?;
     put_number(c, class, "defaultMaxSockets", f64::INFINITY)?;
     let prototype = get(c, class, "prototype")?;
-    let net = class_net(c)?;
+    let net = super::class(c, Class::Net)?;
     let create_connection = get(c, net, "createConnection")?;
     let key = c.string_rooted("createConnection");
     c.define_data_property_rooted(prototype, key, create_connection, true, true, true)?;
@@ -67,10 +67,6 @@ pub(crate) fn build(c: &mut Context<'_>) -> Outcome {
     let listener = function(c, Member::FreeSocketError, "freeSocketErrorListener", &[])?;
     super::set_class(c, Class::FreeSocketError, listener)?;
     Ok(class)
-}
-
-fn class_net(c: &mut Context<'_>) -> Outcome {
-    class(c, Class::Net)
 }
 
 /// `new Agent({ keepAlive: true, scheduling: 'lifo', timeout: 5000 })`.
@@ -422,7 +418,7 @@ fn server_name(c: &mut Context<'_>, options: RootId, request: RootId) -> Outcome
     } else {
         get(c, options, "host")?
     };
-    let net = class_net(c)?;
+    let net = class(c, Class::Net)?;
     let is_ip = call_method(c, net, "isIP", &[name])?;
     if c.truthy_rooted(is_ip)? {
         return Ok(c.string_rooted(""));
