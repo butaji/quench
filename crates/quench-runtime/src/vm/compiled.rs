@@ -6868,10 +6868,6 @@ impl<H: Host> Vm<H> {
         };
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize))?;
-        // Until calls stay native (TOD-1219), a body that calls leaves at every call it does
-        // not inline and pays its entry again in each callee's return; it runs cheaper in
-        // the lane.
-
         let caller_fields = self.lane_receiver_fields(program, function);
         let callee_fields: Vec<_> = unit.frames.iter().map(|frame| self.lane_receiver_fields(program, frame.target.function)).collect();
         let receiver_fields: Vec<Vec<NativeFieldLoad>> = unit
