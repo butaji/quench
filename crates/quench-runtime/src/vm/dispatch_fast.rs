@@ -6928,12 +6928,14 @@ fn lane_loop_run<H: Host>(
                 array.elements().iter().take(LOOP_TIER_ELEMENT_SAMPLE).all(|value| value.as_int().is_some())
             })
         };
+        let only_int32 = |register| heap.record_array(array_value(register)).is_some_and(|array| array.elements().holds_only_int32());
         // An inlined callee's register is no register of the running activation: it holds
         // nothing at entry.
         let caller_registers = region.inlining.as_ref().map_or(Register::MAX, |inlining| inlining.caller_registers);
         let observation = super::compiled::Observation {
             register: &|register| if register < caller_registers { r.get(register) } else { Value::UNDEFINED },
             int32_elements: &int32_elements,
+            only_int32: &only_int32,
             captures: &captures,
             fields: &fields,
             native_field_loads: &native_field_loads,

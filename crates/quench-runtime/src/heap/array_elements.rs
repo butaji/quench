@@ -187,6 +187,11 @@ impl ArrayElements {
         self.header().capacity as usize
     }
 
+    /// Whether every value is an int32 (so none is a hole).
+    pub(crate) fn holds_only_int32(&self) -> bool {
+        self.header().others == 0
+    }
+
 
     /// Whether this array alone owns its backing, so writes reach no other array.
     #[inline(always)]
@@ -560,12 +565,6 @@ mod tests {
         };
         assert_eq!(current_values, (&*shared).as_ptr());
         assert_eq!(shared.len(), 3);
-    }
-
-    impl ArrayElements {
-        fn holds_only_int32(&self) -> bool {
-            self.header().others == 0
-        }
     }
 
     #[test]

@@ -2355,6 +2355,9 @@ pub(crate) struct Observation<'a> {
     pub(crate) register: &'a dyn Fn(Register) -> Value,
     /// Whether the array in a register looks to hold `i32` elements.
     pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
+    /// Whether the array in a register holds only int32s now, so that entry may prove it
+    /// with one load (`Lowering::prove_int32_kinds`).
+    pub(crate) only_int32: &'a dyn Fn(Register) -> bool,
     pub(crate) captures: &'a [Value],
     /// The fields' values at the entry the compilation follows, in the region's order.
     pub(crate) fields: &'a [Value],
@@ -4187,9 +4190,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// Proves at entry, with one load of each array's count of values that are not int32s
     /// (`crate::heap::OTHERS_FROM_VALUES`), that each array the region reads as `i32`s holds
     /// only int32s, when every store of the region stores an `i32` (so each stays one,
-    /// whichever array it writes): the reads then take the payload with no tag guard. An
-    /// array that held others at an entry keeps guarded int32 reads from the next
-    /// compilation (`Widening::Kind`). A region that stores other values marks each array it
+    /// whichever array it writes): the reads then take the payload with no tag guard. Only
+    /// an array holding only int32s as the region compiles is proved, so an array still
+    /// being filled costs no recompilation; one that held others at a later entry keeps
+    /// guarded int32 reads from the next compilation (`Widening::Kind`). A region that stores other values marks each array it
     /// writes as holding uncounted ones before any store (`demote_written_kinds`).
     fn prove_int32_kinds(&mut self) {
         let region = self.region;
@@ -4214,7 +4218,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
             })
             .filter_map(|instruction| instruction.operand_b().register_index())
             .filter(|register| {
-                !self.resident.arrays.contains_key(register) && !self.observation.widened.contains(&Widening::Kind(*register))
+                !self.resident.arrays.contains_key(register)
+                    && (self.observation.only_int32)(*register)
+                    && !self.observation.widened.contains(&Widening::Kind(*register))
             })
             .collect();
         for register in read_int32 {
@@ -6393,7 +6399,7 @@ mod tests {
         assert_eq!(values.find(values.leaves[&(3, 1)]), values.defined(&region, 2));
         let widened = std::collections::BTreeSet::from([Widening::Register(1)]);
         let observation = Observation {
-            register: &|_| Value::number(1.0), int32_elements: &|_| true,
+            register: &|_| Value::number(1.0), int32_elements: &|_| true, only_int32: &|_| true,
             captures: &[], fields: &[], native_field_loads: &[], widened: &widened,
         };
         let (representations, _) = representations(&region, &values, &observation);
