@@ -20,14 +20,14 @@ const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
 
 /// The predicates `StatsBase.prototype` and `Dirent.prototype` share, with the `S_IFMT` type
 /// each tests and the `UV_DIRENT_*` type a directory entry carries.
-pub(crate) const TYPE_PREDICATES: [(&str, u32, i32); 7] = [
-    ("isDirectory", libc::S_IFDIR as u32, super::UV_DIRENT_DIR),
-    ("isFile", libc::S_IFREG as u32, super::UV_DIRENT_FILE),
-    ("isBlockDevice", libc::S_IFBLK as u32, super::UV_DIRENT_BLOCK),
-    ("isCharacterDevice", libc::S_IFCHR as u32, super::UV_DIRENT_CHAR),
-    ("isSymbolicLink", libc::S_IFLNK as u32, super::UV_DIRENT_LINK),
-    ("isFIFO", libc::S_IFIFO as u32, super::UV_DIRENT_FIFO),
-    ("isSocket", libc::S_IFSOCK as u32, super::UV_DIRENT_SOCKET),
+pub(crate) const TYPE_PREDICATES: [(&str, libc::mode_t, i32); 7] = [
+    ("isDirectory", libc::S_IFDIR, super::UV_DIRENT_DIR),
+    ("isFile", libc::S_IFREG, super::UV_DIRENT_FILE),
+    ("isBlockDevice", libc::S_IFBLK, super::UV_DIRENT_BLOCK),
+    ("isCharacterDevice", libc::S_IFCHR, super::UV_DIRENT_CHAR),
+    ("isSymbolicLink", libc::S_IFLNK, super::UV_DIRENT_LINK),
+    ("isFIFO", libc::S_IFIFO, super::UV_DIRENT_FIFO),
+    ("isSocket", libc::S_IFSOCK, super::UV_DIRENT_SOCKET),
 ];
 
 /// A stat result: the kernel's integer fields and its times in nanoseconds.

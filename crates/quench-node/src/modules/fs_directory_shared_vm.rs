@@ -275,6 +275,21 @@ fn error_at(
     };
     fs::failure::system(c, &error, fs::failure::Syscall::at("scandir", &path.to_string_lossy()))
 }
+/// `binding.writeFileUtf8(path | fd, data, flags, mode)`: `data`'s UTF-8 bytes, the whole
+/// file, with policy already applied by the caller.
+pub(crate) fn write_file_utf8(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let argument = |c: &mut Context<'_>, index: usize| args.get(index).copied().unwrap_or_else(|| c.undefined());
+    let (target, data, flags, mode) = (argument(c, 0), argument(c, 1), argument(c, 2), argument(c, 3));
+    let file = fs::ops::file_argument(c, target)?;
+    let bytes = c
+        .string_utf8(data)?
+        .ok_or_else(|| RootedError::host("internal fs.writeFileUtf8 requires string data"))?;
+    let flags = c.to_number(flags)? as i32;
+    let mode = c.to_number(mode)? as u32;
+    fs::ops::write_whole(c, &file, &bytes, flags, mode, false)?;
+    Ok(c.undefined())
+}
+
 pub(crate) fn readdir(
     c: &mut Context<'_>,
     _: RootId,

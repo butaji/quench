@@ -52,6 +52,9 @@ pub(crate) enum Reply {
     Descriptor(i32),
     /// A read or write: the bytes moved, and the buffer (or buffers, or string) involved.
     Transfer { count: usize, data: RootId, kind: Transfer },
+    /// A value an `AbortSignal` still cancels until it is delivered: Node's reads and writes
+    /// check the signal between their asynchronous steps.
+    Abortable { value: RootId, signal: RootId },
 }
 
 /// An operation's call: `Err` is an argument error, which the sync and callback APIs throw;
@@ -96,13 +99,13 @@ pub(crate) fn run(c: &mut Context<'_>, op: Op, flavor: Flavor, args: &[RootId]) 
         Flavor::Callback => {
             let (args, callback) = split_callback(c, op, args)?;
             let outcome = op.call(c, args, flavor)?;
-            let values = match attempt(outcome)? {
+            let (values, signal) = match attempt(outcome)? {
                 Ok(reply) => callback_values(c, reply),
-                Err(error) => vec![error],
+                Err(error) => (vec![error], None),
             };
-            match callback {
-                Some(callback) => super::streams::complete(c, callback, &values)?,
-                None => {}
+            if let Some(callback) = callback {
+                let callback = guarded(c, callback, signal, false)?;
+                super::streams::complete(c, callback, &values)?;
             }
             Ok(c.undefined())
         }
@@ -112,11 +115,12 @@ pub(crate) fn run(c: &mut Context<'_>, op: Op, flavor: Flavor, args: &[RootId]) 
                 Ok(outcome) => outcome,
                 Err(error) => Err(error),
             };
-            let settled = match attempt(outcome)? {
-                Ok(reply) => attempt(project_promise(c, reply))?,
-                Err(error) => Err(error),
+            let (settled, signal) = match attempt(outcome)? {
+                Ok(Reply::Abortable { value, signal }) => (Ok(value), Some(signal)),
+                Ok(reply) => (attempt(project_promise(c, reply))?, None),
+                Err(error) => (Err(error), None),
             };
-            settle_later(c, promise, settled)?;
+            settle_guarded(c, promise, settled, signal)?;
             Ok(promise)
         }
     }
@@ -124,13 +128,47 @@ pub(crate) fn run(c: &mut Context<'_>, op: Op, flavor: Flavor, args: &[RootId]) 
 
 /// Settle `promise` from the immediate queue, as a completion arriving after this turn.
 pub(crate) fn settle_later(c: &mut Context<'_>, promise: RootId, outcome: Result<RootId, RootId>) -> Result<(), RootedError> {
+    settle_guarded(c, promise, outcome, None)
+}
+
+fn settle_guarded(c: &mut Context<'_>, promise: RootId, outcome: Result<RootId, RootId>, signal: Option<RootId>) -> Result<(), RootedError> {
     let settle = c.host_function_with_data(crate::host::shared_vm::operation("fsSettle"), promise)?;
+    let settle = guarded(c, settle, signal, true)?;
     let (rejected, value) = match outcome {
         Ok(value) => (false, value),
         Err(error) => (true, error),
     };
     let rejected = c.boolean(rejected);
     super::streams::complete(c, settle, &[rejected, value])
+}
+
+/// `deliver`, or a delivery that reports an `AbortError` instead once `signal` aborted:
+/// as `(error)` to a callback, as `(true, error)` to a promise's settlement.
+fn guarded(c: &mut Context<'_>, deliver: RootId, signal: Option<RootId>, settles: bool) -> Outcome {
+    let Some(signal) = signal else {
+        return Ok(deliver);
+    };
+    let settles = c.boolean(settles);
+    crate::modules::stream_shared_vm::closure(c, "fsAbortGuard", "", &[deliver, signal, settles])
+}
+
+/// The delivery `guarded` wraps.
+pub(crate) fn abort_guard(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let [deliver, signal, settles] = crate::modules::stream_shared_vm::captures::<3>(c)?;
+    let aborted = crate::modules::stream_shared_vm::get(c, signal, "aborted")?;
+    let undefined = c.undefined();
+    if !c.truthy_rooted(aborted)? {
+        return c.call_rooted(deliver, undefined, args);
+    }
+    let failure = super::failure::aborted(c, signal);
+    let Some(error) = failure.exception else {
+        return Err(failure);
+    };
+    if c.truthy_rooted(settles)? {
+        let rejected = c.boolean(true);
+        return c.call_rooted(deliver, undefined, &[rejected, error]);
+    }
+    c.call_rooted(deliver, undefined, &[error])
 }
 
 /// The completion `settle_later` queued: `(rejected, value)`.
@@ -171,27 +209,33 @@ fn project_sync(c: &mut Context<'_>, reply: Reply) -> Outcome {
         Reply::Exists(exists) => c.boolean(exists),
         Reply::Descriptor(fd) => c.number(f64::from(fd)),
         Reply::Transfer { count, .. } => c.number(count as f64),
+        Reply::Abortable { value, .. } => value,
     })
 }
 
 /// A reply as a callback's arguments: `(null)` for nothing, `(null, value)`, `(exists)` or
-/// `(null, count, data)`.
-fn callback_values(c: &mut Context<'_>, reply: Reply) -> Vec<RootId> {
+/// `(null, count, data)`, with the signal that may still cancel it.
+fn callback_values(c: &mut Context<'_>, reply: Reply) -> (Vec<RootId>, Option<RootId>) {
     let null = c.null();
-    match reply {
+    let values = match reply {
+        Reply::Abortable { value, signal } => {
+            let (values, _) = callback_values(c, Reply::Value(value));
+            return (values, Some(signal));
+        }
         Reply::Value(value) if c.rooted_value(value).is_some_and(|value| value.is_undefined()) => vec![null],
         Reply::Value(value) => vec![null, value],
         Reply::Exists(exists) => vec![c.boolean(exists)],
         Reply::Descriptor(fd) => vec![null, c.number(f64::from(fd))],
         Reply::Transfer { count, data, .. } => vec![null, c.number(count as f64), data],
-    }
+    };
+    (values, None)
 }
 
 /// A reply as a promise's value: a descriptor becomes a `FileHandle`, a transfer an object
 /// `{ __proto__: null, bytesRead, buffer }`.
 fn project_promise(c: &mut Context<'_>, reply: Reply) -> Outcome {
     match reply {
-        Reply::Value(value) => Ok(value),
+        Reply::Value(value) | Reply::Abortable { value, .. } => Ok(value),
         Reply::Exists(exists) => Ok(c.boolean(exists)),
         Reply::Descriptor(fd) => super::file_handle::create(c, fd),
         Reply::Transfer { count, data, kind } => {

@@ -671,7 +671,7 @@ fn realpath(c: &mut Context<'_>, args: &[RootId], native: bool) -> Call {
         Err(error) if !native => {
             let cwd = c.host_mut().shared_state().borrow().cwd.clone();
             let cwd = cwd.current_path().map_err(|error| RootedError::host(error.to_string()))?;
-            let absolute = crate::modules::path_algorithms::posix::resolve_strings(&[path.shown.clone()], &cwd.to_string_lossy());
+            let absolute = crate::modules::path_algorithms::posix::resolve_strings(std::slice::from_ref(&path.shown), &cwd.to_string_lossy());
             match failing_prefix(Path::new(&absolute)) {
                 Some((syscall, prefix, error)) => Err(failure::system(c, &error, Syscall::at(syscall, &prefix.to_string_lossy()))),
                 None => Err(failure::system(c, &error, Syscall::at("lstat", &absolute))),
@@ -1009,14 +1009,10 @@ pub(crate) fn file_argument(c: &mut Context<'_>, value: RootId) -> Result<FileAr
     Ok(FileArgument::Path(args::path(c, value, "path")?))
 }
 
-/// `options.signal`, if it is aborted.
-fn aborted(c: &mut Context<'_>, options: RootId) -> Result<Option<RootId>, RootedError> {
-    let signal = get(c, options, "signal")?;
-    if is_undefined(c, signal) {
-        return Ok(None);
-    }
+/// Whether `signal` is aborted.
+fn aborted(c: &mut Context<'_>, signal: RootId) -> Result<bool, RootedError> {
     let aborted = get(c, signal, "aborted")?;
-    Ok(c.truthy_rooted(aborted)?.then_some(signal))
+    c.truthy_rooted(aborted)
 }
 
 /// Every byte from the descriptor's offset to its end, within `kIoMaxLength`.
@@ -1055,10 +1051,9 @@ fn read_file(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> Call {
     let flags = args::flags(c, flag, "r")?;
     let file = file_argument(c, args[0])?;
     let encoding = args::encoding(c, options, Encoding::Buffer)?;
-    if flavor != Flavor::Sync {
-        if let Some(signal) = aborted(c, options)? {
-            return Ok(Err(failure::aborted(c, signal)));
-        }
+    let signal = get(c, options, "signal")?;
+    if flavor != Flavor::Sync && !is_undefined(c, signal) && aborted(c, signal)? {
+        return Ok(Err(failure::aborted(c, signal)));
     }
     let bytes = read_whole(c, &file, flags);
     Ok(bytes
@@ -1066,7 +1061,12 @@ fn read_file(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> Call {
             Encoding::Buffer => unsafe_buffer(c, &bytes),
             Encoding::Text(_) => encoding.project(c, bytes),
         })
-        .map(Reply::Value))
+        .map(|value| abortable(c, value, signal)))
+}
+
+/// `value`, cancelled when `signal` aborts before it is delivered.
+fn abortable(c: &mut Context<'_>, value: RootId, signal: RootId) -> Reply {
+    if is_undefined(c, signal) { Reply::Value(value) } else { Reply::Abortable { value, signal } }
 }
 
 /// `Buffer.allocUnsafe(bytes.length)` holding `bytes`: the buffer Node's `readFile` returns,
@@ -1133,8 +1133,10 @@ fn write_file(c: &mut Context<'_>, args: &[RootId], append: bool) -> Call {
     let mode = args::mode(c, mode, "mode", Some(DEFAULT_FILE_MODE))?;
     let encoding = get(c, options, "encoding")?;
     let bytes = data_bytes(c, args[1], encoding)?;
-    if let Some(signal) = aborted(c, options)? {
+    let signal = get(c, options, "signal")?;
+    if !is_undefined(c, signal) && aborted(c, signal)? {
         return Ok(Err(failure::aborted(c, signal)));
     }
-    Ok(write_whole(c, &file, &bytes, flags, mode, flush).and_then(|()| nothing(c)))
+    let undefined = c.undefined();
+    Ok(write_whole(c, &file, &bytes, flags, mode, flush).map(|()| abortable(c, undefined, signal)))
 }

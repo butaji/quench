@@ -71,7 +71,7 @@ pub(crate) fn cp(c: &mut Context<'_>, call_args: &[RootId], sync: bool) -> Call 
     let source = args::path(c, call_args[0], "src")?;
     let destination = args::path(c, call_args[1], "dest")?;
     let copy = Copy { options };
-    Ok(copy.entry(c, &source, &destination).and_then(|()| Ok(Reply::Value(c.undefined()))))
+    Ok(copy.entry(c, &source, &destination).map(|()| Reply::Value(c.undefined())))
 }
 
 /// The conditions a copy refuses, each reported in the binding's or the library's form.
