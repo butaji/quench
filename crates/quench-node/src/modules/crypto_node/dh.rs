@@ -2,7 +2,7 @@
 //! `getCurves()`.
 
 use super::errors::{self, CryptoError};
-use super::{arg, attach, construct_if_called, define_methods, get, with_native, Class, Context, Members, Native, Outcome};
+use super::{arg, attach, construct_if_called, define_methods, get, put, with_native, Class, Context, Members, Native, Outcome};
 use openssl::bn::{BigNum, BigNumContext, BigNumRef};
 use openssl::ec::{EcGroup, EcKey, EcPoint, PointConversionForm};
 use openssl::nid::Nid;
@@ -375,35 +375,60 @@ pub(crate) fn dh_generate_keys(c: &mut Context<'_>, this: RootId, args: &[RootId
     dh_get_public_key(c, this, args)
 }
 
-fn dh_value(c: &mut Context<'_>, this: RootId, encoding: RootId, missing: &'static str, read: fn(&DiffieHellman) -> Option<Vec<u8>>) -> Outcome {
-    match dh(c, this, |state| read(state))? {
+/// The values a DiffieHellman party reads back.
+#[derive(Clone, Copy)]
+enum Field {
+    Prime,
+    Generator,
+    PublicKey,
+    PrivateKey,
+}
+
+impl Field {
+    fn value(self, state: &DiffieHellman) -> Option<&BigNum> {
+        match self {
+            Self::Prime => Some(&state.prime),
+            Self::Generator => Some(&state.generator),
+            Self::PublicKey => state.public.as_ref(),
+            Self::PrivateKey => state.private.as_ref(),
+        }
+    }
+
+    /// The error a missing key reports.
+    fn missing(self) -> &'static str {
+        match self {
+            Self::PublicKey => "No public key - did you forget to generate one?",
+            _ => "No private key - did you forget to generate one?",
+        }
+    }
+}
+
+fn dh_field(c: &mut Context<'_>, this: RootId, args: &[RootId], field: Field) -> Outcome {
+    let encoding = arg(c, args, 0);
+    match dh(c, this, |state| field.value(state).map(|value| value.to_vec()))? {
         Some(bytes) => encode(c, bytes, encoding),
-        None => Err(errors::throw(c, CryptoError::InvalidStateMessage(missing))),
+        None => Err(errors::throw(c, CryptoError::InvalidStateMessage(field.missing()))),
     }
 }
 
 /// `dh.getPrime([encoding])`.
 pub(crate) fn dh_get_prime(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let encoding = arg(c, args, 0);
-    dh_value(c, this, encoding, "", |state| Some(state.prime.to_vec()))
+    dh_field(c, this, args, Field::Prime)
 }
 
 /// `dh.getGenerator([encoding])`.
 pub(crate) fn dh_get_generator(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let encoding = arg(c, args, 0);
-    dh_value(c, this, encoding, "", |state| Some(state.generator.to_vec()))
+    dh_field(c, this, args, Field::Generator)
 }
 
 /// `dh.getPublicKey([encoding])`.
 pub(crate) fn dh_get_public_key(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let encoding = arg(c, args, 0);
-    dh_value(c, this, encoding, "No public key - did you forget to generate one?", |state| state.public.as_ref().map(|value| value.to_vec()))
+    dh_field(c, this, args, Field::PublicKey)
 }
 
 /// `dh.getPrivateKey([encoding])`.
 pub(crate) fn dh_get_private_key(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    let encoding = arg(c, args, 0);
-    dh_value(c, this, encoding, "No private key - did you forget to generate one?", |state| state.private.as_ref().map(|value| value.to_vec()))
+    dh_field(c, this, args, Field::PrivateKey)
 }
 
 fn dh_set(c: &mut Context<'_>, this: RootId, args: &[RootId], private: bool) -> Outcome {
@@ -465,37 +490,46 @@ pub(crate) fn dh_compute_secret(c: &mut Context<'_>, this: RootId, args: &[RootI
 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
     let shared = [
-        ("generateKeys", "cryptoDhGenerateKeys"),
-        ("computeSecret", "cryptoDhComputeSecret"),
-        ("getPrime", "cryptoDhGetPrime"),
-        ("getGenerator", "cryptoDhGetGenerator"),
-        ("getPublicKey", "cryptoDhGetPublicKey"),
-        ("getPrivateKey", "cryptoDhGetPrivateKey"),
+        ("generateKeys", "cryptoDhGenerateKeys", "dhGenerateKeys"),
+        ("computeSecret", "cryptoDhComputeSecret", "dhComputeSecret"),
+        ("getPrime", "cryptoDhGetPrime", "dhGetPrime"),
+        ("getGenerator", "cryptoDhGetGenerator", "dhGetGenerator"),
+        ("getPublicKey", "cryptoDhGetPublicKey", "dhGetPublicKey"),
+        ("getPrivateKey", "cryptoDhGetPrivateKey", "dhGetPrivateKey"),
     ];
     let diffie_hellman = c.host_constructor_named(crate::host::shared_vm::operation("cryptoDiffieHellmanConstructor"), "DiffieHellman")?;
     let prototype = get(c, diffie_hellman, "prototype")?;
-    define_methods(c, prototype, &shared, Members::Assigned)?;
+    define_named_methods(c, prototype, &shared)?;
     define_methods(c, prototype, &[("setPublicKey", "cryptoDhSetPublicKey"), ("setPrivateKey", "cryptoDhSetPrivateKey")], Members::Assigned)?;
     let group = c.host_constructor_named(crate::host::shared_vm::operation("cryptoDiffieHellmanGroupConstructor"), "DiffieHellmanGroup")?;
     let prototype = get(c, group, "prototype")?;
-    define_methods(c, prototype, &shared, Members::Assigned)?;
+    define_named_methods(c, prototype, &shared)?;
     let ecdh = c.host_constructor_named(crate::host::shared_vm::operation("cryptoEcdhConstructor"), "ECDH")?;
     let prototype = get(c, ecdh, "prototype")?;
-    define_methods(
+    define_named_methods(
         c,
         prototype,
         &[
-            ("computeSecret", "cryptoEcdhComputeSecret"),
-            ("setPrivateKey", "cryptoEcdhSetPrivateKey"),
-            ("setPublicKey", "cryptoEcdhSetPublicKey"),
-            ("getPrivateKey", "cryptoEcdhGetPrivateKey"),
-            ("generateKeys", "cryptoEcdhGenerateKeys"),
-            ("getPublicKey", "cryptoEcdhGetPublicKey"),
+            ("computeSecret", "cryptoEcdhComputeSecret", "dhComputeSecret"),
+            ("setPrivateKey", "cryptoEcdhSetPrivateKey", "setPrivateKey"),
+            ("setPublicKey", "cryptoEcdhSetPublicKey", "setPublicKey"),
+            ("getPrivateKey", "cryptoEcdhGetPrivateKey", "dhGetPrivateKey"),
+            ("generateKeys", "cryptoEcdhGenerateKeys", "generateKeys"),
+            ("getPublicKey", "cryptoEcdhGetPublicKey", "getPublicKey"),
         ],
-        Members::Assigned,
     )?;
     define_methods(c, ecdh, &[("convertKey", "cryptoEcdhConvertKey")], Members::Assigned)?;
     Ok(vec![(Class::DiffieHellman, diffie_hellman), (Class::DiffieHellmanGroup, group), (Class::Ecdh, ecdh)])
+}
+
+/// Prototype methods Node shares between classes under their first owner's name:
+/// `(member, host operation, function name)`.
+fn define_named_methods(c: &mut Context<'_>, target: RootId, methods: &[(&str, &str, &str)]) -> Result<(), RootedError> {
+    for &(member, operation, name) in methods {
+        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        put(c, target, member, function)?;
+    }
+    Ok(())
 }
 
 /// `crypto.createECDH(curve)`.

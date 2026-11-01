@@ -12,6 +12,9 @@ unsafe extern "C" {
     fn X509_check_private_key(certificate: *const openssl_sys::X509, key: *const openssl_sys::EVP_PKEY) -> std::ffi::c_int;
 }
 
+/// Room for one dotted OID's text.
+const OID_TEXT_BYTES: usize = 128;
+
 /// A parsed certificate.
 pub(crate) struct Certificate(X509);
 
@@ -116,6 +119,9 @@ const FIELDS: [(&str, Field); 17] = [
     ("ca", Field::Ca),
 ];
 
+/// Where `ca` falls among the prototype's members: after `toJSON`.
+const CA_FIELD: usize = 16;
+
 /// One getter: the field its data names.
 pub(crate) fn field(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     let index = c.host_function_data()?;
@@ -168,7 +174,7 @@ fn key_usage(c: &mut Context<'_>, cert: &X509Ref) -> Outcome {
         let count = openssl_sys::OPENSSL_sk_num(usages.cast());
         for index in 0..count {
             let object = openssl_sys::OPENSSL_sk_value(usages.cast(), index) as *const openssl_sys::ASN1_OBJECT;
-            let mut buffer = [0 as std::ffi::c_char; 128];
+            let mut buffer = [0 as std::ffi::c_char; OID_TEXT_BYTES];
             let length = openssl_sys::OBJ_obj2txt(buffer.as_mut_ptr(), buffer.len() as i32, object, 1);
             if length > 0 {
                 let text = std::ffi::CStr::from_ptr(buffer.as_ptr()).to_string_lossy().into_owned();
@@ -341,7 +347,8 @@ pub(crate) fn verify(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
     let constructor = c.host_constructor_named(crate::host::shared_vm::operation("cryptoX509Constructor"), "X509Certificate")?;
     let prototype = get(c, constructor, "prototype")?;
-    for (index, (name, _)) in FIELDS.iter().enumerate() {
+    let define_field = |c: &mut Context<'_>, index: usize| -> Result<(), RootedError> {
+        let name = FIELDS[index].0;
         let data = c.number(index as f64);
         let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoX509Field"), &format!("get {name}"), data)?;
         let key = c.string_rooted(name);
@@ -353,13 +360,17 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
             ..quench_runtime::DescriptorFields::default()
         };
         c.define_property_fields_rooted(prototype, key, fields)?;
+        Ok(())
+    };
+    for index in 0..CA_FIELD {
+        define_field(c, index)?;
     }
+    define_methods(c, prototype, &[("toString", "cryptoX509ToString"), ("toJSON", "cryptoX509ToString")], Members::Declared)?;
+    define_field(c, CA_FIELD)?;
     define_methods(
         c,
         prototype,
         &[
-            ("toString", "cryptoX509ToString"),
-            ("toJSON", "cryptoX509ToString"),
             ("checkHost", "cryptoX509CheckHostApi"),
             ("checkEmail", "cryptoX509CheckEmail"),
             ("checkIP", "cryptoX509CheckIp"),

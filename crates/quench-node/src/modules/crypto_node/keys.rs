@@ -370,16 +370,13 @@ fn base64url_field(c: &mut Context<'_>, jwk: RootId, name: &str) -> Result<Optio
 const RSA_FIELDS: [&str; 8] = ["n", "e", "d", "p", "q", "dp", "dq", "qi"];
 /// The members of an RSA public JWK: the first of `RSA_FIELDS`.
 const RSA_PUBLIC_FIELDS: usize = 2;
-const OKP_CURVES: [&str; 4] = ["Ed25519", "Ed448", "X25519", "X448"];
 const EC_CURVES: [&str; 4] = ["P-256", "secp256k1", "P-384", "P-521"];
 
-/// The raw key size of an OKP curve.
+/// The raw key sizes of the OKP curves (RFC 8032, RFC 7748).
+const OKP_KEY_BYTES: [(&str, usize); 4] = [("Ed25519", 32), ("Ed448", 57), ("X25519", 32), ("X448", 56)];
+
 fn okp_key_size(curve: &str) -> usize {
-    match curve {
-        "Ed448" => 57,
-        "X448" => 56,
-        _ => 32,
-    }
+    OKP_KEY_BYTES.iter().find(|(name, _)| *name == curve).map_or(0, |(_, size)| *size)
 }
 
 /// `getKeyObjectHandleFromJwk`.
@@ -394,7 +391,7 @@ pub(crate) fn import_jwk(c: &mut Context<'_>, jwk: RootId, kind: KeyKind) -> Res
         "OKP" => {
             let curve_value = get(c, jwk, "crv")?;
             super::string_argument(c, curve_value, "key.crv")?;
-            let curve = one_of(c, curve_value, "key.crv", &OKP_CURVES)?;
+            let curve = one_of(c, curve_value, "key.crv", &OKP_KEY_BYTES.map(|(name, _)| name))?;
             let x = get(c, jwk, "x")?;
             super::string_argument(c, x, "key.x")?;
             if private {

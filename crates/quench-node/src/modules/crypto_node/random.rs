@@ -19,6 +19,9 @@ const UUID_VERSION_MASK: u8 = 0x0f;
 const UUID_VARIANT_RFC4122: u8 = 0x80;
 const UUID_VARIANT_MASK: u8 = 0x3f;
 const UUID_BYTES: usize = 16;
+/// The bytes holding the version nibble and the variant bits.
+const UUID_VERSION_BYTE: usize = 6;
+const UUID_VARIANT_BYTE: usize = 8;
 /// The byte offsets after which a UUID's text has a hyphen.
 const UUID_GROUP_ENDS: [usize; 4] = [4, 6, 8, 10];
 
@@ -204,8 +207,8 @@ pub(crate) fn random_uuid(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     }
     let mut bytes = [0u8; UUID_BYTES];
     fill(&mut bytes).map_err(|stack| errors::openssl(c, stack))?;
-    bytes[6] = (bytes[6] & UUID_VERSION_MASK) | UUID_VERSION_4;
-    bytes[8] = (bytes[8] & UUID_VARIANT_MASK) | UUID_VARIANT_RFC4122;
+    bytes[UUID_VERSION_BYTE] = (bytes[UUID_VERSION_BYTE] & UUID_VERSION_MASK) | UUID_VERSION_4;
+    bytes[UUID_VARIANT_BYTE] = (bytes[UUID_VARIANT_BYTE] & UUID_VARIANT_MASK) | UUID_VARIANT_RFC4122;
     let mut text = String::with_capacity(UUID_BYTES * 2 + UUID_GROUP_ENDS.len());
     for (index, byte) in bytes.iter().enumerate() {
         if UUID_GROUP_ENDS.contains(&index) {

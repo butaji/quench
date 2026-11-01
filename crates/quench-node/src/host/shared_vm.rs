@@ -1356,6 +1356,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoSecureHeapUsed" (0) => crate::modules::crypto_node::secure_heap_used,
         #[cfg(quench_openssl_provider)]
+        method "cryptoAliasGet" (0) => crate::modules::crypto_node::alias_get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoAliasSet" (1) => crate::modules::crypto_node::alias_set,
+        #[cfg(quench_openssl_provider)]
         method "cryptoWebcryptoGetter" (0) => crate::modules::crypto_node::webcrypto_getter,
         #[cfg(quench_openssl_provider)]
         method "cryptoSubtleGetter" (0) => crate::modules::crypto_node::subtle_getter,

@@ -564,56 +564,56 @@ fn stream_class(c: &mut Context<'_>, name: &str) -> Outcome {
 
 // ---- The module ----------------------------------------------------------------------
 
-/// The `crypto` module's functions: `(export name, host operation)`.
-const FUNCTIONS: &[(&str, &str)] = &[
-    ("checkPrime", "cryptoCheckPrime"),
-    ("checkPrimeSync", "cryptoCheckPrimeSync"),
-    ("createCipheriv", "cryptoCreateCipheriv"),
-    ("createDecipheriv", "cryptoCreateDecipheriv"),
-    ("createDiffieHellman", "cryptoCreateDiffieHellman"),
-    ("createDiffieHellmanGroup", "cryptoCreateDiffieHellmanGroup"),
-    ("createECDH", "cryptoCreateEcdh"),
-    ("createHash", "cryptoCreateHash"),
-    ("createHmac", "cryptoCreateHmac"),
-    ("createPrivateKey", "cryptoCreatePrivateKey"),
-    ("createPublicKey", "cryptoCreatePublicKey"),
-    ("createSecretKey", "cryptoCreateSecretKey"),
-    ("createSign", "cryptoCreateSign"),
-    ("createVerify", "cryptoCreateVerify"),
-    ("diffieHellman", "cryptoDiffieHellmanStateless"),
-    ("generatePrime", "cryptoGeneratePrime"),
-    ("generatePrimeSync", "cryptoGeneratePrimeSync"),
-    ("getCiphers", "cryptoGetCiphers"),
-    ("getCipherInfo", "cryptoGetCipherInfo"),
-    ("getCurves", "cryptoGetCurves"),
-    ("getDiffieHellman", "cryptoCreateDiffieHellmanGroup"),
-    ("getHashes", "cryptoGetHashes"),
-    ("hkdf", "cryptoHkdfAsync"),
-    ("hkdfSync", "cryptoHkdfSync"),
-    ("pbkdf2", "cryptoPbkdf2Async"),
-    ("pbkdf2Sync", "cryptoPbkdf2Sync"),
-    ("generateKeyPair", "cryptoGenerateKeyPair"),
-    ("generateKeyPairSync", "cryptoGenerateKeyPairSync"),
-    ("generateKey", "cryptoGenerateKey"),
-    ("generateKeySync", "cryptoGenerateKeySync"),
-    ("privateDecrypt", "cryptoPrivateDecrypt"),
-    ("privateEncrypt", "cryptoPrivateEncrypt"),
-    ("publicDecrypt", "cryptoPublicDecrypt"),
-    ("publicEncrypt", "cryptoPublicEncrypt"),
-    ("randomBytes", "cryptoRandomBytesApi"),
-    ("randomFill", "cryptoRandomFill"),
-    ("randomFillSync", "cryptoRandomFillSync"),
-    ("randomInt", "cryptoRandomInt"),
-    ("randomUUID", "cryptoRandomUuid"),
-    ("scrypt", "cryptoScryptAsync"),
-    ("scryptSync", "cryptoScryptSync"),
-    ("sign", "cryptoSignOneShot"),
-    ("setEngine", "cryptoSetEngineApi"),
-    ("timingSafeEqual", "cryptoTimingSafeEqual"),
-    ("getFips", "cryptoGetFips"),
-    ("setFips", "cryptoSetFips"),
-    ("verify", "cryptoVerifyOneShot"),
-    ("hash", "cryptoHashOneShot"),
+/// The `crypto` module's functions: `(export name, host operation, function name)`.
+const FUNCTIONS: &[(&str, &str, &str)] = &[
+    ("checkPrime", "cryptoCheckPrime", "checkPrime"),
+    ("checkPrimeSync", "cryptoCheckPrimeSync", "checkPrimeSync"),
+    ("createCipheriv", "cryptoCreateCipheriv", "createCipheriv"),
+    ("createDecipheriv", "cryptoCreateDecipheriv", "createDecipheriv"),
+    ("createDiffieHellman", "cryptoCreateDiffieHellman", "createDiffieHellman"),
+    ("createDiffieHellmanGroup", "cryptoCreateDiffieHellmanGroup", "createDiffieHellmanGroup"),
+    ("createECDH", "cryptoCreateEcdh", "createECDH"),
+    ("createHash", "cryptoCreateHash", "createHash"),
+    ("createHmac", "cryptoCreateHmac", "createHmac"),
+    ("createPrivateKey", "cryptoCreatePrivateKey", "createPrivateKey"),
+    ("createPublicKey", "cryptoCreatePublicKey", "createPublicKey"),
+    ("createSecretKey", "cryptoCreateSecretKey", "createSecretKey"),
+    ("createSign", "cryptoCreateSign", "createSign"),
+    ("createVerify", "cryptoCreateVerify", "createVerify"),
+    ("diffieHellman", "cryptoDiffieHellmanStateless", "diffieHellman"),
+    ("generatePrime", "cryptoGeneratePrime", "generatePrime"),
+    ("generatePrimeSync", "cryptoGeneratePrimeSync", "generatePrimeSync"),
+    ("getCiphers", "cryptoGetCiphers", ""),
+    ("getCipherInfo", "cryptoGetCipherInfo", "getCipherInfo"),
+    ("getCurves", "cryptoGetCurves", ""),
+    ("getDiffieHellman", "cryptoCreateDiffieHellmanGroup", "createDiffieHellmanGroup"),
+    ("getHashes", "cryptoGetHashes", ""),
+    ("hkdf", "cryptoHkdfAsync", "hkdf"),
+    ("hkdfSync", "cryptoHkdfSync", "hkdfSync"),
+    ("pbkdf2", "cryptoPbkdf2Async", "pbkdf2"),
+    ("pbkdf2Sync", "cryptoPbkdf2Sync", "pbkdf2Sync"),
+    ("generateKeyPair", "cryptoGenerateKeyPair", "generateKeyPair"),
+    ("generateKeyPairSync", "cryptoGenerateKeyPairSync", "generateKeyPairSync"),
+    ("generateKey", "cryptoGenerateKey", "generateKey"),
+    ("generateKeySync", "cryptoGenerateKeySync", "generateKeySync"),
+    ("privateDecrypt", "cryptoPrivateDecrypt", ""),
+    ("privateEncrypt", "cryptoPrivateEncrypt", ""),
+    ("publicDecrypt", "cryptoPublicDecrypt", ""),
+    ("publicEncrypt", "cryptoPublicEncrypt", ""),
+    ("randomBytes", "cryptoRandomBytesApi", "randomBytes"),
+    ("randomFill", "cryptoRandomFill", "randomFill"),
+    ("randomFillSync", "cryptoRandomFillSync", "randomFillSync"),
+    ("randomInt", "cryptoRandomInt", "randomInt"),
+    ("randomUUID", "cryptoRandomUuid", "randomUUID"),
+    ("scrypt", "cryptoScryptAsync", "scrypt"),
+    ("scryptSync", "cryptoScryptSync", "scryptSync"),
+    ("sign", "cryptoSignOneShot", "signOneShot"),
+    ("setEngine", "cryptoSetEngineApi", "setEngine"),
+    ("timingSafeEqual", "cryptoTimingSafeEqual", ""),
+    ("getFips", "cryptoGetFips", "getFips"),
+    ("setFips", "cryptoSetFips", "setFips"),
+    ("verify", "cryptoVerifyOneShot", "verifyOneShot"),
+    ("hash", "cryptoHashOneShot", "hash"),
 ];
 
 /// The module's class members, by export name; the removed legacy `Cipher` and
@@ -689,8 +689,8 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     if let Some(intrinsics) = state(c).borrow_mut().crypto.intrinsics.as_mut() {
         intrinsics.webcrypto = webcrypto;
     }
-    for &(name, operation) in FUNCTIONS {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+    for &(name, operation, own_name) in FUNCTIONS {
+        let function = c.host_function_named(crate::host::shared_vm::operation(operation), own_name)?;
         put(c, module, name, function)?;
     }
     let util = crate::modules::util_shared_vm::module(c)?;
@@ -708,8 +708,20 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     }
     let secure_heap_used = c.host_function_named(crate::host::shared_vm::operation("cryptoSecureHeapUsed"), "secureHeapUsed")?;
     put(c, module, "secureHeapUsed", secure_heap_used)?;
+    let get_fips = get(c, module, "getFips")?;
+    let set_fips = get(c, module, "setFips")?;
+    let key = c.string_rooted("fips");
+    let fields = DescriptorFields {
+        get: Some(get_fips),
+        set: Some(set_fips),
+        enumerable: Some(false),
+        configurable: Some(false),
+        ..DescriptorFields::default()
+    };
+    c.define_property_fields_rooted(module, key, fields)?;
     let constants = crate::modules::crypto_constants::binding(c)?;
-    put(c, module, "constants", constants)?;
+    let key = c.string_rooted("constants");
+    c.define_data_property_rooted(module, key, constants, false, true, false)?;
     for (name, operation) in [("webcrypto", "cryptoWebcryptoGetter"), ("subtle", "cryptoSubtleGetter"), ("getRandomValues", "cryptoGetRandomValuesGetter")] {
         let getter = c.host_function_named(crate::host::shared_vm::operation(operation), "get")?;
         let key = c.string_rooted(name);
@@ -722,18 +734,37 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
         };
         c.define_property_fields_rooted(module, key, fields)?;
     }
-    let get_fips = get(c, module, "getFips")?;
-    let set_fips = get(c, module, "setFips")?;
-    let key = c.string_rooted("fips");
-    let fields = DescriptorFields {
-        get: Some(get_fips),
-        set: Some(set_fips),
-        enumerable: Some(false),
-        configurable: Some(true),
-        ..DescriptorFields::default()
-    };
-    c.define_property_fields_rooted(module, key, fields)?;
+    let random_bytes = get(c, module, "randomBytes")?;
+    for alias in RANDOM_BYTES_ALIASES {
+        let name = c.string_rooted(alias);
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoAliasGet"), "get", random_bytes)?;
+        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoAliasSet"), "set", name)?;
+        let fields = DescriptorFields {
+            get: Some(getter),
+            set: Some(setter),
+            enumerable: Some(false),
+            configurable: Some(true),
+            ..DescriptorFields::default()
+        };
+        c.define_property_fields_rooted(module, name, fields)?;
+    }
     Ok(())
+}
+
+/// The legacy aliases of `randomBytes`, kept as accessors the ecosystem still reads.
+const RANDOM_BYTES_ALIASES: [&str; 3] = ["prng", "pseudoRandomBytes", "rng"];
+
+/// An alias's getter: the function it names.
+pub(crate) fn alias_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
+    c.host_function_data()
+}
+
+/// An alias's setter: an own data property replaces the accessor.
+pub(crate) fn alias_set(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    let name = c.host_function_data()?;
+    let value = arg(c, args, 0);
+    c.define_data_property_rooted(this, name, value, true, true, true)?;
+    Ok(c.undefined())
 }
 
 pub(crate) fn webcrypto(c: &mut Context<'_>) -> Outcome {
