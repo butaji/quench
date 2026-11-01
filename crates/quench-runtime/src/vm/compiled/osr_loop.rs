@@ -792,6 +792,12 @@ pub(crate) struct InlineCallee<'a> {
 /// Whether an inlined callee's instruction computes its result and returns it in one
 /// (`RETURN_REGISTER` alone, of a value-producing instruction), which inlining splits into
 /// the computation and the `Return` it makes.
+/// The register a `SetThisField` turned `SetField` names before its receiver is set: none
+/// a callee's renaming reaches (`Operand::PAYLOAD_MASK`), replaced by the frame's receiver.
+const fn frame_receiver_placeholder() -> Register {
+    Operand::PAYLOAD_MASK
+}
+
 fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
         && instruction.op() != Op::Return
@@ -802,7 +808,12 @@ fn inlined_returning(instruction: WideInstruction) -> bool {
 fn inlinable(op: Op) -> bool {
     matches!(
         op,
-        Op::LoadCapture
+        // A call the callee makes leaves native code before its effects, with the callee's
+        // activation made (`INLINED_EXIT`); the lane makes the call.
+        Op::Call
+            | Op::SetField
+            | Op::SetThisField
+            | Op::LoadCapture
             | Op::LoadConst
             | Op::Move
             | Op::Binary
@@ -871,6 +882,16 @@ fn renamed(
     let c = rename(InstructionField::C, instruction.c())?;
     let imm = match op.immediate_role() {
         ImmediateRole::JumpTarget => target(instruction.imm())?,
+        // A call's argument window renames as one block: each of its registers to the one
+        // after the base's rename.
+        _ if op == Op::Call => {
+            let imm = instruction.imm();
+            let base = ImmediateLayout::call_window_base(imm);
+            let count = ImmediateLayout::argument_count(imm);
+            let renamed_base = register(base);
+            (0..count).all(|offset| register(base + offset) == renamed_base + offset).then_some(())?;
+            ImmediateLayout::call_immediate(renamed_base, count, ImmediateLayout::direct_eval(imm), ImmediateLayout::parameter_eval(imm))
+        }
         _ => instruction.imm(),
     };
     Some(WideInstruction::new(op, a, b, c, imm))
@@ -1236,10 +1257,20 @@ pub(super) fn inline_region<'a>(
                 });
                 let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
                 WideInstruction::new(Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot))
+            } else if instruction.op() == Op::SetThisField {
+                // The callee's `this` is the call's receiver, a caller register: its store of
+                // a `this` field is a store to that register's object.
+                WideInstruction::new(Op::SetField, instruction.a(), frame_receiver_placeholder(), instruction.c(), instruction.imm())
             } else {
                 instruction
             };
-            instructions.push(renamed(instruction, &register, frame.receiver, &target)?);
+            let renamed_instruction = renamed(instruction, &register, frame.receiver, &target)?;
+            let renamed_instruction = if renamed_instruction.op() == Op::SetField && instruction.b() == frame_receiver_placeholder() {
+                WideInstruction::new(Op::SetField, renamed_instruction.a(), frame.receiver, renamed_instruction.c(), renamed_instruction.imm())
+            } else {
+                renamed_instruction
+            };
+            instructions.push(renamed_instruction);
             origins.push(origin);
             masks.push(set);
         }
