@@ -2958,19 +2958,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
         BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),
-        BuiltinModule::Zlib => {
-            let module = node_library_module(context, "zlib.js", "zlib.js")?;
-            // Node exposes the constants table as an immutable snapshot. The
-            // shared host's native-binding projection can materialize its
-            // properties as ordinary writable data properties, so freeze the
-            // public table after loading the Node-owned zlib implementation.
-            let constants = get(context, module, "constants")?;
-            let global = context.global_root()?;
-            let object = get(context, global, "Object")?;
-            let freeze = get(context, object, "freeze")?;
-            context.call_rooted(freeze, object, &[constants])?;
-            Ok(module)
-        }
+        BuiltinModule::Zlib => crate::modules::zlib_shared_vm::module(context),
         BuiltinModule::Crypto => {
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
             let transform_key = context.string_rooted("Transform");

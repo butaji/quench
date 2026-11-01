@@ -142,6 +142,7 @@ pub(crate) mod v8_shared_vm;
 pub(crate) mod vm_shared_vm;
 pub(crate) mod web_stream_consumers_shared_vm;
 pub(crate) mod zlib_constants;
+pub(crate) mod zlib_shared_vm;
 
 pub(crate) mod trace_shared_vm;
 pub(crate) mod trace_state;
