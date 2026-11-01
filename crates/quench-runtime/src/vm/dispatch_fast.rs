@@ -83,7 +83,7 @@ impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
     /// slot of its own data field, as the site's primary entry proved it
     /// (`lane_get_field_own_refresh`) or a polymorphic store hit it (`lane_set_field_polymorphic`).
-    /// Between shape compactions, which clear every hint (`LaneView::clear_field_hints`), a
+    /// Between shape compactions, which clear every hint (`LaneView::invalidate_shape_bindings`), a
     /// shape's slots never change, so the pair holds whatever the entry holds now.
     #[inline(always)]
     fn field_hint(&self) -> super::FieldCache {
@@ -189,9 +189,6 @@ struct LoopTier {
     code: Option<super::compiled::CompiledOsrRegion>,
     widened: std::collections::BTreeSet<super::compiled::Widening>,
     compilations: u32,
-    /// A raw field load embeds a shape ID, which collection may remap. Such code is only
-    /// valid under the epoch in which its field descriptors were observed.
-    native_field_epoch: Option<u64>,
 }
 
 impl LoopTier {
@@ -514,9 +511,10 @@ struct ActivationShape {
 }
 
 impl LaneView {
-    /// Forgets every own-field hint of its records (`LaneInstruction::field_hint`): a shape
-    /// compaction renumbers the shapes they name.
-    pub(super) fn clear_field_hints(&self) {
+    /// Forgets own-field hints and retires code that embeds shape IDs: compaction
+    /// renumbers them. No region runs across collection: its probes cannot collect
+    /// or call guest code, and effectful operations resume in the VM first.
+    pub(super) fn invalidate_shape_bindings(&self) {
         for &pc in &self.field_records {
             let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
             // SAFETY: no handler runs during a collection, and each listed record is a
@@ -524,6 +522,12 @@ impl LaneView {
             unsafe {
                 (*record).operand.field.shape = super::NO_FIELD_RECEIVER;
                 (*record).call_link.set(NO_CALL_LINK);
+            }
+        }
+        for site in &self.loops {
+            let mut tier = site.tier.borrow_mut();
+            if tier.code.as_ref().is_some_and(|code| code.embeds_shape_ids) {
+                tier.code = None;
             }
         }
     }
@@ -6638,15 +6642,6 @@ script_handler! {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
-        // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        let layout_epoch = crate::heap::prototype_layout_epoch();
-        {
-            let mut tier = site.tier.borrow_mut();
-            if tier.native_field_epoch.is_some_and(|epoch| epoch != layout_epoch) {
-                tier.code = None;
-                tier.native_field_epoch = None;
-            }
-        }
         if site.exits.get() >= LOOP_TIER_MAX_EXITS
             || site.declines.get() >= LOOP_TIER_MAX_DECLINES
             || !site.tier.borrow().may_run(unsafe { vm(cx) }.heap.memory_policy())
@@ -6874,7 +6869,6 @@ fn lane_loop_run<H: Host>(
                     .map(|(shape, slot)| super::compiled::NativeFieldLoad {
                         shape,
                         slot,
-                        epoch: crate::heap::prototype_layout_epoch(),
                     })
             })
             .collect::<Vec<_>>();
@@ -6911,13 +6905,6 @@ fn lane_loop_run<H: Host>(
                 heap.memory_policy(),
                 track_backedges,
             );
-        tier.native_field_epoch = tier.code.as_ref().and_then(|_| {
-            native_field_loads
-                .iter()
-                .flatten()
-                .next()
-                .map(|load| load.epoch)
-        });
         // SAFETY: as above; the observation's borrow of the heap has ended.
         unsafe { vm(cx) }.host.after_native_compilation();
         if site.diagnostics && tier.code.is_some() {

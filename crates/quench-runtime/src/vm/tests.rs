@@ -487,7 +487,7 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 fn shape_compaction_clears_own_field_hints() {
     // Read sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
-    // another layout, so the compaction clears every hint (`LaneView::clear_field_hints`).
+    // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
     let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
     let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
@@ -15132,9 +15132,8 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    // A compiled raw field load embeds an object shape ID. Collection may compact and remap
-    // those IDs, so the next loop admission must retire and rebuild the old region before
-    // it can use the old slot descriptor.
+    // A compiled raw field load embeds a shape ID. Compaction must retire it at
+    // the mutation, before another loop admission can use the old descriptor.
     let native_runs_before_collection = {
         let views = vm
             .programs
@@ -15156,6 +15155,10 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.collect_now(&program);
     assert!(crate::heap::prototype_layout_epoch() > epoch_before_collection);
     assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).unwrap();
+    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 0,
+        "compaction must retire dependent code immediately, without a backedge poll");
 
     let sum_list_atom = vm.intern_atom("sumList");
     let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
@@ -15190,6 +15193,72 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
         Some(0),
         "the out-of-line changing-receiver loads still called the field probe"
     );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_shape_invalidation_retires_only_dependent_code() {
+    let program = Engine::specialize(r#"
+        function sum(node) {
+            let result = 0;
+            while (node !== null) { result += node.value; node = node.next; }
+            return result;
+        }
+        function scalar(n) {
+            let result = 0;
+            for (let i = 0; i < n; i++) result += i;
+            return result;
+        }
+        function mutatePrototype() {
+            Object.defineProperty(Object.prototype, 'unrelatedNativeField', { value: 1 });
+        }
+        let head = null;
+        for (let value = 32; value > 0; value--) head = { pad: 0, marker: 0, value, next: head };
+        globalThis.nativeOwnHead = head;
+        for (let i = 0; i < 300; i++) if (sum(head) !== 528) throw 'sum';
+        if (scalar(3000) !== 4498500) throw 'scalar';
+    "#, "osr-reactive-shapes.js").unwrap();
+    let function_id = |name| program.functions.iter().position(|function|
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let sum_id = function_id("sum");
+    let scalar_id = function_id("scalar");
+    let state = |vm: &Vm<TestHost>, function| {
+        let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+        views.get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics()
+    };
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    let before = state(&vm, sum_id);
+    assert_eq!(before.currently_compiled_sites, 1);
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
+
+    let epoch = crate::heap::prototype_layout_epoch();
+    let mutate_atom = vm.intern_atom("mutatePrototype");
+    let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
+    vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
+    assert!(crate::heap::prototype_layout_epoch() > epoch);
+    let sum_atom = vm.intern_atom("sum");
+    let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
+    let head_atom = vm.intern_atom("nativeOwnHead");
+    let head = vm.own_property(vm.realm.globals, head_atom).unwrap();
+    assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[head]).unwrap(), Value::number(528.0));
+    assert_eq!(state(&vm, sum_id).compile_successes, before.compile_successes,
+        "an unrelated prototype change does not invalidate own-field shape/slot facts");
+
+    let shapes = vm.shapes.len();
+    for index in 0..shapes * 2 {
+        let atom = vm.intern_atom(&format!("dead-reactive-shape-{index}"));
+        vm.transition_shape(0, atom);
+    }
+    let shapes_before_collection = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes_before_collection);
+    assert_eq!(state(&vm, sum_id).currently_compiled_sites, 0,
+        "shape-dependent code is retired by compaction before its next entry");
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1,
+        "scalar code has no shape-ID dependency");
 }
 
 #[test]

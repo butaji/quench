@@ -2408,9 +2408,6 @@ pub(crate) struct Observation<'a> {
 pub(crate) struct NativeFieldLoad {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
-    /// Shape IDs are remapped by collection. Compiled users must retire this descriptor when
-    /// the process-wide shape-layout epoch changes.
-    pub(crate) epoch: u64,
 }
 
 /// How native code holds the values the entry record carries, by their record order.

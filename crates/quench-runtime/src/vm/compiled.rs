@@ -5900,6 +5900,9 @@ pub(super) struct CompiledOsrRegion {
     _code: CodeMemory,
     entry: Entry,
     widenings: std::collections::BTreeMap<u32, Widening>,
+    /// Own-field descriptors embed shape IDs. Shape compaction retires this code
+    /// through its lane view before execution can resume with remapped IDs.
+    pub(super) embeds_shape_ids: bool,
 }
 
 impl CompiledOsrRegion {
@@ -6081,6 +6084,7 @@ pub(super) fn compile_osr_region(
         _code,
         entry,
         widenings,
+        embeds_shape_ids: observation.native_field_loads.iter().any(Option::is_some),
     })
 }
 

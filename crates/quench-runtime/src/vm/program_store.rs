@@ -3246,11 +3246,11 @@ impl ProgramStore {
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
 
-    /// Forgets the own-field hints of every program's lane views: a shape compaction
-    /// renumbered the shapes they name.
-    pub(super) fn clear_field_hints(&self) {
+    /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
+    /// the IDs held by field hints and native own-field descriptors.
+    pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.clear_field_hints();
+            entry.lane_views.invalidate_shape_bindings();
         }
     }
 
@@ -3934,10 +3934,10 @@ fn derive_lane_view<'s>(
 }
 
 impl LaneViews {
-    /// Forgets the own-field hints of every derived view (`LaneView::clear_field_hints`).
-    fn clear_field_hints(&self) {
+    /// Notifies every derived view that shape compaction invalidated its bindings.
+    fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
-            view.clear_field_hints();
+            view.invalidate_shape_bindings();
         }
     }
 
