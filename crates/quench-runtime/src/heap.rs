@@ -12,7 +12,9 @@ mod array_elements;
 pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod cell;
 mod dependencies;
-pub(crate) use dependencies::{IndexFreeChainProof, ProofKind};
+pub(crate) use dependencies::{
+    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, ProofKind,
+};
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
@@ -1072,11 +1074,12 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
-        let Some(first) = self.prototype_object_mut(prototype).map(|object| !object.was_used_as_prototype()) else {
+        let Some(unwatched) = self.prototype_object_mut(prototype).map(|object| object.watched_subject().is_none()) else {
             return;
         };
-        // A newly watched prototype takes a subject, which its extras keep.
-        let watch = first.then(|| self.dependencies.watch());
+        // A prototype marked without a subject (newly, or in a restored heap, whose
+        // prototypes watch nothing) takes one, which its extras keep.
+        let watch = unwatched.then(|| self.dependencies.watch());
         let subject = watch.as_ref().and_then(dependencies::Watch::subject);
         let object = self.prototype_object_mut(prototype).expect("the prototype just read");
         object.mark_as_prototype();
@@ -1101,10 +1104,12 @@ impl Heap {
     }
 
     /// The proofs that rely on prototypes' layouts (`dependencies`).
+    #[inline(always)]
     pub(crate) fn dependencies(&self) -> &dependencies::Dependencies {
         &self.dependencies
     }
 
+    #[inline(always)]
     pub(crate) fn dependencies_mut(&mut self) -> &mut dependencies::Dependencies {
         &mut self.dependencies
     }

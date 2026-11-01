@@ -711,49 +711,13 @@ struct AccessorFieldCache {
     /// The `prototype_layout_epoch` the chain was proved under.
     epoch: u64,
 }
-/// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
-/// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
-/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances, and the
-/// Babel parser's methods up to a dozen (its parser classes and plugin mixins); deeper chains
-/// stay uncached.
-const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
-/// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
-/// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
-#[derive(Clone, Copy)]
-struct InheritedFieldCache {
-    receiver: u32,
-    atom: Atom,
-    prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
-    depth: u8,
-    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
-    function_links: bool,
-    answer: InheritedFieldAnswer,
-    /// The `prototype_layout_epoch` under which a walk last proved the chain from
-    /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
-    /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
-    proved_epoch: u64,
-    /// The receiver's prototype link the proof holds for, compared undecoded; a
-    /// collection advances the epoch, so it never outlives the record it names.
-    proved_prototype: ProtoLink,
-    proved_holder: Value,
-    /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
-    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
-    next: u32,
-}
 /// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
 /// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
 /// reaches one site with a shape per class. A further shape reuses the oldest entry.
 const INHERITED_FIELD_CACHE_WAYS: usize = 4;
 // Reusing the oldest entry unlinks it from an older-than-head predecessor.
 const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum InheritedFieldAnswer {
-    /// The last recorded prototype holds the data property at this slot.
-    Slot(u16),
-    /// No recorded shape has the name and the last prototype's prototype is null: the load
-    /// is `undefined`.
-    Absent,
-}
+use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = u32::MAX;
@@ -1991,10 +1955,9 @@ pub(crate) struct Vm<H> {
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
-    /// Per cache site, the index of its `inherited_field_caches` entry, or
+    /// Per cache site, the index of its inherited entry (`Dependencies::inherited`), or
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: site_table::SiteTable<u32>,
-    inherited_field_caches: Vec<InheritedFieldCache>,
     /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
@@ -2980,7 +2943,7 @@ impl<H: Host> Vm<H> {
         self.refresh_active_field_entries();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
-        self.inherited_field_caches.clear();
+        self.heap.dependencies_mut().clear_inherited();
         self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_sets.clear();

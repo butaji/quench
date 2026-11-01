@@ -15,6 +15,44 @@ use crate::value::Value;
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
 
+/// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
+/// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
+/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances, and the
+/// Babel parser's methods up to a dozen (its parser classes and plugin mixins); deeper chains
+/// stay uncached.
+pub(crate) const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
+/// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
+/// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
+#[derive(Clone, Copy)]
+pub(crate) struct InheritedFieldCache {
+    pub(crate) receiver: u32,
+    pub(crate) atom: crate::bytecode::Atom,
+    pub(crate) prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
+    pub(crate) depth: u8,
+    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
+    pub(crate) function_links: bool,
+    pub(crate) answer: InheritedFieldAnswer,
+    /// Whether a walk proved the chain from `proved_prototype` up to `proved_holder`, its
+    /// last recorded prototype: the table clears it when any prototype the walk read
+    /// changes or dies (`Dependencies::prove_inherited`), so it never outlives the record
+    /// it names, and a use needs no walk while it holds.
+    pub(crate) proved: bool,
+    /// The receiver's prototype link the proof holds for, compared undecoded.
+    pub(crate) proved_prototype: super::ProtoLink,
+    pub(crate) proved_holder: Value,
+    /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
+    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
+    pub(crate) next: u32,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InheritedFieldAnswer {
+    /// The last recorded prototype holds the data property at this slot.
+    Slot(u16),
+    /// No recorded shape has the name and the last prototype's prototype is null: the load
+    /// is `undefined`.
+    Absent,
+}
+
 /// A kind of cached proof, by its bit in a subject's `readers`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -53,12 +91,24 @@ struct Table {
     proofs: Proofs,
     /// Per subject, the kinds of the proofs that read it, as bits.
     readers: Vec<u32>,
+    /// Per subject, the inherited field cache entries whose chain proof read it.
+    inherited_readers: Vec<Vec<u32>>,
+    /// The inherited field cache's entries (`Vm::inherited_field_indices`), each of whose
+    /// chain proofs the table retires.
+    inherited: Vec<InheritedFieldCache>,
     /// Subjects a dead prototype released, for reuse.
     free: Vec<u32>,
 }
 
 impl Table {
     fn retire(&mut self, subject: u32) {
+        if let Some(entries) = self.inherited_readers.get_mut(subject as usize) {
+            for entry in std::mem::take(entries) {
+                if let Some(cache) = self.inherited.get_mut(entry as usize) {
+                    cache.proved = false;
+                }
+            }
+        }
         let Some(readers) = self.readers.get_mut(subject as usize) else { return };
         let kinds = std::mem::take(readers);
         if kinds == 0 {
@@ -78,6 +128,10 @@ impl Table {
     }
 }
 
+/// How many times its entries a subject's inherited reader list may hold before it is
+/// deduplicated (`Dependencies::prove_inherited`).
+const INHERITED_READERS_SLACK: usize = 2;
+
 /// The heap's dependency table.
 pub(crate) struct Dependencies(Box<UnsafeCell<Table>>);
 
@@ -94,6 +148,7 @@ impl std::fmt::Debug for Dependencies {
 }
 
 impl Dependencies {
+    #[inline(always)]
     fn table(&self) -> &Table {
         // SAFETY: the table is reached only through this owner and the `Watch`es it hands
         // out, all on the heap's thread; neither keeps a reference across a call, as every
@@ -101,6 +156,7 @@ impl Dependencies {
         unsafe { &*self.0.get() }
     }
 
+    #[inline(always)]
     fn table_mut(&mut self) -> &mut Table {
         self.0.get_mut()
     }
@@ -117,6 +173,7 @@ impl Dependencies {
             Some(subject) => subject,
             None => {
                 table.readers.push(0);
+                table.inherited_readers.push(Vec::new());
                 (table.readers.len() - 1) as u32
             }
         };
@@ -149,6 +206,65 @@ impl Dependencies {
             table.retire_kind(kind);
         }
         table.readers.iter_mut().for_each(|readers| *readers = 0);
+        table.inherited_readers.iter_mut().for_each(Vec::clear);
+        table.inherited.iter_mut().for_each(|cache| cache.proved = false);
+    }
+
+    /// Inherited field cache entry `entry`.
+    ///
+    /// # Safety
+    /// `entry` is an index `push_inherited` returned since the last `clear_inherited`.
+    #[inline(always)]
+    pub(crate) unsafe fn inherited_unchecked(&self, entry: u32) -> &InheritedFieldCache {
+        // SAFETY: as the caller promises.
+        unsafe { self.table().inherited.get_unchecked(entry as usize) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn inherited(&self, entry: u32) -> &InheritedFieldCache {
+        &self.table().inherited[entry as usize]
+    }
+
+    pub(crate) fn inherited_mut(&mut self, entry: u32) -> &mut InheritedFieldCache {
+        &mut self.table_mut().inherited[entry as usize]
+    }
+
+    /// How many inherited entries the cache holds.
+    #[cfg(test)]
+    pub(crate) fn inherited_count(&self) -> usize {
+        self.table().inherited.len()
+    }
+
+    /// Adds `cache` as a new inherited entry, and its index.
+    pub(crate) fn push_inherited(&mut self, cache: InheritedFieldCache) -> u32 {
+        let inherited = &mut self.table_mut().inherited;
+        inherited.push(cache);
+        (inherited.len() - 1) as u32
+    }
+
+    /// Holds inherited field cache entry `entry`'s chain proof, as read from `subjects`.
+    pub(crate) fn prove_inherited(&mut self, entry: u32, subjects: &[u32]) {
+        let table = self.table_mut();
+        let entries = table.inherited.len();
+        for subject in subjects {
+            let readers = &mut table.inherited_readers[*subject as usize];
+            readers.push(entry);
+            // An entry recached and proved again without its subjects changing is listed
+            // again: past twice the entries, the list is deduplicated, amortized over the
+            // pushes that grew it.
+            if readers.len() > INHERITED_READERS_SLACK * entries + INHERITED_READERS_SLACK {
+                readers.sort_unstable();
+                readers.dedup();
+            }
+        }
+        table.inherited[entry as usize].proved = true;
+    }
+
+    /// Drops every inherited entry's proof: the caches were cleared.
+    pub(crate) fn clear_inherited(&mut self) {
+        let table = self.table_mut();
+        table.inherited.clear();
+        table.inherited_readers.iter_mut().for_each(Vec::clear);
     }
 }
 

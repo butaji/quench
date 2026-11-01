@@ -67,7 +67,6 @@ struct InheritedChainProof {
     prototype: Value,
     holder: Value,
     depth: u8,
-    epoch: u64,
 }
 
 enum FieldCacheRead {
@@ -973,7 +972,7 @@ impl<H: Host> Vm<H> {
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_fields.clear();
-        self.inherited_field_caches.clear();
+        self.heap.dependencies_mut().clear_inherited();
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
@@ -1821,10 +1820,11 @@ impl<H: Host> Vm<H> {
         if index == NO_INHERITED_FIELD {
             return None;
         }
-        let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
+        // SAFETY: a site's index names a recorded entry (`record_inherited_field`).
+        let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
         if cache.receiver != receiver.shape()
             || function_receiver && !cache.function_links
-            || cache.proved_epoch != crate::heap::prototype_layout_epoch()
+            || !cache.proved
             || cache.proved_prototype != receiver.proto_link()
         {
             return None;
@@ -2749,10 +2749,10 @@ impl<H: Host> Vm<H> {
         let head = self.inherited_field_indices.get(site);
         let (mut index, mut previous, mut length) = (head, NO_INHERITED_FIELD, 0);
         while index != NO_INHERITED_FIELD {
-            let entry = &self.inherited_field_caches[index as usize];
+            let entry = self.heap.dependencies().inherited(index);
             if entry.receiver == cache.receiver {
                 cache.next = entry.next;
-                self.inherited_field_caches[index as usize] = cache;
+                *self.heap.dependencies_mut().inherited_mut(index) = cache;
                 return;
             }
             length += 1;
@@ -2764,14 +2764,13 @@ impl<H: Host> Vm<H> {
         let slot = if length >= INHERITED_FIELD_CACHE_WAYS {
             // The oldest entry, `index`, follows `previous`: more than one way keeps it apart
             // from the head the new entry links to.
-            self.inherited_field_caches[previous as usize].next = NO_INHERITED_FIELD;
+            self.heap.dependencies_mut().inherited_mut(previous).next = NO_INHERITED_FIELD;
             index
         } else {
-            self.inherited_field_caches.push(cache);
-            (self.inherited_field_caches.len() - 1) as u32
+            self.heap.dependencies_mut().push_inherited(cache)
         };
         cache.next = head;
-        self.inherited_field_caches[slot as usize] = cache;
+        *self.heap.dependencies_mut().inherited_mut(slot) = cache;
         self.inherited_field_indices.set(site, slot);
     }
 
@@ -2794,7 +2793,8 @@ impl<H: Host> Vm<H> {
             if index == NO_INHERITED_FIELD {
                 return None;
             }
-            let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
+            // SAFETY: a site's index names a recorded entry (`record_inherited_field`).
+            let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
             if cache.receiver == receiver.shape() {
                 break cache;
             }
@@ -2809,8 +2809,7 @@ impl<H: Host> Vm<H> {
             depth: u16::from(cache.depth),
         };
         let first = receiver.proto();
-        let epoch = crate::heap::prototype_layout_epoch();
-        if cache.proved_epoch == epoch && cache.proved_prototype == receiver.proto_link() {
+        if cache.proved && cache.proved_prototype == receiver.proto_link() {
             let value = match cache.answer {
                 InheritedFieldAnswer::Slot(slot) => {
                     // A holder in the object records, as most prototypes are, without the
@@ -2851,29 +2850,30 @@ impl<H: Host> Vm<H> {
             prototype: first,
             holder: holder_value,
             depth: cache.depth,
-            epoch,
         };
         Some((hit(value), Some(proof)))
     }
 
-    /// Records that a walk proved inherited entry `proof.index`'s chain under `proof.epoch`.
-    /// Every link becomes a prototype first, so a later change to any of them advances the
-    /// epoch and retires the proof.
+    /// Records that a walk proved inherited entry `proof.index`'s chain. Every link becomes
+    /// a watched prototype first, and the proof is held as read from each of them
+    /// (`Dependencies::prove_inherited`), so a later change to any of them retires it.
     #[cold]
     #[inline(never)]
     fn prove_inherited_chain(&mut self, proof: InheritedChainProof) {
+        let mut subjects = smallvec::SmallVec::<[u32; INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
         let mut link = proof.prototype;
         for _ in 0..proof.depth {
             self.heap.mark_prototype(link);
-            link = self.heap.object(link).map_or(Value::NULL, Object::proto);
+            let Some(object) = self.heap.object(link) else { return };
+            let Some(subject) = object.watched_subject() else { return };
+            subjects.push(subject);
+            link = object.proto();
         }
-        if crate::heap::prototype_layout_epoch() != proof.epoch {
-            return;
-        }
-        let cache = &mut self.inherited_field_caches[proof.index as usize];
-        cache.proved_epoch = proof.epoch;
+        let dependencies = self.heap.dependencies_mut();
+        let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
         cache.proved_holder = proof.holder;
+        dependencies.prove_inherited(proof.index, &subjects);
     }
 
     /// Whether a function on a prototype chain answers `atom` from its shape as an ordinary
@@ -2923,7 +2923,7 @@ impl<H: Host> Vm<H> {
             depth: 0,
             function_links,
             answer: InheritedFieldAnswer::Absent,
-            proved_epoch: NO_PROVED_EPOCH,
+            proved: false,
             proved_prototype: crate::heap::ProtoLink::NULL,
             proved_holder: Value::UNDEFINED,
             next: NO_INHERITED_FIELD,
