@@ -1440,7 +1440,9 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<(u32, u16)> {
         let cache = self.field_cache_entry(site);
-        (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
+        // A site of several shapes reads through the OSR probe, which answers from its
+        // polymorphic entries; a one-shape load would leave at every other shape.
+        (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER && !self.field_site_polymorphic(site))
             .then_some((cache.receiver, cache.slot))
     }
 

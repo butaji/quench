@@ -635,6 +635,19 @@ fn tagged_registers_with_failure(
                 .then_some(instruction.result_register())
         }))
         .chain(held.iter().copied())
+        // A field receiver the region's field reads give holds an object.
+        .chain(instructions.iter().filter(|instruction| instruction.op() == Op::GetField).filter_map(|instruction| {
+            let receiver = object_reads(*instruction)?;
+            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(receiver)).peekable();
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(receiver)
+        }))
+        // A branch on a value only field reads give tests its truthiness tagged
+        // (`Lowering::tagged_truthiness`): a field may hold an object.
+        .chain(instructions.iter().filter(|instruction| matches!(instruction.op(), Op::JumpFalse | Op::JumpTrue)).filter_map(|instruction| {
+            let value = instruction.register_a();
+            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
+        }))
         // A store whose receiver the region redefines passes its receiver, and a value only
         // field reads give (which may be an object), tagged to the VM's cached store
         // (`LoopRegion::dynamic_field_stores`); a Number result is boxed at the store.
@@ -1712,7 +1725,12 @@ fn admit_lifetime_roles(
             Op::LoadConst | Op::Move | Op::Binary | Op::NumericAdd | Op::NumericMultiply
             | Op::IncDec | Op::ToNumeric | Op::Unary | Op::GetIndex | Op::SetIndex
             | Op::RequireObjectCoercible | Op::Jump | Op::JumpFalse | Op::JumpTrue
-            | Op::JumpBinaryFalse))
+            | Op::JumpBinaryFalse | Op::SetField | Op::SetFieldStrict)
+            // A field read by name from a register or `this`: its base renames as a register
+            // does. A site's lookup names its base in the site table, which keeps VM slots.
+            || (instruction.op() == Op::GetField
+                && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
+                    if base == FieldBase::THIS || base.register_index().is_some())))
     {
         return None;
     }
@@ -1762,6 +1780,11 @@ fn admit_lifetime_roles(
     }
     let mut canonical = flow.instructions.clone();
     for (offset, instruction) in canonical.iter_mut().enumerate() {
+        // Field receivers rename as values do; only array accesses read through an entry
+        // array's root.
+        if !matches!(instruction.op(), Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) {
+            continue;
+        }
         if let Some(receiver) = object_reads(*instruction) {
             let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
                 Some(root) => root,
@@ -1810,8 +1833,12 @@ fn admit_lifetime_roles(
                         _ => return None,
                     }
                 }
+                FieldLayout::FieldBase => {
+                    let base = FieldBase(raw);
+                    if base == FieldBase::THIS { raw } else { FieldBase::register(read(base.register_index()?)?).0 }
+                }
                 FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
-                | FieldLayout::FieldBase | FieldLayout::RegisterWindowBase => return None,
+                | FieldLayout::RegisterWindowBase => return None,
                 _ => raw,
             })
         };
@@ -1844,6 +1871,21 @@ fn admit_lifetime_roles(
     for array in &mut region.arrays { array.register = original[usize::from(array.register)]; }
     region.dynamic_arrays = region.dynamic_arrays.iter().map(|register| original[usize::from(*register)]).collect();
     for branch in region.identity_branches.values_mut() { branch.register = original[usize::from(branch.register)]; }
+    // Field receivers name VM slots again: an entry receiver's identity is its slot at entry,
+    // and a redefined one's reads go through the canonical instructions' registers.
+    for field in &mut region.fields {
+        if let FieldReceiver::Register(register) = &mut field.receiver {
+            *register = original[usize::from(*register)];
+        }
+    }
+    for store in &mut region.field_store_sites { store.receiver = original[usize::from(store.receiver)]; }
+    region.held = std::mem::take(&mut region.held).into_iter()
+        .map(|(register, (mut path, index))| {
+            if let FieldReceiver::Register(root) = &mut path.root {
+                *root = original[usize::from(*root)];
+            }
+            (original[usize::from(register)], (path, index))
+        }).collect();
     region.instructions = canonical;
     region.live = flow.live.take();
     region.lifetime_roles = Some(LifetimeRoles { tagged_entries, tagged_definitions });
