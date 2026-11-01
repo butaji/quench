@@ -3987,6 +3987,12 @@ const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
 const OSR_RESERVE_ARRAY_APPEND: u64 = u64::MAX - 1;
 /// Read a present own dense element without allocation, coercion or collection.
 const OSR_DENSE_ARRAY_READ: u64 = u64::MAX - 2;
+/// Store the value the scratch word holds into an own data property of the receiver, through
+/// its site's cache entry (`Vm::cached_field_store_hit`): the operation word is this flag,
+/// the atom shifted by `OSR_FIELD_STORE_ATOM_SHIFT` and the site. A store never collects or
+/// runs guest code, and a miss returns before it writes.
+pub(super) const OSR_FIELD_STORE: u64 = 1 << 48;
+pub(super) const OSR_FIELD_STORE_ATOM_SHIFT: u32 = u16::BITS;
 
 /// A no-guest-effect JavaScript OSR helper. Capacity reserve may relocate a backing but
 /// never stores a guest value or collects; it refreshes all entry aliases and exits on debt.
@@ -4033,6 +4039,14 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // Collection is never performed with native SSA values unrooted. A debt exit
             // writes live values back at this SetIndex before the VM performs its store.
             return (!due).then_some(Value::UNDEFINED);
+        }
+        if cache_site & OSR_FIELD_STORE != 0 {
+            let site = cache_site as u16;
+            let atom = ((cache_site & !OSR_FIELD_STORE) >> OSR_FIELD_STORE_ATOM_SHIFT) as crate::bytecode::Atom;
+            // SAFETY: generated code seeded the scratch word with the boxed value.
+            let value = Value::from_bits(unsafe { result.read() });
+            let receiver = Value::from_bits(receiver_bits);
+            return vm.cached_field_store_hit(program, receiver, atom, value, site).then_some(Value::UNDEFINED);
         }
         if cache_site == OSR_INITIALIZED_LOCAL_READ {
             if vm.lane_has_activations()
