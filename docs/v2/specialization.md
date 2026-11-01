@@ -95,22 +95,26 @@ V8-v7 under `--jit` is the acceptance workload for this design. The target is at
 times the best of Node and Bun on Score, at no more than 0.80 times their peak RSS. The rules
 are in `jit-design.md`.
 
-Baseline screen of the merged branch: one round per engine through
-`quench-bench/v8-v7-rss.cjs`, Linux x86-64, 4 vCPUs, Node 22.23.4, Bun 1.4.4, release
-`quench-node`.
+Screen of branch head `726919b8e`, which includes the `v2-jit` OSR and collection commits:
+three rounds per engine through `quench-bench/v8-v7-rss.cjs`, Linux x86-64, 4 vCPUs,
+Node 22.23.4, Bun 1.4.4, release `quench-node`, medians. Ratios compare Quench `--jit` with
+the better JIT-mode peer: higher is better for Score, lower is better for peak RSS.
 
-| Fixture | Quench `--jit` | Best peer | Score ratio | Peak RSS |
-| --- | ---: | ---: | ---: | --- |
-| Richards | 1918 | 42539 | 0.045 | Below every peer |
-| DeltaBlue | 1999 | 82304 | 0.024 | Below every peer |
-| Crypto | 16779 | 45211 | 0.371 | Below every peer |
-| RayTrace | 4987 | 92795 | 0.054 | Below every peer |
-| EarleyBoyer | 6840 | 64774 | 0.106 | Below every peer |
-| RegExp | 3867 | 11910 | 0.325 | Below every peer |
-| Splay | 6140 | 23486 | 0.261 | Below every peer |
-| NavierStokes | 43999 | 40365 | 1.090 | Below every peer |
+| Fixture | Quench `--jit` | Node | Bun | Score ratio | Peak RSS ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Richards | 1683 | 35108 | 38398 | 0.044 | 0.298 |
+| DeltaBlue | 1678 | 78938 | 48002 | 0.021 | 0.195 |
+| Crypto | 16926 | 41408 | 48167 | 0.351 | 0.326 |
+| RayTrace | 5382 | 55666 | 95977 | 0.056 | 0.172 |
+| EarleyBoyer | 7041 | 59777 | 47222 | 0.118 | 0.176 |
+| RegExp | 3857 | 7516 | 12845 | 0.300 | 0.301 |
+| Splay | 6545 | 10395 | 22483 | 0.291 | 0.428 |
+| NavierStokes | 49522 | 39771 | 31188 | 1.245 | 0.527 |
 
-Peak RSS already meets the bar on every fixture. Score meets it on none.
+Peak RSS meets the bar against JIT-mode peers on all eight fixtures. Score meets it on
+NavierStokes only. Splay's RSS rose from 34 to 79 MiB with `v2-jit`'s collection-headroom
+commit, which traded memory for Score. It remains below both JIT peers but above Bun without
+JIT, so the board's stricter all-modes rule marks it lost.
 
 What the diagnostics show:
 
