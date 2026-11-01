@@ -10,6 +10,37 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn fresh_execution_does_not_reuse_a_capture_walk_from_the_previous_heap() {
+    let program = Engine::specialize("", "capture-heap-lifetime.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.initialize(&program).unwrap();
+    let (old_env, _) = vm.heap.alloc_environment(
+        Value::NULL, 1, vec![Value::number(42.0)].into(),
+        crate::heap::EnvironmentScopeRef::of_program(0),
+    );
+    vm.walked_capture_slots(old_env, false, 0).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    // Keep an old value view alive outside the discarded heap: an erroneous
+    // cache hit returns 42 deterministically instead of dereferencing freed data.
+    let old_slots = Box::new(crate::heap::EnvironmentSlots::from(vec![Value::number(42.0)]));
+    vm.capture_walks.iter_mut().find(|walk| walk.cache.env == old_env).unwrap()
+        .cache.slots = std::ptr::from_ref(old_slots.as_ref());
+
+    vm.initialize(&program).unwrap();
+    let (new_env, _) = vm.heap.alloc_environment(
+        Value::NULL, 1, vec![Value::number(99.0)].into(),
+        crate::heap::EnvironmentScopeRef::of_program(0),
+    );
+    assert_eq!(new_env, old_env, "the new heap reuses the locator");
+    assert_eq!(vm.heap.collection_epoch(), epoch, "the collection counter also restarts");
+    let (slots, root) = vm.walked_capture_slots(new_env, false, 0).unwrap();
+    assert!(root.is_none());
+    // SAFETY: the returned view belongs to either the live environment or the
+    // retained old_slots test value, and neither is mutated during this read.
+    assert_eq!(unsafe { &*slots }.dense_plain(0), Some(Value::number(99.0)));
+}
+
+#[test]
 fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
     let source = r#"
       function exercise() {

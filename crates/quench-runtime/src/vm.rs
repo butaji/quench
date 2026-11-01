@@ -2892,6 +2892,9 @@ impl<H: Host> Vm<H> {
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
         self.shared_async_waiters.clear();
+        // Reset reuses environment locators and collection counters. Retire raw
+        // capture views at this boundary before either identity can appear again.
+        self.capture_walks.fill(CaptureWalk::default());
         self.heap.reset();
         self.natives = Default::default();
         self.frames.clear();
