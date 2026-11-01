@@ -7073,7 +7073,9 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).capture });
         let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::LoopHeader, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        if !Vm::<H>::lane_shadow_active() && exit == super::compiled::LaneExit::At(site.header as usize) {
+        // Every run that leaves before the loop completes pays the entry again at the next
+        // backward jump; a loop that keeps leaving runs in the interpreter.
+        if !matches!(exit, super::compiled::LaneExit::Returned { .. }) {
             site.exits.set(site.exits.get() + 1);
             if site.exits.get() >= LOOP_TIER_MAX_EXITS {
                 lane_loop_retire::<H>(cx, ip, site);
