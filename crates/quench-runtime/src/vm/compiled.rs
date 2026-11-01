@@ -6320,9 +6320,9 @@ struct JsStepDispatch {
 pub(super) struct LaneMethod {
     _code: CodeMemory,
     entry: Entry,
-    /// The shape-layout epoch its folded receiver fields were proved under, if it folds any.
-    /// Collection may remap shape IDs; a later epoch runs the lane instead.
-    shape_epoch: Option<u64>,
+    /// Whether its code names shape ids as constants, which a shape compaction renumbers:
+    /// the compaction unlinks it (`LaneView::clear_field_hints`), so no entry checks them.
+    pub(super) names_shapes: bool,
 }
 
 /// Lane bodies compiled by this process, for tests that a lane activation ran natively.
@@ -6412,7 +6412,6 @@ impl<H: Host> Vm<H> {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
         };
-        let epoch = crate::heap::prototype_layout_epoch();
         let receiver_fields = self.lane_receiver_fields(program, function);
         let region = lane_region::compile(program, function, helpers, &receiver_fields);
         self.host.after_native_compilation();
@@ -6435,8 +6434,8 @@ impl<H: Host> Vm<H> {
         let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
         #[cfg(test)]
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let shape_epoch = receiver_fields.iter().any(|shapes| !shapes.is_empty()).then_some(epoch);
-        Some(LaneMethod { _code: code, entry, shape_epoch })
+        let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
+        Some(LaneMethod { _code: code, entry, names_shapes })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -6450,10 +6449,6 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         captures: *const crate::heap::EnvironmentSlots,
     ) -> usize {
-        if method.shape_epoch.is_some_and(|epoch| epoch != crate::heap::prototype_layout_epoch()) {
-            // The folded shapes may name others now: nothing ran, so the lane starts here.
-            return 0;
-        }
         let (status, word) = LANE_FRAME.with(|frame| {
             // SAFETY: a lane body never re-enters the VM, so no other borrow of this
             // thread's frame is live; the frame is never moved once made.

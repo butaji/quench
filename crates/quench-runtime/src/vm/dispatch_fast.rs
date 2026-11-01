@@ -260,8 +260,8 @@ pub(super) struct LaneView {
     /// (`Vm::direct_tier_entry`).
     tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
     /// The frameless body the prologue runs once the JavaScript tier declined the
-    /// function (`Vm::compile_lane_method`), specialized at most once.
-    tier_lane: std::cell::OnceCell<Option<std::rc::Rc<super::compiled::LaneMethod>>>,
+    /// function (`Vm::compile_lane_method`).
+    tier_lane: std::cell::UnsafeCell<LaneBody>,
     /// Per record, the register whose value it reads as the carried accumulator
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
@@ -520,10 +520,45 @@ struct ActivationShape {
     initial: Value,
 }
 
+/// A lane view's frameless body (`LaneView::tier_lane`). Specialization moves it out of
+/// `Unspecialized`; a shape compaction moves a body that names shape ids back to it.
+enum LaneBody {
+    Unspecialized,
+    Specialized(super::compiled::LaneMethod),
+    Declined,
+}
+
 impl LaneView {
-    /// Forgets every own-field hint of its records (`LaneInstruction::field_hint`): a shape
-    /// compaction renumbers the shapes they name.
+    /// The specialized frameless body, if there is one.
+    fn lane_body(&self) -> Option<&super::compiled::LaneMethod> {
+        // SAFETY: the body changes only at specialization and at a shape compaction, when
+        // no body of this view runs and no reference into it is held.
+        match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Specialized(method) => Some(method),
+            LaneBody::Unspecialized | LaneBody::Declined => None,
+        }
+    }
+
+    /// Specializes the frameless body unless it was tried; whether there is one.
+    fn specialize_lane_body(&self, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) -> bool {
+        // SAFETY: as `lane_body`; specializing runs no lane body.
+        let body = unsafe { &mut *self.tier_lane.get() };
+        if let LaneBody::Unspecialized = body {
+            *body = specialize().map_or(LaneBody::Declined, LaneBody::Specialized);
+        }
+        matches!(body, LaneBody::Specialized(_))
+    }
+
+    /// Forgets every own-field hint of its records (`LaneInstruction::field_hint`), and the
+    /// frameless body if it names shapes: a shape compaction renumbers the shapes they name.
     pub(super) fn clear_field_hints(&self) {
+        // SAFETY: no lane body runs during a collection.
+        let body = unsafe { &mut *self.tier_lane.get() };
+        if let LaneBody::Specialized(method) = body
+            && method.names_shapes
+        {
+            *body = LaneBody::Unspecialized;
+        }
         for &pc in &self.field_records {
             let record = std::cell::UnsafeCell::raw_get(&self.records[pc as usize]);
             // SAFETY: no handler runs during a collection, and each listed record is a
@@ -13478,7 +13513,7 @@ script_handler! {
         // SAFETY: the program's views outlive the lane run.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         if let Some(own) = own
-            && let Some(Some(method)) = own.tier_lane.get()
+            && let Some(method) = own.lane_body()
         {
             // SAFETY: the activation just set the context to its own receiver.
             let this = unsafe { (*cx).this };
@@ -13564,10 +13599,7 @@ fn lane_tier_enter<H: Host>(
         // prologue keeps the start once that body compiles. Frame entries keep whatever
         // tier holds the function.
         if vm.programs.js_jit_lane_methods_enabled()
-            && own
-                .tier_lane
-                .get_or_init(|| vm.compile_lane_method(code, function).map(std::rc::Rc::new))
-                .is_some()
+            && own.specialize_lane_body(|| vm.compile_lane_method(code, function))
         {
             return None;
         }
@@ -17766,7 +17798,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::OnceCell::new(),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()

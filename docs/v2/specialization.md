@@ -338,7 +338,7 @@ file:line cited on TOD-1232) places Quench as follows.
 | 4 | Speculation and deoptimization | Exact-PC exits to the lane, widening recompiles; one frame only, no frame states, no per-guard exit counters | partial | R0, R2, R3 |
 | 5 | Value representation | NaN-boxing with an int32 tag and 32-bit record IDs; every float store canonicalizes | adopted | R1, R6 |
 | 6 | Array element kinds | Always tagged values; the loop tier proves int32 by an O(n) scan at each entry and checks tags and holes per element | missing | R5, TOD-1249 |
-| 7 | Dependencies instead of guards | One process-wide prototype epoch, advanced on any prototype change and on every collection | missing | R2, TOD-1248 |
+| 7 | Dependencies instead of guards | Lane bodies are reactive: shape compaction unlinks those that name shape ids, and no entry checks anything. Interpreter proofs still compare one process-wide prototype epoch, advanced on prototype changes, on collections that free a prototype and on shape compaction | partial | R2, TOD-1248 |
 | 8 | Inlining and escape analysis | OSR region inlining only, guarded at entry; compiled code never allocates | minimal | R3, R6 |
 | 9 | Generational GC with bump allocation | Generational, non-moving, sticky marks, parallel mark; allocation scans occupancy words, barrier is a call | partial | R6, R10 |
 | 10 | Lazy and cached startup | Lazy bodies, heap and program-store snapshots | adopted | none |
