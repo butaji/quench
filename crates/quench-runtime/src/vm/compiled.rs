@@ -1720,65 +1720,6 @@ fn emit_lane_helper_call(
     builder.inst_results(call)[0]
 }
 
-/// A lane body's field read: the own slot natively, else the VM's cache probe, else the
-/// exact exit.
-#[allow(clippy::too_many_arguments)]
-fn emit_lane_field_get(
-    builder: &mut FunctionBuilder<'_>,
-    arguments: ir::Value,
-    payload: ir::Value,
-    helpers: LaneHelpers,
-    base_source: ir::Value,
-    base_offset: i32,
-    site: u16,
-    destination_offset: i32,
-    next: ir::Block,
-    exact: &JsExactFallback,
-) {
-    let probe = builder.create_block();
-    let address = emit_js_own_field_slot(builder, base_source, payload, base_offset, site, probe);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
-    builder.ins().jump(next, &[]);
-    builder.switch_to_block(probe);
-    let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), base_source, base_offset);
-    let site = builder.ins().iconst(types::I64, i64::from(site));
-    let value = emit_lane_helper_call(builder, payload, helpers.field_get, &[receiver, site]);
-    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-    let store = builder.create_block();
-    let exit = builder.create_block();
-    builder.ins().brif(hit, store, &[], exit, &[]);
-    builder.switch_to_block(store);
-    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
-    builder.ins().jump(next, &[]);
-    exact.emit(builder, exit);
-}
-
-/// A lane body's own-field store through the lane's logged store hit, else the exact exit.
-#[allow(clippy::too_many_arguments)]
-fn emit_lane_field_set(
-    builder: &mut FunctionBuilder<'_>,
-    arguments: ir::Value,
-    payload: ir::Value,
-    helpers: LaneHelpers,
-    base_source: ir::Value,
-    base_offset: i32,
-    value_offset: i32,
-    atom: Atom,
-    site: u16,
-    next: ir::Block,
-    exact: &JsExactFallback,
-) {
-    let receiver = builder.ins().load(types::I64, MemFlagsData::trusted(), base_source, base_offset);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, value_offset);
-    let atom = builder.ins().iconst(types::I64, i64::from(atom));
-    let site = builder.ins().iconst(types::I64, i64::from(site));
-    let stored = emit_lane_helper_call(builder, payload, helpers.field_set, &[receiver, atom, site, value]);
-    let exit = builder.create_block();
-    builder.ins().brif(stored, next, &[], exit, &[]);
-    exact.emit(builder, exit);
-}
-
 /// The checks a direct own-field store makes before writing, as the lane's store hit does
 /// (`Vm::primary_own_field_store_hit`): a specialized run, a value outside the heap (which
 /// the write barrier never logs) and a name no method cache holds. The value to store,
@@ -1829,16 +1770,6 @@ fn emit_js_store_admits(
 /// interruption as the interpreter before consuming the branch.
 fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
-}
-
-/// Where a general-dispatch body runs. A frame body continues past an unsupported
-/// instruction through the VM step callout; a lane body runs on a frameless lane
-/// activation's registers and leaves at that instruction's PC, where the lane resumes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum GeneralDispatchMode {
-    Frame,
-    #[allow(dead_code)]
-    Lane(LaneHelpers),
 }
 
 /// A receiver field site whose cache entry a lane body folds (Ershov's online division):
@@ -1945,41 +1876,6 @@ fn emit_arena_slot_address(
     builder.ins().iadd(properties, offset)
 }
 
-/// A lane body's folded receiver store: under the site's proved shape, an admitted value
-/// (`emit_js_store_admits`) written straight to the receiver's arena slot. Inline storage,
-/// whose narrow encoding the lane's store makes, and every failed proof take `general`.
-#[allow(clippy::too_many_arguments)]
-fn emit_lane_receiver_store(
-    builder: &mut FunctionBuilder<'_>,
-    receiver: &LaneReceiver,
-    arguments: ir::Value,
-    payload: ir::Value,
-    value_offset: i32,
-    atom: Atom,
-    field: ReceiverField,
-    next: ir::Block,
-    general: ir::Block,
-) {
-    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let shape = builder.use_var(receiver.shape);
-    let same = builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-    emit_js_guard(builder, same, general);
-    let inline = builder.use_var(receiver.inline);
-    let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-    emit_js_guard(builder, arena, general);
-    let value = emit_js_store_admits(builder, arguments, payload, value_offset, atom, general);
-    let object = builder.use_var(receiver.object);
-    let properties = builder.use_var(receiver.properties);
-    let properties_len = builder.use_var(receiver.properties_len);
-    let word = builder.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
-    let extras = builder.ins().band_imm_u(word, layout.extras_tag_mask as i64);
-    let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
-    emit_js_guard(builder, plain, general);
-    let address = emit_arena_slot_address(builder, word, properties, properties_len, field.slot, general);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
-    builder.ins().jump(next, &[]);
-}
-
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
@@ -2058,24 +1954,14 @@ pub(super) fn compile_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
     unresolved_names_are_global: bool,
-    mode: GeneralDispatchMode,
-    receiver_fields: &[Option<ReceiverField>],
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
-    let helpers = match mode {
-        GeneralDispatchMode::Lane(helpers) => Some(helpers),
-        GeneralDispatchMode::Frame => None,
-    };
-    let lane = helpers.is_some();
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
     }
     let function = program
         .function_get(function_id as usize)
         .ok_or("missing-function")?;
-    // A lane body's fallbacks leave native code, so a name it would resolve through the
-    // callout's global cache gains nothing from a native record.
-    let static_global_names = !lane
-        && unresolved_names_are_global
+    let static_global_names = unresolved_names_are_global
         && function.names_resolve_statically(program);
     let instruction_count = function.code.len();
     if !js_general_dispatch_candidate(program, function) {
@@ -2129,10 +2015,6 @@ pub(super) fn compile_js_general_dispatch(
     let start_pc = builder
         .ins()
         .load(types::I64, MemFlagsData::trusted(), start_pc_address, 0);
-    let lane_receiver = lane.then(|| {
-        let offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, receiver)).expect("JS dispatch offset fits i32");
-        emit_lane_receiver(&mut builder, payload, offset)
-    });
     builder
         .ins()
         .jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
@@ -2165,132 +2047,14 @@ pub(super) fn compile_js_general_dispatch(
         }
         i32::try_from(usize::from(register).checked_mul(std::mem::size_of::<u64>())?).ok()
     };
-    // A lane activation's receiver is a location the entry fixes (Ershov's division):
-    // the payload holds it, `DELETED` where the function binds none. A frame body reads
-    // `this` through the VM.
-    let receiver_offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, receiver))
-        .expect("JS dispatch offset fits i32");
-    let terminal_return = function.code.len().checked_sub(1).and_then(|pc| {
-        let terminal = super::dispatch_fast::decoded_instruction(function, function.code[pc]);
-        (terminal.op() == Op::Return && terminal.result_flags() == 0 && !terminal.writes_current_this())
-            .then(|| (pc, terminal.register_a()))
-    });
     let field_base = |base: crate::bytecode::FieldBase| -> Option<(ir::Value, i32)> {
-        match base.register_index() {
-            Some(register) => register_offset(register).map(|offset| (arguments, offset)),
-            None if lane && base == crate::bytecode::FieldBase::THIS => Some((payload, receiver_offset)),
-            None => None,
-        }
+        base.register_index().and_then(register_offset).map(|offset| (arguments, offset))
     };
     for (pc, block) in blocks.iter().copied().enumerate() {
         builder.switch_to_block(block);
         let packed = function.code[pc];
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
         let next = blocks.get(pc + 1).copied();
-        if lane
-            && instruction.op() == Op::LoadThis
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
-            && !instruction.writes_current_this()
-            && let Some(next) = next
-            && let Some(destination) = register_offset(instruction.result_register())
-        {
-            let fallback = builder.create_block();
-            let this = builder.ins().load(types::I64, MemFlagsData::trusted(), payload, receiver_offset);
-            let bound = builder.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
-            emit_js_guard(&mut builder, bound, fallback);
-            builder.ins().store(MemFlagsData::trusted(), this, arguments, destination);
-            builder.ins().jump(next, &[]);
-            builder.switch_to_block(fallback);
-            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
-            general_dispatch_native_pcs[pc] = 1;
-            continue;
-        }
-        if lane
-            && instruction.op() == Op::LoadCapture
-            && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
-            && !instruction.writes_current_this()
-            && let Some(next) = next
-            && let Some(destination) = register_offset(instruction.result_register())
-        {
-            let fallback = builder.create_block();
-            let slots = builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                payload,
-                i32::try_from(std::mem::offset_of!(JsStepDispatch, captures)).expect("JS dispatch offset fits i32"),
-            );
-            let slot = builder.ins().iconst(types::I64, i64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())));
-            let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64)]);
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = builder.import_signature(signature);
-            let helper = builder.ins().iconst(
-                types::I64,
-                lane_capture_read as unsafe extern "C" fn(u64, u64) -> u64 as usize as i64,
-            );
-            let call = builder.ins().call_indirect(signature, helper, &[slots, slot]);
-            let value = builder.inst_results(call)[0];
-            let read = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-            emit_js_guard(&mut builder, read, fallback);
-            builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
-            builder.ins().jump(next, &[]);
-            builder.switch_to_block(fallback);
-            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
-            general_dispatch_native_pcs[pc] = 1;
-            continue;
-        }
-        if lane
-            && matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)
-            && instruction.result_flags() == 0
-            && !instruction.returns_from_frame()
-            && !instruction.writes_current_this()
-            && let Some(next) = next
-            && let Some(value_offset) = register_offset(instruction.register_a())
-        {
-            let exact = JsExactFallback {
-                context,
-                callout,
-                callout_signature,
-                result_pointer,
-                stopped_block,
-                continue_block,
-                pc,
-            };
-            let helpers = helpers.expect("a lane body has helpers");
-            if let (Some(receiver), Some(Some(field))) = (&lane_receiver, receiver_fields.get(pc)) {
-                let general = builder.create_block();
-                emit_lane_receiver_store(
-                    &mut builder,
-                    receiver,
-                    arguments,
-                    payload,
-                    value_offset,
-                    instruction.atom_index(),
-                    *field,
-                    next,
-                    general,
-                );
-                builder.switch_to_block(general);
-            }
-            emit_lane_field_set(
-                &mut builder,
-                arguments,
-                payload,
-                helpers,
-                payload,
-                receiver_offset,
-                value_offset,
-                instruction.atom_index(),
-                instruction.cache_site_index(),
-                next,
-                &exact,
-            );
-            general_dispatch_native_pcs[pc] = 1;
-            continue;
-        }
         if instruction.op().js_denotation() == JsDenotation::Return
             && instruction.result_flags() == 0
             && !instruction.writes_current_this()
@@ -2418,28 +2182,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            if base == crate::bytecode::FieldBase::THIS
-                && let (Some(receiver), Some(Some(field))) = (&lane_receiver, receiver_fields.get(pc))
-            {
-                // The site's proved shape and slot, folded: one shape test of the receiver
-                // found at entry and a direct read; anything else takes the general read.
-                let general = builder.create_block();
-                let shape = builder.use_var(receiver.shape);
-                let same = builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-                emit_js_guard(&mut builder, same, general);
-                let object = builder.use_var(receiver.object);
-                let inline = builder.use_var(receiver.inline);
-                let properties = builder.use_var(receiver.properties);
-                let properties_len = builder.use_var(receiver.properties_len);
-                let value = emit_object_slot_read(&mut builder, object, inline, properties, properties_len, field.slot, general);
-                builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
-                builder.ins().jump(next, &[]);
-                builder.switch_to_block(general);
-            }
-            match helpers {
-                Some(helpers) => emit_lane_field_get(&mut builder, arguments, payload, helpers, base_source, base_offset, cache_site, destination_offset, next, &exact),
-                None => emit_js_own_field_get(&mut builder, arguments, payload, base_source, base_offset, cache_site, destination_offset, next, &exact),
-            }
+            emit_js_own_field_get(&mut builder, arguments, payload, base_source, base_offset, cache_site, destination_offset, next, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -2484,33 +2227,18 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            match helpers {
-                Some(helpers) => emit_lane_field_set(
-                    &mut builder,
-                    arguments,
-                    payload,
-                    helpers,
-                    arguments,
-                    base_offset,
-                    value_offset,
-                    instruction.atom_index(),
-                    instruction.cache_site_index(),
-                    next,
-                    &exact,
-                ),
-                None => emit_js_own_field_set(
-                    &mut builder,
-                    arguments,
-                    payload,
-                    arguments,
-                    base_offset,
-                    value_offset,
-                    instruction.atom_index(),
-                    instruction.cache_site_index(),
-                    next,
-                    &exact,
-                ),
-            }
+            emit_js_own_field_set(
+                &mut builder,
+                arguments,
+                payload,
+                arguments,
+                base_offset,
+                value_offset,
+                instruction.atom_index(),
+                instruction.cache_site_index(),
+                next,
+                &exact,
+            );
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -2975,11 +2703,6 @@ pub(super) fn compile_js_general_dispatch(
             (None, None)
         } else if !instruction.returns_from_frame() {
             (Some(instruction.result_register()), next)
-        } else if lane
-            && instruction.result_flags() == crate::bytecode::RETURN_REGISTER
-            && let Some((terminal_pc, register)) = terminal_return
-        {
-            (Some(register), blocks.get(terminal_pc).copied())
         } else {
             (None, None)
         };
@@ -13328,8 +13051,6 @@ impl<H: Host> Vm<H> {
                             program,
                             function_id,
                             unresolved_names_are_global,
-                            GeneralDispatchMode::Frame,
-                            &[],
                         ) {
                             Ok(artifact) => (Some(artifact), None),
                             Err(rejection) => (None, Some(rejection)),
