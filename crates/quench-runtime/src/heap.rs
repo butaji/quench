@@ -3863,6 +3863,10 @@ impl Heap {
                 work.extend(fields.descriptor);
             }
             Cell::WasmExtern(value) => work.push(*value),
+            Cell::AccessorPair { getter, setter } => {
+                work.push(*getter);
+                work.push(*setter);
+            }
             Cell::WasmException { tag, payload } => {
                 work.push(*tag);
                 work.extend(payload.iter().copied());
@@ -4075,6 +4079,7 @@ impl Heap {
             Cell::WasmBits64(_) => CellKind::WasmBits64,
             Cell::WasmV128(_) => CellKind::WasmV128,
             Cell::WasmExtern(_) => CellKind::WasmExtern,
+            Cell::AccessorPair { .. } => CellKind::Function,
             Cell::WasmTag { .. } => CellKind::WasmTag,
             Cell::WasmException { .. } => CellKind::WasmException,
             Cell::WasmGc { .. } => CellKind::WasmGc,
@@ -4120,6 +4125,7 @@ impl Heap {
                 | Cell::WasmBits64(_)
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
+                | Cell::AccessorPair { .. }
                 | Cell::WasmTag { .. } => 0,
                 Cell::Promise(promise) => {
                     size_of::<PromiseCell>()

@@ -8,6 +8,25 @@ const FACTORY: &str = quench_js_check::checked_js!(
   'use strict';
   // The most listener arguments `emit` passes to a lone listener without gathering them.
   const DIRECT_ARGUMENTS = 2;
+  // A function listener's `once` wraps it here as `onceNative` does, so registering and
+  // firing it cross no native boundary: a wrapper whose first call removes it through the
+  // emitter's `removeListener` and then calls the listener with the wrapper's arguments,
+  // registered through the emitter's own `on` or `prependListener`; `listener` names the
+  // original for `listeners` and removal. Any other listener takes the native validation.
+  function onceListener(target, type, listener, prepend) {
+    if (typeof listener !== "function") return onceNative(target, type, listener, prepend);
+    let fired = false;
+    // Named as Node's bound wrapper reads.
+    const wrapper = { "bound onceWrapper": function () {
+      if (fired) return undefined;
+      fired = true;
+      call(target.removeListener, target, type, wrapper);
+      return apply(listener, target, arguments);
+    } }["bound onceWrapper"];
+    wrapper.listener = listener;
+    call(prepend ? target.prependListener : target.on, target, type, wrapper);
+    return target;
+  }
   return {
     eventNames: function eventNames() { return namesNative(this); },
     listeners: function listeners(type) { return listenersNative(this, type); },
@@ -27,8 +46,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
       return addNative(this, type, listener, false);
     },
     prependListener: function prependListener(type, listener) { return addNative(this, type, listener, true); },
-    once: function once(type, listener) { return onceNative(this, type, listener, false); },
-    prependOnceListener: function prependOnceListener(type, listener) { return onceNative(this, type, listener, true); },
+    once: function once(type, listener) { return onceListener(this, type, listener, false); },
+    prependOnceListener: function prependOnceListener(type, listener) { return onceListener(this, type, listener, true); },
     // Removing a type's lone listener (or the once wrapper of it) retires the type here as
     // `removeNative` retires it (`event_removed`, then the "removeListener" notification);
     // a listener array and every other case take the native store.

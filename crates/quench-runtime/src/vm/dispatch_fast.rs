@@ -5134,7 +5134,29 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let receiver = r.get(i.b);
         let Some(length) = vm.arguments_object_length(receiver).or_else(|| vm.plain_function_length(receiver)) else {
+            // A site that reads a typed array's length mostly reads typed arrays, as a loop
+            // over one does: it reads the intrinsic getter's geometry first from now on.
+            if let Some(length) = vm.typed_array_geometry_read(receiver, vm.length_atom) {
+                requicken::<H>(ip, lane_get_length_typed::<H>);
+                r.set(i.a, length);
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, length);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_length` at a site that read a typed array's length
+    /// (`lane_get_length_arguments`): the intrinsic `length` getter's value for a typed array
+    /// that shadows it nowhere (`Vm::typed_array_geometry_read`); any other receiver takes
+    /// `lane_get_length`.
+    fn lane_get_length_typed<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(length) = vm.typed_array_geometry_read(r.get(i.b), vm.length_atom) else {
+            sibling!(lane_get_length::<H>, r, ip, view)
         };
         r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -5501,6 +5523,21 @@ fn lane_activate_getter<H: Host>(
             return Err(exit(ip));
         };
         return lane_activate_keeping::<H, false>(cx, r, ip, &target, no_arguments, this, false, None);
+    }
+    // A getter that makes closures, of this program or another, runs as the environment
+    // activation its plain call makes (`lane_activate_environment`), with no arguments, as
+    // Zod's `get error() { ... issues.map((iss) => ...) }` does.
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    let environment = vm
+        .script_call_entry(getter)
+        .or_else(|| vm.cross_call_entry(getter))
+        .map(|target| unsafe { *target })
+        .filter(|target| target.entry == CallEntry::Environment && !lane_constructing(vm, getter));
+    if let Some(target) = environment {
+        let Some(this) = lane_call_this(vm, &target, base) else {
+            return Err(exit(ip));
+        };
+        return lane_activate_environment(cx, r, ip, &target, &[], this);
     }
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let Some(target) = vm
@@ -6530,6 +6567,20 @@ script_handler! {
             return lane_jump(cx, r, ip, BACKWARD, Carried::script(cx), None);
         }
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `StringCaseIndex`: the case a string `switch` selects (`Vm::string_case_index`) among
+    /// the run of constants the record's immediate starts, which the view checked lies in
+    /// the program's constants (`lane_operand`).
+    fn lane_string_case_index<>(cx, r, ip, i, view) {
+        let start = i.imm() as usize;
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
+        let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + usize::from(i.b)) };
+        let index = unsafe { vm(cx) }.string_case_index(r.get(i.c), cases);
+        r.set(i.a, Value::integer(index as i32));
+        next!(cx, r, following(ip), view)
     }
 }
 
@@ -16582,6 +16633,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::MakeConstArray => Some(lane_make_const_array::<H>),
+        Op::StringCaseIndex => Some(lane_string_case_index::<H>),
         Op::LoadLocal | Op::LoadEnvLocal => Some(lane_load_local::<H>),
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
@@ -16788,6 +16840,12 @@ fn lane_operand(
             LaneOperand {
                 jump: distance.checked_mul(record)?,
             }
+        }
+        // A case selector reads its run of constants from the context by index.
+        ImmediateRole::ConstantIndex if instruction.op() == Op::StringCaseIndex => {
+            let start = instruction.imm() as usize;
+            constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
+            LaneOperand { imm: instruction.imm() }
         }
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,

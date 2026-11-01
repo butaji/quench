@@ -873,6 +873,17 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
                 self.write(f, i.result_register(), v);
             }
+            Op::StringCaseIndex => {
+                let start = i.constant_index();
+                let end = start + usize::from(i.element_count());
+                let value = self.read(f, i.register_c());
+                let cases = self.programs.constants(self.frames[f].program);
+                let cases = cases
+                    .get(start..end)
+                    .ok_or_else(|| JsError::validation("switch cases are outside program".into()))?;
+                let index = self.string_case_index(value, cases);
+                self.write(f, i.result_register(), Value::integer(index as i32));
+            }
             Op::MakeLiteralTemplate => {
                 let v = self.literal_template(p, f, i.literal_template_index())?;
                 self.write(f, i.result_register(), v);
