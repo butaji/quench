@@ -12306,6 +12306,84 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
+    let source = r#"
+      function update(item, limit, delta) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          const before = item.value;
+          item.value = before + delta;
+          total += item.value;
+        }
+        return total;
+      }
+      function aliases(first, second, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          first.value = first.value + 1;
+          total += second.value;
+        }
+        return total;
+      }
+      function replace(item, value, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          total += item.value;
+          item.value = value;
+        }
+        return total;
+      }
+      const item = { value: 0, left: 1, right: 2 };
+      let total = 0;
+      for (let call = 0; call < 80; call++) total += update(item, 2000, 1);
+      item.value = -0;
+      update(item, 1, -0);
+      if (!Object.is(item.value, -0)) throw 'field cell signed zero';
+      item.value = 2147483647;
+      update(item, 3, 0.5);
+      if (item.value !== 2147483648.5) throw 'field cell precision';
+      let reads = 0, writes = 0, value = 2;
+      Object.defineProperty(item, 'value', {
+        get() { reads++; return value; },
+        set(next) { writes++; value = next; }, configurable: true
+      });
+      update(item, 3, 1);
+      if (reads !== 6 || writes !== 3 || value !== 5) throw 'field cell accessor fallback';
+      const aliased = { value: 0, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) {
+        const before = aliased.value;
+        const answer = aliases(aliased, aliased, 1000);
+        if (answer !== before * 1000 + 500500) throw 'field cell receiver alias';
+      }
+      const replaced = { value: 1, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) replace(replaced, 2, 1000);
+      const reference = {};
+      replace(replaced, reference, 3);
+      if (replaced.value !== reference) throw 'field cell tagged store fallback';
+      print(total + ' ' + reads + ' ' + writes + ' ' + value + ' ' + aliased.value);
+    "#;
+    let program = Engine::specialize(source, "osr-field-cell.js").unwrap();
+    let id = program.functions.iter().position(|body| body.header().name
+        .is_some_and(|atom| &program.atoms[atom as usize] == "update")).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    let mut oracle = Vm::new(TestHost::writing_to(interpreted.clone()));
+    oracle.set_execution_mode(crate::ExecutionMode::Interpreted);
+    oracle.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
+        .unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_and_fills_holes_in_place() {
     // The loops append at the length while the backing has room and fill holes below it.
     // Once a prototype holds an index, the entry declines, and the setter it defines runs.

@@ -236,6 +236,11 @@ impl LoopRegion {
         self.dynamic_field_reads.values().any(|field| *field == index)
     }
 
+    /// An entry-pinned own Number field whose writes update its SSA cell.
+    fn is_field_cell(&self, index: usize) -> bool {
+        self.field_store_sites.iter().any(|store| store.matches(&self.fields[index]))
+    }
+
     pub(crate) fn call_boundary_pcs(&self) -> Vec<u32> {
         self.instructions
             .iter()
@@ -442,6 +447,12 @@ pub(crate) struct FieldStore {
     pub(crate) receiver: Register,
     pub(crate) atom: crate::bytecode::Atom,
     pub(crate) cache_site: u16,
+}
+
+impl FieldStore {
+    fn matches(&self, field: &FieldUse) -> bool {
+        field.receiver == FieldReceiver::Register(self.receiver) && field.atom == self.atom
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1676,19 +1687,6 @@ fn admit_region(
             let receiver = instruction.register_b();
             let atom = instruction.atom_index();
             let cache_site = instruction.cache_site_index();
-            // A cached read of this atom could otherwise keep using its entry value after a
-            // native store. Be conservative about aliases: reject every same-name read in
-            // this small region.
-            if let Some(read_offset) = instructions.iter().position(|candidate| {
-                candidate.op() == Op::GetField && candidate.atom_index() == atom
-            }) {
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
-                    eprintln!(
-                        "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_after_or_before_store atom={atom} read_offset={read_offset} store_offset={offset} receiver={receiver}"
-                    );
-                }
-                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
-            }
             // The slot pointer is captured at entry. The receiver must therefore stay in its
             // tagged register for the entire region.
             if let Some(write_offset) = instructions
@@ -1771,6 +1769,21 @@ fn admit_region(
             (register, (path, index))
         })
         .collect();
+    // A mutable field is one own-data Number cell. Every same-name read must
+    // name that exact unchanged receiver; a different receiver may alias it.
+    // Its stores must remain Numbers, so no write can invalidate its view or
+    // require a reference barrier. Nested/tagged paths retain snapshot semantics.
+    for (offset, index) in &field_stores {
+        let store = &field_store_sites[*index];
+        let reads = admission.fields.iter().filter(|field| field.atom == store.atom);
+        for field in reads {
+            if !store.matches(field) || field.tagged
+                || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Number)
+            {
+                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, *offset as usize));
+            }
+        }
+    }
     let mut identity_branches = std::collections::BTreeMap::new();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
         let Some(branch) = identity_branch(instruction, constants) else {
@@ -2301,6 +2314,11 @@ fn representations(
         .map(|(index, field)| {
             if field.tagged {
                 return Representation::Tagged;
+            }
+            // Entry observations do not bound future stores. Keep the full
+            // Number domain until a field-cell range analysis proves otherwise.
+            if region.is_field_cell(index) {
+                return Representation::Float64;
             }
             let value = observation.fields.get(index).copied().unwrap_or(Value::UNDEFINED);
             of(value, Widening::Field(index as u16))
@@ -3231,6 +3249,12 @@ struct Typed {
     representation: Representation,
 }
 
+/// Immutable entry snapshots and mutable Number cells have different lifetimes.
+enum FieldValue {
+    Snapshot(Typed),
+    NumberCell(cranelift_frontend::Variable),
+}
+
 struct Lowering<'a, 'b> {
     /// The shared native body: the builder, each register's views, which hold each web's value
     /// in its representation (`view_type`), and the interrupt check.
@@ -3253,8 +3277,8 @@ struct Lowering<'a, 'b> {
     units: std::collections::BTreeSet<Register>,
     /// Each capture's value, unboxed at entry, in region order.
     captures: Vec<Typed>,
-    /// Numeric cached field values, loaded from the guarded entry record.
-    fields: Vec<Typed>,
+    /// Entry-pinned fields: snapshots or SSA cells updated by admitted stores.
+    fields: Vec<FieldValue>,
     entry_representations: EntryRepresentations,
     /// The `i32` arithmetic that needs no guard (`int32_facts`).
     facts: Int32Facts,
@@ -3389,6 +3413,9 @@ impl Resident {
             }
         }
         for field in 0..region.fields.len() {
+            if region.is_field_cell(field) {
+                continue;
+            }
             let read = region.field_reads.iter().any(|(offset, read)| *read == field && hot(*offset as usize));
             if !read {
                 resident.fields[field] = Some(resident.values);
@@ -3883,7 +3910,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     fn field(&mut self, index: usize) -> Typed {
-        self.resident_value(self.resident.fields[index], self.fields[index])
+        match self.fields[index] {
+            FieldValue::Snapshot(value) => self.resident_value(self.resident.fields[index], value),
+            FieldValue::NumberCell(variable) => Typed {
+                value: self.body.builder.use_var(variable),
+                representation: Representation::Float64,
+            },
+        }
     }
 
     fn capture(&mut self, index: usize) -> Typed {
@@ -3988,7 +4021,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             + self.region.captures.len()
             + self.region.fields.len()
             + ARRAY_WORDS * self.region.arrays.len();
-        self.word(start + index)
+        // Admission fixes the slot for this synchronous run. No native store
+        // targets the entry record, so its pointer can be hoisted past writes.
+        self.body.builder.ins().load(
+            types::I64, super::invariant(), self.entry, (start + index) as i32 * WORD_BYTES,
+        )
     }
 
     /// A block laid out after the hot code: an exit, or a representation a region rarely
@@ -4075,7 +4112,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.unbox(bits, representation, otherwise)
             };
             self.reside(self.resident.fields[index], value);
-            self.fields.push(Typed { value, representation });
+            let field = if self.region.is_field_cell(index) {
+                let variable = self.body.builder.declare_var(types::F64);
+                self.body.builder.def_var(variable, value);
+                FieldValue::NumberCell(variable)
+            } else {
+                FieldValue::Snapshot(Typed { value, representation })
+            };
+            self.fields.push(field);
         }
         self.scan_int32();
         if let Some(inlining) = &self.region.inlining {
@@ -4085,7 +4129,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.body.builder.ins().stack_store(self.pointer, scratch, self.handoff, Handoff::Scratch.offset());
             self.scratch = Some(scratch);
             for frame in inlining.frames.clone() {
-                let held = self.fields[frame.field].value;
+                let held = self.field(frame.field).value;
                 let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, held, frame.callee.to_bits() as i64);
                 let otherwise = self.not_entered(None);
                 self.pass_unless(other, otherwise);
@@ -5473,6 +5517,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 let index = *self.region.field_stores.get(&(pc - self.region.header))?;
                 let pointer = self.field_store_pointer(index);
                 let value = self.register(instruction.register_a());
+                if let Some(field) = self.region.fields.iter().position(|field|
+                    self.region.field_store_sites[index].matches(field))
+                {
+                    let FieldValue::NumberCell(variable) = self.fields[field] else {
+                        unreachable!("an admitted mutable field has an SSA cell")
+                    };
+                    let number = self.float(value);
+                    self.body.builder.def_var(variable, number);
+                }
+                // Keep the canonical heap current at every interrupt/poll and
+                // exact-PC exit. Reads use the unboxed cell, without reloading.
                 let bits = self.boxed(value);
                 self.body.builder.ins().store(flags(), bits, pointer, 0);
                 self.fall_through(pc)
