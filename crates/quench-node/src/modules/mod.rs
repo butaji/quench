@@ -114,6 +114,8 @@ pub(crate) mod process_execve_shared_vm;
 pub(crate) mod process_memory_shared_vm;
 #[cfg(unix)]
 pub(crate) mod process_metrics_shared_vm;
+pub(crate) mod process_lazy_shared_vm;
+pub(crate) mod process_permission_shared_vm;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_warning_shared_vm;
 mod process_exception_route;
@@ -129,6 +131,9 @@ pub(crate) mod punycode_shared_vm;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod string_decoder_codec;
 pub(crate) mod readline_shared_vm;
+pub(crate) mod bootstrap_realm_shared_vm;
+pub(crate) mod sea_shared_vm;
+pub(crate) mod source_map_shared_vm;
 pub(crate) mod stream_shared_vm;
 pub(crate) mod string_decoder_shared_vm;
 pub(crate) mod test_shared_vm;
@@ -202,7 +207,6 @@ pub(crate) mod stream_binding;
 pub(crate) mod deep_equal_shared_vm;
 pub(crate) mod dom_exception_shared_vm;
 
-pub(crate) mod util_aborted_source_shared_vm;
 
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_digest_cache;

@@ -429,20 +429,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let instantiate_wasm = context.host_function(crate::host::shared_vm::operation("esmWasmInstantiate"))?;
     let key = context.string_rooted(super::esm_wasm::INSTANTIATE);
     context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
-    let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
-    let key = context.string_rooted("\0quench:evalScript");
-    context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     context.scoped(install_performance_global)?;
     #[cfg(quench_openssl_provider)]
     context.scoped(crate::modules::crypto_node::install_global)?;
-    if node_primordials_source(context).is_some() {
-        // Node 24 exposes these well-known disposal symbols before its
-        // primordial snapshot is built. The runtime may not provide them yet,
-        // so seed stable symbols for Node's internal modules first.
-        let seed_disposal_symbols = crate::host::removed_javascript("node:bootstrap/disposal-symbols.js")?;
-        let undefined = context.undefined();
-        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // Builtins built after this point see the intrinsics as they are now, whatever a
@@ -552,6 +541,14 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         set(context, global, "__filename", label)?;
         let dirname = context.string_rooted(".");
         set(context, global, "__dirname", dirname)?;
+        #[cfg(quench_openssl_provider)]
+        if context.host_mut().eval_crypto {
+            crate::modules::eval_globals_shared_vm::bind_crypto(context)?;
+        }
+        if let Some(source) = context.host_mut().eval_print.take() {
+            let name = context.host_mut().inline_source.compilation_name();
+            crate::modules::eval_globals_shared_vm::print(context, &source, name)?;
+        }
     }
     Ok(())
 }
@@ -898,19 +895,6 @@ pub(super) fn initialize_process_release(
     }
     let key = context.string_rooted(PROCESS_RELEASE);
     context.define_data_property_rooted(process, key, release, true, true, true)?;
-    Ok(context.undefined())
-}
-
-pub(super) fn initialize_process_surface(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    #[cfg(unix)]
-    crate::modules::process_memory_shared_vm::install(context)?;
-    crate::host::removed_javascript("node:bootstrap/process-surface-lazy.js")?;
-    #[cfg(unix)]
-    crate::modules::process_metrics_shared_vm::install(context)?;
     Ok(context.undefined())
 }
 
@@ -1267,8 +1251,8 @@ fn require_for_module_inner(
         set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
-    if specifier == "internal/bootstrap/realm" {
-        return crate::host::removed_javascript("internal/bootstrap/realm.js");
+    if specifier == "internal/bootstrap/realm" && internals_exposed(context) {
+        return cached_native_binding(context, "\0native:internal/bootstrap/realm", crate::modules::bootstrap_realm_shared_vm::module);
     }
     match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
@@ -2691,11 +2675,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Ok(module)
         }
         BuiltinModule::Internal("internal/source_map/source_map_cache") => {
-            // Node's error formatter imports these helpers even when source
-            // maps are disabled. The full Node implementation depends on
-            // internals that Quench does not yet provide, so expose its
-            // disabled-state contract without evaluating it during bootstrap.
-            crate::host::removed_javascript("internal/source_map/source_map_cache-quench.js")
+            crate::modules::source_map_shared_vm::cache_module(context)
         }
         BuiltinModule::Internal("internal/zip") => {
             node_library_module(context, "zlib.js", "internal/zip.js")
@@ -2806,7 +2786,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
             let operation = get(context, data, "abortSignal")?;
             set(context, module, "abortSignal", operation)?;
-            let aborted = crate::modules::util_aborted_source_shared_vm::original_aborted(context)?;
+            let util = util_module(context)?;
+            let aborted = get(context, util, "aborted")?;
             set(context, module, "aborted", aborted)?;
             Ok(module)
         }
@@ -2925,7 +2906,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             node_library_module(context, "repl.js", "repl.js")
         }
         BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
-        BuiltinModule::Sea => crate::host::removed_javascript("node:sea.js"),
+        BuiltinModule::Sea => crate::modules::sea_shared_vm::module(context),
         BuiltinModule::Process
         | BuiltinModule::Assert
         | BuiltinModule::AssertStrict
@@ -3982,6 +3963,11 @@ fn load_with_resolution(
                             }
                             Err(error) => return Err(error),
                         };
+                        crate::modules::source_map_shared_vm::maybe_cache(
+                            context,
+                            filename,
+                            &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()],
+                        )?;
                         // The compiled program keeps its own source; the module body runs
                         // inside this call, so the wrapper is released before it.
                         drop(wrapper_source);

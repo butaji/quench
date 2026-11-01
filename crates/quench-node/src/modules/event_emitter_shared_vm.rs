@@ -652,7 +652,7 @@ pub(crate) fn once(
     Ok(target)
 }
 
-/// Dispatch from the canonical store; domain forwarding preserves primitive errors.
+/// Dispatch from the canonical store.
 pub(crate) fn emit(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -689,41 +689,6 @@ pub(crate) fn emit(
     } else {
         context.get_property_rooted(events, event)?
     };
-    if undefined(context, listeners) {
-        let domain = get(context, target, "domain")?;
-        let has_domain = !context
-            .rooted_value(domain)
-            .is_some_and(|value| value.is_null() || value.is_undefined());
-        let process = context.host_mut().shared_state().borrow().process_module;
-        let is_process = if let Some(process) = process {
-            context.strict_equal_rooted(target, process)?
-        } else {
-            false
-        };
-        if has_domain && !is_process {
-            let values = listener_arguments(context, arguments)?;
-            let provided = values.first().copied().unwrap_or(missing);
-            let error = if context.truthy_rooted(provided)? {
-                provided
-            } else {
-                let error = context.error_rooted("Unhandled error.")?;
-                let code = context.string_rooted("ERR_UNHANDLED_ERROR");
-                context.assign_named_property_rooted(error, "code", code)?;
-                error
-            };
-            if context.is_object_rooted(error)? {
-                context.assign_named_property_rooted(error, "domainEmitter", target)?;
-                let domain_key = context.string_rooted("domain");
-                context
-                    .define_data_property_rooted(error, domain_key, domain, true, false, true)?;
-                let no = context.boolean(false);
-                context.assign_named_property_rooted(error, "domainThrown", no)?;
-            }
-            let domain_emit = get(context, domain, "emit")?;
-            context.call_rooted(domain_emit, domain, &[event, error])?;
-            return Ok(context.boolean(true));
-        }
-    }
     unhandled_or_dispatch(context, target, event, arguments, listeners)
 }
 
@@ -897,9 +862,13 @@ pub(crate) fn proto_emit(c: &mut NativeContext<'_, NodeHost>, this: RootId, args
 }
 
 /// `EventEmitter` (callable as `EventEmitter.call(this)` and with `new`): runs
-/// `EventEmitter.init` on the receiver.
+/// `EventEmitter.init` on the receiver, whatever function that property holds (`node:domain`
+/// replaces it).
 pub(crate) fn constructor(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    init(c, this, args)?;
+    let data = c.host_function_data()?;
+    let emitter = get(c, data, "emitter")?;
+    let init = get(c, emitter, "init")?;
+    c.call_rooted(init, this, args)?;
     Ok(c.undefined())
 }
 

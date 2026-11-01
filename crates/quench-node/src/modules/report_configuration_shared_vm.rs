@@ -225,6 +225,26 @@ pub(crate) fn set(
         .values[index] = parsed;
     Ok(context.undefined())
 }
+/// `process.report.reportOnUncaughtException`'s native setting.
+const REPORT_ON_UNCAUGHT_EXCEPTION: &str = "--report-uncaught-exception";
+
+fn report_on_uncaught_exception_index() -> usize {
+    SETTINGS
+        .iter()
+        .position(|setting| setting.option == REPORT_ON_UNCAUGHT_EXCEPTION)
+        .expect("declared report-on-uncaught-exception setting")
+}
+
+pub(crate) fn report_on_uncaught_exception(context: &mut Context<'_>) -> bool {
+    let index = report_on_uncaught_exception_index();
+    matches!(context.host_mut().shared_state().borrow().report_config.values[index], SettingValue::Boolean(true))
+}
+
+pub(crate) fn set_report_on_uncaught_exception(context: &mut Context<'_>, enabled: bool) {
+    let index = report_on_uncaught_exception_index();
+    context.host_mut().shared_state().borrow_mut().report_config.values[index] = SettingValue::Boolean(enabled);
+}
+
 pub(crate) fn initialize_signal(context: &mut Context<'_>) -> Result<(), RootedError> {
     if context
         .host_mut()

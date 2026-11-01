@@ -42,21 +42,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .scheduler
         .reset_shared();
     let process = context.object_rooted()?;
-    // Permission projection needs the same normalized flags used by Node's
-    // internal options layer, including values read from --config-file. Keep
-    // the accessor private and one-shot: process.binding('options') is denied
-    // under the Permission Model, but bootstrap still needs this trusted view.
-    let permission_options =
-        context.host_function(crate::host::shared_vm::operation("cliOptionsFlags"))?;
-    let permission_options_key = context.string_rooted("\0quench:permission-options");
-    context.define_data_property_rooted(
-        process,
-        permission_options_key,
-        permission_options,
-        false,
-        false,
-        true,
-    )?;
     let capture_state = context.object_rooted()?;
     let null = context.null();
     let auxiliary = context.array_rooted(&[])?;
@@ -167,30 +152,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let active_handles =
         context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
-    let active_network_resources = context.host_function(crate::host::shared_vm::operation(
-        "processGetActiveNetworkResources",
-    ))?;
-    install(
-        context,
-        process,
-        "__quenchGetActiveNetworkResources",
-        active_network_resources,
-    )?;
-    let active_timer_resources = context.host_function(crate::host::shared_vm::operation(
-        "processGetActiveTimerResources",
-    ))?;
-    install(
-        context,
-        process,
-        "__quenchGetActiveTimerResources",
-        active_timer_resources,
-    )?;
     let hrtime = context.host_function_named(crate::host::shared_vm::operation("processHrtime"), "hrtime")?;
     let bigint = context.host_function_named(crate::host::shared_vm::operation("processHrtimeBigint"), "bigint")?;
     install(context, hrtime, "bigint", bigint)?;
     install(context, process, "hrtime", hrtime)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
+    // The active domain (`node:domain`), none until one is entered.
+    let null = context.null();
+    install(context, process, "domain", null)?;
     let shared_state = context.host_mut().shared_state();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
@@ -1938,32 +1908,23 @@ pub(crate) fn set_uncaught_exception_capture_callback(
         }
     }
     context.assign_named_property_rooted(state, "captureFn", callback)?;
-    let process = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    // `process.report.reportOnUncaughtException` is the native setting this toggles.
     use super::event_constructor_shared_vm::get;
+    use super::report_configuration_shared_vm::{report_on_uncaught_exception, set_report_on_uncaught_exception};
     if is_null {
         let auxiliary = get(context, state, "auxiliaryCallbacks")?;
         let length = get(context, auxiliary, "length")?;
         let zero = context.number(0.0);
         if context.strict_equal_rooted(length, zero)? {
-            let report = get(context, process, "report")?;
             let flag = get(context, state, "reportFlag")?;
-            context.assign_named_property_rooted(report, "reportOnUncaughtException", flag)?;
+            let flag = context.truthy_rooted(flag)?;
+            set_report_on_uncaught_exception(context, flag);
         }
     } else {
-        let report = get(context, process, "report")?;
-        let flag = get(context, report, "reportOnUncaughtException")?;
-        let yes = context.boolean(true);
-        let enabled = context.strict_equal_rooted(flag, yes)?;
+        let enabled = report_on_uncaught_exception(context);
         let enabled = context.boolean(enabled);
         context.assign_named_property_rooted(state, "reportFlag", enabled)?;
-        let report = get(context, process, "report")?;
-        let no = context.boolean(false);
-        context.assign_named_property_rooted(report, "reportOnUncaughtException", no)?;
+        set_report_on_uncaught_exception(context, false);
     }
     Ok(context.undefined())
 }
@@ -4365,38 +4326,25 @@ pub(crate) fn initialize_warning_policy(
             context.define_data_property_rooted(process, key, yes, false, true, true)?;
         }
     }
-    let exposed = options.enabled("--expose-internals");
-    if exposed {
-        let emit_warning = warning_export(context, "emitWarning")?;
-        install(context, process, "emitWarning", emit_warning)?;
-    } else {
-        // Node's warning module is loaded on the first read of `process.emitWarning`.
-        let initializer = context.host_function(crate::host::shared_vm::operation(
-            "processEmitWarningInitialize",
-        ))?;
-        context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
-    }
+    // `process.emitWarning` is made on its first read.
+    let initializer = context.host_function(crate::host::shared_vm::operation(
+        "processEmitWarningInitialize",
+    ))?;
+    context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
     // The bootstrap reads the environment before any script can change `process.env`.
     let disabled = environment(context).into_iter().any(|(name, value)| name == "NODE_NO_WARNINGS" && value == "1");
     if options.enabled("--warnings") && !disabled {
-        if exposed {
-            let callback = warning_export(context, "onWarning")?;
-            let on = get(context, process, "on")?;
-            let event = context.string_rooted("warning");
-            context.call_rooted(on, process, &[event, callback])?;
-        } else {
-            // Node's own listener, registered as `process.on` would (`_events.warning`, one
-            // more event type) but loaded on the first read of that entry: by an emitted
-            // warning or a look at the listeners. Most runs never warn.
-            let events = get(context, process, "_events")?;
-            let initializer = context.host_function(crate::host::shared_vm::operation("processWarningListenerInitialize"))?;
-            context.define_lazy_data_properties_rooted(events, &[WARNING_EVENT], true, initializer)?;
-            let count = get(context, process, "_eventsCount")?;
-            let count = context.to_number(count)? + 1.0;
-            let count = context.number(count);
-            let key = context.string_rooted("_eventsCount");
-            context.set_property_rooted(process, key, count, process)?;
-        }
+        // Node's own listener, registered as `process.on` would (`_events.warning`, one
+        // more event type) but made on the first read of that entry: by an emitted
+        // warning or a look at the listeners. Most runs never warn.
+        let events = get(context, process, "_events")?;
+        let initializer = context.host_function(crate::host::shared_vm::operation("processWarningListenerInitialize"))?;
+        context.define_lazy_data_properties_rooted(events, &[WARNING_EVENT], true, initializer)?;
+        let count = get(context, process, "_eventsCount")?;
+        let count = context.to_number(count)? + 1.0;
+        let count = context.number(count);
+        let key = context.string_rooted("_eventsCount");
+        context.set_property_rooted(process, key, count, process)?;
     }
     if options.enabled("--permission") || options.enabled("--permission-audit") {
         // Permission startup warnings must be emitted after the process
@@ -4452,18 +4400,6 @@ pub(crate) fn initialize_warning_policy(
         install(context, process, "binding", binding)?;
     }
     Ok(())
-}
-
-fn warning_export(
-    context: &mut NativeContext<'_, NodeHost>,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "internal/process/pre_execution.js",
-        "internal/process/warning.js",
-        name,
-    )
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
