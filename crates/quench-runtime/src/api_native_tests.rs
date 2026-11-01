@@ -3,6 +3,21 @@ use crate::{Engine, ResidualProgram};
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
+#[test]
+fn guest_catch_does_not_hide_unavailable_native_host_operations() {
+    fn unavailable(c: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        Err(c.native_execution_unavailable("native operation is not linked"))
+    }
+    let host = TestHost::default().with_natives(crate::host_functions![global "unavailable" (0) => unavailable]);
+    let program = Engine::specialize(
+        "try { unavailable(); } catch (error) { if (error.message !== 'native operation is not linked') throw error; }",
+        "caught-native-host-rejection.js",
+    ).unwrap();
+    let mut runtime = Runtime::new(host);
+    runtime.execute(&program).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 1);
+}
+
 fn capturing_host() -> TestHost {
     TestHost::default()
         .with_natives(crate::host_functions![method "captured" (0) => captured])

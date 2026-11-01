@@ -1022,6 +1022,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Reject a host operation unavailable to the native image. The rejection
+    /// remains visible to completion checks when guest code catches the error.
+    pub fn native_execution_unavailable(&mut self, reason: &str) -> RootedError {
+        self.vm.record_native_execution_rejection();
+        RootedError::host(reason)
+    }
+
     /// Evaluate named guest Script code in the active realm, without resetting roots.
     /// Caller lexical bindings and direct-eval grammar are not inherited.
     pub fn evaluate_script_rooted(

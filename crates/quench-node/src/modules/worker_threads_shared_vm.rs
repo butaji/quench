@@ -1031,6 +1031,9 @@ pub(crate) fn construct(
             ctx.type_error_rooted("Class constructor Worker cannot be invoked without new")?;
         return Err(ctx.throw(error));
     }
+    if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+        return Err(ctx.native_execution_unavailable(super::worker_shared_vm::NATIVE_ENTRY_UNAVAILABLE));
+    }
     let global = ctx.global_root()?;
     let process = get(ctx, global, "process")?;
     let permission = get(ctx, process, "permission")?;
