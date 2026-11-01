@@ -601,7 +601,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     productive_full: Ratio::new(1, 8),
     maximum_cap_backoff: 2,
     survival_limit: THROUGHPUT_SURVIVAL_LIMIT,
-    full_only_headroom: Ratio::new(1, 1),
+    full_only_headroom: THROUGHPUT_FULL_ONLY_HEADROOM,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
@@ -673,6 +673,14 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 /// 1 MiB and 39.4-43.1 at 8 MiB); 256 KiB gave no lower peak. Memory-first trades the extra
 /// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
+
+/// Allocation between full collections, as a share of the live set, once most of each young
+/// generation survives (`Regime::FullOnly`) under throughput: one and a half live sets. A heap
+/// whose survivors fill each young generation, as V8-v7 Splay's tree does, collects only
+/// fully, and each full collection marks the whole live set: at one live set Splay ran 26 full
+/// collections a run (gc-tuning binary, static, pinned, 2026-11-01: Score 5140-5204 at
+/// 31.8 MB; 3/2: 5960-6124 at 39.3 MB; 2/1: 5782-5847 at 47.9 MB).
+const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(3, 2);
 
 /// Memory-first lets half a live set of allocation pass between full collections once most of
 /// each young generation survives, not a whole one, which let the heap reach twice its live
