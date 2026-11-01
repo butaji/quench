@@ -54,7 +54,7 @@ mod facts;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 mod wavefront;
-pub(super) use osr_loop::{CALLEE_CAPTURE, NATIVE_FIELD_SHAPES, 
+pub(super) use osr_loop::{CALLEE_CAPTURE, THIS_CAPTURE, NATIVE_FIELD_SHAPES, 
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
