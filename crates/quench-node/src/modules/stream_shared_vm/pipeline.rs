@@ -578,9 +578,9 @@ fn next(c: &mut Context<'_>, pump: RootId) -> Result<(), RootedError> {
             Ok((done, value))
         })())?;
         return match step {
-            Ok((true, _)) => after_loop(c, pump),
-            Ok((false, value)) => {
-                let fulfilled = closure(c, "streamPumpChunk", "", &[pump])?;
+            Ok((done, value)) => {
+                let done = c.boolean(done);
+                let fulfilled = closure(c, "streamPumpSyncValue", "", &[pump, done])?;
                 let rejected = closure(c, "streamPumpFailed", "", &[pump])?;
                 await_then(c, value, fulfilled, rejected)
             }
@@ -613,10 +613,16 @@ pub(crate) fn pump_result(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Ou
     Ok(c.undefined())
 }
 
-pub(crate) fn pump_chunk(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let [pump] = captures(c)?;
+/// A sync iterator's awaited value: `CreateAsyncFromSyncIterator` settles its own promise
+/// with the result, which the loop awaits in turn.
+pub(crate) fn pump_sync_value(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let [pump, done] = captures(c)?;
     let value = arg(c, args, 0);
-    body(c, pump, value)?;
+    let done = c.truthy_rooted(done)?;
+    let result = super::iterator_result(c, value, done)?;
+    let fulfilled = closure(c, "streamPumpResult", "", &[pump])?;
+    let rejected = closure(c, "streamPumpFailed", "", &[pump])?;
+    await_then(c, result, fulfilled, rejected)?;
     Ok(c.undefined())
 }
 

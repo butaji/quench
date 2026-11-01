@@ -202,7 +202,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "streamPumpResume" (1) => crate::modules::stream_shared_vm::pipeline::pump_resume,
         method "streamPumpNext" (0) => crate::modules::stream_shared_vm::pipeline::pump_next,
         method "streamPumpResult" (1) => crate::modules::stream_shared_vm::pipeline::pump_result,
-        method "streamPumpChunk" (1) => crate::modules::stream_shared_vm::pipeline::pump_chunk,
+        method "streamPumpSyncValue" (1) => crate::modules::stream_shared_vm::pipeline::pump_sync_value,
         method "streamPumpBodyFailed" (1) => crate::modules::stream_shared_vm::pipeline::pump_body_failed,
         method "streamPumpClosed" (0) => crate::modules::stream_shared_vm::pipeline::pump_closed,
         method "streamPumpFailed" (1) => crate::modules::stream_shared_vm::pipeline::pump_failed,
