@@ -7005,7 +7005,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                     }),
                 );
             }
-            dispatch.refresh_heap_bases(vm);
             match step {
                 Ok(super::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -7052,6 +7051,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                         // this function and the artifact outlives this entry.
                         && unsafe { *dispatch.native_pcs.add(next) != 0 };
                     if SINGLE_OPERATION || !fallthrough || resumes_native {
+                        // Only generated code consumes these raw views. A stopped
+                        // dispatch discards them, and a batched VM operation will
+                        // refresh once at the boundary before native execution.
+                        dispatch.refresh_heap_bases(vm);
                         return Ok(JsCalloutStep::Continue(next));
                     }
 
