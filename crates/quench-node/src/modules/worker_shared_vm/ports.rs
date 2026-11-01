@@ -47,6 +47,30 @@ impl Endpoint {
         (first, second)
     }
 
+    /// An endpoint with no peer: a broadcast channel's, delivered to by `deliver`.
+    pub(crate) fn lone() -> Arc<Self> {
+        Arc::new(Self { state: Mutex::default() })
+    }
+
+    /// Queue `message` for this endpoint's own port, unless it was closed.
+    pub(crate) fn deliver(&self, message: Message) {
+        let wake = {
+            let mut state = self.lock();
+            if state.closed {
+                return;
+            }
+            state.inbox.push_back(message);
+            state.wake.clone()
+        };
+        if let Some(wake) = wake {
+            wake.notify();
+        }
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.lock().closed
+    }
+
     /// Associate this endpoint with the event loop that currently owns its port.
     /// A message may have arrived before adoption, so signal after releasing the lock.
     pub(crate) fn attach_wake(&self, wake: Arc<WakeSignal>) {
