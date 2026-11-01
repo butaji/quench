@@ -116,6 +116,25 @@ NavierStokes only. Splay's RSS rose from 34 to 79 MiB with `v2-jit`'s collection
 commit, which traded memory for Score. It remains below both JIT peers but above Bun without
 JIT, so the board's stricter all-modes rule marks it lost.
 
+The interpreters, compared in the same screen with JIT off, show where the gap lies:
+
+| Fixture | Quench no-JIT | Node `--jitless` | Bun no-JIT | Node JIT |
+| --- | ---: | ---: | ---: | ---: |
+| Richards | 1936 | 1190 | 1402 | 35108 |
+| DeltaBlue | 1881 | 1365 | 1120 | 78938 |
+| Crypto | 3121 | 1188 | 1684 | 41408 |
+| RayTrace | 5230 | 3520 | 2547 | 55666 |
+| EarleyBoyer | 6935 | 5508 | 4533 | 59777 |
+| RegExp | 3855 | 3234 | 729 | 7516 |
+| Splay | 7278 | 5018 | 3973 | 10395 |
+| NavierStokes | 3240 | 1681 | 2545 | 39771 |
+
+Quench's lane already beats V8's Ignition and JavaScriptCore's LLInt on every fixture. The
+JIT-mode gap is the factor that V8's optimizing tiers add over Ignition, 30 to 58 times on
+Richards and DeltaBlue. Closing it needs an optimizing online specializer at that level:
+shape and callee speculation, inlining, unboxing and allocation elimination. Faster dispatch
+or a better baseline cannot close it.
+
 What the diagnostics show:
 
 - **Richards has no native coverage.** `QUENCH_JS_JIT_STATS` reports zero native entries.
