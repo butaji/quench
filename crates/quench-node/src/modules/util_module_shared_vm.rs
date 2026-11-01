@@ -451,6 +451,18 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     Ok(c.boolean(matches))
 }
 
+/// `sys` (lib/sys.js): the util module, with DEP0025 when first required.
+pub(crate) fn sys_module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let module = super::util_shared_vm::module(c)?;
+    let process = process(c)?;
+    let emit = get(c, process, "emitWarning")?;
+    let message = c.string_rooted("sys is deprecated. Use util instead.");
+    let kind = c.string_rooted("DeprecationWarning");
+    let code = c.string_rooted("DEP0025");
+    c.call_rooted(emit, process, &[message, kind, code])?;
+    Ok(module)
+}
+
 /// `inspect.defaultOptions` getter.
 pub(crate) fn inspect_defaults_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     inspect::primordial(c, "defaultOptions")

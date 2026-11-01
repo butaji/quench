@@ -1425,6 +1425,7 @@ fn require_for_module_inner(
             | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
+            | BuiltinModule::Sys
             | BuiltinModule::ChildProcess
             | BuiltinModule::InternalChildProcess
             | BuiltinModule::Https
@@ -1754,6 +1755,8 @@ enum BuiltinModule {
     StringDecoder,
     WorkerThreads,
     Util,
+    /// `sys`, the deprecated alias of `util`.
+    Sys,
     UtilTypes,
     Timers,
     TimersPromises,
@@ -1827,6 +1830,7 @@ impl BuiltinModule {
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
             Self::Util => Some("util"),
+            Self::Sys => Some("sys"),
             Self::UtilTypes => Some("util/types"),
             Self::Timers => Some("timers"),
             Self::InternalTimers => Some("internal/timers"),
@@ -2102,8 +2106,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
     // Node keeps the deprecated `sys` specifier as an alias of `util`.
-    ("sys", BuiltinModule::Util),
-    ("node:sys", BuiltinModule::Util),
+    ("sys", BuiltinModule::Sys),
+    ("node:sys", BuiltinModule::Sys),
     ("node:util", BuiltinModule::Util),
     ("util/types", BuiltinModule::UtilTypes),
     ("node:util/types", BuiltinModule::UtilTypes),
@@ -2979,6 +2983,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "stateful builtin passed to generic shared module builder",
         )),
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
+        BuiltinModule::Sys => crate::modules::util_module_shared_vm::sys_module(context),
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
         BuiltinModule::InternalChildProcess => {
             let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
