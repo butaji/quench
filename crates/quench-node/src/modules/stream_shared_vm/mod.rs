@@ -42,6 +42,8 @@ pub(crate) enum Slot {
     Destroy,
     Construct,
     Callback,
+    PairCallback,
+    OtherSide,
     IsDestroyed,
     IsErrored,
     IsReadable,
@@ -59,6 +61,8 @@ pub(crate) enum Slot {
 enum SymbolSource {
     /// A fresh `Symbol(description)`, private to the module.
     Private(&'static str),
+    /// A private name no reflection exposes (a class's `#field`).
+    PrivateName(&'static str),
     /// `Symbol.for(key)`, shared with every library that names it.
     Registered(&'static str),
     /// A well-known `Symbol[name]`.
@@ -68,7 +72,7 @@ enum SymbolSource {
 }
 
 impl Slot {
-    const ALL: [Self; 24] = [
+    const ALL: [Self; 26] = [
         Self::State,
         Self::ErroredValue,
         Self::DefaultEncodingValue,
@@ -82,6 +86,8 @@ impl Slot {
         Self::Destroy,
         Self::Construct,
         Self::Callback,
+        Self::PairCallback,
+        Self::OtherSide,
         Self::IsDestroyed,
         Self::IsErrored,
         Self::IsReadable,
@@ -111,6 +117,8 @@ impl Slot {
             Self::Destroy => Private("kDestroy"),
             Self::Construct => Private("kConstruct"),
             Self::Callback => Private("kCallback"),
+            Self::PairCallback => Private("Callback"),
+            Self::OtherSide => PrivateName("#otherSide"),
             Self::IsDestroyed => Registered("nodejs.stream.destroyed"),
             Self::IsErrored => Registered("nodejs.stream.errored"),
             Self::IsReadable => Registered("nodejs.stream.readable"),
@@ -139,10 +147,11 @@ pub(crate) enum Class {
     ReadableState,
     WritableState,
     Buffer,
+    DuplexSide,
 }
 
 impl Class {
-    const COUNT: usize = 10;
+    const COUNT: usize = 11;
 }
 
 /// Operations a stream schedules with `process.nextTick`, each a host function made once.
@@ -491,6 +500,7 @@ fn make_symbol(c: &mut Context<'_>, source: SymbolSource) -> Outcome {
     };
     match source {
         SymbolSource::Private(description) => Ok(c.symbol_rooted(Some(description))),
+        SymbolSource::PrivateName(description) => Ok(c.private_symbol_rooted(Some(description))),
         SymbolSource::Registered(key) => registered(c, key),
         SymbolSource::WellKnown(name) => get(c, symbol, name),
         SymbolSource::WellKnownOr(name, key) => {
@@ -549,6 +559,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let duplex = duplex::build_duplex(c, readable, writable)?;
     let transform = duplex::build_transform(c, duplex)?;
     let pass_through = duplex::build_pass_through(c, transform)?;
+    let duplex_side = duplex::build_duplex_side(c, duplex)?;
     for (class, value) in [
         (Class::Emitter, emitter),
         (Class::Stream, stream),
@@ -560,6 +571,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         (Class::ReadableState, readable_state),
         (Class::WritableState, writable_state),
         (Class::Buffer, buffer),
+        (Class::DuplexSide, duplex_side),
     ] {
         intrinsics.classes[class as usize] = c.retain(value)?;
     }
@@ -594,6 +606,7 @@ fn exports(
         c,
         stream,
         &[
+            (Key::Name("duplexPair"), "streamDuplexPair", "duplexPair"),
             (Key::Name("pipeline"), "streamPipeline", "pipeline"),
             (Key::Name("addAbortSignal"), "streamAddAbortSignal", "addAbortSignal"),
             (Key::Name("finished"), "streamFinished", "eos"),

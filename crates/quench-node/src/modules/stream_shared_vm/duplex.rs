@@ -302,3 +302,74 @@ pub(crate) fn build_pass_through(c: &mut Context<'_>, transform: RootId) -> Outc
     define_methods(c, prototype, &[(Key::Name("_transform"), "streamPassThroughTransform", "")])?;
     Ok(constructor)
 }
+
+/// `new DuplexSide(options)`: one end of a `duplexPair`.
+pub(crate) fn duplex_side(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    let options = arg(c, args, 0);
+    initialize(c, this, options)?;
+    let null = c.null();
+    put_slot(c, this, Slot::PairCallback, null)?;
+    put_slot(c, this, Slot::OtherSide, null)?;
+    Ok(c.undefined())
+}
+
+/// `DuplexSide.prototype._read()`: release the other side's waiting write.
+pub(crate) fn side_read(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
+    let callback = get_slot(c, this, Slot::PairCallback)?;
+    if c.truthy_rooted(callback)? {
+        let null = c.null();
+        put_slot(c, this, Slot::PairCallback, null)?;
+        let undefined = c.undefined();
+        c.call_rooted(callback, undefined, &[])?;
+    }
+    Ok(c.undefined())
+}
+
+/// `DuplexSide.prototype._write(chunk, encoding, callback)`: hand the chunk to the other
+/// side, which calls back once its reader takes more.
+pub(crate) fn side_write(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    let (chunk, callback) = (arg(c, args, 0), arg(c, args, 2));
+    if number(c, chunk, "length")? == 0.0 {
+        next_tick(c, callback, &[])?;
+    } else {
+        let other = get_slot(c, this, Slot::OtherSide)?;
+        call_method(c, other, "push", &[chunk])?;
+        put_slot(c, other, Slot::PairCallback, callback)?;
+    }
+    Ok(c.undefined())
+}
+
+/// `DuplexSide.prototype._final(callback)`: end the other side's readable half.
+pub(crate) fn side_final(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    let callback = arg(c, args, 0);
+    let other = get_slot(c, this, Slot::OtherSide)?;
+    on(c, other, "end", callback)?;
+    let null = c.null();
+    call_method(c, other, "push", &[null])?;
+    Ok(c.undefined())
+}
+
+pub(crate) fn build_duplex_side(c: &mut Context<'_>, duplex: RootId) -> Outcome {
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamDuplexSide"), "DuplexSide")?;
+    let prototype = get(c, constructor, "prototype")?;
+    let duplex_prototype = get(c, duplex, "prototype")?;
+    c.set_prototype_rooted(prototype, duplex_prototype)?;
+    c.set_prototype_rooted(constructor, duplex)?;
+    for (name, operation) in [("_read", "streamDuplexSideRead"), ("_write", "streamDuplexSideWrite"), ("_final", "streamDuplexSideFinal")] {
+        let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let key = c.string_rooted(name);
+        c.define_data_property_rooted(prototype, key, method, true, false, true)?;
+    }
+    Ok(constructor)
+}
+
+/// `duplexPair(options)`: two duplexes, each writing into the other's readable half.
+pub(crate) fn duplex_pair(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let options = arg(c, args, 0);
+    let side = intrinsics(c)?.class(Class::DuplexSide);
+    let first = c.construct_rooted(side, side, &[options])?;
+    let second = c.construct_rooted(side, side, &[options])?;
+    put_slot(c, first, Slot::OtherSide, second)?;
+    put_slot(c, second, Slot::OtherSide, first)?;
+    c.array_rooted(&[first, second])
+}

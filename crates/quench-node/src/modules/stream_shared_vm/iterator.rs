@@ -37,6 +37,15 @@ pub(crate) fn iterator(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Ou
 
 /// `streamToAsyncIterator(stream, options)`.
 fn create(c: &mut Context<'_>, stream: RootId, options: RootId) -> Outcome {
+    let read = get(c, stream, "read")?;
+    let stream = if c.is_callable_rooted(read)? {
+        stream
+    } else {
+        let wrap_options = c.object_rooted()?;
+        super::put_bool(c, wrap_options, "objectMode", true)?;
+        let undefined = c.undefined();
+        super::readable::wrap_static(c, undefined, &[stream, wrap_options])?
+    };
     let record = c.null_object_rooted()?;
     put(c, record, "stream", stream)?;
     put(c, record, "options", options)?;

@@ -1332,6 +1332,47 @@ pub(crate) fn wrap_read(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome
     Ok(c.undefined())
 }
 
+/// `Readable._fromList(n, state)`.
+pub(crate) fn from_list_export(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let (n, state) = (arg(c, args, 0), arg(c, args, 1));
+    let n = c.to_number(n)?;
+    from_list(c, n, state)
+}
+
+/// `Readable.wrap(src, options)`: a readable over an old-style stream, destroying it along.
+pub(crate) fn wrap_static(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let (source, options) = (arg(c, args, 0), arg(c, args, 1));
+    let settings = c.object_rooted()?;
+    let mut object_mode = get(c, source, "readableObjectMode")?;
+    if is_nullish(c, object_mode) {
+        object_mode = get(c, source, "objectMode")?;
+    }
+    if is_nullish(c, object_mode) {
+        object_mode = c.boolean(true);
+    }
+    put(c, settings, "objectMode", object_mode)?;
+    if !is_nullish(c, options) {
+        let global = c.global_root()?;
+        let object = get(c, global, "Object")?;
+        call_method(c, object, "assign", &[settings, options])?;
+    }
+    let destroy = closure(c, "streamWrapDestroy", "destroy", &[source])?;
+    put(c, settings, "destroy", destroy)?;
+    let readable = intrinsics(c)?.class(Class::Readable);
+    let wrapper = c.construct_rooted(readable, readable, &[settings])?;
+    call_method(c, wrapper, "wrap", &[source])
+}
+
+/// The `destroy` a `Readable.wrap` wrapper takes: destroy the source, then call back.
+pub(crate) fn wrap_destroy(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let [source] = captures(c)?;
+    let (error, callback) = (arg(c, args, 0), arg(c, args, 1));
+    destroy::destroyer(c, source, error)?;
+    let undefined = c.undefined();
+    c.call_rooted(callback, undefined, &[error])?;
+    Ok(undefined)
+}
+
 /// `Stream._isArrayBufferView(value)`.
 pub(crate) fn is_view_export(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let value = arg(c, args, 0);
@@ -1372,7 +1413,15 @@ pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) ->
     c.set_prototype_rooted(constructor, stream)?;
     let key = c.string_rooted("ReadableState");
     c.define_data_property_rooted(constructor, key, state_class, true, true, true)?;
-    define_methods(c, constructor, &[(Key::Name("from"), "streamReadableFrom", "")])?;
+    define_methods(
+        c,
+        constructor,
+        &[
+            (Key::Name("_fromList"), "streamReadableFromList", "fromList"),
+            (Key::Name("from"), "streamReadableFrom", ""),
+            (Key::Name("wrap"), "streamReadableWrapStatic", ""),
+        ],
+    )?;
     define_methods(
         c,
         prototype,
