@@ -1842,7 +1842,10 @@ fn admit_lifetime_roles(
             .then(|| flow.entry_register(entry)).flatten()
     }).collect();
     let tagged_definitions = region.instructions.iter().enumerate().filter_map(|(offset, instruction)| {
-        instruction.defined_register().filter(|register| region.tagged.contains(register)).map(|_| offset as u32)
+        // A dynamic array's values are tagged too (`LoopRegion::dynamic_arrays`).
+        instruction.defined_register()
+            .filter(|register| region.tagged.contains(register) || region.dynamic_arrays.contains(register))
+            .map(|_| offset as u32)
     }).collect();
     let tagged: BTreeSet<Register> = region.tagged.iter().map(|register| original[usize::from(*register)]).collect();
     region.numbers = region.numbers.iter().map(|register| original[usize::from(*register)])
@@ -6316,7 +6319,7 @@ mod tests {
     }
 
     #[test]
-    fn osr_nested_receiver_store_retains_entry_identity_guard() {
+    fn osr_nested_receiver_store_reads_its_array_from_the_record() {
         let region = admit_region(vec![
             WideInstruction::new(Op::GetIndex, 1, Operand::register(0).0, Operand::register(3).0, 0),
             WideInstruction::new(Op::SetIndex, 2, 1, 3, 0),
@@ -6324,9 +6327,12 @@ mod tests {
         ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![15; 3]))),
             Some(15), 0, &Default::default(),
-        ).unwrap_or_else(|failure| panic!("existing guarded store: {failure:?}"));
-        // Lowering::define checks GetIndex against this pinned identity before a store.
-        assert!(region.arrays.iter().any(|array| array.register == 1 && array.written));
+        ).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
+        // The element read defines the receiver, so the store reads its array from the record at
+        // each access (`Lowering::dynamic_array`) instead of pinning an entry identity.
+        assert!(region.dynamic_arrays.contains(&1));
+        assert!(!region.arrays.iter().any(|array| array.register == 1));
+        assert!(region.arrays.iter().any(|array| array.register == 0 && !array.written));
     }
 
     #[test]
