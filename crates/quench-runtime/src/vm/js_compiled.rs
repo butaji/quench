@@ -1884,11 +1884,52 @@ fn compile_string_transform(
 /// do not constrain the generated function. Dynamic Number comparisons remain
 /// native comparisons. Every non-Number entry is rejected by the caller's
 /// guard and resumes from the untouched interpreter frame.
+pub(super) struct JsBooleanRegion {
+    pub(super) function: ir::Function,
+    pub(super) params: usize,
+    pub(super) requires_signed_int32_arguments: bool,
+    pub(super) field_argument: Option<JsJitFieldArgument>,
+    pub(super) numeric_field_inputs: Vec<JsJitNumericFieldInput>,
+    pub(super) capture_arguments: Vec<JsJitCaptureArgument>,
+}
+
 fn compile_number_domain_boolean_tree(
     program: &ResidualProgram,
     function_id: u32,
     function: &Function,
 ) -> Option<JsJitArtifact> {
+    let isa = super::jit_backend::target_isa("speed")?;
+    let region = lower_number_domain_boolean_tree(program, function_id, function, &*isa)?;
+    let mut context = cranelift_codegen::Context::for_function(region.function);
+    let compiled = context
+        .compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default())
+        .ok()?;
+    if !compiled.buffer.relocs().is_empty() {
+        return None;
+    }
+    let code = compiled.code_buffer().to_vec();
+    if code.is_empty() || code.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    Some(JsJitArtifact {
+        code,
+        params: region.params,
+        requires_signed_int32_arguments: region.requires_signed_int32_arguments,
+        result: JsJitResultKind::Boolean,
+        field_argument: region.field_argument,
+        numeric_field_inputs: region.numeric_field_inputs,
+        capture_arguments: region.capture_arguments,
+        general_dispatch_native_pcs: Vec::new(),
+    })
+}
+
+/// Residualize the boolean Number domain independently of code publication.
+pub(super) fn lower_number_domain_boolean_tree(
+    program: &ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+) -> Option<JsBooleanRegion> {
     if !function_candidate(function, program)
         || usize::from(function.registers) > MAX_REGISTERS
     {
@@ -2263,8 +2304,6 @@ fn compile_number_domain_boolean_tree(
     }
 
     let params = usize::from(function.params);
-    let isa = super::jit_backend::target_isa("speed")?;
-
     let mut signature = ir::Signature::new(isa.default_call_conv());
     signature.params.push(AbiParam::new(isa.pointer_type()));
     signature.returns.push(AbiParam::new(types::I32));
@@ -2691,29 +2730,13 @@ fn compile_number_domain_boolean_tree(
     }
 
     builder.finalize(isa.frontend_config());
-    let mut context = cranelift_codegen::Context::for_function(native);
-    let compiled = context
-        .compile(
-            &*isa,
-            &mut cranelift_codegen::control::ControlPlane::default(),
-        )
-        .ok()?;
-    if !compiled.buffer.relocs().is_empty() {
-        return None;
-    }
-    let code = compiled.code_buffer().to_vec();
-    if code.is_empty() || code.len() > MAX_CODE_BYTES {
-        return None;
-    }
-    Some(JsJitArtifact {
-        code,
+    Some(JsBooleanRegion {
+        function: native,
         params,
         requires_signed_int32_arguments: has_int32_bitwise_candidate(program, function),
-        result: JsJitResultKind::Boolean,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
         capture_arguments: capture_arguments.into_vec(),
-        general_dispatch_native_pcs: Vec::new(),
     })
 }
 

@@ -15458,6 +15458,34 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
+    #[test]
+    fn guarded_boolean_region_emits_a_relocatable_object() {
+        let program = crate::Engine::specialize(
+            "function make(mask, expected) { function check() { return (this.value & mask) !== 0 || this.value == expected; } return check; }",
+            "object-boolean-region.js",
+        ).unwrap();
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "check")
+        }).unwrap() as u32;
+        let isa = super::super::jit_backend::target_isa_for(
+            "speed", super::super::jit_backend::CodePublication::RelocatableObject,
+        ).unwrap();
+        let region = super::super::js_compiled::lower_number_domain_boolean_tree(
+            &program, id, program.function(id as usize), &*isa,
+        ).unwrap();
+        assert!(region.requires_signed_int32_arguments);
+        assert_eq!(region.capture_arguments.len(), 2);
+        assert!(!region.numeric_field_inputs.is_empty());
+        let object = super::super::native_object::emit_native_object(
+            "boolean_region", vec![super::super::native_object::NativeFunction::Definition {
+                name: "quench_boolean_region_test".into(), function: region.function,
+            }],
+        ).unwrap();
+        assert!(!object.is_empty());
+    }
+
+    #[cfg(feature = "aot")]
     fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
         let program = crate::Engine::specialize(source, "semantic-entry.js").unwrap();
         semantic_program(program)
