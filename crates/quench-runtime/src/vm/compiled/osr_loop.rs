@@ -99,45 +99,39 @@ pub(crate) enum Widening {
     /// A register the region never writes, held as exactly 1 so that multiplying or
     /// dividing by it is the identity (`Lowering::units`), held something else at entry.
     Unit(Register),
+    /// The array in this register, whose int32 reads the entry proved from its element
+    /// kind (`Lowering::prove_int32_kinds`), had another kind at entry: its reads keep
+    /// their guards, and stay int32.
+    Kind(Register),
 }
 
-/// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
-const WIDEN_REGISTER: u64 = 1 << u16::BITS;
-const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
-const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
-const WIDEN_FIELD: u64 = WIDEN_UNIT << 1;
-const WIDEN_ELEMENTS: u64 = WIDEN_FIELD << 1;
-const _: () = assert!(WIDEN_ELEMENTS <= u32::MAX as u64);
-const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
+/// A not-entered outcome's low word: zero, or a widening's kind bit (its index in
+/// `WIDENINGS`, above the payload) over its payload.
+const WIDEN_PAYLOAD: u64 = (1 << u16::BITS) - 1;
+
+/// Each widening, by its kind bit's index above the payload.
+const WIDENINGS: [fn(u16) -> Widening; 6] =
+    [Widening::Register, Widening::Capture, Widening::Unit, Widening::Field, Widening::Elements, Widening::Kind];
+const _: () = assert!(1_u64 << (u16::BITS as usize + WIDENINGS.len() - 1) <= u32::MAX as u64);
 
 impl Widening {
-    /// The not-entered word of an entry guard's widening: an array's elements are named by
-    /// the entry kind proof of an array whose reads drop their guard (`Lowering::prove_int32_kinds`).
+    /// The not-entered word of an entry guard's widening.
     fn code(self) -> u32 {
-        match self {
-            Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
-            Self::Capture(index) => (WIDEN_CAPTURE | u64::from(index)) as u32,
-            Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
-            Self::Field(index) => (WIDEN_FIELD | u64::from(index)) as u32,
-            Self::Elements(register) => (WIDEN_ELEMENTS | u64::from(register)) as u32,
-        }
+        let (kind, payload) = match self {
+            Self::Register(payload) => (0, payload),
+            Self::Capture(payload) => (1, payload),
+            Self::Unit(payload) => (2, payload),
+            Self::Field(payload) => (3, payload),
+            Self::Elements(payload) => (4, payload),
+            Self::Kind(payload) => (5, payload),
+        };
+        debug_assert!(WIDENINGS[kind](payload) == self);
+        ((1_u64 << (u16::BITS as usize + kind)) | u64::from(payload)) as u32
     }
 
     fn decode(word: u64) -> Option<Self> {
-        let payload = (word & WIDEN_PAYLOAD) as u16;
-        if word & WIDEN_REGISTER != 0 {
-            Some(Self::Register(payload))
-        } else if word & WIDEN_CAPTURE != 0 {
-            Some(Self::Capture(payload))
-        } else if word & WIDEN_UNIT != 0 {
-            Some(Self::Unit(payload))
-        } else if word & WIDEN_FIELD != 0 {
-            Some(Self::Field(payload))
-        } else if word & WIDEN_ELEMENTS != 0 {
-            Some(Self::Elements(payload))
-        } else {
-            None
-        }
+        let kind = (word >> u16::BITS).checked_ilog2()? as usize;
+        WIDENINGS.get(kind).map(|widening| widening((word & WIDEN_PAYLOAD) as u16))
     }
 }
 
@@ -2361,9 +2355,6 @@ pub(crate) struct Observation<'a> {
     pub(crate) register: &'a dyn Fn(Register) -> Value,
     /// Whether the array in a register looks to hold `i32` elements.
     pub(crate) int32_elements: &'a dyn Fn(Register) -> bool,
-    /// Whether the array in a register has the `Int32` element kind, which entry can prove
-    /// with one load (`Lowering::prove_int32_kinds`).
-    pub(crate) int32_kind: &'a dyn Fn(Register) -> bool,
     pub(crate) captures: &'a [Value],
     /// The fields' values at the entry the compilation follows, in the region's order.
     pub(crate) fields: &'a [Value],
@@ -4193,14 +4184,13 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    /// Proves at entry, from its element kind (`crate::heap::ElementKind`), that each array
-    /// the region reads as `i32`s, and that had the `Int32` kind when the region compiled,
-    /// holds only int32s; an array of another kind keeps its guarded reads. This holds when
-    /// every store of the region stores
-    /// an `i32` (so each stays one, whichever array it writes): the reads then take the
-    /// payload with no tag guard. One load per array; another kind widens the array's
-    /// reads for the next compilation. A region that stores other values demotes the kind
-    /// of each array it writes before any store (`demote_written_kinds`).
+    /// Proves at entry, with one load of each array's count of values that are not int32s
+    /// (`crate::heap::OTHERS_FROM_VALUES`), that each array the region reads as `i32`s holds
+    /// only int32s, when every store of the region stores an `i32` (so each stays one,
+    /// whichever array it writes): the reads then take the payload with no tag guard. An
+    /// array that held others at an entry keeps guarded int32 reads from the next
+    /// compilation (`Widening::Kind`). A region that stores other values marks each array it
+    /// writes as holding uncounted ones before any store (`demote_written_kinds`).
     fn prove_int32_kinds(&mut self) {
         let region = self.region;
         let stores_int32 = (region.header..=region.backedge).all(|pc| {
@@ -4223,14 +4213,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     && element_representation(instruction, self.observation) == Representation::Int32
             })
             .filter_map(|instruction| instruction.operand_b().register_index())
-            .filter(|register| !self.resident.arrays.contains_key(register) && (self.observation.int32_kind)(*register))
+            .filter(|register| {
+                !self.resident.arrays.contains_key(register) && !self.observation.widened.contains(&Widening::Kind(*register))
+            })
             .collect();
         for register in read_int32 {
             let Some(view) = self.arrays.get(&register).copied() else { continue };
             let elements = self.array_elements(view);
             let others = self.body.builder.ins().load(types::I32, flags(), elements, crate::heap::OTHERS_FROM_VALUES);
             let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, others, 0);
-            let widen = self.not_entered(Some(Widening::Elements(register)));
+            let widen = self.not_entered(Some(Widening::Kind(register)));
             self.pass_unless(other, widen);
             self.int32_arrays.insert(register);
         }
@@ -6401,7 +6393,7 @@ mod tests {
         assert_eq!(values.find(values.leaves[&(3, 1)]), values.defined(&region, 2));
         let widened = std::collections::BTreeSet::from([Widening::Register(1)]);
         let observation = Observation {
-            register: &|_| Value::number(1.0), int32_elements: &|_| true, int32_kind: &|_| true,
+            register: &|_| Value::number(1.0), int32_elements: &|_| true,
             captures: &[], fields: &[], native_field_loads: &[], widened: &widened,
         };
         let (representations, _) = representations(&region, &values, &observation);

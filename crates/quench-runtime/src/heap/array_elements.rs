@@ -14,18 +14,9 @@ struct Header {
     capacity: u32,
     /// How many values below `len` are not int32s, holes (`Value::DELETED`) included: the
     /// fold of every write, each adding what it writes and removing what it overwrites, so a
-    /// reader proves the kind (`ElementKind`) with one load instead of a scan. At least the
+    /// reader proves every value an int32 with one load instead of a scan. At least the
     /// true count once native code stored unknown values (`OTHERS_UNKNOWN`).
     others: u32,
-}
-
-/// What every value of a backing is, derived from its `others` count, as V8's elements kinds
-/// and JavaScriptCore's indexing types: `Int32` holds only int32s, so it is also packed. It
-/// returns to `Int32` when the last other value is overwritten or removed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ElementKind {
-    Int32,
-    Tagged,
 }
 
 /// The `others` count native code stores when it may write values it does not count: above
@@ -196,10 +187,6 @@ impl ArrayElements {
         self.header().capacity as usize
     }
 
-    #[inline(always)]
-    pub(crate) fn kind(&self) -> ElementKind {
-        if self.header().others == 0 { ElementKind::Int32 } else { ElementKind::Tagged }
-    }
 
     /// Whether this array alone owns its backing, so writes reach no other array.
     #[inline(always)]
@@ -575,13 +562,19 @@ mod tests {
         assert_eq!(shared.len(), 3);
     }
 
+    impl ArrayElements {
+        fn holds_only_int32(&self) -> bool {
+            self.header().others == 0
+        }
+    }
+
     #[test]
-    fn every_write_keeps_the_element_kind_exact() {
+    fn every_write_keeps_the_others_count_exact() {
         let ints = || ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
-        assert_eq!(ints().kind(), ElementKind::Int32);
-        assert_eq!(ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).kind(), ElementKind::Tagged);
-        assert_eq!(ArrayElements::filled(3, Value::integer(0)).kind(), ElementKind::Int32);
-        assert_eq!(ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).kind(), ElementKind::Tagged);
+        assert_eq!(ints().holds_only_int32(), true);
+        assert_eq!(ArrayElements::from(vec![Value::integer(1), Value::number(0.5)]).holds_only_int32(), false);
+        assert_eq!(ArrayElements::filled(3, Value::integer(0)).holds_only_int32(), true);
+        assert_eq!(ArrayElements::from_fn(3, |slot| if slot == 2 { Value::NULL } else { Value::integer(0) }).holds_only_int32(), false);
         let demotions: [(&str, fn(&mut UniqueElements)); 6] = [
             ("set", |elements| elements.set(0, Value::DELETED)),
             ("push", |elements| elements.push(Value::number(0.5))),
@@ -593,33 +586,33 @@ mod tests {
         for (write, demote) in demotions {
             let mut elements = ints();
             demote(elements.make_mut());
-            assert_eq!(elements.kind(), ElementKind::Tagged, "{write}");
+            assert_eq!(elements.holds_only_int32(), false, "{write}");
         }
         let mut grown = ints();
         for value in 3..64 {
             grown.make_mut().push(Value::integer(value));
         }
         grown.make_mut().set(5, Value::integer(-5));
-        assert_eq!(grown.kind(), ElementKind::Int32, "int32 writes and growth keep the kind");
+        assert_eq!(grown.holds_only_int32(), true, "int32 writes and growth keep the kind");
         let mut shared = ArrayElements::from(vec![Value::integer(1), Value::NULL]);
         let mut copy = shared.clone();
         copy.make_mut().set(1, Value::integer(2));
-        assert_eq!((shared.kind(), copy.kind()), (ElementKind::Tagged, ElementKind::Int32), "a detached copy counts its own writes");
+        assert_eq!((shared.holds_only_int32(), copy.holds_only_int32()), (false, true), "a detached copy counts its own writes");
         shared.make_mut().truncate(1);
-        assert_eq!(shared.kind(), ElementKind::Int32, "removing the last other value restores Int32");
+        assert_eq!(shared.holds_only_int32(), true, "removing the last other value restores Int32");
         let mut holey = ints();
         holey.make_mut().resize(4, Value::DELETED);
-        assert_eq!(holey.kind(), ElementKind::Tagged);
+        assert_eq!(holey.holds_only_int32(), false);
         for index in [3, 2] {
             holey.make_mut().set(index, Value::integer(0));
         }
-        assert_eq!(holey.kind(), ElementKind::Int32, "filling every hole with int32s restores Int32");
+        assert_eq!(holey.holds_only_int32(), true, "filling every hole with int32s restores Int32");
         holey.make_mut().set(0, Value::number(0.5));
         holey.make_mut().pop();
-        assert_eq!(holey.kind(), ElementKind::Tagged);
+        assert_eq!(holey.holds_only_int32(), false);
         holey.make_mut().remove(0);
-        assert_eq!(holey.kind(), ElementKind::Int32);
-        assert_eq!(ArrayElements::new().kind(), ElementKind::Int32);
+        assert_eq!(holey.holds_only_int32(), true);
+        assert_eq!(ArrayElements::new().holds_only_int32(), true);
     }
 
     #[test]
