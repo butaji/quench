@@ -449,6 +449,8 @@ pub(crate) fn legacy(
             .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
         let value = context.string_rooted(&modulus);
         put(context, object, "modulus", value)?;
+        let value = context.number(f64::from(rsa.n().num_bits()));
+        put(context, object, "bits", value)?;
         let exponent = rsa
             .e()
             .to_hex_str()
@@ -460,8 +462,6 @@ pub(crate) fn legacy(
             .map_err(|error| crate::modules::crypto_error_shared_vm::decorated(context, error))?;
         let value = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
         put(context, object, "pubkey", value)?;
-        let value = context.number(f64::from(rsa.n().num_bits()));
-        put(context, object, "bits", value)?;
     }
     for (name, text) in [
         ("valid_from", cert.not_before().to_string()),

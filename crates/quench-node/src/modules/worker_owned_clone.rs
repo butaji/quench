@@ -9,7 +9,7 @@ pub fn encode_with_transfers(
 ) -> Result<Message, RootedError> {
     #[cfg(quench_openssl_provider)]
     let root = if transfers.is_empty() {
-        crate::modules::crypto_key_shared_vm::prepare_key_objects_for_transport(ctx, root)?
+        crate::modules::crypto_node::clone::prepare(ctx, root)?
     } else {
         root
     };
@@ -21,7 +21,7 @@ pub fn decode(
 ) -> Result<RootId, RootedError> {
     let value = ctx.import_owned_clone_rooted(message)?;
     #[cfg(quench_openssl_provider)]
-    return crate::modules::crypto_key_shared_vm::revive_key_objects_after_transport(ctx, value);
+    return crate::modules::crypto_node::clone::restore(ctx, value);
     #[cfg(not(quench_openssl_provider))]
     Ok(value)
 }

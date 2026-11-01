@@ -140,6 +140,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
     #[cfg(quench_openssl_provider)]
+    pub(crate) crypto: crate::modules::crypto_node::State,
+    #[cfg(quench_openssl_provider)]
     pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
     pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
     pub(crate) zlib_native: crate::modules::zlib_native_shared_vm::State,
@@ -384,6 +386,8 @@ impl SharedNodeState {
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto: crate::modules::crypto_node::State::default(),
             crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),

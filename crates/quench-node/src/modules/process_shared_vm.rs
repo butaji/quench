@@ -3299,6 +3299,8 @@ fn drain_shared_jobs(
             super::crypto_secret_job_shared_vm::prune(runtime);
             #[cfg(quench_openssl_provider)]
             super::crypto_hash_shared_vm::prune(runtime);
+            #[cfg(quench_openssl_provider)]
+            super::crypto_node::prune(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
@@ -3880,6 +3882,8 @@ fn cleanup_native_work(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     super::crypto_signature_shared_vm::cleanup(runtime);
     #[cfg(quench_openssl_provider)]
     super::crypto_hash_shared_vm::cleanup(runtime);
+    #[cfg(quench_openssl_provider)]
+    super::crypto_node::cleanup(runtime);
     super::cares_binding::cleanup(runtime);
     super::performance_binding_shared_vm::cleanup(runtime);
     super::pipe_binding::cleanup(runtime);

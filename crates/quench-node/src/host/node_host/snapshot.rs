@@ -82,6 +82,8 @@ impl SharedNodeState {
             process_ipc,
             #[cfg(quench_openssl_provider)]
             crypto_hashes,
+            #[cfg(quench_openssl_provider)]
+            crypto,
             crypto_key_material,
             #[cfg(quench_openssl_provider)]
             crypto_signatures,
@@ -156,6 +158,7 @@ impl SharedNodeState {
         #[cfg(quench_openssl_provider)]
         {
             crypto_hashes.write_snapshot(writer)?;
+            crypto.write_snapshot(writer)?;
             crypto_signatures.write_snapshot(writer)?;
         }
         dns_channels.write_snapshot(writer)?;
@@ -230,6 +233,7 @@ impl SharedNodeState {
         #[cfg(quench_openssl_provider)]
         {
             self.crypto_hashes.read_snapshot(reader)?;
+            self.crypto.read_snapshot(reader)?;
             self.crypto_signatures.read_snapshot(reader)?;
         }
         self.dns_channels.read_snapshot(reader)?;

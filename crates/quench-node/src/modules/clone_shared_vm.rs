@@ -100,33 +100,19 @@ pub(crate) fn structured_clone(
     };
     #[cfg(quench_openssl_provider)]
     if transfers.is_empty() && context.is_object_rooted(value)? {
-        // KeyObjects nested in a payload need the same transport records as
-        // Worker messages. The direct same-realm clone path below only sees a
-        // KeyObject at the root, so otherwise a nested KeyObject becomes an
-        // empty ordinary object before MessagePort delivery.
-        if contains_nested_key_object(context, value, &mut Vec::new())? {
-            let prepared = crate::modules::crypto_key_shared_vm::prepare_key_objects_for_transport(
-                context, value,
-            )?;
+        use crate::modules::crypto_node::clone;
+        // A KeyObject or CryptoKey below the root travels as a record of its material:
+        // the generic clone would copy it as an empty ordinary object.
+        if clone::contains_nested_key(context, value)? {
+            let prepared = clone::prepare(context, value)?;
             let cloned = match context.structured_clone_with_transfers_rooted(prepared, &[]) {
                 Ok(cloned) => cloned,
                 Err(error) => return Err(as_dom_exception(context, error)),
             };
-            return crate::modules::crypto_key_shared_vm::revive_key_objects_after_transport(
-                context, cloned,
-            );
+            return clone::restore(context, cloned);
         }
-    }
-    if transfers.is_empty() && context.is_object_rooted(value)? {
-        if let Some(cloned_key_object) =
-            crate::modules::crypto_key_shared_vm::clone_key_object(context, value)?
-        {
-            return Ok(cloned_key_object);
-        }
-        if let Some(cloned_key) =
-            crate::modules::crypto_key_shared_vm::clone_crypto_key(context, value)?
-        {
-            return Ok(cloned_key);
+        if let Some(cloned) = clone::clone_key(context, value)? {
+            return Ok(cloned);
         }
     }
     if transfers.is_empty() {
@@ -172,54 +158,6 @@ fn clone_dom_exception(
         return Err(RootedError::host("cannot preserve DOMException stack"));
     }
     Ok(Some(clone))
-}
-
-#[cfg(quench_openssl_provider)]
-fn contains_nested_key_object(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-    seen: &mut Vec<RootId>,
-) -> Result<bool, RootedError> {
-    if !context.is_object_rooted(value)? {
-        return Ok(false);
-    }
-    if let Some(clone) = crate::modules::crypto_key_shared_vm::clone_key_object(context, value)? {
-        context.release_root(clone);
-        return Ok(true);
-    }
-    if let Some(clone) = crate::modules::crypto_key_shared_vm::clone_crypto_key(context, value)? {
-        context.release_root(clone);
-        return Ok(true);
-    }
-    if context.clone_metadata_rooted(value)?.is_some()
-        || context.builtin_data_rooted(value)?.is_some()
-    {
-        return Ok(false);
-    }
-    for previous in seen.iter() {
-        if context.strict_equal_rooted(*previous, value)? {
-            return Ok(false);
-        }
-    }
-    seen.push(value);
-    for key in context.enumerable_own_keys_rooted(value, false, true)? {
-        let descriptor = context.own_property_descriptor_rooted(value, key)?;
-        if !context.is_object_rooted(descriptor)? {
-            continue;
-        }
-        let value_key = context.string_rooted("value");
-        let field = context.own_property_descriptor_rooted(descriptor, value_key)?;
-        if !context.is_object_rooted(field)? {
-            continue;
-        }
-        let descriptor_value_key = context.string_rooted("value");
-        let field_value = context.get_property_rooted(field, descriptor_value_key)?;
-        context.release_root(descriptor_value_key);
-        if contains_nested_key_object(context, field_value, seen)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// A `DataCloneError` DOMException, as Node's serializer throws.

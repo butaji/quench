@@ -1345,11 +1345,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoDiffieHellman" (2) => crate::modules::crypto_asymmetric_shared_vm::diffie_hellman,
         #[cfg(quench_openssl_provider)]
-        method "cryptoWebNamespace" (0) => crate::modules::crypto_provider_shared_vm::webcrypto,
-        #[cfg(quench_openssl_provider)]
         method "webDomExceptionInitialize" (0) => crate::modules::dom_exception_shared_vm::initialize,
-        #[cfg(quench_openssl_provider)]
-        method "cryptoWebClasses" (0) => crate::modules::crypto_provider_shared_vm::install_classes,
         method "cryptoKeySlots" (0) => crate::modules::crypto_key_shared_vm::operation,
         method "nodeEvalBuiltinGet" (0) => crate::modules::eval_globals_shared_vm::load,
         method "nodeEvalBuiltinCachedGet" (0) => crate::modules::eval_globals_shared_vm::cached,
@@ -1537,23 +1533,297 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsContextSetOptions" (0) => crate::modules::tls_shared_vm::contexts::set_options,
         method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
         method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
-        method "cryptoHandleSymbol" (0) => crate::modules::crypto_shared_vm::handle_symbol,
         method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
-        method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
-        method "cryptoX509Metadata" (1) => crate::modules::crypto_shared_vm::x509_metadata,
-        method "cryptoX509CheckHost" (3) => crate::modules::crypto_shared_vm::x509_check_host,
-        method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
-        method "cryptoMacDigest" (4) => crate::modules::crypto_shared_vm::mac_digest,
-        method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
-        method "cryptoVerify" (7) => crate::modules::crypto_shared_vm::verify,
-        method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
-        method "get crypto" (0) => crate::modules::crypto_shared_vm::global_crypto,
-        method "cryptoPbkdf2" (5) => crate::modules::crypto_shared_vm::pbkdf2,
-        method "cryptoScrypt" (7) => crate::modules::crypto_shared_vm::scrypt,
-        method "cryptoCipherProcess" (10) => crate::modules::crypto_shared_vm::cipher_process,
-        method "cryptoGenerateRsaKeyPair" (4) => crate::modules::crypto_shared_vm::generate_rsa_key_pair,
-        method "cryptoRsaCrypt" (8) => crate::modules::crypto_shared_vm::rsa_crypt,
-        method "cryptoEcdh" (5) => crate::modules::crypto_shared_vm::ecdh,
+        #[cfg(quench_openssl_provider)]
+        method "get crypto" (0) => crate::modules::crypto_node::webcrypto_getter,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCheckPrime" (1) => crate::modules::crypto_node::random::check_prime,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCheckPrimeSync" (1) => crate::modules::crypto_node::random::check_prime_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateCipheriv" (4) => crate::modules::crypto_node::cipher::create_cipheriv,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateDecipheriv" (4) => crate::modules::crypto_node::cipher::create_decipheriv,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateDiffieHellman" (4) => crate::modules::crypto_node::dh::create_diffie_hellman,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateDiffieHellmanGroup" (1) => crate::modules::crypto_node::dh::create_diffie_hellman_group,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateEcdh" (1) => crate::modules::crypto_node::dh::create_ecdh,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateHash" (2) => crate::modules::crypto_node::hash::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateHmac" (3) => crate::modules::crypto_node::hash::create_hmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreatePrivateKey" (1) => crate::modules::crypto_node::keys::create_private_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreatePublicKey" (1) => crate::modules::crypto_node::keys::create_public_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateSecretKey" (2) => crate::modules::crypto_node::keys::create_secret_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateSign" (2) => crate::modules::crypto_node::sign::create_sign,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCreateVerify" (2) => crate::modules::crypto_node::sign::create_verify,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDiffieHellmanStateless" (1) => crate::modules::crypto_node::dh::stateless,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGeneratePrime" (3) => crate::modules::crypto_node::random::generate_prime,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGeneratePrimeSync" (1) => crate::modules::crypto_node::random::generate_prime_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetCiphers" (0) => crate::modules::crypto_node::cipher::get_ciphers,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetCipherInfo" (2) => crate::modules::crypto_node::cipher::get_cipher_info,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetCurves" (0) => crate::modules::crypto_node::dh::get_curves,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetHashes" (0) => crate::modules::crypto_node::hash::get_hashes,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHkdfAsync" (6) => crate::modules::crypto_node::kdf::hkdf,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHkdfSync" (5) => crate::modules::crypto_node::kdf::hkdf_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPbkdf2Async" (6) => crate::modules::crypto_node::kdf::pbkdf2,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPbkdf2Sync" (5) => crate::modules::crypto_node::kdf::pbkdf2_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGenerateKeyPair" (3) => crate::modules::crypto_node::keys::generate_key_pair,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGenerateKeyPairSync" (2) => crate::modules::crypto_node::keys::generate_key_pair_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGenerateKey" (3) => crate::modules::crypto_node::keys::generate_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGenerateKeySync" (2) => crate::modules::crypto_node::keys::generate_key_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPrivateDecrypt" (2) => crate::modules::crypto_node::sign::private_decrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPrivateEncrypt" (2) => crate::modules::crypto_node::sign::private_encrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicDecrypt" (2) => crate::modules::crypto_node::sign::public_decrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicEncrypt" (2) => crate::modules::crypto_node::sign::public_encrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoRandomBytesApi" (2) => crate::modules::crypto_node::random::random_bytes,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoRandomFill" (4) => crate::modules::crypto_node::random::random_fill,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoRandomFillSync" (1) => crate::modules::crypto_node::random::random_fill_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoRandomInt" (3) => crate::modules::crypto_node::random::random_int,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoRandomUuid" (1) => crate::modules::crypto_node::random::random_uuid,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoScryptAsync" (4) => crate::modules::crypto_node::kdf::scrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoScryptSync" (3) => crate::modules::crypto_node::kdf::scrypt_sync,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSignOneShot" (4) => crate::modules::crypto_node::sign::sign_one_shot,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSetEngineApi" (2) => crate::modules::crypto_node::set_engine,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoTimingSafeEqual" (0) => crate::modules::crypto_node::random::timing_safe_equal,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetFips" (0) => crate::modules::crypto_node::get_fips,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSetFips" (1) => crate::modules::crypto_node::set_fips,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoVerifyOneShot" (5) => crate::modules::crypto_node::sign::verify_one_shot,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashOneShot" (2) => crate::modules::crypto_node::hash::one_shot,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSecureHeapUsed" (0) => crate::modules::crypto_node::secure_heap_used,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoAliasGet" (0) => crate::modules::crypto_node::alias_get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoAliasSet" (1) => crate::modules::crypto_node::alias_set,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebcryptoGetter" (0) => crate::modules::crypto_node::webcrypto_getter,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleGetter" (0) => crate::modules::crypto_node::subtle_getter,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetRandomValuesGetter" (0) => crate::modules::crypto_node::get_random_values_getter,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoGetRandomValuesUnbound" (1) => crate::modules::crypto_node::random::get_random_values_unbound,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebClassGlobals" (0) => crate::modules::crypto_node::web_class_globals,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransform" (1) => crate::modules::crypto_node::hash::lazy_transform_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransformGet" (0) => crate::modules::crypto_node::hash::lazy_transform_get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransformSet" (1) => crate::modules::crypto_node::hash::lazy_transform_set,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashConstructor" (2) => crate::modules::crypto_node::hash::hash_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHmacConstructor" (3) => crate::modules::crypto_node::hash::hmac_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashCopy" (1) => crate::modules::crypto_node::hash::copy,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashTransform" (3) => crate::modules::crypto_node::hash::transform,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashFlush" (1) => crate::modules::crypto_node::hash::flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashUpdate" (2) => crate::modules::crypto_node::hash::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoHashDigest" (1) => crate::modules::crypto_node::hash::digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipheriv" (4) => crate::modules::crypto_node::cipher::cipheriv,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDecipheriv" (4) => crate::modules::crypto_node::cipher::decipheriv,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherTransform" (3) => crate::modules::crypto_node::cipher::transform,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherFlush" (1) => crate::modules::crypto_node::cipher::flush,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherUpdate" (3) => crate::modules::crypto_node::cipher::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherFinal" (1) => crate::modules::crypto_node::cipher::final_,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherSetAutoPadding" (1) => crate::modules::crypto_node::cipher::set_auto_padding,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherGetAuthTag" (0) => crate::modules::crypto_node::cipher::get_auth_tag,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherSetAuthTag" (2) => crate::modules::crypto_node::cipher::set_auth_tag,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCipherSetAad" (2) => crate::modules::crypto_node::cipher::set_aad,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSignConstructor" (2) => crate::modules::crypto_node::sign::sign_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoVerifyConstructor" (2) => crate::modules::crypto_node::sign::verify_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSignWrite" (3) => crate::modules::crypto_node::sign::write,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSignUpdate" (2) => crate::modules::crypto_node::sign::update,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSignSign" (2) => crate::modules::crypto_node::sign::sign,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoVerifyVerify" (3) => crate::modules::crypto_node::sign::verify,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectConstructor" (2) => crate::modules::crypto_node::keys::constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectType" (0) => crate::modules::crypto_node::keys::get_type,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectEquals" (1) => crate::modules::crypto_node::keys::equals,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectFrom" (1) => crate::modules::crypto_node::keys::from,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectSymmetricKeySize" (0) => crate::modules::crypto_node::keys::symmetric_key_size,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectExportSecret" (1) => crate::modules::crypto_node::keys::export_secret,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectExportAsymmetric" (1) => crate::modules::crypto_node::keys::export_asymmetric,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectToCryptoKey" (3) => crate::modules::crypto_node::keys::to_crypto_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectAsymmetricKeyType" (0) => crate::modules::crypto_node::keys::asymmetric_key_type,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyObjectAsymmetricKeyDetails" (0) => crate::modules::crypto_node::keys::asymmetric_key_details,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhConstructor" (1) => crate::modules::crypto_node::dh::ecdh_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhComputeSecret" (3) => crate::modules::crypto_node::dh::ecdh_compute_secret,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhSetPrivateKey" (2) => crate::modules::crypto_node::dh::ecdh_set_private_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhSetPublicKey" (2) => crate::modules::crypto_node::dh::ecdh_set_public_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhGetPrivateKey" (1) => crate::modules::crypto_node::dh::ecdh_get_private_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhGenerateKeys" (2) => crate::modules::crypto_node::dh::ecdh_generate_keys,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhGetPublicKey" (2) => crate::modules::crypto_node::dh::ecdh_get_public_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoEcdhConvertKey" (5) => crate::modules::crypto_node::dh::ecdh_convert_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDiffieHellmanConstructor" (4) => crate::modules::crypto_node::dh::diffie_hellman_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDiffieHellmanGroupConstructor" (1) => crate::modules::crypto_node::dh::diffie_hellman_group_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhGenerateKeys" (1) => crate::modules::crypto_node::dh::dh_generate_keys,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhComputeSecret" (3) => crate::modules::crypto_node::dh::dh_compute_secret,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhGetPrime" (1) => crate::modules::crypto_node::dh::dh_get_prime,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhGetGenerator" (1) => crate::modules::crypto_node::dh::dh_get_generator,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhGetPublicKey" (1) => crate::modules::crypto_node::dh::dh_get_public_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhGetPrivateKey" (1) => crate::modules::crypto_node::dh::dh_get_private_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhSetPublicKey" (2) => crate::modules::crypto_node::dh::dh_set_public_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhSetPrivateKey" (2) => crate::modules::crypto_node::dh::dh_set_private_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509Constructor" (1) => crate::modules::crypto_node::x509::constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509Field" (0) => crate::modules::crypto_node::x509::field,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509ToString" (0) => crate::modules::crypto_node::x509::to_string,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509CheckHostApi" (2) => crate::modules::crypto_node::x509::check_host,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509CheckEmail" (2) => crate::modules::crypto_node::x509::check_email,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509CheckIp" (2) => crate::modules::crypto_node::x509::check_ip,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509CheckIssued" (1) => crate::modules::crypto_node::x509::check_issued,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509CheckPrivateKey" (1) => crate::modules::crypto_node::x509::check_private_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509Verify" (1) => crate::modules::crypto_node::x509::verify,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoX509ToLegacyObject" (0) => crate::modules::crypto_node::x509::to_legacy_object,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoCertificate" (0) => crate::modules::crypto_node::x509::certificate_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSpkacVerify" (2) => crate::modules::crypto_node::x509::verify_spkac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSpkacExportPublicKey" (2) => crate::modules::crypto_node::x509::spkac_public_key_pem,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSpkacExportChallenge" (2) => crate::modules::crypto_node::x509::spkac_challenge,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebIllegalConstructor" (0) => crate::modules::crypto_node::web::illegal_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebSubtle" (0) => crate::modules::crypto_node::web::subtle,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebGetRandomValues" (1) => crate::modules::crypto_node::web::get_random_values,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoWebRandomUuid" (0) => crate::modules::crypto_node::web::random_uuid,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyType" (0) => crate::modules::crypto_node::web::key_type,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyExtractable" (0) => crate::modules::crypto_node::web::key_extractable,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyAlgorithm" (0) => crate::modules::crypto_node::web::key_algorithm,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyUsages" (0) => crate::modules::crypto_node::web::key_usages,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKeyInspect" (2) => crate::modules::crypto_node::web::key_inspect,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleEncrypt" (3) => crate::modules::crypto_node::web::subtle_encrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleDecrypt" (3) => crate::modules::crypto_node::web::subtle_decrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleSign" (3) => crate::modules::crypto_node::web::subtle_sign,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleVerify" (4) => crate::modules::crypto_node::web::subtle_verify,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleDigest" (2) => crate::modules::crypto_node::web::subtle_digest,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleGenerateKey" (3) => crate::modules::crypto_node::web::subtle_generate_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleDeriveKey" (5) => crate::modules::crypto_node::web::subtle_derive_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleDeriveBits" (2) => crate::modules::crypto_node::web::subtle_derive_bits,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleImportKey" (5) => crate::modules::crypto_node::web::subtle_import_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleExportKey" (2) => crate::modules::crypto_node::web::subtle_export_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleWrapKey" (4) => crate::modules::crypto_node::web::subtle_wrap_key,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoSubtleUnwrapKey" (7) => crate::modules::crypto_node::web::subtle_unwrap_key,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
         method "asyncResourceEnterScope" (1) => crate::modules::async_hooks_shared_vm::enter_async_scope,
         method "asyncResourceExitScope" (0) => crate::modules::async_hooks_shared_vm::exit_async_scope,

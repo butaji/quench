@@ -44,7 +44,8 @@ pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
 #[cfg(not(quench_openssl_provider))]
 pub(crate) mod crypto_sha1;
-pub(crate) mod crypto_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_node;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
 pub(crate) mod dgram_shared_vm;
@@ -211,10 +212,6 @@ pub(crate) mod crypto_digest_cache;
 pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
-#[cfg(quench_openssl_provider)]
-#[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_hash_source_shared_vm;
-
 
 pub(crate) mod abort_controller_shared_vm;
 
