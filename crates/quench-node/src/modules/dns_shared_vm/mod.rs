@@ -188,7 +188,9 @@ fn text(c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<String, Ro
     c.to_string(value)
 }
 
-/// Add the resolver half to `cares_binding`'s `internalBinding('cares_wrap')`.
+/// Add the resolver half to `cares_binding`'s `internalBinding('cares_wrap')`: the
+/// `QueryReqWrap` request class and the `ChannelWrap` class, whose instances carry their
+/// channel id in a private slot and release the channel when collected.
 pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     for (name, operation) in [
         ("canonicalizeIP", "caresCanonicalizeIp"),
@@ -198,30 +200,99 @@ pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<()
         let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
         put(c, binding, name, function)?;
     }
-    let native = c.object_rooted()?;
+    let request = c.host_constructor_named(crate::host::shared_vm::operation("dnsRequestConstruct"), "QueryReqWrap")?;
+    put(c, binding, "QueryReqWrap", request)?;
+    let channel = c.host_constructor_named(crate::host::shared_vm::operation("caresChannelConstruct"), "ChannelWrap")?;
+    let key = c.string_rooted("prototype");
+    let prototype = c.get_property_rooted(channel, key)?;
+    for (index, (name, _)) in QUERIES.iter().enumerate() {
+        let kind = c.number(index as f64);
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation("caresChannelQuery"), name, kind)?;
+        put(c, prototype, name, function)?;
+    }
     for (name, operation) in [
-        ("channel", "caresChannel"),
-        ("release", "caresChannelRelease"),
-        ("query", "caresQuery"),
-        ("getServers", "caresGetServers"),
-        ("setServers", "caresSetServers"),
-        ("setLocalAddress", "caresSetLocalAddress"),
-        ("cancel", "caresCancel"),
+        ("getServers", "caresChannelGetServers"),
+        ("setServers", "caresChannelSetServers"),
+        ("setLocalAddress", "caresChannelSetLocalAddress"),
+        ("cancel", "caresChannelCancel"),
     ] {
         let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
-        put(c, native, name, function)?;
+        put(c, prototype, name, function)?;
     }
-    let names = QUERIES.iter().map(|(name, _)| c.string_rooted(name)).collect::<Vec<_>>();
-    let names = c.array_rooted(&names)?;
-    let factory = crate::host::removed_javascript("node:internal/cares_wrap.js")?;
-    let undefined = c.undefined();
-    let classes = c.call_rooted(factory, undefined, &[native, names])?;
-    for name in ["QueryReqWrap", "ChannelWrap"] {
-        let key = c.string_rooted(name);
-        let class = c.get_property_rooted(classes, key)?;
-        put(c, binding, name, class)?;
-    }
+    put(c, binding, "ChannelWrap", channel)?;
     Ok(())
+}
+
+/// The private slot a ChannelWrap keeps its channel id in, and the registry releasing it.
+fn channel_slot(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0dns:channel-slot", |c| {
+        Ok(c.private_symbol_rooted(Some("kChannel")))
+    })
+}
+
+fn channel_registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0dns:channel-registry", |c| {
+        let release = c.host_function(crate::host::shared_vm::operation("caresChannelRelease"))?;
+        let global = c.global_root()?;
+        let key = c.string_rooted("FinalizationRegistry");
+        let registry = c.get_property_rooted(global, key)?;
+        c.construct_rooted(registry, registry, &[release])
+    })
+}
+
+/// `new ChannelWrap(timeout, tries, maxTimeout)`.
+pub(crate) fn channel_construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = c.undefined();
+    let id = channel(c, undefined, args)?;
+    let slot = channel_slot(c)?;
+    c.define_data_property_rooted(this, slot, id, false, false, false)?;
+    let registry = channel_registry(c)?;
+    let key = c.string_rooted("register");
+    let register = c.get_property_rooted(registry, key)?;
+    c.call_rooted(register, registry, &[this, id])?;
+    Ok(this)
+}
+
+/// `operation(channelId, ...args)` for the ChannelWrap receiver.
+fn on_channel(
+    c: &mut Context<'_>,
+    this: RootId,
+    prefix: &[RootId],
+    args: &[RootId],
+    operation: fn(&mut Context<'_>, RootId, &[RootId]) -> Result<RootId, RootedError>,
+) -> Result<RootId, RootedError> {
+    let slot = channel_slot(c)?;
+    let id = c.get_property_rooted(this, slot)?;
+    if c.rooted_value(id).and_then(Value::as_number).is_none() {
+        let error = c.type_error_rooted("Illegal invocation")?;
+        return Err(c.throw(error));
+    }
+    let mut arguments = vec![id];
+    arguments.extend_from_slice(prefix);
+    arguments.extend_from_slice(args);
+    let undefined = c.undefined();
+    operation(c, undefined, &arguments)
+}
+
+pub(crate) fn channel_query(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let kind = c.host_function_data()?;
+    on_channel(c, this, &[kind], args, query)
+}
+
+pub(crate) fn channel_get_servers(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    on_channel(c, this, &[], args, get_servers)
+}
+
+pub(crate) fn channel_set_servers(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    on_channel(c, this, &[], args, set_servers)
+}
+
+pub(crate) fn channel_set_local_address(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    on_channel(c, this, &[], args, set_local_address)
+}
+
+pub(crate) fn channel_cancel(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    on_channel(c, this, &[], args, cancel)
 }
 
 /// Node's `ada::idna::to_ascii`: ASCII input lowercases; other input maps through UTS 46;
