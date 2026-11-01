@@ -4498,6 +4498,8 @@ pub(super) struct JsEntryFacts {
     pub(super) enters: bool,
     /// Whether the function is a specialized tier candidate (`function_candidate`).
     pub(super) candidate: bool,
+    /// Calls whose cost a frameless unit can remove by specializing their targets.
+    pub(super) has_calls: bool,
     /// Whether the general baseline admits it, and without backward jumps
     /// (`js_general_dispatch_shape`).
     pub(super) general: bool,
@@ -4518,17 +4520,20 @@ impl JsEntryFacts {
         let field_return = cached_this_field_return_candidate(function);
         let captured_store = captured_field_store_candidate(program, function);
         let candidate = function_candidate(function, program);
+        let has_calls = function.instructions().any(|instruction|
+            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
         let shape = super::compiled::js_general_dispatch_shape(function);
         let (general, general_acyclic) = (shape.is_some(), shape == Some(true));
         let enters = candidate || numeric_find.is_some() || field_increment.is_some() || field_return.is_some() || captured_store.is_some();
         // The other facts are read only past the candidate check an entering function passes.
         if !enters {
-            return Self { candidate, general, general_acyclic, ..Self::default() };
+            return Self { candidate, has_calls, general, general_acyclic, ..Self::default() };
         }
         Self {
             captured_store,
             enters,
             candidate,
+            has_calls,
             general,
             general_acyclic,
             numeric_find,

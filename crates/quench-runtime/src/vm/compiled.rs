@@ -13373,8 +13373,10 @@ impl<H: Host> Vm<H> {
         // Keep bounded candidates on a frame entry until the shared tier has
         // settled. Lane target caches otherwise preserve a frameless route
         // across the later promotion and no longer consult tiering.
+        // Inlining may erase a short body's calls; a call-free candidate still has
+        // to pay for native entry under the same cost policy.
         candidate || self.js_general_tier_takes(program, function, &facts)
-            || self.programs.js_jit_lane_methods_enabled()
+            || (self.programs.js_jit_lane_methods_enabled() && (!facts.candidate || facts.has_calls))
     }
 
     /// Whether the general baseline may take `function`: a general candidate the tier admits
