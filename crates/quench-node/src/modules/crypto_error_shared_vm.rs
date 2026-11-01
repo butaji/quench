@@ -44,7 +44,7 @@ const LIBRARY_CODES: &[(i32, &str)] = &[
 const SETTER_MESSAGE_BYTES: usize = 128;
 const STACK_MESSAGE_BYTES: usize = 256;
 
-fn message(code: std::ffi::c_ulong, capacity: usize) -> String {
+pub(crate) fn message(code: std::ffi::c_ulong, capacity: usize) -> String {
     let mut bytes = vec![0; capacity];
     unsafe {
         ERR_error_string_n(code, bytes.as_mut_ptr().cast(), bytes.len());

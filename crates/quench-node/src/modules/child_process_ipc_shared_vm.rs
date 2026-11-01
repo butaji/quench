@@ -473,33 +473,72 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     Ok(())
 }
 
-pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner:u64, target:RootId) -> Result<(),RootedError> {
-    let taken={let state=context.host_mut().shared_state();let mut state=state.borrow_mut();channel(&mut state,owner).and_then(|channel|{let serialization=channel.serialization;channel.take_socket().map(|socket|(socket,serialization))})};
-    let Some((socket,serialization))=taken else {return Ok(())};
-    let constructor=super::pipe_binding::constructor(context)?;
-    let kind=context.number(2.0);
-    let pipe=context.construct_rooted(constructor,constructor,&[kind])?;
-    super::pipe_binding::adopt(context,pipe,socket)?;
-    let resource=super::pipe_binding::resource_view(context,pipe)?;
-    if let super::native_async_wrap::View::Active(resource)=resource {
-        if let Some(child)=context.host_mut().shared_state().borrow_mut().child_processes.get_mut(&owner){child.ipc_pipe=Some(resource.id);}
+/// Give `target` (a ChildProcess, or `process` in a forked child) the channel's surface:
+/// `send`, `disconnect`, `connected`, and `channel`, an EventEmitter whose reference
+/// methods and `fd` project the host channel.
+pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner: u64, target: RootId) -> Result<(), RootedError> {
+    let state = context.host_mut().shared_state();
+    if channel(&mut state.borrow_mut(), owner).is_none() {
+        return Ok(());
     }
-    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","internal/child_process.js")?;
-    let setup=super::event_constructor_shared_vm::get(context,policy,"setupChannel")?;
-    let mode=context.string_rooted(serialization.mode());let undefined=context.undefined();
-    let count=context.number(2.0);set(context,target,"_closesNeeded",count)?;
-    let count=context.number(0.0);set(context,target,"_closesGot",count)?;
-    context.call_rooted(setup,undefined,&[target,pipe,mode])?;
-    Ok(())
+    let owner = context.number(owner as f64);
+    let data = context.array_rooted(&[owner, target])?;
+    for (name, operation) in [("send", "ipcSend"), ("disconnect", "ipcDisconnect")] {
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        set(context, target, name, function)?;
+    }
+    let emitter_api = state
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
+    let emitter = super::event_constructor_shared_vm::get(context, emitter_api, "emitterCtor")?;
+    let control = context.construct_rooted(emitter, emitter, &[])?;
+    for (name, operation, refed) in [
+        ("ref", "ipcReference", true),
+        ("unref", "ipcReference", false),
+        ("refCounted", "ipcReferenceCounted", true),
+        ("unrefCounted", "ipcReferenceCounted", false),
+    ] {
+        let refed = context.boolean(refed);
+        let data = context.array_rooted(&[owner, target, refed])?;
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(control, key, function, true, false, true)?;
+    }
+    let descriptor = context.host_function_named_with_data(crate::host::shared_vm::operation("ipcDescriptor"), "get fd", data)?;
+    let fields = quench_runtime::DescriptorFields {
+        get: Some(descriptor),
+        enumerable: Some(true),
+        configurable: Some(true),
+        ..quench_runtime::DescriptorFields::default()
+    };
+    let key = context.string_rooted("fd");
+    context.define_property_fields_rooted(control, key, fields)?;
+    set(context, target, "channel", control)?;
+    let connected = context.boolean(true);
+    set(context, target, "connected", connected)
 }
 
-pub(crate) fn activate_process(context:&mut NativeContext<'_,NodeHost>)->Result<(),RootedError>{
-    let (process,channel)={let shared=context.host_mut().shared_state();let state=shared.borrow();(state.process_module,state.process_ipc.channel.as_ref().filter(|c|!c.closed()).map(|c|(c.fd(),c.serialization)))};
-    let (Some(process),Some((fd,serialization)))=(process,channel) else{return Ok(())};
-    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","child_process.js")?;
-    let fork=super::event_constructor_shared_vm::get(context,policy,"_forkChild")?;
-    let fd=context.number(fd as f64);let mode=context.string_rooted(serialization.mode());
-    context.call_rooted(fork,process,&[fd,mode])?;Ok(())
+/// A forked child's `process` channel: the surface, and listener counting that keeps the
+/// channel referenced while `message` or `disconnect` listeners exist.
+pub(crate) fn activate_process(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let (process, open) = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        (state.process_module, state.process_ipc.channel.as_ref().is_some_and(|channel| !channel.closed()))
+    };
+    let (Some(process), true) = (process, open) else { return Ok(()) };
+    install(context, PROCESS_OWNER, process)?;
+    let control = super::event_constructor_shared_vm::get(context, process, "channel")?;
+    let on = super::event_constructor_shared_vm::get(context, process, "on")?;
+    for (event, name, add) in [("newListener", "onNewListener", true), ("removeListener", "onRemoveListener", false)] {
+        let event = context.string_rooted(event);
+        let add = context.boolean(add);
+        let data = context.array_rooted(&[control, add])?;
+        let callback = context.host_function_named_with_data(crate::host::shared_vm::operation("processIpcListenerReference"), name, data)?;
+        context.call_rooted(on, process, &[event, callback])?;
+    }
+    Ok(())
 }
 
 pub(crate) fn take_socket(

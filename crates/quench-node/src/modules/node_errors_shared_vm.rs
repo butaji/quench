@@ -294,6 +294,13 @@ pub(super) fn decorate_range_error(
     decorate_coded_error(context, error, code, ErrorClass::RangeError, &[])
 }
 
+/// Resolve the shared coded-error policy before native staging.
+pub(crate) fn prepare_coded_error_support(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    super::util_shared_vm::module(context).map(drop)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MessageOrder {
     BeforeCode,

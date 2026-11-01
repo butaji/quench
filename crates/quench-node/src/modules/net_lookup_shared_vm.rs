@@ -108,10 +108,11 @@ pub(super) fn start(
     ] {
         set(context, owner, name, value)?;
     }
-    let callback = context
-        .host_function_with_data(crate::host::shared_vm::operation("netLookupResult"), owner)?;
-    let factory = crate::host::removed_javascript("node:net/lookup-callback.js")?;
-    let callback = context.call_rooted(factory, undefined, &[callback])?;
+    let callback = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("netLookupResult"),
+        "emitLookup",
+        owner,
+    )?;
     let name = context.string_rooted("_host");
     context.set_property_rooted(socket, name, host, socket)?;
     context.call_rooted(lookup, undefined, &[host, dns_options, callback])?;

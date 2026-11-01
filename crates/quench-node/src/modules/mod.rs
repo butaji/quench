@@ -19,6 +19,7 @@ pub(crate) mod buffer_module;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod primordials_shared_vm;
 pub(crate) mod cares_binding;
+pub(crate) mod child_process_class_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
@@ -44,9 +45,12 @@ pub(crate) mod crypto_engine_shared_vm;
 pub(crate) mod crypto_error_shared_vm;
 #[cfg(not(quench_openssl_provider))]
 pub(crate) mod crypto_sha1;
-pub(crate) mod crypto_shared_vm;
+#[cfg(quench_openssl_provider)]
+pub(crate) mod crypto_node;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
+pub(crate) mod dgram_shared_vm;
+pub(crate) mod dns_module_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod domain_trampoline;
@@ -62,15 +66,12 @@ pub(crate) mod fetch_shared_vm;
 pub(crate) mod fs_directory_shared_vm;
 pub(crate) mod fs_error_codes;
 pub(crate) mod fs_error_details;
-pub(crate) mod fs_ops;
 pub(crate) mod fs_path;
-pub(crate) mod fs_policy_shared_vm;
-pub(crate) mod fs_read_file_shared_vm;
 pub(crate) mod fs_shared_vm;
 pub(crate) mod fs_stat_watch_shared_vm;
 pub(crate) mod fs_state;
 pub(crate) mod fs_watch_shared_vm;
-pub(crate) mod fs_write_shared_vm;
+pub(crate) mod host_members;
 pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
@@ -82,9 +83,12 @@ pub(crate) mod memory_facts;
 pub(crate) mod messaging_binding_shared_vm;
 pub(crate) mod module_shared_vm;
 pub(crate) mod native_task_pool;
+pub(crate) mod net_block_list;
+pub(crate) mod net_class_shared_vm;
 pub(crate) mod net_config;
 pub(crate) mod net_connect_error;
 pub(crate) mod net_endpoint_shared_vm;
+pub(crate) mod net_internal_shared_vm;
 pub(crate) mod net_lookup_shared_vm;
 pub(crate) mod net_options_shared_vm;
 pub(crate) mod net_reference_shared_vm;
@@ -101,7 +105,9 @@ pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
-pub(crate) mod perf_timeline_query;
+pub(crate) mod perf_timeline;
+pub(crate) mod perf_histogram;
+pub(crate) mod hdr_histogram;
 pub(crate) mod performance_binding_shared_vm;
 pub(crate) mod process_binding_shared_vm;
 #[cfg(unix)]
@@ -207,11 +213,6 @@ pub(crate) mod crypto_digest_cache;
 pub(crate) mod crypto_digest_state;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_shared_vm;
-#[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_hash_source_shared_vm;
-#[cfg(quench_openssl_provider)]
-pub(crate) mod crypto_lazy_transform;
-
 
 pub(crate) mod abort_controller_shared_vm;
 

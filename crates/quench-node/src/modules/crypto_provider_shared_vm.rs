@@ -180,36 +180,6 @@ pub(crate) fn operation(
         _ => Err(RootedError::host("Unknown native crypto provider fact")),
     }
 }
-pub(crate) fn webcrypto(
-    c: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::node_library_export(
-        c,
-        "crypto.js",
-        "internal/crypto/webcrypto.js",
-        "crypto",
-    )
-}
-pub(crate) fn install_classes(
-    c: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let source = crate::host::shared_vm::commonjs::node_library_module(
-        c,
-        "crypto.js",
-        "internal/crypto/webcrypto.js",
-    )?;
-    let global = c.global_root()?;
-    for name in ["Crypto", "SubtleCrypto", "CryptoKey"] {
-        let value = get(c, source, name)?;
-        let key = c.string_rooted(name);
-        c.define_data_property_rooted(global, key, value, true, false, true)?;
-    }
-    Ok(c.undefined())
-}
 
 /// SDK already converted BufferSource ranges to bytes. Use intrinsic slot getters
 /// and one bulk typed-array write; never evaluate public .buffer/.byteOffset.

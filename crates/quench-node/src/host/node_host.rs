@@ -110,8 +110,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
     #[cfg(quench_icu)]
     pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
-    pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
-    pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
+    pub(crate) fs_classes: crate::modules::fs_shared_vm::classes::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
@@ -139,6 +138,8 @@ pub(crate) struct SharedNodeState {
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto: crate::modules::crypto_node::State,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
     pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
@@ -333,8 +334,7 @@ impl SharedNodeState {
         {
             self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
         }
-        self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
-        self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
+        self.fs_classes = crate::modules::fs_shared_vm::classes::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
     }
 
@@ -360,8 +360,7 @@ impl SharedNodeState {
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
             #[cfg(quench_icu)]
             icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
-            fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
-            fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
+            fs_classes: crate::modules::fs_shared_vm::classes::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             builtin_cache: std::collections::HashMap::new(),
@@ -384,6 +383,8 @@ impl SharedNodeState {
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto: crate::modules::crypto_node::State::default(),
             crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),

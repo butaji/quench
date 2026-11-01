@@ -19,24 +19,21 @@ pub(crate) fn install_promisified(
     context: &mut NativeContext<'_, NodeHost>,
     originals: &[RootId],
 ) -> Result<(), RootedError> {
-    let factory = crate::host::removed_javascript("node:child_process/promisified.js")?;
     let global = context.global_root()?;
     let promise = get(context, global, "Promise")?;
     let with_resolvers = get(context, promise, "withResolvers")?;
     let symbol = get(context, global, "Symbol")?;
     let name = context.string_rooted("nodejs.util.promisify.custom");
     let custom = method(context, symbol, "for", &[name])?;
-    let undefined = context.undefined();
     for &original in originals {
         let data = context.array_rooted(&[original, promise, with_resolvers])?;
-        let invoke = context.host_function_with_data(
+        let name = get(context, original, "name")?;
+        let name = context.to_string(name)?;
+        let function = context.host_function_named_with_data(
             crate::host::shared_vm::operation("childProcessPromiseExec"),
+            &name,
             data,
         )?;
-        let function = context.call_rooted(factory, undefined, &[invoke])?;
-        let key = context.string_rooted("name");
-        let name = get(context, original, "name")?;
-        context.define_data_property_rooted(function, key, name, false, false, true)?;
         context.define_data_property_rooted(original, custom, function, false, false, false)?;
     }
     Ok(())
@@ -62,12 +59,7 @@ pub(crate) fn promise_exec(
         crate::host::shared_vm::operation("childProcessPromiseExecSettled"),
         callback_data,
     )?;
-    let array = args[0];
-    let length = get(context, array, "length")?;
-    let length = number(context, length).unwrap_or(0.0) as usize;
-    let mut arguments = (0..length)
-        .map(|index| get(context, array, &index.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut arguments = args.to_vec();
     arguments.push(callback);
     let undefined = context.undefined();
     let child = context.call_rooted(original, undefined, &arguments)?;

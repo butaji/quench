@@ -433,7 +433,16 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let key = context.string_rooted("\0quench:evalScript");
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     context.scoped(install_performance_global)?;
-    context.scoped(crate::modules::crypto_shared_vm::install_global)?;
+    #[cfg(quench_openssl_provider)]
+    context.scoped(crate::modules::crypto_node::install_global)?;
+    if node_primordials_source(context).is_some() {
+        // Node 24 exposes these well-known disposal symbols before its
+        // primordial snapshot is built. The runtime may not provide them yet,
+        // so seed stable symbols for Node's internal modules first.
+        let seed_disposal_symbols = crate::host::removed_javascript("node:bootstrap/disposal-symbols.js")?;
+        let undefined = context.undefined();
+        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
+    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // Builtins built after this point see the intrinsics as they are now, whatever a
@@ -767,9 +776,23 @@ pub(crate) fn vfs_position_set(
     Ok(context.undefined())
 }
 
-/// Node's replaceable `performance` global loads `perf_hooks` on first access.
+/// The timeline classes Node exposes as globals, from `perf_hooks`.
+const PERFORMANCE_GLOBALS: [&str; 6] = [
+    "PerformanceEntry",
+    "PerformanceMark",
+    "PerformanceMeasure",
+    "PerformanceObserver",
+    "PerformanceObserverEntryList",
+    "PerformanceResourceTiming",
+];
+
+/// Node's replaceable `performance` global and the timeline classes load `perf_hooks` on
+/// first access.
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
     install_lazy_global(context, "performance", "perf_hooks", "performance", true)?;
+    for name in PERFORMANCE_GLOBALS {
+        install_lazy_global(context, name, "perf_hooks", name, false)?;
+    }
     Ok(())
 }
 
@@ -1263,8 +1286,12 @@ fn require_for_module_inner(
         Some(BuiltinModule::InternalUrl) => {
             return cached_builtin(context, BuiltinModule::InternalUrl);
         }
-        Some(BuiltinModule::Internal("_http_agent")) => {
-            return cached_builtin(context, BuiltinModule::Internal("_http_agent"));
+        Some(
+            module @ BuiltinModule::Internal(
+                "_http_agent" | "_http_client" | "_http_common" | "_http_incoming" | "_http_outgoing" | "_http_server",
+            ),
+        ) => {
+            return cached_builtin(context, module);
         }
         Some(BuiltinModule::InternalVfsFd) => {
             return cached_builtin(context, BuiltinModule::InternalVfsFd);
@@ -1280,7 +1307,7 @@ fn require_for_module_inner(
             return load(context, &filename, Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::Dgram) => {
-            return node_library_module(context, "dgram.js", "dgram.js");
+            return cached_builtin(context, BuiltinModule::Dgram);
         }
         Some(BuiltinModule::InternalDgram) => {
             return node_library_module(context, "internal/dgram.js", "internal/dgram.js");
@@ -1298,18 +1325,14 @@ fn require_for_module_inner(
             );
         }
         Some(BuiltinModule::InternalBlockList) => {
-            let module = crate::host::removed_javascript("internal/blocklist.js")?;
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let constructor = get(context, net, "BlockList")?;
+            let module = context.object_rooted()?;
+            let (constructor, _) = crate::modules::net_block_list::classes(context)?;
             set(context, module, "BlockList", constructor)?;
             return Ok(module);
         }
         Some(BuiltinModule::InternalSocketAddress) => {
-            let module = crate::host::removed_javascript("internal/socketaddress.js")?;
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let constructor = get(context, net, "SocketAddress")?;
-            // cached_builtin may return the cache's retained root: ownership
-            // remains with builtin_cache, not this projection's call frame.
+            let module = context.object_rooted()?;
+            let (_, constructor) = crate::modules::net_block_list::classes(context)?;
             set(context, module, "SocketAddress", constructor)?;
             return Ok(module);
         }
@@ -1507,16 +1530,6 @@ pub(crate) fn stage_builtin_exports(context: &mut Context<'_>, name: &str) -> Re
         })?;
     }
     Ok(())
-}
-
-/// Stage a dependency through the owner's actual SDK require protocol. Bundled
-/// virtual IDs and frozen resolution metadata follow the same path as execution.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_library_dependency(context: &mut Context<'_>, owner: &str, id: &str) -> Result<(), RootedError> {
-    let root = context.host_mut().node_library_root.clone();
-    let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    let specifier = context.string_rooted(id);
-    host_load(|| context.with_startup_intrinsics(|context| require_for_module(context, parent, &[specifier]).map(drop)))
 }
 
 /// The values of a builtin module's named exports (`args`: the module and the export names),
@@ -2195,7 +2208,6 @@ fn cached_builtin(
     let retained = context.retain(module)?;
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
-    // `fs` installs its library policy with the rest of its members (`initialize_module`).
     Ok(module)
 }
 
@@ -2345,6 +2357,9 @@ pub(crate) fn node_library_module(
     if let Some(module) = crate::modules::stream_shared_vm::library_module(context, relative)? {
         return Ok(module);
     }
+    if relative == "internal/net.js" {
+        return crate::modules::net_internal_shared_vm::module(context);
+    }
     crate::host::removed_javascript(format!("node:{}", relative.trim_end_matches(".js")))
 }
 
@@ -2401,6 +2416,10 @@ pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Buffer)
 }
 
+pub(crate) fn readline_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Readline)
+}
+
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Util)
 }
@@ -2415,6 +2434,10 @@ pub(crate) fn crypto_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 pub(crate) fn http_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Http)
+}
+
+pub(crate) fn https_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Https)
 }
 
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -2644,13 +2667,8 @@ pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[Roo
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
-        BuiltinModule::Internal("_http_agent") => {
-            // Share the projected internal export with every loader surface.
-            let http = cached_builtin(context, BuiltinModule::Http)?;
-            let agent = get(context, http, "Agent")?;
-            let module = context.null_object_rooted()?;
-            set(context, module, "Agent", agent)?;
-            Ok(module)
+        BuiltinModule::Internal(name @ ("_http_agent" | "_http_client" | "_http_incoming" | "_http_outgoing" | "_http_server")) => {
+            crate::modules::http_shared_vm::internal_module(context, name)
         }
         BuiltinModule::Internal("_tls_common") | BuiltinModule::Internal("_tls_wrap") => {
             let process = context
@@ -2794,37 +2812,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Ok(module)
         }
         BuiltinModule::Internal("internal/process/task_queues") => task_queues_module(context),
-        BuiltinModule::Internal("_http_incoming") => {
-            let root = context.host_mut().node_library_root.clone();
-            let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
-            load(
-                context,
-                &root.join("lib/_http_incoming.js"),
-                Some(parent),
-                EntryGoal::CommonJs,
-            )
-        }
         BuiltinModule::Internal("_http_common") => {
             crate::modules::http_common_shared_vm::module(context)
         }
-        BuiltinModule::Internal("_http_outgoing") => {
-            node_library_module(context, "http.js", "_http_outgoing.js")
-        }
-        BuiltinModule::Internal("_http_server") => {
-            let module = context.object_rooted()?;
-            let interval = node_library_export(
-                context,
-                "_http_server.js",
-                "_http_server.js",
-                "kConnectionsCheckingInterval",
-            )?;
-            set(context, module, "kConnectionsCheckingInterval", interval)?;
-            Ok(module)
-        }
-        BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
-        // Node's `_http_client` builds on its `http_parser` binding, which the native `http`
-        // module does not use; until it is projected from it, it stays empty.
-        BuiltinModule::Internal("_http_client") => context.object_rooted(),
+        BuiltinModule::Internal("dns/promises") => crate::modules::dns_module_shared_vm::promises(context),
         BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
         BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
         // Every other such builtin is Node's own library module of that name.
@@ -2883,24 +2874,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
-        BuiltinModule::Dns => {
-            let utils = node_library_module(context, "dns.js", "internal/dns/utils.js")?;
-            let initialize = get(context, utils, "initializeDns")?;
-            let undefined = context.undefined();
-            context.call_rooted(initialize, undefined, &[])?;
-            node_library_module(context, "dns.js", "dns.js")
-        }
-        BuiltinModule::Dgram => crate::host::removed_javascript("node:dgram"),
+        BuiltinModule::Dns => crate::modules::dns_module_shared_vm::module(context),
+        BuiltinModule::Dgram => crate::modules::dgram_shared_vm::module(context),
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
         BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),
         BuiltinModule::Zlib => crate::modules::zlib_shared_vm::module(context),
-        BuiltinModule::Crypto => {
-            let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            let transform_key = context.string_rooted("Transform");
-            let transform = context.get_property_rooted(stream, transform_key)?;
-            crate::modules::crypto_shared_vm::module(context, transform)
-        }
+        #[cfg(quench_openssl_provider)]
+        BuiltinModule::Crypto => crate::modules::crypto_node::module(context),
+        #[cfg(not(quench_openssl_provider))]
+        BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
         BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
@@ -4083,7 +4066,6 @@ fn load_with_resolution(
     let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
     if is_fs_utilities {
         if let Ok(exports) = &result {
-            crate::modules::fs_policy_shared_vm::adopt(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;

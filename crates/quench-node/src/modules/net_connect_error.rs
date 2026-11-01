@@ -7,10 +7,6 @@ pub(crate) enum TcpConnectFailure {
         error: std::io::Error,
         address: SocketAddr,
     },
-    Resolve {
-        error: std::io::Error,
-        hostname: String,
-    },
     Setup(std::io::Error),
     WorkerStopped,
     EmptyDestinations,
@@ -22,8 +18,7 @@ impl TcpConnectFailure {
             Self::Connect { error, .. } | Self::Setup(error) => {
                 error.raw_os_error().map(|errno| -f64::from(errno))
             }
-            // std's resolver error does not preserve a portable getaddrinfo code.
-            Self::Resolve { .. } | Self::WorkerStopped | Self::EmptyDestinations => None,
+            Self::WorkerStopped | Self::EmptyDestinations => None,
         }
     }
     pub(crate) fn code(&self) -> String {
@@ -31,7 +26,6 @@ impl TcpConnectFailure {
             return super::util_system_error_shared_vm::system_error_name(errno);
         }
         match self {
-            Self::Resolve { .. } => "ENOTFOUND",
             Self::Connect { error, .. } | Self::Setup(error) => match error.kind() {
                 std::io::ErrorKind::ConnectionRefused => "ECONNREFUSED",
                 std::io::ErrorKind::TimedOut => "ETIMEDOUT",
@@ -47,20 +41,11 @@ impl TcpConnectFailure {
         .to_owned()
     }
     pub(crate) fn syscall(&self) -> &'static str {
-        match self {
-            Self::Resolve { .. } => "getaddrinfo",
-            _ => "connect",
-        }
+        "connect"
     }
     pub(crate) fn address(&self) -> Option<SocketAddr> {
         match self {
             Self::Connect { address, .. } => Some(*address),
-            _ => None,
-        }
-    }
-    pub(crate) fn hostname(&self) -> Option<&str> {
-        match self {
-            Self::Resolve { hostname, .. } => Some(hostname),
             _ => None,
         }
     }
@@ -72,7 +57,6 @@ impl TcpConnectFailure {
                 address.ip(),
                 address.port()
             ),
-            Self::Resolve { hostname, .. } => format!("getaddrinfo ENOTFOUND {hostname}"),
             Self::Setup(_) => format!("connect {}", self.code()),
             Self::WorkerStopped => "socket connect worker stopped".to_owned(),
             Self::EmptyDestinations => "resolved socket has no destinations".to_owned(),
@@ -88,9 +72,7 @@ impl std::fmt::Display for TcpConnectFailure {
 impl std::error::Error for TcpConnectFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Connect { error, .. } | Self::Resolve { error, .. } | Self::Setup(error) => {
-                Some(error)
-            }
+            Self::Connect { error, .. } | Self::Setup(error) => Some(error),
             Self::WorkerStopped | Self::EmptyDestinations => None,
         }
     }

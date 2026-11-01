@@ -86,17 +86,14 @@ pub(crate) fn install(
         crate::host::shared_vm::operation("netSocketSetKeepAlive"),
         data,
     )?;
-    let factory = crate::host::removed_javascript("node:net/socket-options.js")?;
-    let undefined = context.undefined();
-    let methods = context.call_rooted(factory, undefined, &[no_delay, keep_alive])?;
     let server = context.host_function_with_data(
         crate::host::shared_vm::operation("netServerInitializeOptions"),
         data,
     )?;
     Ok([
         initialize,
-        get(context, methods, "0")?,
-        get(context, methods, "1")?,
+        super::net_internal_shared_vm::method(context, no_delay, "setNoDelay")?,
+        super::net_internal_shared_vm::method(context, keep_alive, "setKeepAlive")?,
         server,
     ])
 }

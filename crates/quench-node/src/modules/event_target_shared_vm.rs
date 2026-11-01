@@ -990,7 +990,8 @@ fn report_rejection(c: &mut Context<'_>, result: RootId) -> Result<(), RootedErr
     Ok(())
 }
 
-fn queue_uncaught(c: &mut Context<'_>, reason: RootId) -> Result<(), RootedError> {
+/// `process.nextTick(() => { throw reason; })`: `reason` reaches the uncaught-exception path.
+pub(super) fn queue_uncaught(c: &mut Context<'_>, reason: RootId) -> Result<(), RootedError> {
     let callback = c.host_function_named_with_data(crate::host::shared_vm::operation("eventTargetRethrow"), "", reason)?;
     let undefined = c.undefined();
     super::shared_event_loop::queue_next_tick(c, callback, undefined, &[])
@@ -1013,6 +1014,50 @@ pub(crate) fn event_target_inspect(c: &mut Context<'_>, receiver: RootId, args: 
     target_table(c, receiver)?;
     let body = c.object_rooted()?;
     custom_inspect(c, receiver, body, args, Shallow::Name)
+}
+
+/// An event handler attribute's holder field: the current handler.
+const HANDLER: &str = "handler";
+
+/// `defineEventHandler`'s getter: the handler `container[field]` keeps, or null.
+pub(super) fn event_handler(c: &mut Context<'_>, container: RootId, field: &str) -> Result<RootId, RootedError> {
+    let holder = get(c, container, field)?;
+    let handler = if is_undefined(c, holder) { holder } else { get(c, holder, HANDLER)? };
+    Ok(if is_nullish(c, handler) { c.null() } else { handler })
+}
+
+/// `defineEventHandler`'s setter for `kind` on `target`, its holder kept in
+/// `container[field]`: the first assignment registers a wrapper listener that calls the
+/// current handler; a later one keeps the wrapper's position, and the listener count follows
+/// whether the handler is a function.
+pub(super) fn set_event_handler(c: &mut Context<'_>, target: RootId, container: RootId, field: &str, kind: &str, value: RootId) -> Result<(), RootedError> {
+    let holder = get(c, container, field)?;
+    if is_undefined(c, holder) {
+        let holder = c.null_object_rooted()?;
+        put(c, holder, HANDLER, value)?;
+        put(c, container, field, holder)?;
+        let wrapper = c.host_function_named_with_data(crate::host::shared_vm::operation("eventHandlerInvoke"), "eventHandler", holder)?;
+        return add_host_listener(c, target, kind, wrapper, false, false);
+    }
+    let previous = get(c, holder, HANDLER)?;
+    if c.is_callable_rooted(previous)? {
+        adjust_size(c, target, kind, -1.0)?;
+    }
+    put(c, holder, HANDLER, value)?;
+    if c.is_callable_rooted(value)? {
+        adjust_size(c, target, kind, 1.0)?;
+    }
+    Ok(())
+}
+
+/// The event handler attribute's listener: calls the current handler, if a function.
+pub(crate) fn event_handler_invoke(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let holder = c.host_function_data()?;
+    let handler = get(c, holder, HANDLER)?;
+    if !c.is_callable_rooted(handler)? {
+        return Ok(c.undefined());
+    }
+    c.call_rooted(handler, receiver, args)
 }
 
 /// Adds `listener` for `kind` on EventTarget `target` with `options`' flags, as the

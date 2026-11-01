@@ -934,15 +934,6 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     // state.reads drops every not-yet-materialized received OwnedFd.
 }
 
-pub(crate) fn constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    binding(c)?;
-    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0native:PipeConstructor", |_| {
-        Err(RootedError::host(
-            "native Pipe constructor authority missing",
-        ))
-    })
-}
-
 impl State {
     pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
         use crate::host::startup_snapshot::{require_quiescent, HostSnap};

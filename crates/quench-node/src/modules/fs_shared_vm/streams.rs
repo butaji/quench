@@ -142,6 +142,11 @@ fn options_copy(c: &mut Context<'_>, options: RootId) -> Outcome {
 /// `importFd(stream, options)` then `getValidatedFd`: a numeric descriptor and its `fs`.
 fn import_fd(c: &mut Context<'_>, stream: RootId, options: RootId) -> Result<RootId, RootedError> {
     let fd = get(c, options, "fd")?;
+    if super::file_handle::descriptor_of(c, fd)?.is_some() {
+        let operations = super::file_handle::stream_operations(c, fd)?;
+        put_slot(c, stream, Slot::Fs, operations)?;
+        return get(c, fd, "fd");
+    }
     if !is_number(c, fd) {
         return Err(invalid_type(c, fd, "options.fd", "of type number or an instance of FileHandle"));
     }
@@ -223,7 +228,7 @@ fn initialize_position(c: &mut Context<'_>, stream: RootId, options: RootId) -> 
 // ---------------------------------------------------------------------------------------
 
 /// Run `callback(...args)` from the immediate queue.
-fn complete(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Result<(), RootedError> {
+pub(crate) fn complete(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Result<(), RootedError> {
     let mut values = vec![callback];
     values.extend_from_slice(args);
     let invoke = closure(c, "fsStreamComplete", "", &values)?;
@@ -264,18 +269,13 @@ fn settle(c: &mut Context<'_>, result: Result<Vec<RootId>, RootId>, callback: Ro
     }
 }
 
-/// Call a host operation; a thrown error becomes the operation's error.
-fn host_operation(
-    c: &mut Context<'_>,
-    operation: fn(&mut Context<'_>, RootId, &[RootId]) -> Outcome,
-    args: &[RootId],
-) -> Result<Result<RootId, RootId>, RootedError> {
-    let undefined = c.undefined();
-    attempt(operation(c, undefined, args))
+/// Run one of `fs`'s sync operations; a thrown error becomes the operation's error.
+fn host_operation(c: &mut Context<'_>, op: super::ops::Op, args: &[RootId]) -> Result<Result<RootId, RootId>, RootedError> {
+    attempt(super::api::run(c, op, super::api::Flavor::Sync, args))
 }
 
 /// `kFs.open(path, flags, mode, cb)`.
-fn open(c: &mut Context<'_>, stream: RootId, writing: bool, callback: RootId) -> Result<(), RootedError> {
+fn open(c: &mut Context<'_>, stream: RootId, callback: RootId) -> Result<(), RootedError> {
     let path = get(c, stream, "path")?;
     let flags = get(c, stream, "flags")?;
     let mode = get(c, stream, "mode")?;
@@ -284,26 +284,18 @@ fn open(c: &mut Context<'_>, stream: RootId, writing: bool, callback: RootId) ->
         c.call_rooted(open, operations, &[path, flags, mode, callback])?;
         return Ok(());
     }
-    let result = if writing {
-        host_operation(c, super::write_stream::open, &[path, flags])?
-    } else {
-        host_operation(c, super::read_stream_open, &[path])?
-    };
+    let result = host_operation(c, super::ops::Op::Open, &[path, flags, mode])?;
     settle(c, result.map(|fd| vec![fd]), callback)
 }
 
 /// `kFs.close(fd, cb)`.
-fn close_descriptor(c: &mut Context<'_>, stream: RootId, fd: RootId, writing: bool, callback: RootId) -> Result<(), RootedError> {
+fn close_descriptor(c: &mut Context<'_>, stream: RootId, fd: RootId, callback: RootId) -> Result<(), RootedError> {
     if let Some(close) = custom_operation(c, stream, "close")? {
         let operations = get_slot(c, stream, Slot::Fs)?;
         c.call_rooted(close, operations, &[fd, callback])?;
         return Ok(());
     }
-    let result = if writing {
-        host_operation(c, super::write_stream::close, &[fd])?
-    } else {
-        host_operation(c, super::read_stream_close, &[fd])?
-    };
+    let result = host_operation(c, super::ops::Op::Close, &[fd])?;
     settle(c, result.map(|_| Vec::new()), callback)
 }
 
@@ -314,42 +306,39 @@ fn sync_descriptor(c: &mut Context<'_>, stream: RootId, fd: RootId, callback: Ro
         c.call_rooted(fsync, operations, &[fd, callback])?;
         return Ok(());
     }
-    let no = c.boolean(false);
-    let result = host_operation(c, super::sync::sync_descriptor, &[fd, no])?;
+    let result = host_operation(c, super::ops::Op::Fsync, &[fd])?;
     settle(c, result.map(|_| Vec::new()), callback)
 }
 
 /// `close(stream, err, cb)`: sync first when `flush` asks, then close the descriptor.
-fn close_stream(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId, writing: bool) -> Result<(), RootedError> {
+fn close_stream(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId) -> Result<(), RootedError> {
     let fd = get(c, stream, "fd")?;
     if !c.truthy_rooted(fd)? {
         let undefined = c.undefined();
         c.call_rooted(callback, undefined, &[error])?;
         return Ok(());
     }
-    let writing_value = c.boolean(writing);
     if truthy_member(c, stream, "flush")? {
-        let after = closure(c, "fsStreamFlushed", "", &[stream, error, callback, writing_value])?;
+        let after = closure(c, "fsStreamFlushed", "", &[stream, error, callback])?;
         return sync_descriptor(c, stream, fd, after);
     }
-    finish_close(c, stream, error, callback, writing)
+    finish_close(c, stream, error, callback)
 }
 
 /// `_close(stream, err, cb)`.
-fn finish_close(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId, writing: bool) -> Result<(), RootedError> {
+fn finish_close(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId) -> Result<(), RootedError> {
     let fd = get(c, stream, "fd")?;
     let after = closure(c, "fsStreamClosed", "", &[error, callback])?;
-    close_descriptor(c, stream, fd, writing, after)?;
+    close_descriptor(c, stream, fd, after)?;
     let null = c.null();
     put(c, stream, "fd", null)
 }
 
 pub(crate) fn flushed(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let [stream, error, callback, writing] = captures(c)?;
+    let [stream, error, callback] = captures(c)?;
     let flush_error = arg(c, args, 0);
     let error = if c.truthy_rooted(error)? { error } else { flush_error };
-    let writing = c.truthy_rooted(writing)?;
-    finish_close(c, stream, error, callback, writing)?;
+    finish_close(c, stream, error, callback)?;
     Ok(c.undefined())
 }
 
@@ -363,35 +352,25 @@ pub(crate) fn closed(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
 }
 
 /// `_destroy(err, cb)`: close once the operation in progress finishes.
-fn destroy(c: &mut Context<'_>, this: RootId, args: &[RootId], writing: bool) -> Outcome {
+pub(crate) fn destroy(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let (error, callback) = (arg(c, args, 0), arg(c, args, 1));
     let busy = get_slot(c, this, Slot::IsPerformingIo)?;
     if c.truthy_rooted(busy)? {
-        let writing = c.boolean(writing);
-        let after = closure(c, "fsStreamIoDone", "", &[this, error, callback, writing])?;
+        let after = closure(c, "fsStreamIoDone", "", &[this, error, callback])?;
         let event = slot(c, Slot::IoDone)?;
         call_method(c, this, "once", &[event, after])?;
     } else {
-        close_stream(c, this, error, callback, writing)?;
+        close_stream(c, this, error, callback)?;
     }
     Ok(c.undefined())
 }
 
 pub(crate) fn io_done(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let [stream, error, callback, writing] = captures(c)?;
+    let [stream, error, callback] = captures(c)?;
     let io_error = arg(c, args, 0);
     let error = if c.truthy_rooted(error)? { error } else { io_error };
-    let writing = c.truthy_rooted(writing)?;
-    close_stream(c, stream, error, callback, writing)?;
+    close_stream(c, stream, error, callback)?;
     Ok(c.undefined())
-}
-
-pub(crate) fn read_destroy(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    destroy(c, this, args, false)
-}
-
-pub(crate) fn write_destroy(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
-    destroy(c, this, args, true)
 }
 
 fn emit_io_done(c: &mut Context<'_>, stream: RootId, error: RootId) -> Result<(), RootedError> {
@@ -419,7 +398,7 @@ fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId], writing: bool) 
         return Ok(c.undefined());
     }
     let opened = closure(c, "fsStreamOpened", "", &[this, callback])?;
-    open(c, this, writing, opened)?;
+    open(c, this, opened)?;
     Ok(c.undefined())
 }
 
@@ -569,7 +548,7 @@ pub(crate) fn read(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
         c.call_rooted(read, operations, &[fd, buffer, zero, size, position, done])?;
         return Ok(c.undefined());
     }
-    let result = host_operation(c, super::read_stream_read, &[fd, size, position])?;
+    let result = attempt(host_read(c, &[fd, size, position]))?;
     match result {
         Ok(chunk) => {
             let null = c.null();
@@ -745,7 +724,8 @@ fn write_all(c: &mut Context<'_>, stream: RootId, data: RootId, position: RootId
         c.call_rooted(write, operations, &[fd, data, zero, size, position, done])?;
         return Ok(());
     }
-    let result = host_operation(c, super::write_stream::write, &[fd, data, position])?;
+    let undefined = c.undefined();
+    let result = host_operation(c, super::ops::Op::Write, &[fd, data, undefined, undefined, position])?;
     settle(c, result.map(|written| vec![written, data]), done)
 }
 
@@ -922,7 +902,7 @@ pub(crate) fn read_stream_class(c: &mut Context<'_>) -> Outcome {
     remember(c, "\0fs:openReadFs", open)?;
     method(c, prototype, "_construct", "fsStreamsReadConstruct", true)?;
     method(c, prototype, "_read", "fsStreamsReadRead", true)?;
-    method(c, prototype, "_destroy", "fsStreamsReadDestroy", true)?;
+    method(c, prototype, "_destroy", "fsStreamsDestroy", true)?;
     method(c, prototype, "close", "fsStreamsReadClose", true)?;
     accessor(c, prototype, "pending", "fsStreamPending", None, true)?;
     Ok(constructor)
@@ -938,7 +918,7 @@ pub(crate) fn write_stream_class(c: &mut Context<'_>) -> Outcome {
     method(c, prototype, "_construct", "fsStreamsWriteConstruct", true)?;
     method(c, prototype, "_write", "fsStreamsWriteWrite", true)?;
     method(c, prototype, "_writev", "fsStreamsWriteWritev", true)?;
-    method(c, prototype, "_destroy", "fsStreamsWriteDestroy", true)?;
+    method(c, prototype, "_destroy", "fsStreamsDestroy", true)?;
     method(c, prototype, "close", "fsStreamsWriteClose", true)?;
     let end = get(c, prototype, "end")?;
     let key = c.string_rooted("destroySoon");
@@ -947,10 +927,23 @@ pub(crate) fn write_stream_class(c: &mut Context<'_>) -> Outcome {
     Ok(constructor)
 }
 
-/// `createReadStream(path, options)` and `createWriteStream(path, options)`: the class
-/// closes over itself.
-pub(crate) fn create(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let class = c.host_function_data()?;
-    let (path, options) = (arg(c, args, 0), arg(c, args, 1));
-    c.construct_rooted(class, class, &[path, options])
+/// A whole-descriptor stream read: a new Buffer of what one read returns, or `null` at the
+/// end (`ReadStream.prototype._read` without `options.fs`).
+fn host_read(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
+    const CHUNK_LIMIT: f64 = (64 * 1024) as f64;
+    let fd = arg(c, args, 0);
+    let fd = super::args::fd(c, fd)?;
+    let requested = arg(c, args, 1);
+    let size = c.rooted_value(requested).and_then(|value| value.as_number()).filter(|size| *size > 0.0).unwrap_or(CHUNK_LIMIT);
+    let position = arg(c, args, 2);
+    let position = c
+        .rooted_value(position)
+        .and_then(|value| value.as_number())
+        .filter(|position| *position >= 0.0)
+        .map(|position| position as u64);
+    let chunk = c.host_mut().shared_state().borrow().fs.read_stream_chunk(fd, size.min(CHUNK_LIMIT) as usize, position);
+    match super::failure::check(c, chunk, super::failure::Syscall::bare("read"))? {
+        Some(bytes) => crate::modules::buffer_shared_vm::from_vec(c, bytes),
+        None => Ok(c.null()),
+    }
 }
