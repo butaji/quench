@@ -74,6 +74,7 @@ pub(crate) mod fs_stat_watch_shared_vm;
 pub(crate) mod fs_state;
 pub(crate) mod fs_watch_shared_vm;
 pub(crate) mod fs_write_shared_vm;
+pub(crate) mod host_members;
 pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;

@@ -4,7 +4,7 @@
 //! `DiagnosticsState`; tracing channels derive their event names from a prefix.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -354,19 +354,6 @@ pub(crate) fn publish_named(
         context.release_root(result);
     }
     Ok(())
-}
-
-/// A snapshot array of the subscribers of channel `name`, or none when it has none: a host
-/// publisher calls each with the message and the name, as `publish` does.
-pub(crate) fn subscribers_rooted(
-    runtime: &mut Runtime<NodeHost>,
-    name: &str,
-) -> Result<Option<RootId>, String> {
-    let state = runtime.host_mut().shared_state();
-    let callbacks = state.borrow().diagnostics.channels.get(name).filter(|callbacks| !callbacks.is_empty()).cloned();
-    callbacks
-        .map(|callbacks| runtime.array_rooted(&callbacks).map_err(|error| error.to_string()))
-        .transpose()
 }
 
 fn callback_wrapper(

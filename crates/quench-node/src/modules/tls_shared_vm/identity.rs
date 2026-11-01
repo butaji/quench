@@ -278,23 +278,6 @@ pub(crate) fn check_server_identity(
     Ok(error)
 }
 
-fn array_strings(
-    context: &mut NativeContext<'_, NodeHost>,
-    array: RootId,
-) -> Result<Vec<String>, RootedError> {
-    let length = get(context, array, "length")?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .unwrap_or(0.0) as usize;
-    (0..length)
-        .map(|index| {
-            let item = get(context, array, &index.to_string())?;
-            context.to_string(item)
-        })
-        .collect()
-}
-
 pub(crate) fn collect_alt_name(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -331,62 +314,6 @@ pub(crate) fn collect_alt_name(
     Ok(context.undefined())
 }
 
-fn pattern_text(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<String, RootedError> {
-    let api = super::facade::install(context)?;
-    let patterns = get(context, api, "identityPatterns")?;
-    let upper_factory = get(context, patterns, "upperCase")?;
-    let undefined = context.undefined();
-    let upper_case = context.call_rooted(upper_factory, undefined, &[])?;
-    let value = unfqdn_root(context, value)?;
-    let replace = get(context, value, "replace")?;
-    let lower = get(context, api, "identityLowercase")?;
-    let value = context.call_rooted(replace, value, &[upper_case, lower])?;
-    let split = get(context, value, "split")?;
-    let dot = context.string_rooted(".");
-    let parts = context.call_rooted(split, value, &[dot])?;
-    Ok(array_strings(context, parts)?.join("."))
-}
-pub(crate) fn lowercase_name(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    let char_code_at = get(context, value, "charCodeAt")?;
-    let zero = context.number(0.0);
-    let code = context.call_rooted(char_code_at, value, &[zero])?;
-    const ASCII_CASE_OFFSET: u8 = b'a' - b'A';
-    let offset = context.number(f64::from(ASCII_CASE_OFFSET));
-    let code = context.arithmetic_rooted(NativeArithmetic::Add, offset, code)?;
-    // ToUint16 and ToInt32 low sixteen bits coincide; existing VM arithmetic
-    // owns original conversion hooks, BigInt/Symbol errors and numeric wrapping.
-    let mask = context.number(f64::from(u16::MAX));
-    let code = context.arithmetic_rooted(NativeArithmetic::BitwiseAnd, code, mask)?;
-    let code = context
-        .rooted_value(code)
-        .and_then(|value| value.as_number())
-        .ok_or_else(|| RootedError::host("character code conversion failed"))?
-        as u16;
-    Ok(context.string_units_rooted(&[code]))
-}
-
-fn unfqdn_root(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<RootId, RootedError> {
-    let api = super::facade::install(context)?;
-    let patterns = get(context, api, "identityPatterns")?;
-    let trailing_factory = get(context, patterns, "trailingDot")?;
-    let undefined = context.undefined();
-    let trailing_dot = context.call_rooted(trailing_factory, undefined, &[])?;
-    let replace = get(context, value, "replace")?;
-    let empty = context.string_rooted("");
-    context.call_rooted(replace, value, &[trailing_dot, empty])
-}
-
 pub(crate) fn match_name(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -401,4 +328,20 @@ pub(crate) fn match_name(
     let host = context.to_string(host)?;
     let pattern = pattern_text(context, pattern)?;
     Ok(context.boolean(matches_dns(&host, &pattern, true)))
+}
+
+/// `unfqdn(host)`: the name without its trailing root label.
+fn unfqdn(name: &str) -> &str {
+    name.strip_suffix('.').unwrap_or(name)
+}
+
+fn unfqdn_root(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<RootId, RootedError> {
+    let text = context.to_string(value)?;
+    Ok(context.string_rooted(unfqdn(&text)))
+}
+
+/// A name as `check` compares it: without its root label, ASCII letters lowercased.
+fn pattern_text(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<String, RootedError> {
+    let text = context.to_string(value)?;
+    Ok(unfqdn(&text).to_ascii_lowercase())
 }

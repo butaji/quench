@@ -4,12 +4,13 @@ use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub(crate) mod encrypted;
+pub(crate) mod transport_poll;
 
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
@@ -424,14 +425,6 @@ impl Default for Transport {
     }
 }
 
-pub(crate) fn listen_with_backlog(
-    transport: &mut Transport,
-    address: SocketAddr,
-    backlog: i32,
-) -> Result<u64, std::io::Error> {
-    listen_with_reuse_port(transport, address, false, backlog)
-}
-
 pub(super) fn listen_with_reuse_port(
     transport: &mut Transport,
     address: SocketAddr,
@@ -449,21 +442,6 @@ pub(super) fn listen_with_reuse_port(
 
 // Node's net.Server.listen uses 511 when no backlog was supplied.
 pub(super) const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
-
-pub(crate) fn listen_backlog(
-    context: &mut NativeContext<'_, NodeHost>,
-    options: Option<RootId>,
-) -> Result<i32, RootedError> {
-    let Some(options) = options else {
-        return Ok(DEFAULT_TCP_LISTEN_BACKLOG);
-    };
-    let key = context.string_rooted("backlog");
-    let value = context.get_property_rooted(options, key)?;
-    if !context.truthy_rooted(value)? {
-        return Ok(DEFAULT_TCP_LISTEN_BACKLOG);
-    }
-    convert_listen_backlog(context, value)
-}
 
 pub(super) fn convert_listen_backlog(
     context: &mut NativeContext<'_, NodeHost>,
@@ -537,39 +515,6 @@ fn bind_listener(
     socket.bind(&address.into())?;
     socket.listen(backlog)?;
     Ok(socket.into())
-}
-
-pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
-    let id = transport.id()?;
-    let (sender, receiver) = mpsc::channel();
-    let wake = crate::modules::napi::thread_wake().ok();
-    std::thread::Builder::new()
-        .name(format!("quench-node-tcp-{id}"))
-        .spawn(move || {
-            let result = connect_with_timeout(&host, port)
-                .map(|stream| SocketStream::Plain(RawStream::Tcp(stream)))
-                .and_then(|stream| {
-                    stream
-                        .set_nonblocking(true)
-                        .map(|()| stream)
-                        .map_err(TcpConnectFailure::Setup)
-                });
-            let _ = sender.send(result.map_err(ConnectFailure::Tcp));
-            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
-        })
-        .map_err(|error| format!("cannot start TCP connect: {error}"))?;
-    transport.connecting.insert(
-        id,
-        ConnectingSocket {
-            completion: ConnectCompletion::NativeRequest(receiver),
-            referenced: true,
-            protocol: SocketProtocol::Tcp,
-            options: TcpOptions::default(),
-            read_demand: ReadDemand::Active,
-            pending_write: Vec::new(),
-        },
-    );
-    Ok(id)
 }
 
 pub(super) fn reserve_lookup(transport: &mut Transport) -> Result<u64, String> {
@@ -692,115 +637,6 @@ pub(crate) fn write_with(
     Err("shared TCP socket is not connected".to_owned())
 }
 
-/// Attempt a socket write synchronously before falling back to the normal
-/// event-loop queue. Node's `net.Socket.write()` reaches the kernel in the
-/// caller's turn when possible; this matters for callers that immediately
-/// inspect pending receive data on the peer without allowing an I/O poll.
-pub(crate) fn write_immediate(
-    transport: &mut Transport,
-    socket: u64,
-    bytes: &[u8],
-) -> Result<(), String> {
-    let stream = transport
-        .sockets
-        .get_mut(&socket)
-        .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
-    if bytes.is_empty() {
-        return Ok(());
-    }
-    if stream.write_offset < stream.pending_write.len() {
-        stream.pending_write.extend_from_slice(bytes);
-        return Ok(());
-    }
-    if !stream.pending_write.is_empty() {
-        stream.pending_write.clear();
-        stream.write_offset = 0;
-        stream.raw_write = false;
-    }
-    match stream.stream.write(bytes, 0) {
-        Ok(written) if written == bytes.len() => Ok(()),
-        Ok(0) => Err(std::io::Error::from(std::io::ErrorKind::WriteZero).to_string()),
-        Ok(written) => {
-            stream.pending_write.extend_from_slice(bytes);
-            stream.write_offset = written;
-            stream.raw_write = false;
-            Ok(())
-        }
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-            ) =>
-        {
-            stream.pending_write.extend_from_slice(bytes);
-            stream.write_offset = 0;
-            stream.raw_write = false;
-            Ok(())
-        }
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-/// Queue `parts` in order, first offering them to the kernel in one vectored write when
-/// the socket has nothing queued, as libuv's `uv_try_write` does before queueing a stream
-/// write: only the bytes the kernel declines are copied into the pending output. Failures
-/// and completion delivery stay with `poll`, which retries the queued bytes.
-pub(crate) fn write_parts<const N: usize>(
-    transport: &mut Transport,
-    socket: u64,
-    parts: [&[u8]; N],
-) -> Result<(), String> {
-    let stream = transport
-        .sockets
-        .get_mut(&socket)
-        .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
-    let mut written = 0;
-    let admitted = stream.write_offset == stream.pending_write.len()
-        && stream.completions.is_empty()
-        && stream.write_failure.is_none()
-        && matches!(stream.delivery, DeliveryPhase::Delivered);
-    if let (true, SocketStream::Plain(raw)) = (admitted, &mut stream.stream) {
-        written = raw.write_vectored(&parts.map(std::io::IoSlice::new)).unwrap_or(0);
-    }
-    for part in parts {
-        let skipped = written.min(part.len());
-        written -= skipped;
-        stream.pending_write.extend_from_slice(&part[skipped..]);
-    }
-    Ok(())
-}
-
-/// Bytes a socket has queued that the kernel has not yet accepted; the
-/// writable length Node's stream backpressure compares to its high-water mark.
-pub(crate) fn queued_bytes(transport: &Transport, socket: u64) -> Option<usize> {
-    transport
-        .sockets
-        .get(&socket)
-        .map(|stream| stream.pending_write.len() - stream.write_offset)
-}
-
-/// Offer a plain socket's queued bytes to the kernel now, as libuv's
-/// `uv_try_write` does before queueing a stream write. Failures and completion
-/// delivery stay with `poll`, which retries the remaining bytes.
-pub(crate) fn try_flush(transport: &mut Transport, socket: u64) {
-    let Some(stream) = transport.sockets.get_mut(&socket) else {
-        return;
-    };
-    if !matches!(stream.delivery, DeliveryPhase::Delivered)
-        || !matches!(stream.stream, SocketStream::Plain(_))
-        || stream.write_offset == stream.pending_write.len()
-    {
-        return;
-    }
-    if let Ok(written) = stream.stream.write(&stream.pending_write, stream.write_offset) {
-        stream.write_offset += written;
-    }
-    if stream.write_offset == stream.pending_write.len() && stream.completions.is_empty() {
-        stream.pending_write.clear();
-        stream.write_offset = 0;
-    }
-}
-
 /// Record the byte boundary for a guest stream write. Raw protocol writes
 /// share the transport without creating guest completion callbacks.
 pub(crate) fn write_with_completion(
@@ -878,15 +714,6 @@ pub(crate) fn socket_is_open(transport: &Transport, id: u64) -> bool {
 
 pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
     transport.sockets.contains_key(&socket)
-}
-
-/// Whether `socket` has delivered every byte the transport already read for it. A
-/// socket in another phase still owns a queued transport event.
-pub(crate) fn delivery_delivered(transport: &Transport, socket: u64) -> bool {
-    transport
-        .sockets
-        .get(&socket)
-        .is_some_and(|socket| matches!(socket.delivery, DeliveryPhase::Delivered))
 }
 
 pub(crate) fn end(transport: &mut Transport, socket: u64, raw: bool) -> Result<(), String> {
@@ -967,13 +794,6 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
     events.extend(poll_accepts(transport));
     events.extend(poll_sockets(transport));
     events
-}
-
-pub(crate) fn queue_http_data(transport: &mut Transport, socket: u64) {
-    transport.pending_events.push_back(TransportEvent::Data {
-        socket,
-        bytes: Vec::new(),
-    });
 }
 
 pub(crate) fn has_work(transport: &Transport) -> bool {
@@ -1375,29 +1195,6 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         close_socket(transport, id);
     }
     events
-}
-
-fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, TcpConnectFailure> {
-    let addresses = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| TcpConnectFailure::Resolve {
-            error,
-            hostname: host.to_owned(),
-        })?;
-    let mut last_error = None;
-    for address in addresses {
-        match TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT) {
-            Ok(stream) => return Ok(stream),
-            Err(error) => last_error = Some(TcpConnectFailure::Connect { error, address }),
-        }
-    }
-    Err(last_error.unwrap_or_else(|| TcpConnectFailure::Resolve {
-        error: std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "resolver returned no addresses",
-        ),
-        hostname: host.to_owned(),
-    }))
 }
 
 fn connect_resolved_address(
@@ -2054,32 +1851,6 @@ pub(super) fn listen_local_server(
         Ok(id) => register_server(context, server, id),
         Err(error) => queue_listen_error(context, server, error, path),
     }
-}
-
-/// Bind a Unix-domain listener for a consumer that owns its own public server
-/// bookkeeping (for example HTTP). Unlike `listen_local_server`, this leaves
-/// registration of the accepted listener to the caller.
-#[cfg(unix)]
-pub(crate) fn listen_local_endpoint(
-    context: &mut NativeContext<'_, NodeHost>,
-    path: &str,
-    backlog: i32,
-) -> Result<u64, String> {
-    let shared = context.host_mut().shared_state();
-    let cwd = shared.borrow().cwd.clone();
-    let bind_path = resolve_local_path(&cwd, path).map_err(|error| error.to_string())?;
-    let cleanup_path = cleanup_local_path(&cwd, path).map_err(|error| error.to_string())?;
-    let result = {
-        let mut state = shared.borrow_mut();
-        listen_local(
-            &mut state.tcp,
-            bind_path,
-            path.to_owned(),
-            cleanup_path,
-            backlog,
-        )
-    };
-    result.map_err(|error| error.to_string())
 }
 
 pub(crate) fn server_address_operation(

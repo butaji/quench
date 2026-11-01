@@ -13,6 +13,7 @@ pub(crate) mod identity;
 pub(crate) mod server;
 pub(crate) mod sessions;
 pub(crate) mod socket;
+pub(crate) mod surface;
 
 /// Build the legacy TLS internal-module facade and emit Node's deprecation
 /// warning when the module is first loaded through CommonJS.
@@ -48,105 +49,31 @@ pub(crate) const DEFAULT_CIPHER_LIST: &str = concat!(
 
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    // The library's crypto wrapper must finish before TLS policy imports it.
-    let crypto = crate::host::shared_vm::commonjs::crypto_module(context)?;
-    let x509_certificate = socket::get(context, crypto, "X509Certificate")?;
-    let factory = crate::host::removed_javascript("node:tls/shared.js")?;
-    let undefined = context.undefined();
     let api = facade::install(context)?;
     handle::registry(context)?;
-    let policy = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "tls.js",
-        "internal/tls/secure-context.js",
-        "configSecureContext",
-    )?;
-    let key = context.string_rooted("standardConfigure");
-    context.define_data_property_rooted(api, key, policy, false, false, false)?;
-    let patterns = crate::host::removed_javascript("node:tls/identity-patterns.js")?;
-    let patterns_key = context.string_rooted("identityPatterns");
-    context.define_data_property_rooted(api, patterns_key, patterns, false, false, false)?;
-    let lower = context.host_function(crate::host::shared_vm::operation("tlsLowercaseName"))?;
-    let lower_factory = crate::host::removed_javascript("node:tls/lowercase-facade.js")?;
-    let lower_callback = context.call_rooted(lower_factory, undefined, &[lower])?;
-    let lower_key = context.string_rooted("identityLowercase");
-    context.define_data_property_rooted(api, lower_key, lower_callback, false, false, false)?;
     let net = crate::host::shared_vm::commonjs::net_module(context)?;
     let net_key = context.string_rooted("identityNet");
     context.define_data_property_rooted(api, net_key, net, false, false, false)?;
     let binding = facade::binding(context)?;
-    let key = context.string_rooted("SecureContext");
-    let constructor = context.get_property_rooted(binding, key)?;
+    let constructor = socket::get(context, binding, "SecureContext")?;
     let key = context.string_rooted("contextConstructor");
     context.define_data_property_rooted(api, key, constructor, true, true, true)?;
-    let ciphers = context.host_function(crate::host::shared_vm::operation("tlsGetCiphers"))?;
-    let ca_certificates =
-        context.host_function(crate::host::shared_vm::operation("tlsGetCACertificates"))?;
-    let identity =
-        context.host_function(crate::host::shared_vm::operation("tlsCheckServerIdentity"))?;
-    let connect = context.host_function(crate::host::shared_vm::operation("tlsSocketConnect"))?;
-    let construct =
-        context.host_function(crate::host::shared_vm::operation("tlsSocketConstruct"))?;
-    let info = context.host_function(crate::host::shared_vm::operation("tlsSocketInfo"))?;
-    let start = context.host_function(crate::host::shared_vm::operation("tlsSocketStart"))?;
-    let create_server =
-        context.host_function(crate::host::shared_vm::operation("tlsServerCreate"))?;
-    let construct_server =
-        context.host_function(crate::host::shared_vm::operation("tlsServerConstruct"))?;
-    let server_context =
-        context.host_function(crate::host::shared_vm::operation("tlsServerSetContext"))?;
-    let error = context.host_function(crate::host::shared_vm::operation("tlsSocketError"))?;
-    let release =
-        context.host_function(crate::host::shared_vm::operation("tlsSocketReleaseControl"))?;
-    let module = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            api,
-            ciphers,
-            ca_certificates,
-            identity,
-            connect,
-            construct,
-            info,
-            start,
-            create_server,
-            construct_server,
-            server_context,
-            error,
-            release,
-            x509_certificate,
-        ],
-    )?;
-    let tls_key = context.string_rooted("TLSSocket");
-    let tls = context.get_property_rooted(module, tls_key)?;
-    let socket_key = context.string_rooted("Socket");
-    let base = context.get_property_rooted(net, socket_key)?;
-    let key = context.string_rooted("prototype");
-    let tls_proto = context.get_property_rooted(tls, key)?;
-    let base_proto = context.get_property_rooted(base, key)?;
-    context.set_prototype_rooted(tls_proto, base_proto)?;
-    context.set_prototype_rooted(tls, base)?;
-    let key = context.string_rooted("socketConstructor");
-    context.define_data_property_rooted(api, key, tls, false, false, false)?;
-    let server_key = context.string_rooted("Server");
-    let server = context.get_property_rooted(module, server_key)?;
-    let base_server = context.get_property_rooted(net, server_key)?;
-    let key = context.string_rooted("prototype");
-    let server_proto = context.get_property_rooted(server, key)?;
-    let base_proto = context.get_property_rooted(base_server, key)?;
-    context.set_prototype_rooted(server_proto, base_proto)?;
-    context.set_prototype_rooted(server, base_server)?;
-    let key = context.string_rooted("serverConstructor");
-    context.define_data_property_rooted(api, key, server, false, false, false)?;
-    let cli_options = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .clone();
-    // Match Node's TLS CLI precedence: the earliest (lowest) enabled minimum
-    // wins, while the highest enabled maximum wins.
+    let defaults = default_versions(context);
+    let module = surface::build(context, api, net, &defaults)?;
+    for (name, field) in [("TLSSocket", "socketConstructor"), ("Server", "serverConstructor")] {
+        let class = socket::get(context, module, name)?;
+        let key = context.string_rooted(field);
+        context.define_data_property_rooted(api, key, class, false, false, false)?;
+    }
+    let key = context.string_rooted("module");
+    context.set_property_rooted(api, key, module, api)?;
+    Ok(module)
+}
+
+/// The `DEFAULT_*` policy, with Node's CLI precedence: the lowest enabled minimum and the
+/// highest enabled maximum win.
+fn default_versions(context: &mut NativeContext<'_, NodeHost>) -> [(&'static str, String); 4] {
+    let cli_options = context.host_mut().shared_state().borrow().cli_options.clone();
     let minimum = [
         ("--tls-min-v1.0", "TLSv1"),
         ("--tls-min-v1.1", "TLSv1.1"),
@@ -164,20 +91,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .string_value("--tls-cipher-list")
         .filter(|value| !value.is_empty())
         .unwrap_or(DEFAULT_CIPHER_LIST);
-    for (name, text) in [
-        ("DEFAULT_MIN_VERSION", minimum),
-        ("DEFAULT_MAX_VERSION", maximum),
-        ("DEFAULT_ECDH_CURVE", "auto"),
-        ("DEFAULT_CIPHERS", ciphers),
-    ] {
-        let key = context.string_rooted(name);
-        let value = context.string_rooted(text);
-        context.set_property_rooted(module, key, value, module)?;
-    }
-    bundled::install(context, module)?;
-    let key = context.string_rooted("module");
-    context.set_property_rooted(api, key, module, api)?;
-    Ok(module)
+    [
+        ("DEFAULT_CIPHERS", ciphers.to_owned()),
+        ("DEFAULT_ECDH_CURVE", "auto".to_owned()),
+        ("DEFAULT_MIN_VERSION", minimum.to_owned()),
+        ("DEFAULT_MAX_VERSION", maximum.to_owned()),
+    ]
 }
 
 fn parsed_pfx(

@@ -1272,8 +1272,12 @@ fn require_for_module_inner(
         Some(BuiltinModule::InternalUrl) => {
             return cached_builtin(context, BuiltinModule::InternalUrl);
         }
-        Some(BuiltinModule::Internal("_http_agent")) => {
-            return cached_builtin(context, BuiltinModule::Internal("_http_agent"));
+        Some(
+            module @ BuiltinModule::Internal(
+                "_http_agent" | "_http_client" | "_http_common" | "_http_incoming" | "_http_outgoing" | "_http_server",
+            ),
+        ) => {
+            return cached_builtin(context, module);
         }
         Some(BuiltinModule::InternalVfsFd) => {
             return cached_builtin(context, BuiltinModule::InternalVfsFd);
@@ -2424,6 +2428,10 @@ pub(crate) fn http_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     cached_builtin(context, BuiltinModule::Http)
 }
 
+pub(crate) fn https_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Https)
+}
+
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Net)
 }
@@ -2651,13 +2659,8 @@ pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[Roo
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
-        BuiltinModule::Internal("_http_agent") => {
-            // Share the projected internal export with every loader surface.
-            let http = cached_builtin(context, BuiltinModule::Http)?;
-            let agent = get(context, http, "Agent")?;
-            let module = context.null_object_rooted()?;
-            set(context, module, "Agent", agent)?;
-            Ok(module)
+        BuiltinModule::Internal(name @ ("_http_agent" | "_http_client" | "_http_incoming" | "_http_outgoing" | "_http_server")) => {
+            crate::modules::http_shared_vm::internal_module(context, name)
         }
         BuiltinModule::Internal("_tls_common") | BuiltinModule::Internal("_tls_wrap") => {
             let process = context
@@ -2801,37 +2804,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Ok(module)
         }
         BuiltinModule::Internal("internal/process/task_queues") => task_queues_module(context),
-        BuiltinModule::Internal("_http_incoming") => {
-            let root = context.host_mut().node_library_root.clone();
-            let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
-            load(
-                context,
-                &root.join("lib/_http_incoming.js"),
-                Some(parent),
-                EntryGoal::CommonJs,
-            )
-        }
         BuiltinModule::Internal("_http_common") => {
             crate::modules::http_common_shared_vm::module(context)
         }
-        BuiltinModule::Internal("_http_outgoing") => {
-            node_library_module(context, "http.js", "_http_outgoing.js")
-        }
-        BuiltinModule::Internal("_http_server") => {
-            let module = context.object_rooted()?;
-            let interval = node_library_export(
-                context,
-                "_http_server.js",
-                "_http_server.js",
-                "kConnectionsCheckingInterval",
-            )?;
-            set(context, module, "kConnectionsCheckingInterval", interval)?;
-            Ok(module)
-        }
         BuiltinModule::Internal("dns/promises") => crate::modules::dns_module_shared_vm::promises(context),
-        // Node's `_http_client` builds on its `http_parser` binding, which the native `http`
-        // module does not use; until it is projected from it, it stays empty.
-        BuiltinModule::Internal("_http_client") => context.object_rooted(),
         BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
         BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
         // Every other such builtin is Node's own library module of that name.
