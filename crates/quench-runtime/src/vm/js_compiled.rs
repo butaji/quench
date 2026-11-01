@@ -160,9 +160,10 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
     if let Some(capture) = number_capture_candidate(function) {
         return compile_capture_number(function_id, capture);
     }
-    if let Some(captures) = numeric_capture_candidate(function) {
-        return compile_numeric_with_captures(program, function_id, &captures)
-            .or_else(|| compile_numeric(program, function_id));
+    if let Some(captures) = numeric_capture_candidate(function)
+        && let Some(artifact) = compile_numeric_with_captures(program, function_id, &captures)
+    {
+        return Some(artifact);
     }
     if string_hash_loop_candidate(program, function) {
         return compile_string_hash_loop(program, function_id, function);
@@ -500,8 +501,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
 pub(super) fn numeric_capture_candidate(
     function: &Function,
 ) -> Option<smallvec::SmallVec<[JsJitCaptureArgument; MAX_CAPTURE_ARGUMENTS]>> {
-    if function.params == 0
-        || function.parent.is_none()
+    if function.parent.is_none()
         || function.is_async
         || function.is_generator
         || function.is_class_constructor
@@ -518,6 +518,7 @@ pub(super) fn numeric_capture_candidate(
         return None;
     }
 
+    let field_inputs = cached_numeric_field_inputs_candidate(function);
     let mut captures = smallvec::SmallVec::new();
     for packed in &function.code {
         let instruction = packed.as_wide();
@@ -530,6 +531,13 @@ pub(super) fn numeric_capture_candidate(
                     depth: instruction.capture_depth(),
                     slot: instruction.capture_slot(),
                 };
+                if field_inputs.as_ref().is_some_and(|inputs| inputs.iter().any(|input| {
+                    matches!(input.receiver, JsJitFieldReceiver::Capture { register, capture: receiver }
+                        if register == instruction.result_register()
+                            && receiver.depth == capture.depth && receiver.slot == capture.slot)
+                })) {
+                    continue;
+                }
                 if !captures.iter().any(|seen: &JsJitCaptureArgument| {
                     seen.depth == capture.depth && seen.slot == capture.slot
                 }) {
@@ -541,9 +549,14 @@ pub(super) fn numeric_capture_candidate(
             }
             Op::LoadConst
             | Op::Move
+            | Op::GetField
             | Op::Binary
             | Op::NumericAdd
             | Op::NumericMultiply
+            | Op::Jump
+            | Op::JumpFalse
+            | Op::JumpTrue
+            | Op::JumpBinaryFalse
             | Op::Return => {}
             _ => return None,
         }

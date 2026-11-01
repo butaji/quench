@@ -14656,6 +14656,55 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_compiles_guarded_boolean_fields_and_captures() {
+    let source = r#"
+      function make(mask, expected) {
+        function check() { return (this.value & mask) !== 0 || this.value == expected; }
+        return {check, setMask(value) { mask = value; }};
+      }
+      const reader = make(2, 4);
+      reader.value = 4;
+      for (let i = 0; i < 80; i++) {
+        if (!reader.check()) throw Error('boolean numeric region');
+      }
+      reader.setMask(1);
+      reader.value = 3;
+      if (!reader.check()) throw Error('capture mutation');
+      reader.setMask(1.5);
+      if (!reader.check()) throw Error('fractional bitwise fallback');
+      reader.setMask(1n);
+      let threw = false;
+      try { reader.check(); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('bigint fallback');
+      reader.setMask(2);
+      let reads = 0;
+      Object.defineProperty(reader, 'value', {
+        configurable: true,
+        get() { reads++; return reads === 1 ? 0 : 4; }
+      });
+      if (!reader.check() || reads !== 2) throw Error('getter fallback ordering');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-capture-boolean.js")).unwrap();
+    let check = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "check")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm.programs
+        .js_tier(super::program_store::ProgramId::MAIN, check) else {
+        panic!("guarded field and capture predicate should compile");
+    };
+    assert!(!compiled.is_general_dispatch());
+    assert!(!compiled.numeric_field_inputs().is_empty());
+    assert!(compiled.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_lowers_guarded_numeric_field_reads_from_captured_objects() {
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
