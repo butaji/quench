@@ -16102,6 +16102,61 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function write(value) { this.x = value; }
+      function writeStrict(value) { 'use strict'; this.x = value; }
+      const target = { a: 1, b: 2, c: 3, x: 0, write, writeStrict };
+      for (let i = 0; i < 64; i++) { target.write(i); target.writeStrict(i + 1); }
+      if (target.x !== 64) throw Error('cached writes');
+      const reference = { n: 7 };
+      target.write(reference);
+      $262.gc();
+      if (target.x !== reference || target.x.n !== 7) throw Error('heap write barrier');
+      let seen = 0;
+      Object.defineProperty(target, 'x', { set(value) { seen = value; }, configurable: true });
+      target.write(71);
+      if (seen !== 71) throw Error('accessor');
+      Object.defineProperty(target, 'x', { value: 1, writable: false, configurable: true });
+      target.write(2);
+      if (target.x !== 1) throw Error('sloppy readonly');
+      let threw = false;
+      try { target.writeStrict(2); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw || target.x !== 1) throw Error('strict readonly');
+      let proxyCalls = 0;
+      const proxy = new Proxy(target, { set() { proxyCalls++; return true; } });
+      write.call(proxy, 5);
+      if (proxyCalls !== 1) throw Error('proxy');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-store.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["write", "writeStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            matches!(super::dispatch_fast::decoded_instruction(body, *packed).op(),
+                crate::bytecode::Op::SetThisField | crate::bytecode::Op::SetThisFieldStrict).then_some(pc)
+        }).expect("this store");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
     let source = r#"
       function outer() {

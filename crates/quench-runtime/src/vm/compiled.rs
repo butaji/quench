@@ -1731,13 +1731,13 @@ fn emit_js_own_field_return(
 /// execution, of a name no method cache names (whose store would invalidate it), to the slot
 /// `emit_js_cached_field_slot` finds. Only a value outside the heap is stored here, which the
 /// write barrier never logs; a heap value, like every failed proof, resumes `Vm::step` at
-/// this SetField PC with nothing written.
+/// the original store PC with nothing written.
 #[allow(clippy::too_many_arguments)]
 fn emit_js_own_field_set(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    receiver: JsFieldReceiver,
     value_offset: i32,
     atom: Atom,
     site: u16,
@@ -1775,7 +1775,7 @@ fn emit_js_own_field_set(
     builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
-    let address = emit_js_cached_field_slot(builder, arguments, payload, JsFieldReceiver::Register(base_offset), site, false, fallback);
+    let address = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -2138,12 +2138,16 @@ pub(super) fn lower_js_general_dispatch(
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        if instruction.op() == Op::SetField
+        let store_receiver = match instruction.op() {
+            Op::SetField => register_offset(instruction.register_b()).map(JsFieldReceiver::Register),
+            Op::SetThisField | Op::SetThisFieldStrict => Some(JsFieldReceiver::FixedThis),
+            _ => None,
+        };
+        if let Some(receiver) = store_receiver
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
             && let Some(next) = next
-            && let Some(base_offset) = register_offset(instruction.register_b())
             && let Some(value_offset) = register_offset(instruction.register_a())
         {
             let exact = JsExactFallback {
@@ -2159,7 +2163,7 @@ pub(super) fn lower_js_general_dispatch(
                 &mut builder,
                 arguments,
                 payload,
-                base_offset,
+                receiver,
                 value_offset,
                 instruction.atom_index(),
                 instruction.cache_site_index(),
