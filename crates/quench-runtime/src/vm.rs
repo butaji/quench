@@ -7,6 +7,8 @@ pub(crate) mod native_object;
 pub(crate) mod native_graph;
 #[cfg(all(feature = "aot", feature = "jit"))]
 pub(crate) mod native_stencil;
+#[cfg(feature = "aot")]
+pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
 mod compiled;

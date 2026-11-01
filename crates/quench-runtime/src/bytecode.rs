@@ -302,6 +302,22 @@ pub(crate) enum FieldLayout {
     SignedConstant,
 }
 
+/// Ershov's binding time of one instruction input: when the fact it names
+/// becomes known. The opcode table is its only authority; every specializer
+/// reads it through `Op::input_binding_times` (docs/v2/specialization.md).
+#[cfg(feature = "aot")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum BindingTime {
+    /// Fixed by the residual program: every specializer folds it.
+    Static,
+    /// Fixed storage (a register, window or slot) whose contents are dynamic:
+    /// specializers fold the address, never the value.
+    Location,
+    /// A fixed index naming mutable feedback (an inline cache or literal site):
+    /// only an online specializer may fold its contents, behind a guard.
+    Site,
+}
+
 impl FieldLayout {
     pub(crate) const fn is_register_field(self) -> bool {
         matches!(
@@ -328,6 +344,118 @@ impl FieldLayout {
     pub(crate) const fn is_operand_field(self) -> bool {
         matches!(self, Self::Operand | Self::NumericIndexOperand)
     }
+
+    #[cfg(feature = "aot")]
+    /// An operand field is a location whose encoding may instead carry a
+    /// constant; the constant is static, which the instruction decides.
+    pub(crate) const fn binding_time(self) -> BindingTime {
+        match self {
+            Self::ResultRegister
+            | Self::Register
+            | Self::WriteRegister
+            | Self::ReadWriteRegister
+            | Self::OptionalRegister
+            | Self::OptionalReadRegister
+            | Self::NumericLocalTarget
+            | Self::RegisterWindowBase
+            | Self::ConstructArguments
+            | Self::FieldBase
+            | Self::Operand
+            | Self::NumericIndexOperand => BindingTime::Location,
+            Self::CacheSiteIndex | Self::FieldLookupCacheSiteIndex => BindingTime::Site,
+            Self::Unused
+            | Self::NumericLocalStoreMarker
+            | Self::FunctionIndex
+            | Self::ElementCount
+            | Self::RegisterCount
+            | Self::WideIndexChunk
+            | Self::BooleanFlag
+            | Self::BinaryOperator
+            | Self::SignedConstant => BindingTime::Static,
+        }
+    }
+}
+
+#[cfg(feature = "aot")]
+impl ImmediateRole {
+    /// A layout-encoded immediate packs register windows or capture slots
+    /// unless it is a plain scalar.
+    pub(crate) const fn binding_time(self, layout: ImmediateLayout) -> BindingTime {
+        match self {
+            Self::LayoutEncoded => match layout {
+                ImmediateLayout::Scalar => BindingTime::Static,
+                ImmediateLayout::CaptureDepthAndSlot
+                | ImmediateLayout::CallWindow
+                | ImmediateLayout::CallWindowWithEvalFlags
+                | ImmediateLayout::SingleArgumentCallWindowWithEvalFlags
+                | ImmediateLayout::ConstructCountAndFlags
+                | ImmediateLayout::RegisterPair => BindingTime::Location,
+            },
+            Self::LocalSlot | Self::WasmInstanceSlot => BindingTime::Location,
+            Self::TemplateSiteIndex
+            | Self::RegExpLiteralSiteIndex
+            | Self::MethodSiteIndex
+            | Self::ObjectSiteIndex
+            | Self::FieldLookup => BindingTime::Site,
+            Self::Unused
+            | Self::ConstantIndex
+            | Self::EnvironmentCloneIndex
+            | Self::ClosureFunctionIndex
+            | Self::ArrayLength
+            | Self::AtomIndex
+            | Self::FunctionNamePrefix
+            | Self::PropertyDefinitionMode
+            | Self::BooleanFlag
+            | Self::ArrayIndex
+            | Self::BinaryOperator
+            | Self::AdditionOperator
+            | Self::MultiplicationOperator
+            | Self::UnaryOperator
+            | Self::WasmSignatureIndex
+            | Self::WasmFunctionIndex
+            | Self::WasmSimdOperator
+            | Self::WasmMemoryLoadOperator
+            | Self::WasmMemoryStoreOperator
+            | Self::WasmMemoryOffset
+            | Self::WasmAtomicOperator
+            | Self::WasmI32Immediate
+            | Self::WasmI32UnaryOperator
+            | Self::WasmI31Operator
+            | Self::WasmExternalConversion
+            | Self::WasmReferenceTarget
+            | Self::WasmNonNullCheck
+            | Self::WasmGcTypeIndex
+            | Self::WasmStructFieldIndex
+            | Self::WasmExceptionFieldIndex
+            | Self::WasmI64BinaryOperator
+            | Self::WasmI64UnaryOperator
+            | Self::WasmScalarConversionOperator
+            | Self::WasmF32BinaryOperator
+            | Self::WasmF32UnaryOperator
+            | Self::WasmF64BinaryOperator
+            | Self::WasmF64UnaryOperator
+            | Self::LiteralTemplateIndex
+            | Self::JumpTarget
+            | Self::BranchTableCases
+            | Self::SuperinstructionIndex
+            | Self::WideInstructionIndex => BindingTime::Static,
+        }
+    }
+}
+
+#[cfg(feature = "aot")]
+impl Op {
+    /// The binding time of each input, in field order `a`, `b`, `c`, then the
+    /// immediate: Ershov's division of this instruction.
+    pub(crate) const fn input_binding_times(self) -> [BindingTime; 4] {
+        [
+            self.field_layout(InstructionField::A).binding_time(),
+            self.field_layout(InstructionField::B).binding_time(),
+            self.field_layout(InstructionField::C).binding_time(),
+            self.immediate_role().binding_time(self.immediate_layout()),
+        ]
+    }
+
 }
 
 impl Op {

@@ -5,7 +5,8 @@ use super::native_object::{
     NativeFunctionAddress,
 };
 use super::native_operands::NativeJsOperands;
-use crate::bytecode::{ControlFlowLayout, Function, Op, ProgramKind, ResidualProgram};
+use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
+use crate::bytecode::{Op, ProgramKind, ResidualProgram};
 use cranelift_codegen::{
     ir::{self, InstBuilder, MemFlagsData, condcodes::IntCC, types},
     isa::TargetIsa,
@@ -50,8 +51,7 @@ impl Default for NativeJsCodegenOptions {
 }
 
 impl NativeJsCodegenOptions {
-    pub(super) fn regions(self, function: &Function) -> Option<Vec<Range<usize>>> {
-        let count = function.code.len();
+    pub(super) fn regions(self, count: usize) -> Option<Vec<Range<usize>>> {
         let width = self.region_instruction_budget.get();
         (count > width).then(|| {
             (0..count)
@@ -94,172 +94,186 @@ pub fn lower_native_js_module_with_options(
     if program.kind == ProgramKind::Wasm {
         return Err("JavaScript native graph requires a JS or TS program".into());
     }
-    program.validate_unless_proven()?;
     let isa = super::jit_backend::target_isa_for(
         "speed",
         super::jit_backend::CodePublication::RelocatableObject,
     )
     .ok_or("native target unavailable")?;
-    let mut functions = Vec::new();
-    let abi_function = 0;
-    functions.push(NativeFunction::Import {
-        name: crate::NATIVE_JS_ABI_SYMBOL.into(),
-        signature: ir::Signature::new(isa.default_call_conv()),
-    });
-    let mut operations = vec![None; Op::COUNT];
-    for id in 0..program.function_count() {
-        let body = program.function(id);
-        for packed in body.code.iter().copied() {
-            let op = super::dispatch_fast::decoded_instruction(body, packed).op();
-            if operations[op as usize].is_none() {
-                let index = u32::try_from(functions.len())
-                    .map_err(|_| "native symbol count exceeds u32")?;
-                operations[op as usize] = Some(index);
-                functions.push(NativeFunction::Import {
-                    name: format!(
-                        "{}{}",
-                        crate::bytecode::NATIVE_JS_OPERATION_PREFIX,
-                        Op::NAMES[op as usize]
-                    ),
-                    signature: super::compiled::native_js_operation_signature(&*isa),
-                });
+    CallThreaded(ObjectExtension { isa, namespace, options, functions: Vec::new() }).specialize(program)
+}
+
+/// The call-threaded generating extension for linked objects: each semantic
+/// entry is an imported symbol, each operand record is object data, and the
+/// linker binds both.
+struct ObjectExtension<'n> {
+    isa: std::sync::Arc<dyn TargetIsa>,
+    namespace: &'n str,
+    options: NativeJsCodegenOptions,
+    functions: Vec<Vec<InstructionSite>>,
+}
+
+impl CallThreadedExtension for ObjectExtension<'_> {
+    type Residual = NativeJsModule;
+
+    fn function(&mut self, _function_id: u32, sites: Vec<InstructionSite>) -> Result<(), String> {
+        self.functions.push(sites);
+        Ok(())
+    }
+
+    fn finish(self) -> Result<NativeJsModule, String> {
+        let Self { isa, namespace, options, functions: bodies } = self;
+        let mut functions = Vec::new();
+        let abi_function = 0;
+        functions.push(NativeFunction::Import {
+            name: crate::NATIVE_JS_ABI_SYMBOL.into(),
+            signature: ir::Signature::new(isa.default_call_conv()),
+        });
+        let mut operations = vec![None; Op::COUNT];
+        for id in 0..bodies.len() {
+            let body = &bodies[id];
+            for op in body.iter().filter(|site| site.calls_semantic_entry()).map(|site| site.op) {
+                if operations[op as usize].is_none() {
+                    let index = u32::try_from(functions.len())
+                        .map_err(|_| "native symbol count exceeds u32")?;
+                    operations[op as usize] = Some(index);
+                    functions.push(NativeFunction::Import {
+                        name: format!(
+                            "{}{}",
+                            crate::bytecode::NATIVE_JS_OPERATION_PREFIX,
+                            Op::NAMES[op as usize]
+                        ),
+                        signature: super::compiled::native_js_operation_signature(&*isa),
+                    });
+                }
             }
         }
-    }
-    let first_definition =
+        let first_definition =
+            u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
+        let mut data = Vec::with_capacity(bodies.len());
+        let mut region_definitions = Vec::new();
+        for id in 0..bodies.len() {
+            let body = &bodies[id];
+            let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
+            let byte_len = body
+                .len()
+                .checked_mul(std::mem::size_of::<NativeJsOperands>())
+                .ok_or("native operand data size overflow")?;
+            let mut bytes = Vec::with_capacity(byte_len);
+            for site in body {
+                site.operands.append_native_bytes(&mut bytes);
+            }
+            let native = if let Some(regions) = options.regions(body.len()) {
+                let region_base = (first_definition as usize)
+                    .checked_add(bodies.len())
+                    .and_then(|base| base.checked_add(region_definitions.len()))
+                    .ok_or("native symbol count overflow")?;
+                let region_end = region_base
+                    .checked_add(regions.len())
+                    .ok_or("native symbol count overflow")?;
+                u32::try_from(region_end).map_err(|_| "native symbol count exceeds u32")?;
+                for (index, region) in regions.iter().cloned().enumerate() {
+                    region_definitions.push(NativeFunction::Definition {
+                        name: format!("{namespace}_function_{id}_region_{index}"),
+                        function: lower_object_body(
+                            body,
+                            function_id,
+                            &*isa,
+                            &operations,
+                            Some(region),
+                        )?,
+                    });
+                }
+                let mut signature = None;
+                lower_region_dispatch(
+                    function_id,
+                    body.len(),
+                    options.region_instruction_budget.get(),
+                    regions.len(),
+                    &*isa,
+                    |builder, index, context, pc, result| {
+                        let signature = *signature.get_or_insert_with(|| {
+                            builder.import_signature(super::compiled::native_entry_signature(
+                                isa.pointer_type(),
+                                isa.default_call_conv(),
+                            ))
+                        });
+                        let symbol =
+                            u32::try_from(region_base + index).expect("validated native region symbol");
+                        let name =
+                            builder
+                                .func
+                                .declare_imported_user_function(ir::UserExternalName::new(
+                                    NATIVE_FUNCTION_NAMESPACE,
+                                    symbol,
+                                ));
+                        let callee = builder.import_function(ir::ExtFuncData {
+                            name: ir::ExternalName::user(name),
+                            signature,
+                            colocated: false,
+                            patchable: false,
+                        });
+                        let arguments = region_call_arguments(builder, &*isa, context, pc, result);
+                        let call = builder.ins().call(callee, &arguments);
+                        builder.inst_results(call)[0]
+                    },
+                )?
+            } else {
+                lower_object_body(body, function_id, &*isa, &operations, None)?
+            };
+            data.push(NativeData {
+                name: format!("{namespace}_operands_{id}"),
+                bytes,
+                alignment: std::mem::align_of::<NativeJsOperands>() as u64,
+                writable: false,
+                function_addresses: Vec::new(),
+            });
+            functions.push(NativeFunction::Definition {
+                name: format!("{namespace}_function_{id}"),
+                function: native,
+            });
+        }
+        functions.extend(region_definitions);
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
-    let mut data = Vec::with_capacity(program.function_count());
-    let mut region_definitions = Vec::new();
-    for id in 0..program.function_count() {
-        let body = program.function(id);
-        let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
-        let byte_len = body
-            .code
+        let pointer_bytes = usize::from(isa.pointer_bytes());
+        let words = bodies
             .len()
-            .checked_mul(std::mem::size_of::<NativeJsOperands>())
-            .ok_or("native operand data size overflow")?;
-        let mut bytes = Vec::with_capacity(byte_len);
-        for packed in body.code.iter().copied() {
-            let instruction = super::dispatch_fast::decoded_instruction(body, packed);
-            NativeJsOperands::new(
-                instruction.a(),
-                instruction.b(),
-                instruction.c(),
-                instruction.imm(),
-            )
-            .append_native_bytes(&mut bytes);
+            .checked_add(crate::NATIVE_JS_IMAGE_HEADER_WORDS)
+            .ok_or("native entry table size overflow")?;
+        let bytes = words
+            .checked_mul(pointer_bytes)
+            .ok_or("native entry table size overflow")?;
+        let mut addresses = Vec::with_capacity(words);
+        addresses.push(NativeFunctionAddress {
+            offset: 0,
+            function: abi_function,
+        });
+        for id in 0..bodies.len() {
+            let word = id + crate::NATIVE_JS_IMAGE_HEADER_WORDS;
+            let offset = u32::try_from(word * pointer_bytes)
+                .map_err(|_| "native entry table exceeds relocation offsets")?;
+            let function = first_definition
+                .checked_add(u32::try_from(id).map_err(|_| "native function count exceeds u32")?)
+                .ok_or("native function symbol count exceeds u32")?;
+            addresses.push(NativeFunctionAddress { offset, function });
         }
-        let native = if let Some(regions) = options.regions(body) {
-            let region_base = (first_definition as usize)
-                .checked_add(program.function_count())
-                .and_then(|base| base.checked_add(region_definitions.len()))
-                .ok_or("native symbol count overflow")?;
-            let region_end = region_base
-                .checked_add(regions.len())
-                .ok_or("native symbol count overflow")?;
-            u32::try_from(region_end).map_err(|_| "native symbol count exceeds u32")?;
-            for (index, region) in regions.iter().cloned().enumerate() {
-                region_definitions.push(NativeFunction::Definition {
-                    name: format!("{namespace}_function_{id}_region_{index}"),
-                    function: lower_object_body(
-                        body,
-                        function_id,
-                        &*isa,
-                        &operations,
-                        Some(region),
-                    )?,
-                });
-            }
-            let mut signature = None;
-            lower_region_dispatch(
-                function_id,
-                body.code.len(),
-                options.region_instruction_budget.get(),
-                regions.len(),
-                &*isa,
-                |builder, index, context, pc, result| {
-                    let signature = *signature.get_or_insert_with(|| {
-                        builder.import_signature(super::compiled::native_entry_signature(
-                            isa.pointer_type(),
-                            isa.default_call_conv(),
-                        ))
-                    });
-                    let symbol =
-                        u32::try_from(region_base + index).expect("validated native region symbol");
-                    let name =
-                        builder
-                            .func
-                            .declare_imported_user_function(ir::UserExternalName::new(
-                                NATIVE_FUNCTION_NAMESPACE,
-                                symbol,
-                            ));
-                    let callee = builder.import_function(ir::ExtFuncData {
-                        name: ir::ExternalName::user(name),
-                        signature,
-                        colocated: false,
-                        patchable: false,
-                    });
-                    let arguments = region_call_arguments(builder, &*isa, context, pc, result);
-                    let call = builder.ins().call(callee, &arguments);
-                    builder.inst_results(call)[0]
-                },
-            )?
-        } else {
-            lower_object_body(body, function_id, &*isa, &operations, None)?
-        };
+        let entry_table = data.len();
         data.push(NativeData {
-            name: format!("{namespace}_operands_{id}"),
-            bytes,
-            alignment: std::mem::align_of::<NativeJsOperands>() as u64,
+            name: format!("{namespace}_entries"),
+            bytes: vec![0; bytes],
+            alignment: pointer_bytes as u64,
             writable: false,
-            function_addresses: Vec::new(),
+            function_addresses: addresses,
         });
-        functions.push(NativeFunction::Definition {
-            name: format!("{namespace}_function_{id}"),
-            function: native,
-        });
+        Ok(NativeJsModule {
+            functions,
+            data,
+            entry_table,
+        })
     }
-    functions.extend(region_definitions);
-    u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
-    let pointer_bytes = usize::from(isa.pointer_bytes());
-    let words = program
-        .function_count()
-        .checked_add(crate::NATIVE_JS_IMAGE_HEADER_WORDS)
-        .ok_or("native entry table size overflow")?;
-    let bytes = words
-        .checked_mul(pointer_bytes)
-        .ok_or("native entry table size overflow")?;
-    let mut addresses = Vec::with_capacity(words);
-    addresses.push(NativeFunctionAddress {
-        offset: 0,
-        function: abi_function,
-    });
-    for id in 0..program.function_count() {
-        let word = id + crate::NATIVE_JS_IMAGE_HEADER_WORDS;
-        let offset = u32::try_from(word * pointer_bytes)
-            .map_err(|_| "native entry table exceeds relocation offsets")?;
-        let function = first_definition
-            .checked_add(u32::try_from(id).map_err(|_| "native function count exceeds u32")?)
-            .ok_or("native function symbol count exceeds u32")?;
-        addresses.push(NativeFunctionAddress { offset, function });
-    }
-    let entry_table = data.len();
-    data.push(NativeData {
-        name: format!("{namespace}_entries"),
-        bytes: vec![0; bytes],
-        alignment: pointer_bytes as u64,
-        writable: false,
-        function_addresses: addresses,
-    });
-    Ok(NativeJsModule {
-        functions,
-        data,
-        entry_table,
-    })
 }
 
 fn lower_object_body(
-    body: &Function,
+    sites: &[InstructionSite],
     function_id: u32,
     isa: &dyn TargetIsa,
     operations: &[Option<u32>],
@@ -268,11 +282,12 @@ fn lower_object_body(
     let mut entries = vec![None; Op::COUNT];
     let mut operand_base = None;
     lower_body(
-        body,
+        sites,
         function_id,
         isa,
         region,
-        |builder, op, pc, context, result| {
+        |builder, site, context, result| {
+            let (op, pc) = (site.op, site.pc);
             let entry = *entries[op as usize].get_or_insert_with(|| {
                 let signature =
                     builder.import_signature(super::compiled::native_js_operation_signature(isa));
@@ -318,16 +333,16 @@ fn lower_object_body(
 /// Bindings choose linker symbols or live JIT addresses; the graph and semantic
 /// continuation protocol are identical in both publication modes.
 pub(super) fn lower_body(
-    function: &Function,
+    sites: &[InstructionSite],
     function_id: u32,
     isa: &dyn TargetIsa,
     region: Option<Range<usize>>,
-    mut operation: impl FnMut(&mut FunctionBuilder<'_>, Op, usize, ir::Value, ir::Value) -> ir::Value,
+    mut operation: impl FnMut(&mut FunctionBuilder<'_>, &InstructionSite, ir::Value, ir::Value) -> ir::Value,
 ) -> Result<ir::Function, String> {
-    u32::try_from(function.code.len()).map_err(|_| "native instruction count exceeds u32")?;
+    u32::try_from(sites.len()).map_err(|_| "native instruction count exceeds u32")?;
     let is_region = region.is_some();
-    let range = region.unwrap_or(0..function.code.len());
-    if range.start > range.end || range.end > function.code.len() {
+    let range = region.unwrap_or(0..sites.len());
+    if range.start > range.end || range.end > sites.len() {
         return Err("invalid native region bounds".into());
     }
     let count =
@@ -359,10 +374,21 @@ pub(super) fn lower_body(
     builder.ins().jump(resume, &[ir::BlockArg::Value(start_pc)]);
 
     for (offset, block) in blocks.iter().copied().enumerate() {
-        let pc = range.start + offset;
+        let site = &sites[range.start + offset];
         builder.switch_to_block(block);
-        let instruction = super::dispatch_fast::decoded_instruction(function, function.code[pc]);
-        let status = operation(&mut builder, instruction.op(), pc, context, result);
+        if let Continuation::Static(target) = site.continuation {
+            match target.checked_sub(range.start).and_then(|offset| blocks.get(offset)) {
+                Some(block) => {
+                    builder.ins().jump(*block, &[]);
+                }
+                None => {
+                    let target = builder.ins().iconst(types::I64, target as i64);
+                    builder.ins().jump(resume, &[ir::BlockArg::Value(target)]);
+                }
+            }
+            continue;
+        }
+        let status = operation(&mut builder, site, context, result);
         let continued = builder.ins().icmp_imm_u(IntCC::Equal, status, 0);
         let successor = builder.create_block();
         builder.ins().brif(continued, successor, &[], stopped, &[]);
@@ -370,12 +396,12 @@ pub(super) fn lower_body(
         let next = builder
             .ins()
             .load(types::I64, MemFlagsData::trusted(), result, 0);
-        if instruction.op().control_flow_layout() == ControlFlowLayout::Fallthrough
+        if site.continuation == Continuation::Fallthrough
             && let Some(block) = blocks.get(offset + 1)
         {
             let fallthrough = builder
                 .ins()
-                .icmp_imm_u(IntCC::Equal, next, (pc + 1) as i64);
+                .icmp_imm_u(IntCC::Equal, next, (site.pc + 1) as i64);
             builder.ins().brif(
                 fallthrough,
                 *block,

@@ -5791,58 +5791,78 @@ pub(super) fn compile_eager_native<H: Host>(
     if options.backend == super::native_graph::NativeJsBackend::Stencil && super::native_stencil::available() {
         return super::native_stencil::compile_program(program).map(|(native, _)| native);
     }
-    program.validate_unless_proven()?;
+    use super::specialize::Specializer;
     program.freeze_native_diagnostics();
     let isa = super::jit_backend::target_isa_for("speed", super::jit_backend::CodePublication::RelocatableObject)
         .ok_or("native target unavailable")?;
-    let mut owners = Vec::with_capacity(program.function_count());
-    let mut entries = Vec::with_capacity(program.function_count());
-    for id in 0..program.function_count() {
-        let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
-        let function = program.function(id);
-        let operands: Box<[_]> = function.code.iter().copied().map(|packed| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
-        }).collect();
-        let mut code = Vec::new();
-        if let Some(regions) = options.regions(function) {
-            for region in regions.iter().cloned() {
-                code.push(compile_eager_body::<H>(function, function_id, &*isa, &operands, Some(region))?);
-            }
-            let mut signature = None;
-            let wrapper = super::native_graph::lower_region_dispatch(function_id, function.code.len(),
-                options.region_instruction_budget.get(), regions.len(), &*isa,
-                |builder, index, context, pc, result| {
-                    let signature = *signature.get_or_insert_with(|| builder.import_signature(
-                        native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
-                    let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
-                    let arguments = super::native_graph::region_call_arguments(builder, &*isa, context, pc, result);
-                    let call = builder.ins().call_indirect(signature, target, &arguments);
-                    builder.inst_results(call)[0]
-                })?;
-            code.push(publish_eager_graph(wrapper, &*isa)?);
-        } else { code.push(compile_eager_body::<H>(function, function_id, &*isa, &operands, None)?); }
-        // SAFETY: the final body or wrapper implements the public native entry
-        // ABI; owner retains every private region and immutable operand array.
-        entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(code.last().expect("native entry compiled").pointer()) });
-        owners.push((code, operands));
-    }
+    let extension = EagerCraneliftExtension::<H> { isa, options, entries: Vec::new(), owners: Vec::new(), host: std::marker::PhantomData };
+    let (entries, owners) = super::specialize::CallThreaded(extension).specialize(&program)?;
     // SAFETY: every entry was lowered from its exact function for host H.
     unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(owners)) }
 }
 
+/// The call-threaded generating extension for live Cranelift code: semantic
+/// entries and operand records are bound by address, so nothing is linked.
+#[cfg(feature = "aot")]
+struct EagerCraneliftExtension<H> {
+    isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
+    options: super::native_graph::NativeJsCodegenOptions,
+    entries: Vec<crate::NativeJsFunctionEntry>,
+    /// Each function's code, private regions first, and the sites whose
+    /// operand records that code addresses.
+    owners: Vec<(Vec<CodeMemory>, Box<[super::specialize::InstructionSite]>)>,
+    host: std::marker::PhantomData<fn(&mut H)>,
+}
+
+#[cfg(feature = "aot")]
+impl<H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExtension<H> {
+    type Residual = (Vec<crate::NativeJsFunctionEntry>, Vec<(Vec<CodeMemory>, Box<[super::specialize::InstructionSite]>)>);
+
+    fn function(&mut self, function_id: u32, sites: Vec<super::specialize::InstructionSite>) -> Result<(), String> {
+        let isa = &*self.isa;
+        let sites = sites.into_boxed_slice();
+        let mut code = Vec::new();
+        if let Some(regions) = self.options.regions(sites.len()) {
+            for region in regions.iter().cloned() {
+                code.push(compile_eager_body::<H>(&sites, function_id, isa, Some(region))?);
+            }
+            let mut signature = None;
+            let wrapper = super::native_graph::lower_region_dispatch(function_id, sites.len(),
+                self.options.region_instruction_budget.get(), regions.len(), isa,
+                |builder, index, context, pc, result| {
+                    let signature = *signature.get_or_insert_with(|| builder.import_signature(
+                        native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
+                    let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
+                    let arguments = super::native_graph::region_call_arguments(builder, isa, context, pc, result);
+                    let call = builder.ins().call_indirect(signature, target, &arguments);
+                    builder.inst_results(call)[0]
+                })?;
+            code.push(publish_eager_graph(wrapper, isa)?);
+        } else { code.push(compile_eager_body::<H>(&sites, function_id, isa, None)?); }
+        // SAFETY: the final body or wrapper implements the public native entry
+        // ABI; owner retains every private region and immutable operand array.
+        self.entries.push(unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(code.last().expect("native entry compiled").pointer()) });
+        self.owners.push((code, sites));
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Self::Residual, String> {
+        Ok((self.entries, self.owners))
+    }
+}
+
 #[cfg(feature = "aot")]
 fn compile_eager_body<H: Host>(
-    function: &Function, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    operands: &[super::NativeJsOperands], region: Option<std::ops::Range<usize>>,
+    sites: &[super::specialize::InstructionSite], function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
+    region: Option<std::ops::Range<usize>>,
 ) -> Result<CodeMemory, String> {
     let mut signature = None;
-    let native = super::native_graph::lower_body(function, function_id, isa, region,
-        |builder, op, pc, context, result| {
+    let native = super::native_graph::lower_body(sites, function_id, isa, region,
+        |builder, site, context, result| {
             let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
-            let target = builder.ins().iconst(isa.pointer_type(), op.native_semantic_entry::<H>() as usize as i64);
-            let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
-            let pc = builder.ins().iconst(types::I64, pc as i64);
+            let target = builder.ins().iconst(isa.pointer_type(), site.op.native_semantic_entry::<H>() as usize as i64);
+            let arguments = builder.ins().iconst(isa.pointer_type(), site.operands.as_ptr() as i64);
+            let pc = builder.ins().iconst(types::I64, site.pc as i64);
             let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
             builder.inst_results(call)[0]
         })?;
@@ -15074,7 +15094,7 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
-    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>) {
+    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         live_native_function(&program, 0, None)
     }
@@ -15094,28 +15114,24 @@ mod tests {
 
     #[cfg(feature = "aot")]
     fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
-        -> (CodeMemory, Entry, Vec<super::super::NativeJsOperands>)
+        -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>)
     {
-        let function = program.function(function_id as usize);
-        let operands: Vec<_> = function.code.iter().copied().map(|packed| {
-            let instruction = super::super::dispatch_fast::decoded_instruction(function, packed);
-            super::super::NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
-        }).collect();
+        let sites = super::super::specialize::instruction_sites(super::super::specialize::Division::Offline, program.function(function_id as usize));
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut signature = None;
-        let native = super::super::native_graph::lower_body(function, function_id, &*isa, None,
-            |builder, op, pc, context, result| {
-                if pc == 0 && let Some(entries) = entries {
+        let native = super::super::native_graph::lower_body(&sites, function_id, &*isa, None,
+            |builder, site, context, result| {
+                if site.pc == 0 && let Some(entries) = entries {
                     let pointer = builder.ins().iconst(isa.pointer_type(), entries as i64);
                     let previous = builder.ins().load(types::I64, MemFlagsData::trusted(), pointer, 0);
                     let count = builder.ins().iadd_imm_s(previous, 1);
                     builder.ins().store(MemFlagsData::trusted(), count, pointer, 0);
                 }
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
-                let target = op.native_semantic_entry::<crate::test_host::TestHost>() as usize;
+                let target = site.op.native_semantic_entry::<crate::test_host::TestHost>() as usize;
                 let target = builder.ins().iconst(isa.pointer_type(), target as i64);
-                let arguments = builder.ins().iconst(isa.pointer_type(), operands[pc].as_ptr() as i64);
-                let pc = builder.ins().iconst(types::I64, pc as i64);
+                let arguments = builder.ins().iconst(isa.pointer_type(), site.operands.as_ptr() as i64);
+                let pc = builder.ins().iconst(types::I64, site.pc as i64);
                 let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
                 builder.inst_results(call)[0]
             }).unwrap();
@@ -15123,7 +15139,7 @@ mod tests {
         // production object backend handles relocations instead of live addresses.
         let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX)
             .expect("native semantic graph compiles");
-        (memory, entry, operands)
+        (memory, entry, sites)
     }
 
     #[cfg(feature = "aot")]

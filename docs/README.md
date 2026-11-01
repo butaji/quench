@@ -3,6 +3,7 @@
 - [Repository rules and Lisp mindset](../AGENTS.md)
 - [Backlog, status and lanes (Linear)](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview)
 - [Measurement evidence](../evidence/)
+- [Specialization architecture: Futamura projections, Ershov division, copy-and-patch](v2/specialization.md)
 - [Pinned v2 design decisions](v2/architecture.md) (copied from `../v2` at the indexed reference commit; binding for the next core)
 - [Wasm boundary](spec.md)
 - [Test262 stages](STAGES.md) and [Node stages](../STAGES.md)

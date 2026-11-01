@@ -27,9 +27,9 @@ use super::compiled::{
     CodeMemory, NATIVE_JS_INVALID_PC, NATIVE_JS_STOPPED, native_entry_signature,
     native_js_operation_signature, native_js_start_pc,
 };
-use super::native_operands::NativeJsOperands;
+use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
 use crate::Host;
-use crate::bytecode::{ControlFlowLayout, ResidualProgram};
+use crate::bytecode::ResidualProgram;
 use cranelift_codegen::{
     FinalizedRelocTarget,
     binemit::Reloc,
@@ -122,6 +122,8 @@ struct StencilLibrary {
     step: Stencil,
     /// An instruction that may transfer control anywhere: always dispatch.
     branch: Stencil,
+    /// A transfer the specializer computed: continue at `Next`, no entry runs.
+    jump: Stencil,
     /// Every stencil copy starts on this boundary.
     alignment: usize,
 }
@@ -143,6 +145,14 @@ enum StepShape {
 }
 
 impl StencilLibrary {
+    fn step_for(&self, site: &InstructionSite) -> &Stencil {
+        match site.continuation {
+            Continuation::Fallthrough => &self.step,
+            Continuation::Dispatch => &self.branch,
+            Continuation::Static(_) => &self.jump,
+        }
+    }
+
     fn compile() -> Option<Self> {
         let isa = super::jit_backend::target_isa_for(
             "speed",
@@ -157,6 +167,7 @@ impl StencilLibrary {
             dispatch: Stencil::extract(dispatch_stencil(&*isa), &*isa)?,
             step: Stencil::extract(step_stencil(&*isa, StepShape::Fallthrough), &*isa)?,
             branch: Stencil::extract(step_stencil(&*isa, StepShape::Branch), &*isa)?,
+            jump: Stencil::extract(jump_stencil(&*isa), &*isa)?,
             alignment,
         })
     }
@@ -309,12 +320,13 @@ fn continuation(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, hole: Ho
     })
 }
 
-/// Continuations carry the context, result word and dispatch table between
-/// stencils in registers; dispatch also receives the PC to select.
+/// Continuations carry the context and result word between stencils in
+/// registers; dispatch also receives the PC to select. Everything else a
+/// stencil needs is static, so it is a hole rather than a live register.
 fn continuation_signature(isa: &dyn TargetIsa, with_pc: bool) -> ir::Signature {
     let pointer = isa.pointer_type();
     let mut signature = ir::Signature::new(CallConv::Tail);
-    for parameter in [pointer, pointer, pointer] {
+    for parameter in [pointer, pointer] {
         signature.params.push(ir::AbiParam::new(parameter));
     }
     if with_pc {
@@ -347,9 +359,8 @@ fn entry_stencil(isa: &dyn TargetIsa) -> ir::Function {
     stencil_function(isa, native_entry_signature(isa.pointer_type(), isa.default_call_conv()), |builder, parameters| {
         let (context, result) = (parameters[0], parameters[4]);
         let start = native_js_start_pc(builder, context);
-        let table = hole_value(builder, isa, Hole::Table);
         let dispatch = continuation(builder, isa, Hole::Dispatch, true);
-        let call = builder.ins().call(dispatch, &[context, result, table, start]);
+        let call = builder.ins().call(dispatch, &[context, result, start]);
         let status = builder.inst_results(call)[0];
         builder.ins().return_(&[status]);
     })
@@ -357,7 +368,7 @@ fn entry_stencil(isa: &dyn TargetIsa) -> ir::Function {
 
 fn dispatch_stencil(isa: &dyn TargetIsa) -> ir::Function {
     stencil_function(isa, continuation_signature(isa, true), |builder, parameters| {
-        let [context, result, table, pc] = parameters else { unreachable!("dispatch signature") };
+        let [context, result, pc] = parameters else { unreachable!("dispatch signature") };
         let count = hole_value(builder, isa, Hole::Count);
         let selected = builder.create_block();
         let invalid = builder.create_block();
@@ -368,10 +379,11 @@ fn dispatch_stencil(isa: &dyn TargetIsa) -> ir::Function {
 
         builder.switch_to_block(selected);
         let offset = builder.ins().imul_imm_u(*pc, i64::from(isa.pointer_bytes()));
-        let slot = builder.ins().iadd(*table, offset);
+        let table = hole_value(builder, isa, Hole::Table);
+        let slot = builder.ins().iadd(table, offset);
         let target = builder.ins().load(isa.pointer_type(), MemFlagsData::trusted(), slot, 0);
         let signature = builder.import_signature(continuation_signature(isa, false));
-        builder.ins().return_call_indirect(signature, target, &[*context, *result, *table]);
+        builder.ins().return_call_indirect(signature, target, &[*context, *result]);
 
         builder.switch_to_block(invalid);
         builder.ins().store(MemFlagsData::trusted(), *pc, *result, 0);
@@ -380,9 +392,16 @@ fn dispatch_stencil(isa: &dyn TargetIsa) -> ir::Function {
     })
 }
 
+fn jump_stencil(isa: &dyn TargetIsa) -> ir::Function {
+    stencil_function(isa, continuation_signature(isa, false), |builder, parameters| {
+        let following = continuation(builder, isa, Hole::Next, false);
+        builder.ins().return_call(following, parameters);
+    })
+}
+
 fn step_stencil(isa: &dyn TargetIsa, shape: StepShape) -> ir::Function {
     stencil_function(isa, continuation_signature(isa, false), |builder, parameters| {
-        let [context, result, table] = parameters else { unreachable!("step signature") };
+        let [context, result] = parameters else { unreachable!("step signature") };
         let operation = hole_value(builder, isa, Hole::Operation);
         let pc = hole_value(builder, isa, Hole::Pc);
         let operands = hole_value(builder, isa, Hole::Operands);
@@ -407,7 +426,7 @@ fn step_stencil(isa: &dyn TargetIsa, shape: StepShape) -> ir::Function {
         let dispatch = continuation(builder, isa, Hole::Dispatch, true);
         match shape {
             StepShape::Branch => {
-                builder.ins().return_call(dispatch, &[*context, *result, *table, next]);
+                builder.ins().return_call(dispatch, &[*context, *result, next]);
             }
             StepShape::Fallthrough => {
                 let dispatched = builder.create_block();
@@ -416,10 +435,10 @@ fn step_stencil(isa: &dyn TargetIsa, shape: StepShape) -> ir::Function {
                 let falls = builder.ins().icmp(IntCC::Equal, next, expected);
                 builder.ins().brif(falls, fallthrough, &[], dispatched, &[]);
                 builder.switch_to_block(dispatched);
-                builder.ins().return_call(dispatch, &[*context, *result, *table, next]);
+                builder.ins().return_call(dispatch, &[*context, *result, next]);
                 builder.switch_to_block(fallthrough);
                 let following = continuation(builder, isa, Hole::Next, false);
-                builder.ins().return_call(following, &[*context, *result, *table]);
+                builder.ins().return_call(following, &[*context, *result]);
             }
         }
     })
@@ -434,21 +453,19 @@ struct FunctionLayout {
     steps: Vec<StepCopy>,
 }
 
-/// One instruction's stencil copy: its offset, its semantic entry, whether it
-/// continues at the next PC, and whether that jump was elided.
+/// One instruction's stencil copy: its offset, and whether its jump to the
+/// following instruction was elided.
 struct StepCopy {
     offset: usize,
-    operation: u64,
-    falls: bool,
     elide: bool,
 }
 
-/// The code, operands and dispatch tables of one copy-and-patch program.
-/// Executable code holds the operand and table addresses, so all three share
-/// the program's lifetime.
+/// The code, operand records and dispatch tables of one copy-and-patch
+/// program. Executable code holds the record and table addresses, so all
+/// three share the program's lifetime.
 struct StencilImage {
     _code: CodeMemory,
-    _operands: Vec<Box<[NativeJsOperands]>>,
+    _sites: Vec<Box<[InstructionSite]>>,
     _tables: Vec<Box<[u64]>>,
 }
 
@@ -458,10 +475,141 @@ pub struct NativeStencilStats {
     pub code_bytes: usize,
     pub instructions: usize,
     pub elided_jumps: usize,
+    /// Instructions whose successor the specializer computed, so no
+    /// semantic entry runs for them.
+    pub static_transfers: usize,
+}
+
+/// The PC a stencil's `Next` hole continues at, when it has one.
+fn successor(site: &InstructionSite) -> Option<usize> {
+    match site.continuation {
+        Continuation::Fallthrough => Some(site.pc + 1),
+        Continuation::Static(target) => Some(target),
+        Continuation::Dispatch => None,
+    }
 }
 
 fn align_up(offset: usize, alignment: usize) -> Option<usize> {
     offset.checked_next_multiple_of(alignment)
+}
+
+/// The call-threaded generating extension that copies stencils. Each
+/// instruction site selects a stencil by its continuation; its folded inputs
+/// become hole values. Laying out a function only reserves space, so the
+/// whole program is copied and patched into one mapping at `finish`.
+struct StencilExtension<H> {
+    library: &'static StencilLibrary,
+    cursor: usize,
+    layouts: Vec<FunctionLayout>,
+    sites: Vec<Box<[InstructionSite]>>,
+    stats: NativeStencilStats,
+    host: std::marker::PhantomData<fn(&mut H)>,
+}
+
+impl<H> StencilExtension<H> {
+    fn place(&mut self, stencil: &Stencil, elide: bool) -> Result<usize, String> {
+        let start = align_up(self.cursor, self.library.alignment).ok_or("stencil image size overflow")?;
+        self.cursor = start.checked_add(stencil.copy_length(elide)).ok_or("stencil image size overflow")?;
+        Ok(start)
+    }
+
+    fn step(&self, site: &InstructionSite) -> &'static Stencil {
+        self.library.step_for(site)
+    }
+}
+
+impl<H: Host> CallThreadedExtension for StencilExtension<H> {
+    type Residual = (StencilImage, Vec<crate::NativeJsFunctionEntry>, NativeStencilStats);
+
+    fn function(&mut self, _function_id: u32, sites: Vec<InstructionSite>) -> Result<(), String> {
+        let library = self.library;
+        let entry = self.place(&library.entry, false)?;
+        let dispatch = self.place(&library.dispatch, false)?;
+        let mut steps = Vec::with_capacity(sites.len());
+        for site in &sites {
+            let stencil = self.step(site);
+            // Elide only when the successor's aligned start is exactly here.
+            let elide = successor(site) == Some(site.pc + 1)
+                && stencil.fallthrough_length.is_some_and(|length| {
+                    align_up(self.cursor, library.alignment)
+                        .and_then(|start| start.checked_add(length))
+                        .is_some_and(|end| align_up(end, library.alignment) == Some(end))
+                });
+            let offset = self.place(stencil, elide)?;
+            steps.push(StepCopy { offset, elide });
+            self.stats.elided_jumps += usize::from(elide);
+            self.stats.static_transfers += usize::from(!site.calls_semantic_entry());
+        }
+        self.stats.instructions += sites.len();
+        self.layouts.push(FunctionLayout { entry, dispatch, steps });
+        self.sites.push(sites.into_boxed_slice());
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Self::Residual, String> {
+        let Self { library, cursor, layouts, sites, mut stats, .. } = self;
+        stats.code_bytes = cursor;
+        let mut tables: Vec<Box<[u64]>> = layouts
+            .iter()
+            .map(|layout| vec![0_u64; layout.steps.len()].into_boxed_slice())
+            .collect();
+        let code = CodeMemory::assemble(cursor, |base, image| {
+            let base = base as u64;
+            let copy = |image: &mut [u8], stencil: &Stencil, offset: usize, elide: bool, value: &dyn Fn(Hole) -> Option<u64>| -> Result<(), String> {
+                let length = stencil.copy_length(elide);
+                let target = image.get_mut(offset..offset + length).ok_or("stencil copy is outside its image")?;
+                target.copy_from_slice(&stencil.code[..length]);
+                for hole in stencil.patches.iter().filter(|patch| patch.offset < length) {
+                    let filled = value(hole.hole).ok_or("stencil hole has no value at this site")?;
+                    patch(target, base + offset as u64, hole, filled)?;
+                }
+                Ok(())
+            };
+            for ((layout, sites), table) in layouts.iter().zip(&sites).zip(&tables) {
+                let dispatch = base + layout.dispatch as u64;
+                let table = table.as_ptr() as u64;
+                let count = layout.steps.len() as u64;
+                copy(image, &library.entry, layout.entry, false, &|hole| match hole {
+                    Hole::Dispatch => Some(dispatch),
+                    _ => None,
+                })?;
+                copy(image, &library.dispatch, layout.dispatch, false, &|hole| match hole {
+                    Hole::Count => Some(count),
+                    Hole::Table => Some(table),
+                    _ => None,
+                })?;
+                for (site, step) in sites.iter().zip(&layout.steps) {
+                    let next = successor(site)
+                        .and_then(|pc| layout.steps.get(pc))
+                        .map(|next| base + next.offset as u64);
+                    let stencil = library.step_for(site);
+                    let operation = site.op.native_semantic_entry::<H>() as usize as u64;
+                    let operands = site.operands.as_ptr() as u64;
+                    copy(image, stencil, step.offset, step.elide, &|hole| match hole {
+                        Hole::Operation => Some(operation),
+                        Hole::Pc => Some(site.pc as u64),
+                        Hole::Operands => Some(operands),
+                        Hole::NextPc => Some(site.pc as u64 + 1),
+                        Hole::Next => next,
+                        Hole::Dispatch => Some(dispatch),
+                        Hole::Count | Hole::Table => None,
+                    })?;
+                }
+            }
+            Ok(())
+        })?;
+        let base = code.pointer() as usize;
+        let mut entries = Vec::with_capacity(layouts.len());
+        for (layout, table) in layouts.iter().zip(&mut tables) {
+            for (slot, step) in table.iter_mut().zip(&layout.steps) {
+                *slot = (base + step.offset) as u64;
+            }
+            // SAFETY: the entry stencil implements the shared native entry ABI,
+            // and its copy for this function was patched with this function's table.
+            entries.push(unsafe { std::mem::transmute::<usize, crate::NativeJsFunctionEntry>(base + layout.entry) });
+        }
+        Ok((StencilImage { _code: code, _sites: sites, _tables: tables }, entries, stats))
+    }
 }
 
 /// Specialize every function of `program` by copying and patching stencils.
@@ -469,111 +617,19 @@ pub(super) fn compile_program<H: Host>(
     program: ResidualProgram,
 ) -> Result<(crate::NativeJsProgram<H>, NativeStencilStats), String> {
     let library = library().ok_or("copy-and-patch stencils are unavailable on this target")?;
-    program.validate_unless_proven()?;
     program.freeze_native_diagnostics();
-    let functions = program.function_count();
-    let mut operands = Vec::with_capacity(functions);
-    let mut layouts = Vec::with_capacity(functions);
-    let mut stats = NativeStencilStats::default();
-    let mut cursor = 0_usize;
-    let place = |stencil: &Stencil, elide: bool, cursor: &mut usize| -> Option<usize> {
-        let start = align_up(*cursor, library.alignment)?;
-        *cursor = start.checked_add(stencil.copy_length(elide))?;
-        Some(start)
+    let extension = StencilExtension::<H> {
+        library,
+        cursor: 0,
+        layouts: Vec::with_capacity(program.function_count()),
+        sites: Vec::with_capacity(program.function_count()),
+        stats: NativeStencilStats::default(),
+        host: std::marker::PhantomData,
     };
-    for id in 0..functions {
-        let function = program.function(id);
-        let mut function_operands = Vec::with_capacity(function.code.len());
-        let entry = place(&library.entry, false, &mut cursor).ok_or("stencil image size overflow")?;
-        let dispatch = place(&library.dispatch, false, &mut cursor).ok_or("stencil image size overflow")?;
-        let mut steps = Vec::with_capacity(function.code.len());
-        for (pc, packed) in function.code.iter().copied().enumerate() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            function_operands.push(NativeJsOperands::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm()));
-            let op = instruction.op();
-            let falls = op.control_flow_layout() == ControlFlowLayout::Fallthrough && pc + 1 < function.code.len();
-            let stencil = if falls { &library.step } else { &library.branch };
-            // Elide only when the successor's aligned start is exactly here.
-            let elide = falls
-                && stencil.fallthrough_length.is_some_and(|length| {
-                    align_up(cursor, library.alignment)
-                        .and_then(|start| start.checked_add(length))
-                        .is_some_and(|end| align_up(end, library.alignment) == Some(end))
-                });
-            let offset = place(stencil, elide, &mut cursor).ok_or("stencil image size overflow")?;
-            let operation = op.native_semantic_entry::<H>() as usize as u64;
-            steps.push(StepCopy { offset, operation, falls, elide });
-            stats.elided_jumps += usize::from(elide);
-        }
-        stats.instructions += function.code.len();
-        operands.push(function_operands.into_boxed_slice());
-        layouts.push(FunctionLayout { entry, dispatch, steps });
-    }
-    stats.code_bytes = cursor;
-    let mut tables: Vec<Box<[u64]>> = layouts
-        .iter()
-        .map(|layout| vec![0_u64; layout.steps.len()].into_boxed_slice())
-        .collect();
-    let code = CodeMemory::assemble(cursor, |base, image| {
-        let base = base as u64;
-        let mut copy = |stencil: &Stencil, offset: usize, elide: bool, value: &dyn Fn(Hole) -> Option<u64>| -> Result<(), String> {
-            let length = stencil.copy_length(elide);
-            let target = image.get_mut(offset..offset + length).ok_or("stencil copy is outside its image")?;
-            target.copy_from_slice(&stencil.code[..length]);
-            for hole in stencil.patches.iter().filter(|patch| patch.offset < length) {
-                let filled = value(hole.hole).ok_or("stencil hole has no value at this site")?;
-                patch(target, base + offset as u64, hole, filled)?;
-            }
-            Ok(())
-        };
-        for (id, layout) in layouts.iter().enumerate() {
-            let dispatch = base + layout.dispatch as u64;
-            let table = tables[id].as_ptr() as u64;
-            let count = layout.steps.len() as u64;
-            copy(&library.entry, layout.entry, false, &|hole| match hole {
-                Hole::Table => Some(table),
-                Hole::Dispatch => Some(dispatch),
-                _ => None,
-            })?;
-            copy(&library.dispatch, layout.dispatch, false, &|hole| match hole {
-                Hole::Count => Some(count),
-                _ => None,
-            })?;
-            for (pc, step) in layout.steps.iter().enumerate() {
-                let next = layout.steps.get(pc + 1).filter(|_| step.falls).map(|next| base + next.offset as u64);
-                let stencil = if step.falls { &library.step } else { &library.branch };
-                let operands = operands[id][pc].as_ptr() as u64;
-                let operation = step.operation;
-                copy(stencil, step.offset, step.elide, &|hole| match hole {
-                    Hole::Operation => Some(operation),
-                    Hole::Pc => Some(pc as u64),
-                    Hole::Operands => Some(operands),
-                    Hole::NextPc => Some(pc as u64 + 1),
-                    Hole::Next => next,
-                    Hole::Dispatch => Some(dispatch),
-                    Hole::Count | Hole::Table => None,
-                })?;
-            }
-        }
-        Ok(())
-    })?;
-    let code_base = code.pointer() as usize;
-    let base = code_base as u64;
-    let mut entries = Vec::with_capacity(functions);
-    for (layout, table) in layouts.iter().zip(&mut tables) {
-        for (slot, step) in table.iter_mut().zip(&layout.steps) {
-            *slot = base + step.offset as u64;
-        }
-        // SAFETY: the entry stencil implements the shared native entry ABI,
-        // and its copy for this function was patched with this function's table.
-        entries.push(unsafe {
-            std::mem::transmute::<usize, crate::NativeJsFunctionEntry>(code_base + layout.entry)
-        });
-    }
-    let owner = Rc::new(StencilImage { _code: code, _operands: operands, _tables: tables });
+    let (image, entries, stats) = CallThreaded(extension).specialize(&program)?;
     // SAFETY: each entry was specialized from this program's function for host
-    // H, and the owner keeps code, operands and dispatch tables alive.
-    let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }?;
+    // H, and the image keeps code, operand records and dispatch tables alive.
+    let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(image)) }?;
     Ok((native, stats))
 }
 
@@ -634,10 +690,11 @@ mod tests {
     fn stencil_library_resolves_every_hole_and_elides_fallthrough_jumps() {
         let library = library().expect("host target has a stencil library");
         for (stencil, holes) in [
-            (&library.entry, &[Hole::Table, Hole::Dispatch][..]),
-            (&library.dispatch, &[Hole::Count][..]),
+            (&library.entry, &[Hole::Dispatch][..]),
+            (&library.dispatch, &[Hole::Count, Hole::Table][..]),
             (&library.step, &[Hole::Operation, Hole::Pc, Hole::Operands, Hole::NextPc, Hole::Next, Hole::Dispatch][..]),
             (&library.branch, &[Hole::Operation, Hole::Pc, Hole::Operands, Hole::Dispatch][..]),
+            (&library.jump, &[Hole::Next][..]),
         ] {
             for hole in holes {
                 assert!(stencil.patches.iter().any(|patch| patch.hole == *hole), "missing {hole:?}");
