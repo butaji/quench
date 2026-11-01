@@ -893,19 +893,6 @@ pub(super) fn initialize_process_release(
     Ok(context.undefined())
 }
 
-pub(super) fn initialize_process_surface(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    #[cfg(unix)]
-    crate::modules::process_memory_shared_vm::install(context)?;
-    crate::host::removed_javascript("node:bootstrap/process-surface-lazy.js")?;
-    #[cfg(unix)]
-    crate::modules::process_metrics_shared_vm::install(context)?;
-    Ok(context.undefined())
-}
-
 pub(super) fn initialize_web_apis(
     context: &mut Context<'_>,
     _: RootId,
@@ -2684,11 +2671,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Ok(module)
         }
         BuiltinModule::Internal("internal/source_map/source_map_cache") => {
-            // Node's error formatter imports these helpers even when source
-            // maps are disabled. The full Node implementation depends on
-            // internals that Quench does not yet provide, so expose its
-            // disabled-state contract without evaluating it during bootstrap.
-            crate::host::removed_javascript("internal/source_map/source_map_cache-quench.js")
+            crate::modules::source_map_shared_vm::cache_module(context)
         }
         BuiltinModule::Internal("internal/zip") => {
             node_library_module(context, "zlib.js", "internal/zip.js")
@@ -3984,6 +3967,11 @@ fn load_with_resolution(
                             }
                             Err(error) => return Err(error),
                         };
+                        crate::modules::source_map_shared_vm::maybe_cache(
+                            context,
+                            filename,
+                            &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()],
+                        )?;
                         // The compiled program keeps its own source; the module body runs
                         // inside this call, so the wrapper is released before it.
                         drop(wrapper_source);

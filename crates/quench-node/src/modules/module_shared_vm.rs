@@ -208,6 +208,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let find_package_json =
         context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
+    super::source_map_shared_vm::install(context, module, true)?;
     Ok(module)
 }
 

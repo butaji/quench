@@ -1,4 +1,5 @@
-//! Genuine Linux process facts; public validation stays in the configured SDK.
+//! Genuine Unix process facts: the `process_methods` binding, and the public methods
+//! Node's `wrapProcessMethods` (lib/internal/process/per_thread.js) makes over it.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -160,13 +161,18 @@ fn thread_rusage() -> libc::c_int {
     }
 }
 
-fn cpu(c: &mut Context<'_>, args: &[RootId], who: libc::c_int) -> Result<RootId, RootedError> {
+/// `[user, system]` CPU time in microseconds.
+fn cpu_values(who: libc::c_int) -> Result<[f64; 2], RootedError> {
     let usage = usage(who)?;
+    Ok([micros(usage.ru_utime), micros(usage.ru_stime)])
+}
+
+fn cpu(c: &mut Context<'_>, args: &[RootId], who: libc::c_int) -> Result<RootId, RootedError> {
     let target = args
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("CPU metrics result is absent"))?;
-    write_values(c, target, &[micros(usage.ru_utime), micros(usage.ru_stime)])?;
+    write_values(c, target, &cpu_values(who)?)?;
     Ok(c.undefined())
 }
 pub(crate) fn process_cpu(
@@ -183,46 +189,66 @@ pub(crate) fn thread_cpu(
 ) -> Result<RootId, RootedError> {
     cpu(c, args, thread_rusage())
 }
+/// `process.resourceUsage()`'s fields, in the binding's value order.
+const RESOURCE_FIELDS: [&str; 16] = [
+    "userCPUTime",
+    "systemCPUTime",
+    "maxRSS",
+    "sharedMemorySize",
+    "unsharedDataSize",
+    "unsharedStackSize",
+    "minorPageFault",
+    "majorPageFault",
+    "swappedOut",
+    "fsRead",
+    "fsWrite",
+    "ipcSent",
+    "ipcReceived",
+    "signalsCount",
+    "voluntaryContextSwitches",
+    "involuntaryContextSwitches",
+];
+
+fn resource_values() -> Result<[f64; RESOURCE_FIELDS.len()], RootedError> {
+    let usage = usage(libc::RUSAGE_SELF)?;
+    // Linux getrusage reports max RSS in KiB; macOS reports bytes. Node's public
+    // API is KiB on every platform, so convert Darwin's value here.
+    const BYTES_PER_KIB: f64 = 1024.0;
+    let max_rss = if cfg!(target_os = "macos") {
+        usage.ru_maxrss as f64 / BYTES_PER_KIB
+    } else {
+        usage.ru_maxrss as f64
+    };
+    Ok([
+        micros(usage.ru_utime),
+        micros(usage.ru_stime),
+        max_rss,
+        usage.ru_ixrss as f64,
+        usage.ru_idrss as f64,
+        usage.ru_isrss as f64,
+        usage.ru_minflt as f64,
+        usage.ru_majflt as f64,
+        usage.ru_nswap as f64,
+        usage.ru_inblock as f64,
+        usage.ru_oublock as f64,
+        usage.ru_msgsnd as f64,
+        usage.ru_msgrcv as f64,
+        usage.ru_nsignals as f64,
+        usage.ru_nvcsw as f64,
+        usage.ru_nivcsw as f64,
+    ])
+}
+
 pub(crate) fn resources(
     c: &mut Context<'_>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let usage = usage(libc::RUSAGE_SELF)?;
-    // Linux getrusage reports max RSS in KiB; macOS reports bytes. Node's public
-    // API is KiB on every platform, so convert Darwin's value here.
-    let max_rss = if cfg!(target_os = "macos") {
-        usage.ru_maxrss as f64 / 1024.0
-    } else {
-        usage.ru_maxrss as f64
-    };
     let target = args
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("resource metrics result is absent"))?;
-    // Linux getrusage already expresses max RSS in KiB, as Node's public API does.
-    write_values(
-        c,
-        target,
-        &[
-            micros(usage.ru_utime),
-            micros(usage.ru_stime),
-            max_rss,
-            usage.ru_ixrss as f64,
-            usage.ru_idrss as f64,
-            usage.ru_isrss as f64,
-            usage.ru_minflt as f64,
-            usage.ru_majflt as f64,
-            usage.ru_nswap as f64,
-            usage.ru_inblock as f64,
-            usage.ru_oublock as f64,
-            usage.ru_msgsnd as f64,
-            usage.ru_msgrcv as f64,
-            usage.ru_nsignals as f64,
-            usage.ru_nvcsw as f64,
-            usage.ru_nivcsw as f64,
-        ],
-    )?;
+    write_values(c, target, &resource_values()?)?;
     Ok(c.undefined())
 }
 /// The process's resident set from `/proc/self/statm`, in bytes.
@@ -275,49 +301,162 @@ pub(crate) fn memory_usage(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("memory usage result is absent"))?;
-    let heap = c.heap_memory_composition();
-    let external = heap.array_buffer_bytes as f64;
-    write_values(
-        c,
-        target,
-        &[resident_bytes()?, heap.reserved_bytes() as f64, heap.used_bytes() as f64, external, external],
-    )?;
+    let values = memory_values(c)?;
+    write_values(c, target, &values)?;
     Ok(c.undefined())
 }
-pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let process = process(c)?;
-    // Node's wrappers load with `internal/process/per_thread.js` on the first read of one.
-    let initializer = c.host_function(crate::host::shared_vm::operation("processMethodsInitialize"))?;
-    c.define_lazy_data_properties_rooted(process, &WRAPPED_METHODS, true, initializer)?;
-    Ok(())
+
+/// `process.memoryUsage()`'s fields, in the binding's value order.
+const MEMORY_FIELDS: [&str; 5] = ["rss", "heapTotal", "heapUsed", "external", "arrayBuffers"];
+
+fn memory_values(c: &mut Context<'_>) -> Result<[f64; MEMORY_FIELDS.len()], RootedError> {
+    let heap = c.heap_memory_composition();
+    let external = heap.array_buffer_bytes as f64;
+    Ok([resident_bytes()?, heap.reserved_bytes() as f64, heap.used_bytes() as f64, external, external])
+}
+
+/// `{ field: value, ... }` in field order.
+fn record(c: &mut Context<'_>, fields: &[&str], values: &[f64]) -> Result<RootId, RootedError> {
+    let result = c.object_rooted()?;
+    for (name, value) in fields.iter().zip(values) {
+        let value = c.number(*value);
+        put(c, result, name, value)?;
+    }
+    Ok(result)
+}
+
+/// `process.memoryUsage()`.
+pub(crate) fn public_memory_usage(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let values = memory_values(c)?;
+    record(c, &MEMORY_FIELDS, &values)
+}
+
+/// `process.resourceUsage()`.
+pub(crate) fn public_resource_usage(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    record(c, &RESOURCE_FIELDS, &resource_values()?)
+}
+
+/// `process.cpuUsage()`'s and `process.threadCpuUsage()`'s fields.
+const CPU_FIELDS: [&str; 2] = ["user", "system"];
+
+/// Whether a previous CPU reading's field can be subtracted: a number in `[0, 2^53 - 1]`.
+fn previous_value_is_valid(c: &Context<'_>, value: RootId) -> bool {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    c.rooted_value(value)
+        .and_then(|value| value.as_number())
+        .is_some_and(|number| (0.0..=MAX_SAFE_INTEGER).contains(&number))
+}
+
+/// `cpuUsage(prevValue)` over `who`'s reading: the reading, less `prevValue` when given.
+fn public_cpu(c: &mut Context<'_>, args: &[RootId], who: libc::c_int) -> Result<RootId, RootedError> {
+    let previous = args.first().copied().unwrap_or_else(|| c.undefined());
+    let has_previous = c.truthy_rooted(previous)?;
+    let mut prior = [0.0; CPU_FIELDS.len()];
+    if has_previous {
+        for (index, field) in CPU_FIELDS.iter().enumerate() {
+            let value = if c.is_object_rooted(previous)? { get(c, previous, field)? } else { c.undefined() };
+            if !previous_value_is_valid(c, value) {
+                if index == 0 {
+                    super::perf_hooks::validate_object(c, previous, "prevValue")?;
+                }
+                let name = format!("prevValue.{field}");
+                if c.rooted_value(value).and_then(|value| value.as_number()).is_none() {
+                    return Err(super::util_shared_vm::argument_type_error(c, value, &name, "number")?);
+                }
+                return Err(invalid_property_range(c, &name, value)?);
+            }
+            prior[index] = c.to_number(value)?;
+        }
+    }
+    let current = cpu_values(who)?;
+    let values = [current[0] - prior[0], current[1] - prior[1]];
+    record(c, &CPU_FIELDS, &values)
+}
+
+/// `ERR_INVALID_ARG_VALUE.RangeError(name, value)`: "The property 'name' is invalid. Received …".
+fn invalid_property_range(c: &mut Context<'_>, name: &str, value: RootId) -> Result<RootedError, RootedError> {
+    let received = super::console_format_shared_vm::inspect(c, value, Default::default())?;
+    let error = c.range_error_rooted(&format!("The property '{name}' is invalid. Received {received}"))?;
+    super::node_errors_shared_vm::decorate_range_error(c, error, "ERR_INVALID_ARG_VALUE")?;
+    Ok(c.throw(error))
+}
+
+/// `process.cpuUsage(prevValue)`.
+pub(crate) fn public_process_cpu(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    public_cpu(c, args, libc::RUSAGE_SELF)
+}
+
+/// `process.threadCpuUsage(prevValue)`.
+pub(crate) fn public_thread_cpu(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    public_cpu(c, args, thread_rusage())
+}
+
+/// `process.execve(execPath[, args[, env]])`: validates, then replaces the process image.
+pub(crate) fn public_execve(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    super::process_warning_shared_vm::emit_experimental(c, "process.execve")?;
+    // A worker thread is the one whose stderr its parent captures.
+    if c.host_mut().shared_state().borrow().workers.captures_stderr() {
+        let error = c.type_error_rooted("Calling process.execve is not supported in a worker")?;
+        super::node_errors_shared_vm::decorate_type_error(c, error, "ERR_WORKER_UNSUPPORTED_OPERATION")?;
+        return Err(c.throw(error));
+    }
+    let undefined = c.undefined();
+    let path = args.first().copied().unwrap_or(undefined);
+    if c.string_text(path)?.is_none() {
+        return Err(super::util_shared_vm::argument_type_error(c, path, "execPath", "string")?);
+    }
+    let arguments = match args.get(1).copied().filter(|value| !c.rooted_value(*value).is_some_and(|value| value.is_undefined())) {
+        Some(arguments) => arguments,
+        None => c.array_rooted(&[])?,
+    };
+    if !c.is_array_rooted(arguments)? {
+        return Err(super::util_shared_vm::argument_type_error(c, arguments, "args", "Array")?);
+    }
+    for (index, argument) in c.array_like_values_rooted(arguments)?.into_iter().enumerate() {
+        if c.string_text(argument)?.is_none_or(|text| text.contains('\0')) {
+            return Err(super::util_shared_vm::argument_value_error(c, argument, &format!("args[{index}]"), "must be a string without null bytes")?);
+        }
+    }
+    let environment = args.get(2).copied().unwrap_or(undefined);
+    let mut pairs = Vec::new();
+    if !c.rooted_value(environment).is_some_and(|value| value.is_undefined()) {
+        super::perf_hooks::validate_object(c, environment, "env")?;
+        for key in c.enumerable_own_keys_rooted(environment, false, true)? {
+            let value = c.get_property_rooted(environment, key)?;
+            let pair = match (c.string_text(key)?, c.string_text(value)?) {
+                (Some(key), Some(value)) if !key.contains('\0') && !value.contains('\0') => format!("{key}={value}"),
+                _ => {
+                    return Err(super::util_shared_vm::argument_value_error(
+                        c,
+                        environment,
+                        "env",
+                        "must be an object with string keys and values without null bytes",
+                    )?)
+                }
+            };
+            pairs.push(c.string_rooted(&pair));
+        }
+    }
+    let pairs = c.array_rooted(&pairs)?;
+    super::process_execve_shared_vm::execve(c, undefined, &[path, arguments, pairs])
+}
+
+/// Defines Node's wrapped process methods on `process`.
+pub(crate) fn define_methods(c: &mut Context<'_>, process: RootId) -> Result<(), RootedError> {
+    for (name, operation) in WRAPPED_METHODS {
+        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        put(c, process, name, function)?;
+    }
+    let memory_usage = get(c, process, "memoryUsage")?;
+    let rss = c.host_function_named(crate::host::shared_vm::operation("processMetricsRss"), "rss")?;
+    put(c, memory_usage, "rss", rss)
 }
 
 /// The process methods Node's `wrapProcessMethods` makes over the native binding.
-const WRAPPED_METHODS: [&str; 5] = ["cpuUsage", "threadCpuUsage", "memoryUsage", "resourceUsage", "execve"];
-
-fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
-        .ok_or_else(|| RootedError::host("process is not initialized"))
-}
-
-/// Defines the wrapped process methods as Node's.
-pub(crate) fn initialize_methods(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let native = binding(c)?;
-    let wrapper = crate::host::shared_vm::commonjs::node_library_export(
-        c,
-        "internal/bootstrap/node.js",
-        "internal/process/per_thread.js",
-        "wrapProcessMethods",
-    )?;
-    let undefined = c.undefined();
-    let methods = c.call_rooted(wrapper, undefined, &[native])?;
-    let process = process(c)?;
-    for name in WRAPPED_METHODS {
-        let function = get(c, methods, name)?;
-        put(c, process, name, function)?;
-    }
-    Ok(c.undefined())
-}
+const WRAPPED_METHODS: [(&str, &str); 5] = [
+    ("cpuUsage", "processCpuUsage"),
+    ("threadCpuUsage", "processThreadCpuUsage"),
+    ("memoryUsage", "processMemoryUsage"),
+    ("resourceUsage", "processResourceUsage"),
+    ("execve", "processExecvePublic"),
+];

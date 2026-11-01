@@ -19,6 +19,27 @@ const DEPRECATION: &str = "DeprecationWarning";
 thread_local! {
     /// Whether the "(Use `node --trace-warnings ...`)" hint has been printed.
     static TRACE_HINT_SHOWN: Cell<bool> = const { Cell::new(false) };
+    /// The features `emit_experimental` has warned about.
+    static EXPERIMENTAL_WARNED: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Node's `emitExperimentalWarning(feature)`: one `ExperimentalWarning` per feature.
+pub(crate) fn emit_experimental(c: &mut Context<'_>, feature: &'static str) -> Result<(), RootedError> {
+    let first = EXPERIMENTAL_WARNED.with_borrow_mut(|warned| {
+        let first = !warned.contains(&feature);
+        if first {
+            warned.push(feature);
+        }
+        first
+    });
+    if first {
+        let process = process(c)?;
+        let emit = get(c, process, "emitWarning")?;
+        let message = c.string_rooted(&format!("{feature} is an experimental feature and might change at any time"));
+        let kind = c.string_rooted("ExperimentalWarning");
+        c.call_rooted(emit, process, &[message, kind])?;
+    }
+    Ok(())
 }
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {

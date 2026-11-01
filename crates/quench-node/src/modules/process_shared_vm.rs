@@ -42,21 +42,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .scheduler
         .reset_shared();
     let process = context.object_rooted()?;
-    // Permission projection needs the same normalized flags used by Node's
-    // internal options layer, including values read from --config-file. Keep
-    // the accessor private and one-shot: process.binding('options') is denied
-    // under the Permission Model, but bootstrap still needs this trusted view.
-    let permission_options =
-        context.host_function(crate::host::shared_vm::operation("cliOptionsFlags"))?;
-    let permission_options_key = context.string_rooted("\0quench:permission-options");
-    context.define_data_property_rooted(
-        process,
-        permission_options_key,
-        permission_options,
-        false,
-        false,
-        true,
-    )?;
     let capture_state = context.object_rooted()?;
     let null = context.null();
     let auxiliary = context.array_rooted(&[])?;
@@ -167,24 +152,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let active_handles =
         context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
-    let active_network_resources = context.host_function(crate::host::shared_vm::operation(
-        "processGetActiveNetworkResources",
-    ))?;
-    install(
-        context,
-        process,
-        "__quenchGetActiveNetworkResources",
-        active_network_resources,
-    )?;
-    let active_timer_resources = context.host_function(crate::host::shared_vm::operation(
-        "processGetActiveTimerResources",
-    ))?;
-    install(
-        context,
-        process,
-        "__quenchGetActiveTimerResources",
-        active_timer_resources,
-    )?;
     let hrtime = context.host_function_named(crate::host::shared_vm::operation("processHrtime"), "hrtime")?;
     let bigint = context.host_function_named(crate::host::shared_vm::operation("processHrtimeBigint"), "bigint")?;
     install(context, hrtime, "bigint", bigint)?;
