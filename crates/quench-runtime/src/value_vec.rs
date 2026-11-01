@@ -1,6 +1,9 @@
 use crate::Value;
 use rustc_hash::FxHashMap;
 
+mod buffer;
+use buffer::PropertyBuffer;
+
 pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
@@ -32,8 +35,6 @@ const fn capacity_class(len: usize) -> usize {
     let step = power / 2 + power / 4;
     if len <= step { step } else { power }
 }
-const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
-const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
 /// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
 /// make a full collection compact the arena. Freed ranges are reused within their size class,
 /// so compaction recovers only what other classes leave idle; rewriting every live object's
@@ -181,7 +182,7 @@ impl Default for ValueVec {
 }
 
 pub(crate) struct ValueArena {
-    values: Vec<Value>,
+    values: PropertyBuffer,
     free: [Vec<u32>; BUCKETS],
     /// Values held by the ranges on `free`.
     released_values: usize,
@@ -194,7 +195,7 @@ pub(crate) struct ValueArena {
 impl Default for ValueArena {
     fn default() -> Self {
         Self {
-            values: vec![],
+            values: PropertyBuffer::default(),
             free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
             shape_lengths: vec![0],
@@ -208,9 +209,9 @@ impl Default for ValueArena {
 impl ValueArena {
     /// The current storage for out-of-line object properties.
     ///
-    /// A native reader may use this address only during synchronous no-safepoint execution:
-    /// growth and compaction can move the vector. Every derived slot must be checked against
-    /// `len` before it is read.
+    /// Native readers remain confined to no-safepoint execution: reserved storage
+    /// keeps its base, but compaction relocates ranges and allocation fallback can
+    /// move the buffer. Every derived slot must be checked against `len`.
     pub(crate) fn native_values(&self) -> (*const Value, usize) {
         (self.values.as_ptr(), self.values.len())
     }
@@ -254,7 +255,7 @@ impl ValueArena {
         .into_iter()
         .collect();
         Ok(Self {
-            values,
+            values: values.into(),
             free,
             released_values,
             shape_lengths,
@@ -748,18 +749,7 @@ impl ValueArena {
             return None;
         }
         let required = start.checked_add(capacity)?;
-        // Vec's 2x policy leaves a large unused tail once long-lived heaps
-        // cross into millions of property slots. Preserve that policy for
-        // small programs, then grow by one third so the arena remains dense
-        // without turning every object allocation into a reallocation.
-        if required > self.values.capacity()
-            && self.values.capacity() >= DENSE_ARENA_RESERVE_THRESHOLD
-        {
-            let target = required
-                .max(self.values.capacity() + self.values.capacity() / DENSE_ARENA_GROWTH_DIVISOR);
-            self.values.reserve_exact(target - self.values.len());
-        }
-        self.values.resize(start + capacity, Value::UNDEFINED);
+        if !self.values.resize(required) { return None; }
         Some(start)
     }
 
@@ -936,5 +926,36 @@ mod tests {
         let mut roots = Vec::new();
         arena.append_heap_references(vector, &mut roots);
         assert_eq!(roots, [Value::heap(11)]);
+    }
+
+    #[test]
+    fn snapshot_preserves_offsets_free_ranges_and_value_bits_after_compaction() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 3);
+        let dead = arena.with_values(1, &[Value::NULL; 3]);
+        let expected = [Value::number(-0.0), Value::number(f64::NAN), Value::heap(17)];
+        let mut live = arena.with_values(1, &expected);
+        arena.release(dead);
+        let capacity = arena.compact_vector(&mut live, 0);
+        arena.finish_compaction(capacity);
+        let mut writer = crate::snapshot::Writer::new();
+        arena.write_snapshot(&mut writer);
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = ValueArena::read_snapshot(&mut reader).unwrap();
+        reader.finish().unwrap();
+        for (slot, value) in expected.iter().enumerate() {
+            assert_eq!(restored.get(live, slot).unwrap().to_bits(), value.to_bits());
+        }
+        let released = restored.with_values(1, &[Value::UNDEFINED; 3]);
+        restored.release(released);
+        let mut writer = crate::snapshot::Writer::new();
+        restored.write_snapshot(&mut writer);
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = ValueArena::read_snapshot(&mut reader).unwrap();
+        let replacement = restored.with_values(1, &[Value::TRUE; 3]);
+        assert_eq!(replacement.start(), released.start());
+        assert_eq!(restored.get(live, 2), Some(expected[2]));
     }
 }

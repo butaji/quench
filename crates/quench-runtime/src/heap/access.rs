@@ -673,7 +673,8 @@ impl Heap {
     /// The current base and length of out-of-line ordinary-object property values.
     ///
     /// Native readers may use these only during synchronous no-safepoint execution and must
-    /// bounds-check every slot. Property arena growth and compaction invalidate the base.
+    /// bounds-check every slot. Compaction relocates property ranges; the ordinary
+    /// allocation fallback may also move the base when the arena grows.
     pub(crate) fn native_property_values(&self) -> (*const Value, usize) {
         self.properties.native_values()
     }
