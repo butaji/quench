@@ -464,6 +464,14 @@ members!(Module, "httpModule", [
     MaxHeaderSize,
     GlobalAgent,
     SetGlobalAgent,
+    ReadStart,
+    ReadStop,
+    PreClose,
+    CheckInvalidHeaderChar,
+    CheckIsHttpToken,
+    FreeParser,
+    IsLenient,
+    PrepareError,
 ]);
 
 pub(crate) fn module_member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
@@ -500,7 +508,103 @@ pub(crate) fn module_member(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
             set_class(c, Class::GlobalAgent, value)?;
             Ok(c.undefined())
         }
+        Module::ReadStart => {
+            incoming::read_start(c, at(0))?;
+            Ok(c.undefined())
+        }
+        Module::ReadStop => {
+            let socket = at(0);
+            if !crate::modules::stream_shared_vm::is_nullish(c, socket) {
+                call_method(c, socket, "pause", &[])?;
+            }
+            Ok(c.undefined())
+        }
+        Module::PreClose => {
+            server::pre_close(c, at(0))?;
+            Ok(c.undefined())
+        }
+        Module::CheckInvalidHeaderChar => {
+            let invalid = outgoing::has_invalid_header_char(c, at(0))?;
+            Ok(c.boolean(invalid))
+        }
+        Module::CheckIsHttpToken => {
+            let token = outgoing::is_token(c, at(0))?;
+            Ok(c.boolean(token))
+        }
+        Module::FreeParser => {
+            let (parser, request, socket) = (at(0), at(1), at(2));
+            let request = if crate::modules::stream_shared_vm::is_nullish(c, request) { None } else { Some(request) };
+            parsing::free(c, parser, request, socket)?;
+            Ok(c.undefined())
+        }
+        Module::IsLenient => {
+            let lenient = c.host_mut().shared_state().borrow().cli_options.enabled("--insecure-http-parser");
+            Ok(c.boolean(lenient))
+        }
+        Module::PrepareError => {
+            let (error, raw) = (at(0), at(2));
+            c.assign_named_property_rooted(error, "rawPacket", raw)?;
+            Ok(c.undefined())
+        }
     }
+}
+
+/// `_http_common`'s functions and `kIncomingMessage`.
+pub(crate) fn common_members(c: &mut Context<'_>, target: RootId) -> Result<(), RootedError> {
+    module(c)?;
+    for (name, member) in [
+        ("_checkInvalidHeaderChar", Module::CheckInvalidHeaderChar),
+        ("_checkIsHttpToken", Module::CheckIsHttpToken),
+        ("freeParser", Module::FreeParser),
+        ("isLenient", Module::IsLenient),
+        ("prepareError", Module::PrepareError),
+    ] {
+        let value = function(c, member, name, &[])?;
+        c.assign_named_property_rooted(target, name, value)?;
+    }
+    let incoming = slot(c, Slot::IncomingMessageClass)?;
+    c.assign_named_property_rooted(target, "kIncomingMessage", incoming)
+}
+
+/// The `_http_*` internal modules: each the part of `http` its Node library file defines.
+pub(crate) fn internal_module(c: &mut Context<'_>, name: &str) -> Outcome {
+    let http = module(c)?;
+    let module = c.object_rooted()?;
+    let exports: &[&str] = match name {
+        "_http_agent" => &["Agent", "globalAgent"],
+        "_http_client" => &["ClientRequest"],
+        "_http_incoming" => &["IncomingMessage"],
+        "_http_outgoing" => &["OutgoingMessage", "validateHeaderName", "validateHeaderValue"],
+        _ => &["STATUS_CODES", "Server", "ServerResponse", "_connectionListener"],
+    };
+    for &export in exports {
+        let value = get(c, http, export)?;
+        c.assign_named_property_rooted(module, export, value)?;
+    }
+    match name {
+        "_http_incoming" => {
+            for (export, member) in [("readStart", Module::ReadStart), ("readStop", Module::ReadStop)] {
+                let value = function(c, member, export, &[])?;
+                c.assign_named_property_rooted(module, export, value)?;
+            }
+        }
+        "_http_outgoing" => {
+            let mark = slot(c, Slot::HighWaterMark)?;
+            c.assign_named_property_rooted(module, "kHighWaterMark", mark)?;
+            let unique = slot(c, Slot::UniqueHeaders)?;
+            c.assign_named_property_rooted(module, "kUniqueHeaders", unique)?;
+        }
+        "_http_server" => {
+            let interval = slot(c, Slot::ConnectionsCheckingInterval)?;
+            c.assign_named_property_rooted(module, "kConnectionsCheckingInterval", interval)?;
+            let response = slot(c, Slot::ServerResponseClass)?;
+            c.assign_named_property_rooted(module, "kServerResponse", response)?;
+            let close = function(c, Module::PreClose, "httpServerPreClose", &[])?;
+            c.assign_named_property_rooted(module, "httpServerPreClose", close)?;
+        }
+        _ => {}
+    }
+    Ok(module)
 }
 
 /// The default `maxHeaderSize`: `--max-http-header-size`, else 16 KiB.

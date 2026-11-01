@@ -459,7 +459,7 @@ pub(crate) fn destroy(c: &mut Context<'_>, this: RootId, error: RootId) -> Outco
 // ---------------------------------------------------------------------------------------
 
 /// `checkIsHttpToken(name)` over a string.
-fn is_token(c: &mut Context<'_>, name: RootId) -> Result<bool, RootedError> {
+pub(crate) fn is_token(c: &mut Context<'_>, name: RootId) -> Result<bool, RootedError> {
     Ok(c.string_code_units(name)?.is_some_and(|units| {
         !units.is_empty() && units.iter().all(|&unit| char::from_u32(u32::from(unit)).is_some_and(is_http_token_char))
     }))
