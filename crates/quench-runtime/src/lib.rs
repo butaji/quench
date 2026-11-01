@@ -13,6 +13,7 @@ mod module_identity;
 mod number_to_string;
 mod profile;
 mod snapshot;
+mod specialize;
 pub(crate) use quench_stack as stack;
 mod unicode;
 mod value;
