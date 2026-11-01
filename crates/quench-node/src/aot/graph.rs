@@ -46,6 +46,8 @@ pub struct DependencyGraph {
     pub requirements: Vec<GraphRequirement>,
     /// Unshadowed eval references may receive source first known at execution.
     pub dynamic_eval_sites: Vec<(PathBuf, u32)>,
+    /// Calls whose possible Function-constructor identity receives nonliteral source.
+    pub dynamic_function_sites: Vec<(PathBuf, u32)>,
 }
 
 struct Requests<'s> {
@@ -237,10 +239,12 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         quench_runtime::Engine::erase_type_only_module_syntax(&mut parsed.program);
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
         let scoping = semantic.semantic.scoping();
-        for key in quench_runtime::Engine::function_constructor_sources(&parsed.program, scoping, true) {
+        let (constructor_sources, dynamic_functions) = quench_runtime::Engine::function_constructor_source_demands(&parsed.program, scoping, true);
+        for key in constructor_sources {
             manifest.insert_key(key);
         }
         let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
+        graph.dynamic_function_sites.extend(dynamic_functions.into_iter().map(|offset| (path.clone(), offset + base)));
         let loaders = LoaderBindings::discover(&parsed.program, scoping, &path);
         let mut requests = Requests::new(scoping, &loaders);
         requests.visit_program(&parsed.program);

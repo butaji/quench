@@ -443,4 +443,23 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    #[test]
+    fn graph_uses_constructor_flow_for_dynamic_source_demands() {
+        let directory = std::env::temp_dir().join(format!("quench-constructor-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        fs::write(&entry, r#"
+            const source = process.argv[2] as unknown as number;
+            const ordinary = Function;
+            const Async = (async function() {}).constructor;
+            ordinary(source); new Function(source); Async(source);
+            Function('return 42');
+        "#).unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        assert_eq!(graph.dynamic_function_sites.len(), 3, "{:?}", graph.dynamic_function_sites);
+        assert!(graph.dynamic_eval_sites.is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
 }
