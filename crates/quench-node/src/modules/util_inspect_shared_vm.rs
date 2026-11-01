@@ -192,7 +192,7 @@ fn is_nullish(c: &Context<'_>, value: RootId) -> bool {
 }
 
 /// The formatter's captured originals and the inspect tables (`UtilIntrinsics::primordials`).
-fn primordial(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
+pub(crate) fn primordial(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
     let primordials = super::util_shared_vm::primordials(c)?;
     get(c, primordials, name)
 }

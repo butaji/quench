@@ -37,24 +37,30 @@ enum LegacyTest {
     Primitive,
 }
 
-/// The legacy predicates in their export order (lib/util.js).
-const LEGACY: &[Legacy] = &[
-    Legacy { name: "isArray", code: "DEP0044", message: "The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.", test: LegacyTest::Array },
-    Legacy { name: "isBoolean", code: "DEP0045", message: "The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.", test: LegacyTest::Boolean },
-    Legacy { name: "isBuffer", code: "DEP0046", message: "The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.", test: LegacyTest::Buffer },
-    Legacy { name: "isDeepStrictEqual", code: "", message: "", test: LegacyTest::Null },
-    Legacy { name: "isNull", code: "DEP0050", message: "The `util.isNull` API is deprecated. Please use `arg === null` instead.", test: LegacyTest::Null },
-    Legacy { name: "isNullOrUndefined", code: "DEP0051", message: "The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.", test: LegacyTest::NullOrUndefined },
-    Legacy { name: "isNumber", code: "DEP0052", message: "The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.", test: LegacyTest::Number },
-    Legacy { name: "isString", code: "DEP0056", message: "The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.", test: LegacyTest::String },
-    Legacy { name: "isSymbol", code: "DEP0057", message: "The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.", test: LegacyTest::Symbol },
-    Legacy { name: "isUndefined", code: "DEP0058", message: "The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.", test: LegacyTest::Undefined },
-    Legacy { name: "isRegExp", code: "DEP0055", message: "The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.", test: LegacyTest::RegExp },
-    Legacy { name: "isObject", code: "DEP0053", message: "The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.", test: LegacyTest::Object },
-    Legacy { name: "isDate", code: "DEP0047", message: "The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.", test: LegacyTest::Date },
-    Legacy { name: "isError", code: "DEP0048", message: "The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.", test: LegacyTest::Error },
-    Legacy { name: "isFunction", code: "DEP0049", message: "The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.", test: LegacyTest::Function },
-    Legacy { name: "isPrimitive", code: "DEP0054", message: "The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.", test: LegacyTest::Primitive },
+/// The module's predicate exports, in their order (lib/util.js): the deprecated legacy
+/// predicates and `isDeepStrictEqual`.
+enum Predicate {
+    Legacy(Legacy),
+    DeepStrictEqual,
+}
+
+const PREDICATES: &[Predicate] = &[
+    Predicate::Legacy(Legacy { name: "isArray", code: "DEP0044", message: "The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.", test: LegacyTest::Array }),
+    Predicate::Legacy(Legacy { name: "isBoolean", code: "DEP0045", message: "The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.", test: LegacyTest::Boolean }),
+    Predicate::Legacy(Legacy { name: "isBuffer", code: "DEP0046", message: "The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.", test: LegacyTest::Buffer }),
+    Predicate::DeepStrictEqual,
+    Predicate::Legacy(Legacy { name: "isNull", code: "DEP0050", message: "The `util.isNull` API is deprecated. Please use `arg === null` instead.", test: LegacyTest::Null }),
+    Predicate::Legacy(Legacy { name: "isNullOrUndefined", code: "DEP0051", message: "The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.", test: LegacyTest::NullOrUndefined }),
+    Predicate::Legacy(Legacy { name: "isNumber", code: "DEP0052", message: "The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.", test: LegacyTest::Number }),
+    Predicate::Legacy(Legacy { name: "isString", code: "DEP0056", message: "The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.", test: LegacyTest::String }),
+    Predicate::Legacy(Legacy { name: "isSymbol", code: "DEP0057", message: "The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.", test: LegacyTest::Symbol }),
+    Predicate::Legacy(Legacy { name: "isUndefined", code: "DEP0058", message: "The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.", test: LegacyTest::Undefined }),
+    Predicate::Legacy(Legacy { name: "isRegExp", code: "DEP0055", message: "The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.", test: LegacyTest::RegExp }),
+    Predicate::Legacy(Legacy { name: "isObject", code: "DEP0053", message: "The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.", test: LegacyTest::Object }),
+    Predicate::Legacy(Legacy { name: "isDate", code: "DEP0047", message: "The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.", test: LegacyTest::Date }),
+    Predicate::Legacy(Legacy { name: "isError", code: "DEP0048", message: "The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.", test: LegacyTest::Error }),
+    Predicate::Legacy(Legacy { name: "isFunction", code: "DEP0049", message: "The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.", test: LegacyTest::Function }),
+    Predicate::Legacy(Legacy { name: "isPrimitive", code: "DEP0054", message: "The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.", test: LegacyTest::Primitive }),
 ];
 
 /// `util._extend`'s and `util.log`'s deprecations.
@@ -137,11 +143,6 @@ fn function(c: &mut Context<'_>, operation_name: &str, name: &str) -> Result<Roo
 
 fn function_with(c: &mut Context<'_>, operation_name: &str, name: &str, data: RootId) -> Result<RootId, RootedError> {
     c.host_function_named_with_data(operation(operation_name), name, data)
-}
-
-fn inspect_primordial(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    let primordials = super::util_shared_vm::primordials(c)?;
-    get(c, primordials, name)
 }
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -276,12 +277,15 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
         put(c, module, name, value)?;
     }
     put(c, module, "inspect", inspect_function)?;
-    for (index, legacy) in LEGACY.iter().enumerate() {
-        if legacy.code.is_empty() {
-            let value = function(c, "utilIsDeepStrictEqual", legacy.name)?;
-            put(c, module, legacy.name, value)?;
-            continue;
-        }
+    for (index, predicate) in PREDICATES.iter().enumerate() {
+        let legacy = match predicate {
+            Predicate::Legacy(legacy) => legacy,
+            Predicate::DeepStrictEqual => {
+                let value = function(c, "utilIsDeepStrictEqual", "isDeepStrictEqual")?;
+                put(c, module, "isDeepStrictEqual", value)?;
+                continue;
+            }
+        };
         let data = c.number(index as f64);
         let test = function_with(c, "utilLegacyIs", legacy.name, data)?;
         let length = c.number(f64::from(legacy_length(legacy.test)));
@@ -317,6 +321,11 @@ pub(crate) fn build(c: &mut Context<'_>, primordials: RootId) -> Result<(RootId,
     put(c, module, "parseArgs", parse_args)?;
     let initializer = function(c, "utilGlobalExport", "")?;
     c.define_lazy_data_properties_rooted(module, &["TextDecoder", "TextEncoder"], true, initializer)?;
+    let (mime, params) = super::util_mime_shared_vm::classes(c)?;
+    put(c, module, "MIMEType", mime)?;
+    put(c, module, "MIMEParams", params)?;
+    let diff = function(c, "utilDiff", "diff")?;
+    put(c, module, "diff", diff)?;
     let trace = function(c, "utilSetTraceSigInt", "setTraceSigInt")?;
     put(c, module, "setTraceSigInt", trace)?;
     let formatters = c.null_object_rooted()?;
@@ -413,7 +422,10 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     let index = c.to_number(data)? as usize;
     let value = argument(c, args, 0);
     let kind = type_of(c, value);
-    let matches = match LEGACY[index].test {
+    let Some(Predicate::Legacy(legacy)) = PREDICATES.get(index) else {
+        return Err(RootedError::host("legacy predicate index out of range"));
+    };
+    let matches = match legacy.test {
         LegacyTest::Array => c.is_array_rooted(value)?,
         LegacyTest::Boolean => kind == ValueType::Boolean,
         LegacyTest::Buffer => {
@@ -441,7 +453,7 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
 
 /// `inspect.defaultOptions` getter.
 pub(crate) fn inspect_defaults_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    inspect_primordial(c, "defaultOptions")
+    inspect::primordial(c, "defaultOptions")
 }
 
 /// `inspect.defaultOptions = options`: `validateObject`, then `Object.assign`.
@@ -450,7 +462,7 @@ pub(crate) fn inspect_defaults_set(c: &mut Context<'_>, _: RootId, args: &[RootI
     if type_of(c, options) != ValueType::Object {
         return Err(super::util_shared_vm::argument_type_error(c, options, "options", "Object")?);
     }
-    let defaults = inspect_primordial(c, "defaultOptions")?;
+    let defaults = inspect::primordial(c, "defaultOptions")?;
     for key in c.enumerable_own_keys_rooted(options, true, true)? {
         let value = c.get_property_rooted(options, key)?;
         c.set_property_rooted(defaults, key, value, defaults)?;
@@ -575,7 +587,7 @@ fn warn_deprecation(c: &mut Context<'_>, state: RootId) -> Result<(), RootedErro
         c.call_rooted(emit, process, &[message, kind, wrapper])?;
         return Ok(());
     }
-    let codes = inspect_primordial(c, "codesWarned")?;
+    let codes = inspect::primordial(c, "codesWarned")?;
     let seen = c.get_property_rooted(codes, code)?;
     if c.truthy_rooted(seen)? {
         return Ok(());
@@ -588,7 +600,7 @@ fn warn_deprecation(c: &mut Context<'_>, state: RootId) -> Result<(), RootedErro
 
 /// `util.getCallSite`: warns that it was renamed, then is `getCallSites`.
 pub(crate) fn get_call_site(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let state = inspect_primordial(c, "codesWarned")?;
+    let state = inspect::primordial(c, "codesWarned")?;
     let key = c.string_rooted("getCallSite");
     let warned = c.get_property_rooted(state, key)?;
     if !c.truthy_rooted(warned)? {
@@ -756,7 +768,7 @@ pub(crate) fn global_export(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> 
 pub(crate) fn promisify(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let original = argument(c, args, 0);
     validate_function(c, original, "original")?;
-    let custom_key = inspect_primordial(c, "promisifyCustom")?;
+    let custom_key = inspect::primordial(c, "promisifyCustom")?;
     let custom = c.get_property_rooted(original, custom_key)?;
     if type_of(c, custom) != ValueType::Undefined {
         validate_function(c, custom, "util.promisify.custom")?;
@@ -764,7 +776,7 @@ pub(crate) fn promisify(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         c.define_property_descriptor_rooted(custom, custom_key, descriptor)?;
         return Ok(custom);
     }
-    let names_key = inspect_primordial(c, "promisifyArgs")?;
+    let names_key = inspect::primordial(c, "promisifyArgs")?;
     let names = c.get_property_rooted(original, names_key)?;
     let data = c.array_rooted(&[original, names])?;
     let promisified = c.host_function_named_with_data(operation("utilPromisified"), "fn", data)?;
@@ -907,7 +919,7 @@ pub(crate) fn debug_enabled_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) ->
 pub(crate) fn debug_logger(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let state = c.host_function_data()?;
     let set = debug_set(c, state)?;
-    let implementations = inspect_primordial(c, "debugImpls")?;
+    let implementations = inspect::primordial(c, "debugImpls")?;
     let mut implementation = get(c, implementations, &set)?;
     if type_of(c, implementation) == ValueType::Undefined {
         let set_root = c.string_rooted(&set);

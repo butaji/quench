@@ -1,4 +1,5 @@
-//! Node's strict deep equality (lib/internal/util/comparisons.js, `isDeepStrictEqual`).
+//! Node's strict deep equality (lib/internal/util/comparisons.js, `isDeepStrictEqual`) and
+//! its line diff (`util.diff`, internal/assert/myers_diff.js).
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, BuiltinData, NativeContext, RootId, RootedError, ValueType};
 
@@ -409,4 +410,98 @@ fn own_symbols(c: &mut Context<'_>, object: RootId) -> Result<Vec<RootId>, Roote
         }
     }
     Ok(symbols)
+}
+
+/// `util.diff`'s operations: an item only in `actual`, in both, or only in `expected`.
+const INSERTED: f64 = 1.0;
+const UNCHANGED: f64 = 0.0;
+const DELETED: f64 = -1.0;
+
+/// `validateInput`: a string's code units, or an array of strings, as diff items.
+fn diff_items(c: &mut Context<'_>, value: RootId, name: &str) -> Result<Vec<Vec<u16>>, RootedError> {
+    if let Some(units) = c.string_code_units(value)? {
+        return Ok(units.into_iter().map(|unit| vec![unit]).collect());
+    }
+    if !c.is_array_rooted(value)? {
+        return Err(super::util_shared_vm::argument_type_error(c, value, name, "string")?);
+    }
+    let mut items = Vec::new();
+    for (index, item) in c.array_like_values_rooted(value)?.into_iter().enumerate() {
+        match c.string_code_units(item)? {
+            Some(units) => items.push(units),
+            None => return Err(super::util_shared_vm::argument_type_error(c, item, &format!("{name}[{index}]"), "string")?),
+        }
+    }
+    Ok(items)
+}
+
+/// Node's `myersDiff` and `backtrack` (internal/assert/myers_diff.js), as (operation, item).
+fn myers_diff<'a>(actual: &'a [Vec<u16>], expected: &'a [Vec<u16>]) -> Vec<(f64, &'a [u16])> {
+    let max = actual.len() + expected.len();
+    let offset = |diagonal: isize| (diagonal + max as isize) as usize;
+    let mut v = vec![0usize; 2 * max + 1];
+    let mut trace = Vec::new();
+    'search: for level in 0..=max as isize {
+        trace.push(v.clone());
+        let mut diagonal = -level;
+        while diagonal <= level {
+            let index = offset(diagonal);
+            let mut x = if diagonal == -level || (diagonal != level && v[index - 1] < v[index + 1]) { v[index + 1] } else { v[index - 1] + 1 };
+            let mut y = (x as isize - diagonal) as usize;
+            while x < actual.len() && y < expected.len() && actual[x] == expected[y] {
+                x += 1;
+                y += 1;
+            }
+            v[index] = x;
+            if x >= actual.len() && y >= expected.len() {
+                break 'search;
+            }
+            diagonal += 2;
+        }
+    }
+    let (mut x, mut y) = (actual.len(), expected.len());
+    let mut result = Vec::new();
+    for (level, v) in trace.iter().enumerate().rev() {
+        let level = level as isize;
+        let diagonal = x as isize - y as isize;
+        let index = offset(diagonal);
+        let previous = if diagonal == -level || (diagonal != level && v[index - 1] < v[index + 1]) { diagonal + 1 } else { diagonal - 1 };
+        let previous_x = v[offset(previous)];
+        let previous_y = previous_x as isize - previous;
+        while x > previous_x && y as isize > previous_y {
+            result.push((UNCHANGED, actual[x - 1].as_slice()));
+            x -= 1;
+            y -= 1;
+        }
+        if level > 0 {
+            if x > previous_x {
+                result.push((INSERTED, actual[x - 1].as_slice()));
+                x -= 1;
+            } else {
+                result.push((DELETED, expected[y - 1].as_slice()));
+                y -= 1;
+            }
+        }
+    }
+    result.reverse();
+    result
+}
+
+/// `util.diff(actual, expected)`.
+pub(crate) fn diff(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = c.undefined();
+    let actual = args.first().copied().unwrap_or(undefined);
+    let expected = args.get(1).copied().unwrap_or(undefined);
+    let actual_items = diff_items(c, actual, "actual")?;
+    let expected_items = diff_items(c, expected, "expected")?;
+    if c.strict_equal_rooted(actual, expected)? || (actual_items.is_empty() && expected_items.is_empty()) {
+        return c.array_rooted(&[]);
+    }
+    let mut entries = Vec::new();
+    for (operation, item) in myers_diff(&actual_items, &expected_items) {
+        let operation = c.number(operation);
+        let item = c.string_units_rooted(item);
+        entries.push(c.array_rooted(&[operation, item])?);
+    }
+    c.array_rooted(&entries)
 }

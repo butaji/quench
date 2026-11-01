@@ -4,11 +4,12 @@
 use crate::host::shared_vm::operation;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
+use super::private_slots as slots;
 use url::Url;
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-/// The private slots, cached as host-private symbols, and the classes.
+/// The private slots (`private_slots`) and the cached classes.
 const HREF_SLOT: &str = "\0node/url/href";
 const PARAMS_SLOT: &str = "\0node/url/searchParams";
 const LIST_SLOT: &str = "\0node/url/list";
@@ -87,14 +88,6 @@ fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<RootId, Rooted
     Ok(value)
 }
 
-fn slot(c: &mut Context<'_>, key: &str) -> Result<RootId, RootedError> {
-    if let Some(symbol) = cached(c, key) {
-        return Ok(symbol);
-    }
-    let symbol = c.private_symbol_rooted(Some(key.trim_start_matches('\0')));
-    cache(c, key, symbol)
-}
-
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     c.get_named_property_rooted(object, name)
 }
@@ -110,30 +103,13 @@ fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
     c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
 }
 
-fn read_slot(c: &mut Context<'_>, object: RootId, key: &str) -> Result<Option<RootId>, RootedError> {
-    if !c.is_object_rooted(object)? {
-        return Ok(None);
-    }
-    let slot = slot(c, key)?;
-    if c.own_property_fields_rooted(object, slot)?.is_none() {
-        return Ok(None);
-    }
-    c.get_property_rooted(object, slot).map(Some)
-}
-
-fn write_slot(c: &mut Context<'_>, object: RootId, key: &str, value: RootId) -> Result<(), RootedError> {
-    let slot = slot(c, key)?;
-    c.define_data_property_rooted(object, slot, value, true, false, true)?;
-    Ok(())
-}
-
 /// `StringPrototypeToWellFormed(`${value}`)`.
-fn usv_string(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
+pub(crate) fn usv_string(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
     let units = c.to_string_code_units(value)?;
     Ok(String::from_utf16_lossy(&units))
 }
 
-fn coded_type_error(c: &mut Context<'_>, message: &str, code: &'static str) -> Result<RootedError, RootedError> {
+pub(crate) fn coded_type_error(c: &mut Context<'_>, message: &str, code: &'static str) -> Result<RootedError, RootedError> {
     let error = c.type_error_rooted(message)?;
     super::node_errors_shared_vm::decorate_type_error(c, error, code)?;
     Ok(c.throw(error))
@@ -297,7 +273,7 @@ pub(crate) fn url_object(c: &mut Context<'_>, url: &Url) -> Result<RootId, Roote
     let object = c.object_rooted()?;
     c.set_prototype_rooted(object, prototype)?;
     let href = c.string_rooted(url.as_str());
-    write_slot(c, object, HREF_SLOT, href)?;
+    slots::write(c, object, HREF_SLOT, href)?;
     Ok(object)
 }
 
@@ -320,7 +296,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
         Err(_) => return Err(invalid_url(c, &input, base.as_deref())?),
     };
     let href = c.string_rooted(url.as_str());
-    write_slot(c, this, HREF_SLOT, href)?;
+    slots::write(c, this, HREF_SLOT, href)?;
     Ok(this)
 }
 
@@ -356,7 +332,7 @@ pub(crate) fn can_parse(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
 
 /// The parsed URL of a URL object; the receiver check of Node's private fields.
 fn this_url(c: &mut Context<'_>, this: RootId) -> Result<Url, RootedError> {
-    let Some(href) = read_slot(c, this, HREF_SLOT)? else {
+    let Some(href) = slots::read(c, this, HREF_SLOT)? else {
         let error = c.type_error_rooted("Receiver must be an instance of class URL")?;
         return Err(c.throw(error));
     };
@@ -367,8 +343,8 @@ fn this_url(c: &mut Context<'_>, this: RootId) -> Result<Url, RootedError> {
 /// Stores a URL's new serialization and refreshes its search params from its query.
 fn update(c: &mut Context<'_>, this: RootId, url: &Url) -> Result<(), RootedError> {
     let href = c.string_rooted(url.as_str());
-    write_slot(c, this, HREF_SLOT, href)?;
-    if let Some(params) = read_slot(c, this, PARAMS_SLOT)? {
+    slots::write(c, this, HREF_SLOT, href)?;
+    if let Some(params) = slots::read(c, this, PARAMS_SLOT)? {
         let pairs = url.query().map(parse_pairs).unwrap_or_default();
         store_pairs(c, params, &pairs)?;
     }
@@ -416,7 +392,7 @@ pub(crate) fn get_component(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> 
 
 /// `url.searchParams`: one object per URL, made on first read.
 fn search_params(c: &mut Context<'_>, this: RootId, url: &Url) -> Result<RootId, RootedError> {
-    if let Some(params) = read_slot(c, this, PARAMS_SLOT)? {
+    if let Some(params) = slots::read(c, this, PARAMS_SLOT)? {
         return Ok(params);
     }
     let (_, class) = classes(c)?;
@@ -425,8 +401,8 @@ fn search_params(c: &mut Context<'_>, this: RootId, url: &Url) -> Result<RootId,
     c.set_prototype_rooted(params, prototype)?;
     let pairs = url.query().map(parse_pairs).unwrap_or_default();
     store_pairs(c, params, &pairs)?;
-    write_slot(c, params, OWNER_SLOT, this)?;
-    write_slot(c, this, PARAMS_SLOT, params)?;
+    slots::write(c, params, OWNER_SLOT, this)?;
+    slots::write(c, this, PARAMS_SLOT, params)?;
     Ok(params)
 }
 
@@ -521,7 +497,7 @@ fn store_pairs(c: &mut Context<'_>, params: RootId, pairs: &Pairs) -> Result<(),
         values.push(c.string_rooted(value));
     }
     let list = c.array_rooted(&values)?;
-    write_slot(c, params, LIST_SLOT, list)
+    slots::write(c, params, LIST_SLOT, list)
 }
 
 fn load_pairs(c: &mut Context<'_>, list: RootId) -> Result<Pairs, RootedError> {
@@ -535,7 +511,7 @@ fn load_pairs(c: &mut Context<'_>, list: RootId) -> Result<Pairs, RootedError> {
 
 /// The receiver's pairs; the receiver check of Node's private fields.
 fn this_pairs(c: &mut Context<'_>, this: RootId) -> Result<Pairs, RootedError> {
-    match read_slot(c, this, LIST_SLOT)? {
+    match slots::read(c, this, LIST_SLOT)? {
         Some(list) => load_pairs(c, list),
         None => Err(coded_type_error(c, "Value of \"this\" must be of type URLSearchParams", "ERR_INVALID_THIS")?),
     }
@@ -544,12 +520,12 @@ fn this_pairs(c: &mut Context<'_>, this: RootId) -> Result<Pairs, RootedError> {
 /// Stores the pairs and, for a URL's params, its query (`#updateURL`).
 fn commit(c: &mut Context<'_>, this: RootId, pairs: &Pairs) -> Result<(), RootedError> {
     store_pairs(c, this, pairs)?;
-    if let Some(owner) = read_slot(c, this, OWNER_SLOT)? {
+    if let Some(owner) = slots::read(c, this, OWNER_SLOT)? {
         let mut url = this_url(c, owner)?;
         let query = serialize_pairs(pairs);
         url.set_query((!query.is_empty()).then_some(query.as_str()));
         let href = c.string_rooted(url.as_str());
-        write_slot(c, owner, HREF_SLOT, href)?;
+        slots::write(c, owner, HREF_SLOT, href)?;
     }
     Ok(())
 }
@@ -578,7 +554,7 @@ pub(crate) fn construct_params(c: &mut Context<'_>, this: RootId, args: &[RootId
 }
 
 fn pairs_from_object(c: &mut Context<'_>, init: RootId) -> Result<Pairs, RootedError> {
-    if let Some(list) = read_slot(c, init, LIST_SLOT)? {
+    if let Some(list) = slots::read(c, init, LIST_SLOT)? {
         return load_pairs(c, list);
     }
     let global = c.global_root()?;
@@ -779,7 +755,7 @@ fn iterator(c: &mut Context<'_>, this: RootId, kind: Kind) -> Result<RootId, Roo
     let kind = c.number(kind as u8 as f64);
     let index = c.number(0.0);
     let state = c.array_rooted(&[this, kind, index])?;
-    write_slot(c, object, ITERATOR_SLOT, state)?;
+    slots::write(c, object, ITERATOR_SLOT, state)?;
     Ok(object)
 }
 
@@ -797,7 +773,7 @@ pub(crate) fn values(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Result<
 
 /// An iterator's (params, kind, position), the receiver check of its `next`.
 fn iterator_state(c: &mut Context<'_>, this: RootId) -> Result<(RootId, Kind, usize, RootId), RootedError> {
-    let Some(state) = read_slot(c, this, ITERATOR_SLOT)? else {
+    let Some(state) = slots::read(c, this, ITERATOR_SLOT)? else {
         return Err(coded_type_error(c, "Value of \"this\" must be of type URLSearchParamsIterator", "ERR_INVALID_THIS")?);
     };
     let params = get(c, state, "0")?;
