@@ -776,9 +776,23 @@ pub(crate) fn vfs_position_set(
     Ok(context.undefined())
 }
 
-/// Node's replaceable `performance` global loads `perf_hooks` on first access.
+/// The timeline classes Node exposes as globals, from `perf_hooks`.
+const PERFORMANCE_GLOBALS: [&str; 6] = [
+    "PerformanceEntry",
+    "PerformanceMark",
+    "PerformanceMeasure",
+    "PerformanceObserver",
+    "PerformanceObserverEntryList",
+    "PerformanceResourceTiming",
+];
+
+/// Node's replaceable `performance` global and the timeline classes load `perf_hooks` on
+/// first access.
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
     install_lazy_global(context, "performance", "perf_hooks", "performance", true)?;
+    for name in PERFORMANCE_GLOBALS {
+        install_lazy_global(context, name, "perf_hooks", name, false)?;
+    }
     Ok(())
 }
 

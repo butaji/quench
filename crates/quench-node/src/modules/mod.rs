@@ -107,7 +107,9 @@ pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
-pub(crate) mod perf_timeline_query;
+pub(crate) mod perf_timeline;
+pub(crate) mod perf_histogram;
+pub(crate) mod hdr_histogram;
 pub(crate) mod performance_binding_shared_vm;
 pub(crate) mod process_binding_shared_vm;
 #[cfg(unix)]
