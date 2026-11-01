@@ -2421,6 +2421,10 @@ pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedE
     cached_builtin(context, BuiltinModule::Buffer)
 }
 
+pub(crate) fn readline_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Readline)
+}
+
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Util)
 }
@@ -4108,7 +4112,6 @@ fn load_with_resolution(
     let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
     if is_fs_utilities {
         if let Ok(exports) = &result {
-            crate::modules::fs_policy_shared_vm::adopt(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;

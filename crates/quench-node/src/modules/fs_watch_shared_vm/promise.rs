@@ -5,30 +5,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_MAX_QUEUE: f64 = 2048.0;
 const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
-    parent: RootId,
-) -> Result<(), RootedError> {
-    let next = context.host_function(crate::host::shared_vm::operation("fsPromiseWatchNext"))?;
-    let finish =
-        context.host_function(crate::host::shared_vm::operation("fsPromiseWatchReturn"))?;
-    let global = context.global_root()?;
-    let promise = get(context, global, "Promise")?;
-    let array = get(context, global, "Array")?;
-    let prototype = get(context, array, "prototype")?;
-    let push = get(context, prototype, "push")?;
-    let shift = get(context, prototype, "shift")?;
-    let error = get(context, global, "Error")?;
-    let factory = crate::host::removed_javascript("node:fs/promise-watch-facade.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(
-        factory,
-        undefined,
-        &[next, finish, promise, push, shift, error],
-    )?;
-    set(context, parent, "promise", api)
-}
 fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     let parent = shared

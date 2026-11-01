@@ -141,8 +141,14 @@ const SYSTEM_ERROR_CLASS: &str = "\0node/errors/SystemError";
 /// syscall, code and message, `info` holding `ctx`, and `errno`, `syscall`, `path` and
 /// `dest` reading and writing it.
 pub(crate) fn system_error(c: &mut Context<'_>, ctx: RootId) -> Result<RootedError, RootedError> {
+    coded_system_error(c, ctx, "ERR_SYSTEM_ERROR", "A system error occurred")
+}
+
+/// A `SystemError` subclass Node defines with `E(code, prefix, SystemError)`: the message
+/// `prefix: syscall returned code (message) path => dest`, and the fields of `ctx`.
+pub(crate) fn coded_system_error(c: &mut Context<'_>, ctx: RootId, code: &str, prefix: &str) -> Result<RootedError, RootedError> {
     let field = |c: &mut Context<'_>, name: &str| c.get_named_property_rooted(ctx, name);
-    let mut message = String::from("A system error occurred: ");
+    let mut message = format!("{prefix}: ");
     for (name, prefix, suffix) in [("syscall", "", " returned "), ("code", "", " ("), ("message", "", ")")] {
         let value = field(c, name)?;
         message.push_str(prefix);
@@ -163,13 +169,13 @@ pub(crate) fn system_error(c: &mut Context<'_>, ctx: RootId) -> Result<RootedErr
     c.set_prototype_rooted(error, prototype)?;
     let stack = c.get_named_property_rooted(error, "stack")?;
     if let Some(stack) = c.string_text(stack)? {
-        let stack = c.string_rooted(&stack.replacen("Error", "SystemError [ERR_SYSTEM_ERROR]", 1));
+        let stack = c.string_rooted(&stack.replacen("Error", &format!("SystemError [{code}]"), 1));
         let key = c.string_rooted("stack");
         c.define_data_property_rooted(error, key, stack, true, false, true)?;
     }
     let message_key = c.string_rooted("message");
     c.delete_property_rooted(error, message_key)?;
-    let code = c.string_rooted("ERR_SYSTEM_ERROR");
+    let code = c.string_rooted(code);
     c.assign_named_property_rooted(error, "code", code)?;
     let name = c.string_rooted("SystemError");
     let key = c.string_rooted("name");
