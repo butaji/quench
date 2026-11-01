@@ -13993,7 +13993,7 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code, base) = unsafe { ((*cx).program, &*(*cx).code, (*cx).base) };
     let captures = capture_reads(unsafe { (*cx).capture });
-    match vm.run_lane_method(method, program, code, registers.0, receiver, captures, cx.cast()) {
+    match vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast()) {
         super::compiled::LaneExit::At(pc) => {
             // A plain `Return` the body left at completes the call here.
             let returned = code

@@ -21313,10 +21313,14 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
       };
       Node.prototype.deep = function (d) { if (d === 0) return this.id; return (this.deep(d - 1) + d) & MASK; };
       Node.prototype.risky = function (k) { if (k === 99) throw new Error("x" + k); return k + this.id; };
+      let shared = 0;
+      Node.prototype.bump = function (k) { for (let i = 0; i < 2; i++) { shared = (shared + k + i) & MASK; } return shared; };
+      Node.prototype.reads = function (k) { const before = shared; const r = this.bump(k); return (before + shared + r) & MASK; };
       Node.prototype.top = function (k) {
         let s = this.outer(k);
         s = (s + this.deep(DEPTH)) & MASK;
         s = (s + Math.max(k, this.id)) & MASK;
+        s = (s + this.reads(k)) & MASK;
         try { s = (s + this.risky(k)) & MASK; } catch (e) { s = s + 1; }
         this.v = (this.v + s) & MASK;
         return s;

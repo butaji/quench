@@ -6699,8 +6699,6 @@ struct JsStepDispatch {
     stores_specialized: usize,
     /// A lane body's receiver (`GeneralDispatchMode::Lane`); `DELETED` elsewhere.
     receiver: u64,
-    /// A lane body's dense capture slots (`LaneContext::capture`, its tag cleared), or null.
-    captures: usize,
     /// A lane body's VM and running residual, which its semantic helpers take.
     vm: usize,
     residual: usize,
@@ -6727,6 +6725,8 @@ pub(super) struct LaneMethod {
     pub(super) names_shapes: bool,
     /// The calls it runs inlined (`lane_unit::unit`), by frame.
     pub(super) inlined: Vec<InlinedCall>,
+    /// The scratch registers a leave inside its widest inlined call fills (`LaneFrame::scratch`).
+    scratch_width: usize,
 }
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
@@ -6820,21 +6820,6 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     ))
 }
 
-/// A lane body's read of the running function's capture `slot`, by the lane's own rule
-/// (`EnvironmentSlots::dense_plain`); `DELETED` where that rule finds no plain value, which
-/// leaves native code for the lane's full read.
-unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
-    let slots = slots as *const crate::heap::EnvironmentSlots;
-    if slots.is_null() {
-        return Value::DELETED.to_bits();
-    }
-    // SAFETY: the payload holds the running activation's dense capture slots, which
-    // outlive the body's run, and nothing collects while it runs.
-    unsafe { &*slots }
-        .dense_plain(usize::try_from(slot).unwrap_or(usize::MAX))
-        .map_or(Value::DELETED.to_bits(), Value::to_bits)
-}
-
 impl<H: Host> Vm<H> {
     /// The receiver field sites of `function` whose cache entries prove a holderless exact
     /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
@@ -6895,7 +6880,8 @@ impl<H: Host> Vm<H> {
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames })
+        let scratch_width = unit.frames.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -6910,25 +6896,25 @@ impl<H: Host> Vm<H> {
         captures: *const crate::heap::EnvironmentSlots,
         lane_context: *mut (),
     ) -> LaneExit {
-        // A lane body re-enters here only through a native call (`lane_body_call`), whose
-        // callee's entry completes before its caller continues: each entry saves the
-        // per-entry words it overwrites and restores them for the body it returns to.
-        let frame = LANE_FRAME.with(|frame| frame.get());
+        let frame = lane_frame();
+        // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
+        let (capture_values, capture_len) = unsafe { captures.as_ref() }
+            .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+            .unwrap_or((std::ptr::null(), 0));
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
-        // into it is held across the body's run, which may enter it again.
-        let frame = unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame };
-        let width = method.inlined.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
-        let (context, dispatch, saved) = unsafe {
-            if (*frame).scratch.len() < width {
-                (*frame).scratch.resize(width, Value::UNDEFINED);
+        // into it is held across the body's run, which may enter it again
+        // (`run_nested_lane_method`).
+        let context = unsafe {
+            if (*frame).scratch.len() < method.scratch_width {
+                (*frame).scratch.resize(method.scratch_width, Value::UNDEFINED);
             }
             let dispatch = &raw mut (*frame).dispatch;
-            let saved = LaneEntry::of(&*dispatch);
             LaneEntry {
                 lane_context: lane_context.addr(),
                 native_registers: registers,
                 receiver: receiver.to_bits(),
-                captures: captures as usize,
+                capture_values,
+                capture_len,
                 residual: residual as *const ResidualProgram as usize,
             }
             .install(&mut *dispatch);
@@ -6938,20 +6924,39 @@ impl<H: Host> Vm<H> {
             let context = &raw mut (*frame).context;
             (*context).adapter_payload = dispatch.cast();
             (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
-            (context, dispatch, saved)
+            context
         };
         let mut word = 0_u64;
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases set above.
         let status = unsafe { (method.entry)(&mut *context, 0, 0, registers.cast_const().cast(), &mut word) };
-        // SAFETY: as above. The caller's entry, if any, continues with its own words; its
-        // callee ran in the same program (`lane_crosses`) and allocated nothing, so the
-        // program's bases stand.
-        unsafe {
-            saved.install(&mut *dispatch);
-            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
-        }
         Self::lane_method_exit(status, word)
+    }
+
+    /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
+    /// caller's body continues with the per-entry words it entered with. Its callee runs in
+    /// the same program (`lane_crosses`) and allocates nothing, so the program's bases stand.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_nested_lane_method(
+        &mut self,
+        method: &LaneMethod,
+        program: ProgramId,
+        residual: &ResidualProgram,
+        registers: *mut Value,
+        receiver: Value,
+        captures: *const crate::heap::EnvironmentSlots,
+        lane_context: *mut (),
+    ) -> LaneExit {
+        let frame = lane_frame();
+        // SAFETY: as `run_lane_method`; the caller's entry made the frame.
+        let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        let exit = self.run_lane_method(method, program, residual, registers, receiver, captures, lane_context);
+        // SAFETY: as above; the callee's run may have grown the scratch window.
+        unsafe {
+            saved.install(&mut (*frame).dispatch);
+            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
+        }
+        exit
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
@@ -6973,7 +6978,8 @@ struct LaneEntry {
     lane_context: usize,
     native_registers: *mut Value,
     receiver: u64,
-    captures: usize,
+    capture_values: *const Value,
+    capture_len: usize,
     residual: usize,
 }
 
@@ -6983,7 +6989,8 @@ impl LaneEntry {
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
             receiver: dispatch.receiver,
-            captures: dispatch.captures,
+            capture_values: dispatch.capture_values,
+            capture_len: dispatch.capture_len,
             residual: dispatch.residual,
         }
     }
@@ -6992,7 +6999,8 @@ impl LaneEntry {
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
         dispatch.receiver = self.receiver;
-        dispatch.captures = self.captures;
+        dispatch.capture_values = self.capture_values;
+        dispatch.capture_len = self.capture_len;
         dispatch.residual = self.residual;
     }
 }
@@ -7041,7 +7049,6 @@ impl LaneFrame {
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
                 receiver: Value::DELETED.to_bits(),
-                captures: 0,
                 vm: 0,
                 residual: 0,
                 inlined: 0,
@@ -7060,6 +7067,14 @@ impl LaneFrame {
 
 thread_local! {
     static LANE_FRAME: std::cell::UnsafeCell<Option<LaneFrame>> = const { std::cell::UnsafeCell::new(None) };
+}
+
+/// This thread's lane frame, made at its first lane body run.
+fn lane_frame() -> *mut LaneFrame {
+    let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
+    // SAFETY: the frame is reached only through this pointer, on its thread, and no
+    // reference into it outlives the statement that makes it.
+    unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame }
 }
 
 impl<H: Host> Vm<H> {
@@ -7154,7 +7169,6 @@ impl JsStepDispatch {
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
-            captures: 0,
             vm: 0,
             residual: 0,
             inlined: 0,

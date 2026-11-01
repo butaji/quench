@@ -55,7 +55,8 @@ struct Registers {
 struct State {
     values: Vec<RegisterFact>,
     /// Registers proved to hold a direct object, this block: its record address and shape.
-    shapes: BTreeMap<Register, (ir::Value, ir::Value, ir::Value)>,
+    /// The proved records of objects by owner: a register's, or `this`'s (`None`).
+    shapes: BTreeMap<Option<Register>, (ir::Value, ir::Value, ir::Value)>,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// Registers holding the receiver, whose facts the entry proved.
@@ -77,7 +78,8 @@ struct Entry {
     /// Per stored atom, whether the run admits direct stores of it.
     store_atoms: BTreeMap<Atom, Variable>,
     /// Per capture slot read, its value or `DELETED`.
-    captures: BTreeMap<u16, Variable>,
+    capture_values: Variable,
+    capture_len: Variable,
     this: Variable,
 }
 
@@ -186,7 +188,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         };
         self.builder.def_var(variable, value);
         state.values[index] = fact;
-        state.shapes.remove(&register);
+        state.shapes.remove(&Some(register));
         state.layouts.retain(|(owner, _), _| *owner != Some(register));
         state.receivers.remove(&register);
     }
@@ -634,28 +636,16 @@ impl Lowering<'_, '_> {
                 store_atoms.insert(atom, variable);
             }
         }
-        let mut captures = BTreeMap::new();
-        for instruction in instructions {
-            if instruction.op() == Op::LoadCapture && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 {
-                let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
-                if captures.contains_key(&slot) {
-                    continue;
-                }
-                let slots = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, captures));
-                let slot_value = self.builder.ins().iconst(types::I64, i64::from(slot));
-                let mut signature = Signature::new(self.builder.func.signature.call_conv);
-                signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64)]);
-                signature.returns.push(AbiParam::new(types::I64));
-                let signature = self.builder.import_signature(signature);
-                let helper = self.builder.ins().iconst(types::I64, lane_capture_read as unsafe extern "C" fn(u64, u64) -> u64 as usize as i64);
-                let call = self.builder.ins().call_indirect(signature, helper, &[slots, slot_value]);
-                let value = self.builder.inst_results(call)[0];
-                let variable = self.builder.declare_var(types::I64);
-                self.builder.def_var(variable, value);
-                captures.insert(slot, variable);
-            }
-        }
-        Entry { receiver, receiver_shapes, store_atoms, captures, this }
+        // The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`),
+        // fixed for the run; each read loads its slot where it runs, after any call that may
+        // have stored to it.
+        let capture_values = self.builder.declare_var(types::I64);
+        let capture_len = self.builder.declare_var(types::I64);
+        let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
+        let len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len));
+        self.builder.def_var(capture_values, values);
+        self.builder.def_var(capture_len, len);
+        Entry { receiver, receiver_shapes, store_atoms, capture_values, capture_len, this }
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
@@ -727,16 +717,19 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
-                let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
-                let variable = self.entry.as_ref().and_then(|entry| entry.captures.get(&slot)).copied();
-                variable.map(|variable| {
-                    let exit = self.guard_exit(state, pc32);
-                    let value = self.builder.use_var(variable);
-                    let read = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
-                    emit_js_guard(&mut self.builder, read, exit);
-                    self.set_tagged(state, instruction.result_register(), value);
-                    true
-                })
+                let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+                let entry = self.entry.as_ref().expect("entry facts");
+                let (values, len) = (self.builder.use_var(entry.capture_values), self.builder.use_var(entry.capture_len));
+                let exit = self.guard_exit(state, pc32);
+                let in_bounds = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, len, slot as i64);
+                emit_js_guard(&mut self.builder, in_bounds, exit);
+                let offset = i32::try_from(slot * std::mem::size_of::<Value>()).expect("capture slot offset fits i32");
+                let value = self.ins().load(types::I64, MemFlagsData::trusted(), values, offset);
+                let tag = self.ins().band_imm_u(value, crate::value::ValueLayout::TAG_MASK as i64);
+                let ordinary = self.ins().icmp_imm_u(IntCC::NotEqual, tag, crate::value::ValueLayout::INTERNAL_TAG as i64);
+                emit_js_guard(&mut self.builder, ordinary, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+                Some(true)
             }
             Op::GetField if plain && !instruction.writes_current_this() => self.get_field(state, pc, instruction),
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
@@ -868,13 +861,13 @@ impl Lowering<'_, '_> {
         let value = self.builder.use_var(variable);
         let tagged = (fact.tagged_current && fact.value.representation != Representation::Tagged)
             .then(|| self.builder.use_var(self.registers.tagged[usize::from(source)]));
-        let shape = state.shapes.get(&source).copied();
+        let shape = state.shapes.get(&Some(source)).copied();
         let receiver = state.receivers.contains(&source);
         let layouts: Vec<_> = state.layouts.iter().filter_map(|((owner, shape), projection)|
             (*owner == Some(source)).then_some((*shape, *projection))).collect();
         self.define(state, destination, value, fact);
         if let Some(bits) = tagged { self.builder.def_var(self.registers.tagged[usize::from(destination)], bits); }
-        if let Some(shape) = shape { state.shapes.insert(destination, shape); }
+        if let Some(shape) = shape { state.shapes.insert(Some(destination), shape); }
         for (shape, projection) in layouts { state.layouts.insert((Some(destination), shape), projection); }
         if receiver { state.receivers.insert(destination); }
     }
@@ -997,7 +990,7 @@ impl Lowering<'_, '_> {
         let receiver = !self.native_calls
             && (base == crate::bytecode::FieldBase::THIS
                 || register.is_some_and(|register| state.receivers.contains(&register)));
-        if !shapes.is_empty() && (receiver || register.is_some()) {
+        if !shapes.is_empty() && (base == crate::bytecode::FieldBase::THIS || register.is_some()) {
             // The site's proved shapes and slots, folded: one shape load of the object (the
             // receiver's was proved at entry), a compare per shape, a direct read.
             let (object, shape, inline) = if receiver {
@@ -1008,7 +1001,7 @@ impl Lowering<'_, '_> {
                     self.builder.use_var(entry.receiver.inline),
                 )
             } else {
-                self.object_record(state, register.expect("a register base"), exit)
+                self.object_record(state, register, exit)
             };
             let owner = if receiver { None } else { register };
             let value = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit)?;
@@ -1076,15 +1069,22 @@ impl Lowering<'_, '_> {
 
     /// The record address, exact shape and inline-storage bits of the direct object in
     /// `register`, proved once per block (`State::shapes`).
-    fn object_record(&mut self, state: &mut State, register: Register, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
-        if let Some(known) = state.shapes.get(&register).copied() { return known; }
-        let bits = self.tagged(state, register);
+    /// The record of `owner`'s object (a register's, or `this`'s), proved once until an
+    /// effect that may change it retires the proof.
+    fn object_record(&mut self, state: &mut State, owner: Option<Register>, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
+        if let Some(known) = state.shapes.get(&owner).copied() { return known; }
+        let bits = match owner {
+            Some(register) => self.tagged(state, register),
+            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+        };
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
         let projection = (header.record, header.shape, header.inline);
-        state.shapes.insert(register, projection);
-        state.values[usize::from(register)] = RegisterFact::definition(
-            Type::language(crate::ValueType::Object), Representation::Tagged);
+        state.shapes.insert(owner, projection);
+        if let Some(register) = owner {
+            state.values[usize::from(register)] = RegisterFact::definition(
+                Type::language(crate::ValueType::Object), Representation::Tagged);
+        }
         projection
     }
 
@@ -1115,17 +1115,12 @@ impl Lowering<'_, '_> {
         let atom = instruction.atom_index();
         let barrier_free = state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER);
         let value = self.tagged(state, source);
-        if self.native_calls && register.is_none() {
-            let this = self.builder.use_var(self.entry.as_ref().expect("entry facts").this);
-            self.store_helper(this, atom, instruction.cache_site_index(), value, exit);
-            return Some(true);
-        }
-        let object_bits = if receiver {
+        let object_bits = if register.is_none() {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").this)
         } else { self.tagged(state, register.expect("register receiver")) };
         let field = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
         let header = if field.is_some() && !receiver {
-            Some(self.object_record(state, register.expect("register receiver"), exit))
+            Some(self.object_record(state, register, exit))
         } else { None };
         let entry = self.entry.as_ref().expect("entry facts");
         if let Some(field) = field {
