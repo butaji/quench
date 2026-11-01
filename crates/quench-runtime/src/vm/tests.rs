@@ -20374,6 +20374,59 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
     }
 }
 
+#[test]
+fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
+    // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
+    // body. A string total makes `add` leave inside it, a double makes its int path
+    // leave, and swapping `add` makes the call's guard leave at the call itself.
+    let source = r#"(function () {
+      const LIMIT = 1000;
+      function Counter(n) { this.n = n; this.total = 0; this.calls = 0; }
+      Counter.prototype.add = function (k) {
+        this.calls = this.calls + 1;
+        this.total = this.total + k;
+        if (this.total > LIMIT) { this.total = this.total - LIMIT; }
+        return this.total;
+      };
+      Counter.prototype.step = function (k) {
+        const t = this.add(k);
+        return t + this.n;
+      };
+      const counters = [];
+      for (let i = 0; i < 6; i++) counters.push(new Counter(i));
+      let sum = 0;
+      for (let round = 0; round < 4000; round++) {
+        for (const c of counters) sum = (sum + c.step(round & 31)) % 1000003;
+        if (round === 1500) counters[2].total = "x";
+        if (round === 1501) counters[2].total = 0;
+        if (round === 2200) counters[3].total = 0.25;
+        if (round === 2201) counters[3].total = 0;
+        if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % LIMIT; return this.total; };
+      }
+      let calls = 0;
+      for (const c of counters) calls += c.calls;
+      globalThis.answer = sum + calls;
+    })();"#;
+    let program = Engine::specialize(source, "lane-inline.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let before = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+            let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(after > before, "the storing callee runs inlined in its caller's lane body");
+        }
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
 /// Lane bodies (`compiled/lane_region.rs`) run declined call-free methods on their lane
 /// activations' registers and leave at exact PCs: at unsupported records, at failed guards
 /// and at records that read the carried accumulator. Every result must equal the interpreter's.

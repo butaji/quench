@@ -862,7 +862,7 @@ fn inlinable(op: Op) -> bool {
 /// `instruction` with each register `register` renames, a `this` field base made the
 /// `this` register, and a jump target `target` renames; `None` for a field it cannot
 /// rename, or a register with flags.
-fn renamed(
+pub(super) fn renamed(
     instruction: WideInstruction,
     register: &dyn Fn(Register) -> Register,
     this: Register,
