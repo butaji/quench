@@ -14,6 +14,8 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 pub(super) const EVENT_SLOT: &str = "eventSlot";
 pub(super) const TARGET_SLOT: &str = "targetSlot";
 pub(super) const DETAIL_SLOT: &str = "detailSlot";
+/// A target's listener-count hook (`listener_hook`).
+pub(super) const LISTENER_HOOK_SLOT: &str = "listenerHookSlot";
 
 /// `Event.NONE` .. `Event.BUBBLING_PHASE`.
 const PHASES: [(&str, f64); 4] = [("NONE", 0.0), ("CAPTURING_PHASE", 1.0), ("AT_TARGET", 2.0), ("BUBBLING_PHASE", 3.0)];
@@ -47,6 +49,8 @@ mod record {
     pub(super) const PASSIVE: &str = "passive";
     pub(super) const RESIST: &str = "resistStopPropagation";
     pub(super) const REMOVED: &str = "removed";
+    /// A NodeEventTarget listener, which receives the event's value.
+    pub(super) const NODE_STYLE: &str = "nodeStyle";
 }
 
 pub(super) fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
@@ -654,15 +658,16 @@ struct ListenerOptions {
     passive: bool,
     resist: bool,
     signal: RootId,
+    node_style: bool,
 }
 
 fn listener_options(c: &mut Context<'_>, options: RootId) -> Result<ListenerOptions, RootedError> {
     let undefined = c.undefined();
     if let Some(capture) = c.rooted_value(options).and_then(|value| value.as_bool()) {
-        return Ok(ListenerOptions { once: false, capture, passive: false, resist: false, signal: undefined });
+        return Ok(ListenerOptions { once: false, capture, passive: false, resist: false, signal: undefined, node_style: false });
     }
     if is_nullish(c, options) {
-        return Ok(ListenerOptions { once: false, capture: false, passive: false, resist: false, signal: undefined });
+        return Ok(ListenerOptions { once: false, capture: false, passive: false, resist: false, signal: undefined, node_style: false });
     }
     if !is_object_like(c, options)? {
         return Err(super::util_shared_vm::argument_type_error(c, options, "options", "Object")?);
@@ -676,6 +681,7 @@ fn listener_options(c: &mut Context<'_>, options: RootId) -> Result<ListenerOpti
         passive: flag(c, options, "passive")?,
         resist: c.truthy_rooted(resist)?,
         signal: get(c, options, "signal")?,
+        node_style: false,
     };
     if !is_undefined(c, parsed.signal) && !super::abort_controller_shared_vm::is_abort_signal(c, parsed.signal)? {
         return Err(super::util_shared_vm::argument_type_error(c, parsed.signal, "options.signal", "AbortSignal")?);
@@ -758,6 +764,7 @@ fn add_listener(c: &mut Context<'_>, target: RootId, table: RootId, kind: RootId
     put_flag(c, entry, record::PASSIVE, options.passive)?;
     put_flag(c, entry, record::RESIST, options.resist)?;
     put_flag(c, entry, record::REMOVED, false)?;
+    put_flag(c, entry, record::NODE_STYLE, options.node_style)?;
     let root = match list_root(c, table, kind)? {
         Some(root) => root,
         None => {
@@ -788,12 +795,13 @@ fn add_listener(c: &mut Context<'_>, target: RootId, table: RootId, kind: RootId
     let size_value = c.number(size);
     put(c, root, record::SIZE, size_value)?;
     new_listener(c, target, size, kind)?;
+    listener_hook(c, target, kind, size)?;
     Ok(true)
 }
 
 /// Unlinks `entry` from its list (`Listener.remove`) and keeps the root's size; an emptied
 /// type leaves the table.
-fn remove_record(c: &mut Context<'_>, table: RootId, kind: RootId, root: RootId, entry: RootId) -> Result<(), RootedError> {
+fn remove_record(c: &mut Context<'_>, target: RootId, table: RootId, kind: RootId, root: RootId, entry: RootId) -> Result<(), RootedError> {
     let previous = get(c, entry, record::PREVIOUS)?;
     let next = get(c, entry, record::NEXT)?;
     if !is_undefined(c, previous) {
@@ -810,7 +818,7 @@ fn remove_record(c: &mut Context<'_>, table: RootId, kind: RootId, root: RootId,
     if size == 0.0 {
         c.delete_property_rooted(table, kind)?;
     }
-    Ok(())
+    listener_hook(c, target, kind, size)
 }
 
 /// `addEventListener(type, listener, options)`.
@@ -837,7 +845,7 @@ pub(crate) fn add_event_listener(c: &mut Context<'_>, receiver: RootId, args: &[
         let capture = c.boolean(options.capture);
         let registration = c.array_rooted(&[receiver, kind, listener, capture])?;
         let remover = c.host_function_with_data(crate::host::shared_vm::operation("eventTargetSignalRemove"), registration)?;
-        let signal_options = ListenerOptions { once: true, capture: false, passive: false, resist: true, signal: c.undefined() };
+        let signal_options = ListenerOptions { once: true, capture: false, passive: false, resist: true, signal: c.undefined(), node_style: false };
         let signal_table = target_table(c, options.signal)?;
         let abort = c.string_rooted("abort");
         add_listener(c, options.signal, signal_table, abort, remover, &signal_options)?;
@@ -864,7 +872,7 @@ fn remove_listener(c: &mut Context<'_>, target: RootId, kind: RootId, listener: 
     for entry in records(c, root)? {
         let same = get(c, entry, record::LISTENER)?;
         if c.strict_equal_rooted(same, listener)? && flag(c, entry, record::CAPTURE)? == capture {
-            remove_record(c, table, kind, root, entry)?;
+            remove_record(c, target, table, kind, root, entry)?;
             break;
         }
     }
@@ -943,7 +951,7 @@ pub(super) fn dispatch(c: &mut Context<'_>, target: RootId, event: RootId, state
             continue;
         }
         if flag(c, handler, record::ONCE)? {
-            remove_record(c, table, kind, root, handler)?;
+            remove_record(c, target, table, kind, root, handler)?;
         }
         let listener = get(c, handler, record::LISTENER)?;
         let passive = flag(c, handler, record::PASSIVE)?;
@@ -1066,7 +1074,7 @@ pub(super) fn add_host_listener(c: &mut Context<'_>, target: RootId, kind: &str,
     let table = target_table(c, target)?;
     let kind = c.string_rooted(kind);
     let undefined = c.undefined();
-    let options = ListenerOptions { once, capture: false, passive: false, resist, signal: undefined };
+    let options = ListenerOptions { once, capture: false, passive: false, resist, signal: undefined, node_style: false };
     add_listener(c, target, table, kind, listener, &options)?;
     Ok(())
 }
@@ -1084,5 +1092,245 @@ pub(super) fn adjust_size(c: &mut Context<'_>, target: RootId, kind: &str, delta
     if delta > 0.0 {
         new_listener(c, target, size, kind_value)?;
     }
+    Ok(())
+}
+
+/// The `NodeEventTarget` class (lib/internal/event_target.js): an EventTarget with
+/// EventEmitter-style methods, whose Node-style listeners receive an event's value rather
+/// than the event. Built once.
+pub(crate) fn node_event_target(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0builtin:NodeEventTarget", |c| {
+        let data = super::events_shared_vm::event_family(c)?;
+        let base = get(c, data, "eventTargetCtor")?;
+        let class = c.host_constructor_named(crate::host::shared_vm::operation("nodeEventTargetConstructor"), "NodeEventTarget")?;
+        c.set_prototype_rooted(class, base)?;
+        let prototype = get(c, class, "prototype")?;
+        let base_prototype = get(c, base, "prototype")?;
+        c.set_prototype_rooted(prototype, base_prototype)?;
+        install_members(c, prototype, &NODE_TARGET_MEMBERS, false)?;
+        c.define_named_data_property_rooted(class, "prototype", prototype, false, false, false)?;
+        Ok(class)
+    })
+}
+
+/// `NodeEventTarget.prototype`'s methods in Node's order; data is a `NodeMethod`.
+const NODE_TARGET_MEMBERS: [Member; 11] = [
+    Member::Method("setMaxListeners", "nodeEventTargetMethod", NodeMethod::SetMaxListeners as u8 as f64),
+    Member::Method("getMaxListeners", "nodeEventTargetMethod", NodeMethod::GetMaxListeners as u8 as f64),
+    Member::Method("eventNames", "nodeEventTargetMethod", NodeMethod::EventNames as u8 as f64),
+    Member::Method("listenerCount", "nodeEventTargetMethod", NodeMethod::ListenerCount as u8 as f64),
+    Member::Method("off", "nodeEventTargetMethod", NodeMethod::Off as u8 as f64),
+    Member::Method("removeListener", "nodeEventTargetMethod", NodeMethod::Off as u8 as f64),
+    Member::Method("on", "nodeEventTargetMethod", NodeMethod::On as u8 as f64),
+    Member::Method("addListener", "nodeEventTargetMethod", NodeMethod::On as u8 as f64),
+    Member::Method("emit", "nodeEventTargetMethod", NodeMethod::Emit as u8 as f64),
+    Member::Method("once", "nodeEventTargetMethod", NodeMethod::Once as u8 as f64),
+    Member::Method("removeAllListeners", "nodeEventTargetMethod", NodeMethod::RemoveAllListeners as u8 as f64),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum NodeMethod {
+    SetMaxListeners,
+    GetMaxListeners,
+    EventNames,
+    ListenerCount,
+    Off,
+    On,
+    Emit,
+    Once,
+    RemoveAllListeners,
+}
+
+impl NodeMethod {
+    const ALL: [NodeMethod; 9] = [
+        NodeMethod::SetMaxListeners,
+        NodeMethod::GetMaxListeners,
+        NodeMethod::EventNames,
+        NodeMethod::ListenerCount,
+        NodeMethod::Off,
+        NodeMethod::On,
+        NodeMethod::Emit,
+        NodeMethod::Once,
+        NodeMethod::RemoveAllListeners,
+    ];
+}
+
+/// `new NodeEventTarget()`.
+pub(crate) fn node_event_target_constructor(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    event_target_constructor(c, receiver, args)
+}
+
+/// Makes `object` a NodeEventTarget instance's state, as its constructor would.
+pub(crate) fn initialize_node_target(c: &mut Context<'_>, object: RootId) -> Result<(), RootedError> {
+    let data = api(c)?;
+    let maximum = get(c, data, "defaultMaxListeners")?;
+    initialize_target(c, object, maximum)
+}
+
+/// The listener count of `kind` on `target`.
+pub(crate) fn listener_count(c: &mut Context<'_>, target: RootId, kind: RootId) -> Result<f64, RootedError> {
+    let table = receiver_slot(c, target, TARGET_SLOT, "NodeEventTarget")?;
+    match list_root(c, table, kind)? {
+        Some(root) => {
+            let size = get(c, root, record::SIZE)?;
+            c.to_number(size)
+        }
+        None => Ok(0.0),
+    }
+}
+
+/// The NodeEventTarget methods, by their `NodeMethod` data.
+pub(crate) fn node_event_target_method(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let index = c.to_number(data)? as usize;
+    let method = NodeMethod::ALL[index.min(NodeMethod::ALL.len() - 1)];
+    let table = receiver_slot(c, receiver, TARGET_SLOT, "NodeEventTarget")?;
+    let first = argument(c, args, 0);
+    match method {
+        NodeMethod::SetMaxListeners => {
+            let api = api(c)?;
+            let key = get(c, api, "maxKey")?;
+            c.define_data_property_rooted(receiver, key, first, true, true, true)?;
+            Ok(c.undefined())
+        }
+        NodeMethod::GetMaxListeners => {
+            let api = api(c)?;
+            let key = get(c, api, "maxKey")?;
+            c.get_property_rooted(receiver, key)
+        }
+        NodeMethod::EventNames => {
+            let keys = c.own_keys_rooted(table)?;
+            c.array_rooted(&keys)
+        }
+        NodeMethod::ListenerCount => {
+            let kind = to_dom_string(c, first)?;
+            let count = listener_count(c, receiver, kind)?;
+            Ok(c.number(count))
+        }
+        NodeMethod::Off => {
+            let listener = argument(c, args, 1);
+            if listener_registers(c, listener)? {
+                let kind = to_dom_string(c, first)?;
+                remove_listener(c, receiver, kind, listener, false)?;
+            }
+            Ok(receiver)
+        }
+        NodeMethod::On | NodeMethod::Once => {
+            let listener = argument(c, args, 1);
+            let options = argument(c, args, 2);
+            let mut options = listener_options(c, options)?;
+            options.node_style = true;
+            options.once |= method == NodeMethod::Once;
+            if listener_registers(c, listener)? {
+                let kind = to_dom_string(c, first)?;
+                add_listener(c, receiver, table, kind, listener, &options)?;
+            }
+            Ok(receiver)
+        }
+        NodeMethod::Emit => {
+            if c.string_text(first)?.is_none() {
+                return Err(super::util_shared_vm::argument_type_error(c, first, "type", "string")?);
+            }
+            let had_listeners = listener_count(c, receiver, first)? > 0.0;
+            let value = argument(c, args, 1);
+            let make_event = |c: &mut Context<'_>| {
+                let data = api(c)?;
+                let event = get(c, data, "eventCtor")?;
+                c.construct_rooted(event, event, &[first])
+            };
+            hybrid_dispatch(c, receiver, value, first, None, &make_event)?;
+            Ok(c.boolean(had_listeners))
+        }
+        NodeMethod::RemoveAllListeners => {
+            let keys = if is_undefined(c, first) { c.own_keys_rooted(table)? } else { vec![to_dom_string(c, first)?] };
+            for key in keys {
+                c.delete_property_rooted(table, key)?;
+            }
+            Ok(receiver)
+        }
+    }
+}
+
+/// `kHybridDispatch(nodeValue, type, event)`: walks `kind`'s listeners as `dispatch` does;
+/// Node-style ones receive `node_value`, DOM ones the event, which `make_event` makes on
+/// first need when none is given.
+pub(crate) fn hybrid_dispatch(
+    c: &mut Context<'_>,
+    target: RootId,
+    node_value: RootId,
+    kind: RootId,
+    event: Option<RootId>,
+    make_event: &dyn Fn(&mut Context<'_>) -> Result<RootId, RootedError>,
+) -> Result<(), RootedError> {
+    let table = receiver_slot(c, target, TARGET_SLOT, "EventTarget")?;
+    let Some(root) = list_root(c, table, kind)? else { return Ok(()) };
+    let mut event = match event {
+        Some(event) => Some(begin_dispatch(c, target, event)?),
+        None => None,
+    };
+    let mut handler = get(c, root, record::NEXT)?;
+    while !is_undefined(c, handler) {
+        let next = get(c, handler, record::NEXT)?;
+        let stopped = match event {
+            Some((_, state)) => flag(c, state, field::STOPPED)?,
+            None => false,
+        };
+        if flag(c, handler, record::REMOVED)? || (stopped && !flag(c, handler, record::RESIST)?) {
+            handler = next;
+            continue;
+        }
+        if flag(c, handler, record::ONCE)? {
+            remove_record(c, target, table, kind, root, handler)?;
+        }
+        let argument = if flag(c, handler, record::NODE_STYLE)? {
+            node_value
+        } else {
+            let (made, _) = match event {
+                Some(pair) => pair,
+                None => {
+                    let made = make_event(c)?;
+                    let pair = begin_dispatch(c, target, made)?;
+                    event = Some(pair);
+                    pair
+                }
+            };
+            made
+        };
+        let listener = get(c, handler, record::LISTENER)?;
+        match invoke(c, target, listener, argument) {
+            Ok(result) => report_rejection(c, result)?,
+            Err(error) => {
+                let Some(reason) = error.exception else { return Err(error) };
+                queue_uncaught(c, reason)?;
+            }
+        }
+        handler = next;
+    }
+    if let Some((_, state)) = event {
+        put_flag(c, state, field::DISPATCHING, false)?;
+    }
+    Ok(())
+}
+
+/// An event entering dispatch at `target`: `(event, its state)`.
+fn begin_dispatch(c: &mut Context<'_>, target: RootId, event: RootId) -> Result<(RootId, RootId), RootedError> {
+    let state = receiver_slot(c, event, EVENT_SLOT, "Event")?;
+    put(c, state, field::TARGET, target)?;
+    put_flag(c, state, field::DISPATCHING, true)?;
+    Ok((event, state))
+}
+
+/// A target's listener hook (`kNewListener`/`kRemoveListener` overridden by
+/// `setupPortReferencing`): called with `(type, size)` after `kind`'s count changes.
+fn listener_hook(c: &mut Context<'_>, target: RootId, kind: RootId, size: f64) -> Result<(), RootedError> {
+    let data = api(c)?;
+    let key = get(c, data, LISTENER_HOOK_SLOT)?;
+    let hook = c.get_property_rooted(target, key)?;
+    if !c.is_callable_rooted(hook)? {
+        return Ok(());
+    }
+    let size = c.number(size);
+    c.call_rooted(hook, target, &[kind, size])?;
     Ok(())
 }

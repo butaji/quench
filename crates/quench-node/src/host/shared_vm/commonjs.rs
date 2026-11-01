@@ -944,7 +944,6 @@ pub(super) fn initialize_web_apis(
         context.call_rooted(expose_lazy_interfaces, undefined, &[global, id, keys])?;
     }
     crate::host::removed_javascript("node:bootstrap/shared-vm/web-apis.js")?;
-    crate::host::removed_javascript("node:bootstrap/shared-vm/broadcast-channel.js")?;
     // Keep the global constructor identical to Node's internal EventTarget
     // export. This is observable in Node's own global-surface assertions and
     // avoids a second, subtly incompatible CustomEvent implementation.
@@ -2855,16 +2854,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::InternalTimers => crate::modules::timers_shared_vm::internal_module(context),
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
-        BuiltinModule::WorkerThreads => {
-            let mut markers = Vec::new();
-            for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
-                let operation = context.host_function(super::operation(name))?;
-                let factory = crate::host::removed_javascript("node:worker_threads/marker.js")?;
-                let undefined = context.undefined();
-                markers.push((name, context.call_rooted(factory, undefined, &[operation])?));
-            }
-            crate::modules::worker_shared_vm::module(context, &markers)
-        }
+        BuiltinModule::WorkerThreads => crate::modules::worker_shared_vm::module(context),
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
         BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),

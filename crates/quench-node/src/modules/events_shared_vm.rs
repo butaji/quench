@@ -77,6 +77,7 @@ pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), Rooted
         super::event_target_shared_vm::EVENT_SLOT,
         super::event_target_shared_vm::TARGET_SLOT,
         super::event_target_shared_vm::DETAIL_SLOT,
+        super::event_target_shared_vm::LISTENER_HOOK_SLOT,
         super::abort_controller_shared_vm::SIGNAL_SLOT,
         super::abort_controller_shared_vm::CONTROLLER_SLOT,
         super::dom_exception_shared_vm::SLOT,
@@ -126,7 +127,7 @@ pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), Rooted
 }
 
 /// The globals the messaging installer defines, in definition order.
-pub(crate) const MESSAGING_GLOBALS: &[&str] = &["MessagePort", "MessageChannel"];
+pub(crate) const MESSAGING_GLOBALS: &[&str] = &["MessagePort", "MessageChannel", "BroadcastChannel"];
 /// The DOM event family's globals, in definition order, with the data member holding each.
 const EVENT_CLASSES: [(&str, &str); 6] = [
     ("DOMException", "domExceptionCtor"),

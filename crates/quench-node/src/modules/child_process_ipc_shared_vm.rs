@@ -716,9 +716,7 @@ pub(crate) fn send(
         }
         // Buffer writes always attempt a synchronous write first.
         Serialization::Advanced => {
-            let undefined = context.undefined();
-            let buffer = super::buffer_shared_vm::constructor(context, undefined, &[])?;
-            (super::ipc_serdes_shared_vm::serialize(context, message, buffer)?, true)
+            (super::ipc_serdes_shared_vm::serialize(context, message)?, true)
         }
     };
     // Node closes a sent handle once its frame is written unless `options.keepOpen`.

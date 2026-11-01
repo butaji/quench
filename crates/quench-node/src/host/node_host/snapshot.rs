@@ -94,7 +94,6 @@ impl SharedNodeState {
             unhandled_rejection_mode: _,
             output: _,
             stdout_output: _,
-            process_env_override: _,
             process_env_shared: _,
             module_require_trace_active: _,
             net_auto_select_family_attempt_timeout,

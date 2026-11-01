@@ -174,8 +174,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
-    /// Per-worker process.env snapshot, when Worker({ env }) supplied one.
-    pub(crate) process_env_override: Option<std::collections::HashMap<String, String>>,
     /// Whether this isolate participates in worker_threads.SHARE_ENV.
     pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
@@ -412,7 +410,6 @@ impl SharedNodeState {
             exec_argv: Vec::new(),
             cli_options: Default::default(),
             report_config: Default::default(),
-            process_env_override: None,
             process_env_shared: false,
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()

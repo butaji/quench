@@ -3308,6 +3308,7 @@ fn drain_shared_jobs(
             super::icu_binding_shared_vm::prune(runtime);
             super::net_reference_shared_vm::prune(runtime);
             super::contextify_shared_vm::prune(runtime);
+            super::serdes_shared_vm::prune(runtime).map_err(|error| rooted_error_message(runtime, program, error))?;
             let epoch = runtime.collection_epoch();
             let prune_promises = {
                 let shared = runtime.host_mut().shared_state();
