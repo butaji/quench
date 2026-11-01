@@ -2881,6 +2881,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         // Node's `_http_client` builds on its `http_parser` binding, which the native `http`
         // module does not use; until it is projected from it, it stays empty.
         BuiltinModule::Internal("_http_client") => context.object_rooted(),
+        BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
         // Every other such builtin is Node's own library module of that name.
         BuiltinModule::Internal(name) => {
             let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
@@ -2940,7 +2941,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Url => node_library_module(context, "url.js", "url.js"),
         BuiltinModule::Querystring => node_library_module(context, "querystring.js", "querystring.js"),
-        BuiltinModule::Readline => node_library_module(context, "readline.js", "readline.js"),
+        BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
         }
