@@ -56,13 +56,17 @@ function parseRss(stderr) {
   throw new Error("timing tool did not report maximum resident set size");
 }
 
+// Benchmarks measure a cold boot: Quench never restores a startup snapshot here, so its
+// rows pay the same builtin loading the peers pay (QUENCH_STARTUP_SNAPSHOT=off).
+const QUENCH_BENCH_ENV = { QUENCH_STARTUP_SNAPSHOT: "off" };
+
 function engineSpecs() {
   if (phase === "no-jit") {
     const specs = [
-      { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: {} },
+      { name: "quench-interpreter", binary: binaries.quench, args: [workload], env: { ...QUENCH_BENCH_ENV } },
     ];
     if (binaries.quenchControl) {
-      const controlEnv = {};
+      const controlEnv = { ...QUENCH_BENCH_ENV };
       if (process.env.QUENCH_CONTROL_GC_MAX_YOUNG) {
         controlEnv.QUENCH_GC_MAX_YOUNG = process.env.QUENCH_CONTROL_GC_MAX_YOUNG;
       }
@@ -77,10 +81,10 @@ function engineSpecs() {
     return specs;
   }
   const specs = [
-    { name: "quench-jit", binary: binaries.quench, args: ["--jit", workload], env: {} },
+    { name: "quench-jit", binary: binaries.quench, args: ["--jit", workload], env: { ...QUENCH_BENCH_ENV } },
   ];
   if (binaries.quenchControl) {
-    specs.push({ name: "quench-control-jit", binary: binaries.quenchControl, args: ["--jit", workload], env: {} });
+    specs.push({ name: "quench-control-jit", binary: binaries.quenchControl, args: ["--jit", workload], env: { ...QUENCH_BENCH_ENV } });
   }
   specs.push(
     { name: "node-jit", binary: binaries.node, args: [workload], env: {} },
@@ -235,6 +239,7 @@ async function runOne(spec, round) {
       QUENCH_BENCH_WARMUPS: env.QUENCH_BENCH_WARMUPS ?? "250",
       ...Object.fromEntries([
         "QUENCH_MEMORY_POLICY",
+        "QUENCH_STARTUP_SNAPSHOT",
         "QUENCH_GC_YOUNG",
         "QUENCH_GC_YOUNG_NUM",
         "QUENCH_GC_YOUNG_DEN",

@@ -38,6 +38,12 @@ const OPENSSL_FIELD_MASK: u64 = 0xff;
 /// The linker that applies a symbol order.
 const ORDERING_LINKER: &str = "ld.lld";
 
+/// Set to `off` to link without the trained symbol order: a build whose code layout owes
+/// nothing to a recorded profile (no PGO, BOLT or ordering), for measurements of source
+/// changes alone.
+const LINK_ORDER_ENV: &str = "QUENCH_LINK_ORDER";
+const LINK_ORDER_OFF: &str = "off";
+
 fn on_path(program: &str) -> bool {
     env::var_os("PATH")
         .is_some_and(|paths| env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
@@ -66,6 +72,7 @@ fn main() {
     println!("cargo:rerun-if-changed={X86_64_LINUX_ORDER}");
     println!("cargo:rerun-if-changed={X86_64_LINUX_STATIC_ORDER}");
     println!("cargo:rerun-if-changed={NODE_API_DYNAMIC_LIST}");
+    println!("cargo:rerun-if-env-changed={LINK_ORDER_ENV}");
     println!("cargo:rustc-check-cfg=cfg(quench_openssl_engine)");
     println!("cargo:rerun-if-env-changed=DEP_OPENSSL_CONF");
     let configuration = std::env::var("DEP_OPENSSL_CONF").unwrap_or_default();
@@ -106,6 +113,7 @@ fn main() {
         && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
         && order.is_file()
         && on_path(ORDERING_LINKER)
+        && env::var_os(LINK_ORDER_ENV).is_none_or(|value| value != LINK_ORDER_OFF)
     {
         println!("cargo:rustc-link-arg-bins=-fuse-ld=lld");
         println!(
