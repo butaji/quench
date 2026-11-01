@@ -118,6 +118,8 @@ pub(crate) struct Parser {
     buffer: Vec<u8>,
     /// The unconsumed bytes of earlier inputs at the start of the current one.
     carried: usize,
+    /// The bytes of the current input consumed so far.
+    consumed: usize,
     /// The largest head, in bytes.
     max_header_size: usize,
     /// The method of the request a response answers: a `HEAD` response has no body.
@@ -133,6 +135,7 @@ impl Parser {
             state: State::Head,
             buffer: Vec::new(),
             carried: 0,
+            consumed: 0,
             max_header_size,
             head_request: false,
             started: None,
@@ -149,6 +152,7 @@ impl Parser {
 
     pub(crate) fn push(&mut self, bytes: &[u8]) {
         self.carried = self.buffer.len();
+        self.consumed = 0;
         self.buffer.extend_from_slice(bytes);
     }
 
@@ -169,11 +173,12 @@ impl Parser {
 
     fn fail(&mut self, (code, reason): Failure, position: usize) -> ParseError {
         self.state = State::Failed;
-        ParseError { code, reason, bytes_parsed: position.saturating_sub(self.carried) }
+        ParseError { code, reason, bytes_parsed: self.consumed + position.saturating_sub(self.carried) }
     }
 
     fn consume(&mut self, count: usize) {
         self.buffer.drain(..count);
+        self.consumed += count.saturating_sub(self.carried);
         self.carried = self.carried.saturating_sub(count);
     }
 
@@ -286,10 +291,14 @@ impl Parser {
         };
         let head_length = end + HEAD_END.len();
         if head_length > self.max_header_size {
-            return Err(self.fail(failure::HEADER_OVERFLOW, head_length));
+            // llhttp counts a head's size as each line ends: the first line past the limit.
+            let position = line_ends(&self.buffer[..end])
+                .find(|&line_end| line_end > self.max_header_size)
+                .map_or(head_length, |line_end| line_end + 1);
+            return Err(self.fail(failure::HEADER_OVERFLOW, position));
         }
         let parsed = parse_head(self.kind, &self.buffer[..end]);
-        let (head, framing) = match parsed.and_then(|head| self.framing(head)) {
+        let (head, framing) = match parsed.and_then(|(head, offsets)| self.framing(head, &offsets)) {
             Ok(value) => value,
             Err((failure, position)) => return Err(self.fail(failure, position)),
         };
@@ -320,23 +329,28 @@ impl Parser {
     }
 
     /// The head's body framing and connection persistence, per llhttp.
-    fn framing(&self, mut head: Head) -> Result<(Head, Framing), (Failure, usize)> {
+    /// `offsets` holds where each header's value starts, the position llhttp reports a
+    /// header's framing failure at.
+    fn framing(&self, mut head: Head, offsets: &[usize]) -> Result<(Head, Framing), (Failure, usize)> {
         let mut content_length = None;
         let mut transfer_encoding: Option<String> = None;
         let mut connection_close = false;
         let mut connection_keep_alive = false;
         let mut connection_upgrade = false;
         let mut upgrade_header = false;
-        for (name, value) in &head.headers {
+        let mut framing_at = 0;
+        for ((name, value), &at) in head.headers.iter().zip(offsets) {
             if name.eq_ignore_ascii_case("content-length") {
                 if content_length.is_some() {
-                    return Err((failure::DUPLICATE_CONTENT_LENGTH, 0));
+                    return Err((failure::DUPLICATE_CONTENT_LENGTH, at));
                 }
                 if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return Err((failure::INVALID_CONTENT_LENGTH, 0));
+                    return Err((failure::INVALID_CONTENT_LENGTH, at));
                 }
-                content_length = Some(value.parse::<usize>().map_err(|_| (failure::INVALID_CONTENT_LENGTH, 0))?);
+                content_length = Some(value.parse::<usize>().map_err(|_| (failure::INVALID_CONTENT_LENGTH, at))?);
+                framing_at = framing_at.max(at);
             } else if name.eq_ignore_ascii_case("transfer-encoding") {
+                framing_at = framing_at.max(at);
                 match &mut transfer_encoding {
                     Some(existing) => {
                         existing.push(',');
@@ -358,10 +372,10 @@ impl Parser {
             value.rsplit(',').next().is_some_and(|last| last.trim().eq_ignore_ascii_case("chunked"))
         });
         if transfer_encoding.is_some() && content_length.is_some() {
-            return Err((failure::TRANSFER_ENCODING_WITH_LENGTH, 0));
+            return Err((failure::TRANSFER_ENCODING_WITH_LENGTH, framing_at));
         }
         if self.kind == Kind::Request && transfer_encoding.is_some() && !chunked {
-            return Err((failure::INVALID_TRANSFER_ENCODING, 0));
+            return Err((failure::INVALID_TRANSFER_ENCODING, framing_at));
         }
         head.upgrade = match self.kind {
             Kind::Request => (connection_upgrade && upgrade_header) || head.method == "CONNECT",
@@ -386,20 +400,21 @@ impl Parser {
     }
 
     fn chunk_size(&mut self) -> Result<Option<Event>, ParseError> {
-        let Some(end) = find(&self.buffer, CRLF) else {
-            if self.buffer.iter().any(|&byte| !is_chunk_size_line_byte(byte)) {
-                return Err(self.fail(failure::INVALID_CHUNK_SIZE, 0));
-            }
+        let line_end = find(&self.buffer, CRLF);
+        let line = &self.buffer[..line_end.unwrap_or(self.buffer.len())];
+        let digits_end = line.iter().position(|&byte| byte == b';').unwrap_or(line.len());
+        let invalid = line[..digits_end].iter().position(|byte| !byte.is_ascii_hexdigit());
+        if let Some(position) = invalid.or((line_end.is_some() && digits_end == 0).then_some(0)) {
+            return Err(self.fail(failure::INVALID_CHUNK_SIZE, position));
+        }
+        let Some(end) = line_end else {
             return Ok(None);
         };
-        let line = &self.buffer[..end];
-        let digits = line.split(|&byte| byte == b';').next().unwrap_or_default();
-        let size = std::str::from_utf8(digits)
+        let Some(size) = std::str::from_utf8(&line[..digits_end])
             .ok()
-            .filter(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .and_then(|digits| usize::from_str_radix(digits, CHUNK_SIZE_RADIX).ok());
-        let Some(size) = size else {
-            return Err(self.fail(failure::INVALID_CHUNK_SIZE, end));
+            .and_then(|digits| usize::from_str_radix(digits, CHUNK_SIZE_RADIX).ok())
+        else {
+            return Err(self.fail(failure::INVALID_CHUNK_SIZE, digits_end));
         };
         self.consume(end + CRLF.len());
         self.state = if size == 0 { State::Trailers } else { State::ChunkData(size) };
@@ -415,9 +430,9 @@ impl Parser {
         let Some(end) = find(&self.buffer, HEAD_END) else {
             return Ok(None);
         };
-        let trailers = match header_lines(&self.buffer[..end]) {
-            Ok(trailers) => trailers,
-            Err(failure) => return Err(self.fail(failure, end)),
+        let trailers = match header_lines(&self.buffer[..end], 0) {
+            Ok(lines) => lines.into_iter().map(|(header, _)| header).collect(),
+            Err((failure, position)) => return Err(self.fail(failure, position)),
         };
         self.consume(end + HEAD_END.len());
         self.state = State::Head;
@@ -435,10 +450,6 @@ pub(crate) fn is_informational(status: u16) -> bool {
     INFORMATIONAL.contains(&status)
 }
 
-fn is_chunk_size_line_byte(byte: u8) -> bool {
-    byte != b'\n'
-}
-
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
@@ -448,7 +459,8 @@ fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|&byte| char::from(byte)).collect()
 }
 
-fn parse_head(kind: Kind, bytes: &[u8]) -> Result<Head, (Failure, usize)> {
+/// The head and where each of its header values starts.
+fn parse_head(kind: Kind, bytes: &[u8]) -> Result<(Head, Vec<usize>), (Failure, usize)> {
     let line_end = find(bytes, CRLF).unwrap_or(bytes.len());
     let line = &bytes[..line_end];
     let mut head = Head {
@@ -485,9 +497,11 @@ fn parse_head(kind: Kind, bytes: &[u8]) -> Result<Head, (Failure, usize)> {
             head.reason = latin1(third.unwrap_or_default());
         }
     }
-    let rest = bytes.get(line_end + CRLF.len()..).unwrap_or_default();
-    head.headers = header_lines(rest).map_err(|failure| (failure, line_end))?;
-    Ok(head)
+    let start = line_end + CRLF.len();
+    let rest = bytes.get(start..).unwrap_or_default();
+    let (headers, offsets) = header_lines(rest, start)?.into_iter().unzip();
+    head.headers = headers;
+    Ok((head, offsets))
 }
 
 /// `HTTP/<digit>.<digit>`.
@@ -501,47 +515,55 @@ fn version_of(bytes: &[u8]) -> Result<(u8, u8), (Failure, usize)> {
     }
 }
 
-/// Header lines `name: value`, each value without its surrounding whitespace.
-fn header_lines(bytes: &[u8]) -> Result<Vec<(String, String)>, Failure> {
+/// Header lines `name: value`, each value without its surrounding whitespace, with the
+/// position its value starts at; `base` is where `bytes` starts in the input.
+fn header_lines(bytes: &[u8], base: usize) -> Result<Vec<((String, String), usize)>, (Failure, usize)> {
     let mut headers = Vec::new();
     if bytes.is_empty() {
         return Ok(headers);
     }
-    for line in split_lines(bytes) {
-        if line.contains(&b'\r') || line.contains(&b'\n') {
-            return Err(failure::LF_EXPECTED);
+    for (start, line) in split_lines(bytes) {
+        let at = base + start;
+        if let Some(position) = line.iter().position(|&byte| byte == b'\r' || byte == b'\n') {
+            return Err((failure::LF_EXPECTED, at + position));
         }
-        let Some(colon) = line.iter().position(|&byte| byte == b':') else {
-            return Err(failure::INVALID_HEADER_TOKEN);
+        let colon = line.iter().position(|&byte| byte == b':');
+        let name = &line[..colon.unwrap_or(line.len())];
+        let invalid = name.iter().position(|&byte| !is_http_token_char(char::from(byte)));
+        let Some(colon) = colon.filter(|_| invalid.is_none() && !name.is_empty()) else {
+            return Err((failure::INVALID_HEADER_TOKEN, at + invalid.unwrap_or(name.len())));
         };
-        let name = &line[..colon];
-        if name.is_empty() || !name.iter().all(|&byte| is_http_token_char(char::from(byte))) {
-            return Err(failure::INVALID_HEADER_TOKEN);
-        }
+        let value_at = at + colon + 1;
         let value = trim_whitespace(&line[colon + 1..]);
-        if value.iter().any(|&byte| byte != b'\t' && (byte < b' ' || byte == 0x7f)) {
-            return Err(failure::INVALID_HEADER_VALUE);
+        if let Some(position) = value.iter().position(|&byte| byte != b'\t' && (byte < b' ' || byte == 0x7f)) {
+            return Err((failure::INVALID_HEADER_VALUE, value_at + position));
         }
-        headers.push((latin1(name), latin1(value)));
+        headers.push(((latin1(name), latin1(value)), value_at));
     }
     Ok(headers)
 }
 
-fn split_lines(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut rest = Some(bytes);
+/// The lines of `bytes`, each with where it starts.
+fn split_lines(bytes: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
+    let mut rest = Some((0, bytes));
     std::iter::from_fn(move || {
-        let current = rest?;
+        let (start, current) = rest?;
         match find(current, CRLF) {
             Some(end) => {
-                rest = Some(&current[end + CRLF.len()..]);
-                Some(&current[..end])
+                rest = Some((start + end + CRLF.len(), &current[end + CRLF.len()..]));
+                Some((start, &current[..end]))
             }
             None => {
                 rest = None;
-                Some(current)
+                Some((start, current))
             }
         }
     })
+}
+
+/// Where each line of `bytes` ends.
+fn line_ends(bytes: &[u8]) -> impl Iterator<Item = usize> + '_ {
+    split_lines(bytes).map(|(start, line)| start + line.len())
 }
 
 fn trim_whitespace(bytes: &[u8]) -> &[u8] {
