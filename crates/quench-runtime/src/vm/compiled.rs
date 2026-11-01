@@ -15437,6 +15437,26 @@ mod tests {
     use super::*;
     use crate::bytecode::Op;
 
+    #[test]
+    fn direct_boolean_bitwise_entry_guards_non_int32_numbers() {
+        let program = crate::Engine::specialize(
+            "function flags(value) { if ((value & 1) !== 0) return true; return false; }",
+            "direct-bitwise-guard.js",
+        ).unwrap();
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == "flags")
+        }).unwrap() as u32;
+        let artifact = super::super::js_compiled::compile(&program, function).unwrap();
+        let compiled = CompiledJsFunction::from_artifact(artifact).unwrap();
+        assert!(compiled.direct_callable());
+        let interrupt = crate::ExecutionInterrupt::default();
+        assert!(matches!(direct_call(&compiled, &[Value::number(1.0)], &interrupt),
+            Some(CompiledJsCallResult::Value(Value::TRUE))));
+        assert!(direct_call(&compiled, &[Value::number(1.5)], &interrupt).is_none());
+        assert!(direct_call(&compiled, &[Value::number(4_294_967_297.0)], &interrupt).is_none());
+    }
+
     #[cfg(feature = "aot")]
     fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
         let program = crate::Engine::specialize(source, "semantic-entry.js").unwrap();

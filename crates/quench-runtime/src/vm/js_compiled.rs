@@ -2695,7 +2695,7 @@ fn compile_number_domain_boolean_tree(
     Some(JsJitArtifact {
         code,
         params,
-        requires_signed_int32_arguments: false,
+        requires_signed_int32_arguments: has_int32_bitwise_candidate(program, function),
         result: JsJitResultKind::Boolean,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
