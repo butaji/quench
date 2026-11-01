@@ -1989,7 +1989,7 @@ fn record_receivers_cache_virtual_names_and_inherited_fields_like_ordinary_cells
         "a prototype-held `size` read on a record receiver filled a holder entry"
     );
     assert!(
-        !vm.inherited_field_caches.is_empty(),
+        vm.heap.dependencies().inherited_count() > 0,
         "a field two prototypes above a record receiver filled the inherited cache"
     );
 }
@@ -14198,6 +14198,36 @@ print(total + " " + w.arr.slice(35, 50).join(","));
         if compiles {
             assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
         }
+    }
+}
+
+#[test]
+fn inherited_field_proofs_retire_when_a_prototype_on_the_chain_changes() {
+    // An inherited read proved through `B.prototype` to `A.prototype` (`Dependencies::
+    // prove_inherited`) must see a property `B.prototype` gains, and a new prototype it
+    // takes, each of which retires the proof held across the warm loop.
+    let source = r#"
+(function () {
+function A() {} A.prototype.m = function () { return 1; };
+function C() {} C.prototype.m = function () { return 5; };
+function B() {} B.prototype = Object.create(A.prototype);
+var b = new B(), s = 0;
+for (var q = 0; q < 3000; q++) s += b.m();
+B.prototype.m = function () { return 3; };
+for (var q = 0; q < 3000; q++) s += b.m();
+delete B.prototype.m;
+Object.setPrototypeOf(B.prototype, C.prototype);
+for (var q = 0; q < 3000; q++) s += b.m();
+print(s);
+})();
+"#;
+    let program = Engine::specialize(source, "inherited-field-proofs.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["27000"], "{mode:?}");
     }
 }
 

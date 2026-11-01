@@ -365,7 +365,6 @@ impl<H: Host> Vm<H> {
             call_targets: _,
             field_caches: _,
             inherited_field_indices: _,
-            inherited_field_caches: _,
             accessor_field_caches: _,
             field_add_indices: _,
             field_add_sets: _,
