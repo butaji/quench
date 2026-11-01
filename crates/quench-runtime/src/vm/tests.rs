@@ -20378,14 +20378,14 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
 fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
     // body. A string total makes `add` leave inside it, a double makes its int path
-    // leave, and swapping `add` makes the call's guard leave at the call itself.
+    // leave, and swapping `add` makes the call's guard leave at the call itself. The callee
+    // reads no capture: its environment is not its caller's.
     let source = r#"(function () {
-      const LIMIT = 1000;
       function Counter(n) { this.n = n; this.total = 0; this.calls = 0; }
       Counter.prototype.add = function (k) {
         this.calls = this.calls + 1;
         this.total = this.total + k;
-        if (this.total > LIMIT) { this.total = this.total - LIMIT; }
+        if (this.total > 1000) { this.total = this.total - 1000; }
         return this.total;
       };
       Counter.prototype.step = function (k) {
@@ -20401,7 +20401,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         if (round === 1501) counters[2].total = 0;
         if (round === 2200) counters[3].total = 0.25;
         if (round === 2201) counters[3].total = 0;
-        if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % LIMIT; return this.total; };
+        if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
       }
       let calls = 0;
       for (const c of counters) calls += c.calls;
