@@ -189,6 +189,10 @@ pub(crate) struct LoopRegion {
     dynamic_arrays: std::collections::BTreeSet<Register>,
     /// Existing own-data Number slots stored by the region, by offset from its header.
     field_stores: std::collections::BTreeMap<u32, usize>,
+    /// Own-data stores whose receiver the region redefines, by offset from its header: each
+    /// stores through the VM's cached store (`OSR_FIELD_STORE`), so every read of the same
+    /// name in the region reads the receiver's current slot (`dynamic_field_reads`).
+    dynamic_field_stores: std::collections::BTreeMap<u32, (crate::bytecode::Atom, u16)>,
     /// Receivers and cache sites whose flat slots are guarded before native entry.
     pub(crate) field_store_sites: Vec<FieldStore>,
     /// The registers that hold a field's value at every read (`held_registers`), with the
@@ -625,6 +629,18 @@ fn tagged_registers_with_failure(
                 .then_some(instruction.result_register())
         }))
         .chain(held.iter().copied())
+        // A store whose receiver the region redefines passes its receiver, and a value only
+        // field reads give (which may be an object), tagged to the VM's cached store
+        // (`LoopRegion::dynamic_field_stores`); a Number result is boxed at the store.
+        .chain(instructions.iter().filter(|instruction| {
+            matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
+                && instructions.iter().any(|candidate| candidate.defined_register() == Some(instruction.register_b()))
+        }).flat_map(|instruction| {
+            let value = instruction.register_a();
+            let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
+            let field_value = definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField);
+            std::iter::once(instruction.register_b()).chain(field_value.then_some(value))
+        }))
         .collect();
     loop {
         let before = tagged.len();
@@ -1700,7 +1716,7 @@ fn admit_lifetime_roles(
         tagged: Vec::new(), lifetime_roles: None, arrays: Vec::new(), captures: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
         dynamic_arrays: BTreeSet::new(),
-        field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
+        field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
         identity_branches: BTreeMap::new(), instructions, constants: BTreeMap::new(),
         tagged_constants: BTreeMap::new(), live, inlining: None,
     };
@@ -1915,6 +1931,7 @@ fn admit_register_roles(
     let mut field_reads = std::collections::BTreeMap::new();
     let mut dynamic_field_reads = std::collections::BTreeMap::new();
     let mut field_stores = std::collections::BTreeMap::new();
+    let mut dynamic_field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers: std::collections::BTreeSet<Register> = instructions
         .iter()
@@ -1955,6 +1972,22 @@ fn admit_register_roles(
             let receiver = instruction.register_b();
             let atom = instruction.atom_index();
             let cache_site = instruction.cache_site_index();
+            // A receiver the region redefines stores through the VM's cached store at the
+            // instruction; every read of its name must then read the current slot too.
+            if defined_registers.contains(&receiver) {
+                let current = |candidate: &WideInstruction| {
+                    field_path(*candidate, sites, &paths).is_some_and(|path| {
+                        path.steps.len() == 1
+                            && matches!(path.root, FieldReceiver::Register(register) if defined_registers.contains(&register))
+                    })
+                };
+                if instructions.iter().any(|candidate| {
+                    candidate.op() == Op::GetField && candidate.atom_index() == atom && !current(candidate)
+                }) {
+                    return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
+                }
+                dynamic_field_stores.insert(offset as u32, (atom, cache_site));
+            } else {
             // A cached read of this atom could otherwise keep using its entry value after a
             // native store. Be conservative about aliases: reject every same-name read in
             // this small region.
@@ -1987,6 +2020,7 @@ fn admit_register_roles(
                 field_store_sites.len() - 1
             });
             field_stores.insert(offset as u32, index);
+            }
         }
         // A field-resolved method call is owned by the existing inliner. Falling back to
         // the generic exact-PC gateway here would run its loop out of line and regress the
@@ -2138,6 +2172,7 @@ fn admit_register_roles(
         dynamic_field_reads,
         dynamic_arrays,
         field_stores,
+        dynamic_field_stores,
         field_store_sites,
         held,
         identity_branches,
@@ -2257,7 +2292,9 @@ fn admit(
         }
         Op::SetField | Op::SetFieldStrict => {
             let value_register = instruction.register_a();
-            if defined_registers.contains(&value_register) {
+            if tagged.contains(&value_register) {
+                admission.tagged(value_register)?;
+            } else if defined_registers.contains(&value_register) {
                 admission.number(value_register)?;
             } else {
                 // An unchanged entry value can be any tagged value. The VM logs the
@@ -6164,6 +6201,25 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 // found no prototype that holds an index (`LoopRegion::arrays`).
                 let bits = self.encoding(value);
                 self.body.builder.ins().store(flags(), bits, address, displacement);
+                self.fall_through(pc)
+            }
+            Op::SetField | Op::SetFieldStrict if let Some(&(atom, site)) = self.region.dynamic_field_stores.get(&(pc - self.region.header)) => {
+                let value = self.register(instruction.register_a());
+                let bits = self.boxed(value);
+                let receiver = self.register(instruction.register_b());
+                (receiver.representation == Representation::Tagged).then_some(())?;
+                let result = self.result;
+                self.body.builder.ins().store(flags(), bits, result, 0);
+                let operation = super::OSR_FIELD_STORE | (u64::from(atom) << super::OSR_FIELD_STORE_ATOM_SHIFT) | u64::from(site);
+                let operation = self.body.builder.ins().iconst(types::I64, operation as i64);
+                let context = self.body.core.context;
+                let call = self.body.builder.ins().call_indirect(
+                    self.callout_signature, self.callout,
+                    &[context, operation, receiver.value, result],
+                );
+                let status = self.body.builder.inst_results(call)[0];
+                let miss = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
+                self.guard(pc, miss);
                 self.fall_through(pc)
             }
             Op::SetField | Op::SetFieldStrict => {
