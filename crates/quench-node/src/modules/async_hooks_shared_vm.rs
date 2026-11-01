@@ -8,8 +8,10 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Runtime};
 use std::{cell::RefCell, rc::Rc};
 
-const ASYNC_ID: &str = "\0quench:async_hooks:id";
-const MANUAL_DESTROY: &str = "\0quench:async_hooks:manualDestroy";
+pub(super) const ASYNC_ID: &str = "\0quench:async_hooks:id";
+pub(super) const MANUAL_DESTROY: &str = "\0quench:async_hooks:manualDestroy";
+pub(super) const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
+const RESOURCE_TYPE: &str = "\0quench:async_hooks:type";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 
 /// Restore the default constructor trigger on normal, thrown, and reentrant
@@ -601,36 +603,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     {
         return Ok(module);
     }
-
-    let api = super::async_hook_registry_shared_vm::initialize(context)?;
-    let factory = crate::host::removed_javascript("node:async_hooks/shared.js")?;
-    let mut functions = [
-        "asyncResourceInit",
-        "asyncResourceEnterScope",
-        "asyncResourceExitScope",
-        "asyncResourceEmitDestroy",
-        "asyncLocalStorageInit",
-        "asyncLocalStorageEnterWith",
-        "asyncLocalStorageGetStore",
-        "asyncLocalStorageDisable",
-        "asyncLocalStorageRun",
-        "asyncHookInit",
-        "asyncHookEnable",
-        "asyncHookDisable",
-        "asyncExecutionId",
-        "asyncTriggerId",
-        "asyncExecutionResource",
-        "asyncHooksEnabled",
-        "asyncExternalInit",
-        "asyncDefaultTriggerScope",
-        "asyncGetDefaultTrigger",
-    ]
-    .map(|name| context.host_function_with_data(crate::host::shared_vm::operation(name), api))
-    .into_iter()
-    .collect::<Result<Vec<_>, _>>()?;
-    functions.push(super::util_shared_vm::symbols_binding(context)?);
-    let undefined = context.undefined();
-    let module = context.call_rooted(factory, undefined, &functions)?;
+    let module = super::async_hooks_module_shared_vm::build(context)?;
     let queue_destroy = context.host_function(crate::host::shared_vm::operation(
         "asyncQueueDestroyAsyncId",
     ))?;
@@ -847,13 +820,10 @@ pub(crate) fn initialize_resource(
     let id = identity.allocate_async_id();
     set_number(context, receiver, ASYNC_ID, id)?;
     let manual_destroy = context.boolean(manual_destroy);
-    context.assign_named_property_rooted(receiver, MANUAL_DESTROY, manual_destroy)?;
+    context.define_named_data_property_rooted(receiver, MANUAL_DESTROY, manual_destroy, true, false, true)?;
     let trigger_value = context.number(trigger as f64);
-    context.assign_named_property_rooted(receiver,
-        "\0quench:async_hooks:trigger",
-        trigger_value,
-    )?;
-    context.assign_named_property_rooted(receiver, "\0quench:async_hooks:type", kind)?;
+    context.define_named_data_property_rooted(receiver, TRIGGER_ID, trigger_value, true, false, true)?;
+    context.define_named_data_property_rooted(receiver, RESOURCE_TYPE, kind, true, false, true)?;
     {
         let mut state = state.borrow_mut();
         state.async_hooks.context_triggers.insert(id, trigger);
@@ -1096,9 +1066,7 @@ pub(crate) fn enter_with(
     receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(store) = args.first().copied() else {
-        return invalid_function(context, "store");
-    };
+    let store = args.first().copied().unwrap_or_else(|| context.undefined());
     let local_id = number_property(context, receiver, LOCAL_ID)?
         .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
     let store = context.retain(store)?;
@@ -1210,9 +1178,10 @@ pub(crate) fn get_store(
         let shared = shared.borrow();
         local_store(&shared.async_hooks, shared.async_hooks.identity.store_context(), local_id)
     };
-    let found = context.boolean(store.is_some());
-    let store = store.unwrap_or_else(|| context.undefined());
-    context.array_rooted(&[found, store])
+    match store {
+        Some(store) => Ok(store),
+        None => super::event_constructor_shared_vm::get(context, receiver, "defaultValue"),
+    }
 }
 
 pub(crate) fn disable_storage(
@@ -1245,10 +1214,10 @@ pub(crate) fn disable_storage(
     for store in released {
         context.release_root(store);
     }
-    Ok(receiver)
+    Ok(context.undefined())
 }
 
-fn number_property(
+pub(super) fn number_property(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
     name: &str,
@@ -1268,9 +1237,8 @@ fn set_number(
     name: &str,
     value: u64,
 ) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
     let value = context.number(value as f64);
-    if context.set_property_rooted(object, key, value, object)? {
+    if context.define_named_data_property_rooted(object, name, value, true, false, true)? {
         Ok(())
     } else {
         Err(RootedError::host(format!(

@@ -809,7 +809,6 @@ pub(crate) const WEB_API_GLOBALS: &[&str] = &[
     "__quenchBlobEnsureReadable",
     "Blob",
     "File",
-    "CustomEvent",
 ];
 pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
     "FormData",
@@ -1323,13 +1322,10 @@ fn require_for_module_inner(
             return Ok(module);
         }
         Some(BuiltinModule::Assert) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            return crate::modules::assert_shared_vm::module(context, util);
+            return crate::modules::assert_shared_vm::module(context);
         }
         Some(BuiltinModule::AssertStrict) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            let module = crate::modules::assert_shared_vm::module(context, util)?;
-            return get(context, module, "strict");
+            return crate::modules::assert_shared_vm::strict_module(context);
         }
         Some(BuiltinModule::Path) => {
             return crate::modules::path_shared_vm::module(context);
@@ -2208,22 +2204,8 @@ fn cached_builtin(
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
     // `fs` installs its library policy with the rest of its members (`initialize_module`).
-    if matches!(builtin, BuiltinModule::Crypto | BuiltinModule::Events) {
+    if matches!(builtin, BuiltinModule::Crypto) {
         let policy = context.with_startup_intrinsics(|context| {
-            if matches!(builtin, BuiltinModule::Events) {
-                let listener = get(context, module, "addAbortListener")?;
-                let data = context.array_rooted(&[module, listener])?;
-                let initialize = context.host_function_with_data(
-                    crate::host::shared_vm::operation("eventsOnInitialize"),
-                    data,
-                )?;
-                return context.define_lazy_data_properties_rooted(
-                    module,
-                    &["on"],
-                    true,
-                    initialize,
-                );
-            }
             let setter =
                 node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
             set(context, module, "setEngine", setter)
@@ -2254,24 +2236,6 @@ pub(crate) fn cached_native_binding(
         .builtin_cache
         .insert(key.to_owned(), retained);
     Ok(value)
-}
-
-pub(crate) fn events_on_initialize(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let module = get(context, data, "0")?;
-    let listener = get(context, data, "1")?;
-    // The pinned public policy uses the same native abort authority as events.
-    // Capture it before guest replacement of the public alias, and load policy
-    // only when `on` is observed, through the VM's ordinary data-property model.
-    let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
-    set(context, abort, "addAbortListener", listener)?;
-    let on = node_library_export(context, "events.js", "events.js", "on")?;
-    set(context, module, "on", on)?;
-    Ok(context.undefined())
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
@@ -2455,10 +2419,6 @@ pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError
 
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
-}
-
-pub(crate) fn console_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached_builtin(context, BuiltinModule::Console)
 }
 
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -4122,19 +4082,6 @@ fn load_with_resolution(
         }
         if library_relative == Some(Path::new("lib/diagnostics_channel.js")) {
             crate::modules::console_shared_vm::note_channels_loaded(context)?;
-        }
-        if library_relative == Some(Path::new("lib/internal/console/global.js")) {
-            // Node's bootstrap initializes the global console as it loads it; one loaded on
-            // first use binds its streams before any module writes to it.
-            let initialize = node_library_export(
-                context,
-                "internal/process/pre_execution.js",
-                "internal/console/constructor.js",
-                "initializeGlobalConsole",
-            )?;
-            let undefined = context.undefined();
-            context.call_rooted(initialize, undefined, &[exports])?;
-            crate::modules::console_shared_vm::adopt(context, module, exports)?;
         }
         let exports = get(context, module, "exports")?;
         if let Some(path) = library_relative {

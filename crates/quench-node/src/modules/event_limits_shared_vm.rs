@@ -192,7 +192,7 @@ pub(crate) fn global_get(
     Err(super::util_shared_vm::argument_type_error(
         context,
         target,
-        "emitterOrTarget",
+        "emitter",
         "EventEmitter or EventTarget",
     )?)
 }

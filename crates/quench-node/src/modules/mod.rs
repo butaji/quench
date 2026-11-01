@@ -3,10 +3,12 @@
 //! Shared-runtime adapters own guest-visible behavior. Neutral modules own
 //! data and host state that those adapters consume.
 
+mod assert_source;
 pub(crate) mod assert_shared_vm;
 pub(crate) mod napi;
 pub(crate) mod worker_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
+pub(crate) mod async_hooks_module_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod blob_binding_shared_vm;
@@ -29,6 +31,8 @@ pub(crate) mod child_process_stdio_shared_vm;
 #[cfg(unix)]
 pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
+pub(crate) mod console_class_shared_vm;
+pub(crate) mod console_format_shared_vm;
 pub(crate) mod console_shared_vm;
 pub(crate) mod contextify_shared_vm;
 #[cfg(quench_openssl_provider)]
@@ -51,7 +55,7 @@ pub(crate) mod event_constructor_shared_vm;
 pub(crate) mod event_emitter_shared_vm;
 pub(crate) mod event_limits_shared_vm;
 pub(crate) mod event_target_shared_vm;
-pub(crate) mod events_abort_shared_vm;
+pub(crate) mod events_once_shared_vm;
 pub(crate) mod events_shared_vm;
 pub(crate) mod fetch_shared_vm;
 pub(crate) mod fs_directory_shared_vm;
@@ -125,6 +129,7 @@ pub(crate) mod text_decoder_codec;
 #[cfg(quench_icu)]
 pub(crate) mod text_decoder_icu;
 pub(crate) mod text_decoder_shared_vm;
+pub(crate) mod timers_interval_shared_vm;
 pub(crate) mod timers_shared_vm;
 pub(crate) mod tls_shared_vm;
 pub(crate) mod tty_shared_vm;
@@ -186,9 +191,9 @@ pub(crate) mod crypto_provider_shared_vm;
 pub(crate) mod stream_binding;
 
 #[cfg(quench_openssl_provider)]
+pub(crate) mod deep_equal_shared_vm;
 pub(crate) mod dom_exception_shared_vm;
 
-pub(crate) mod events_weak_shared_vm;
 pub(crate) mod util_aborted_source_shared_vm;
 
 #[cfg(quench_openssl_provider)]
@@ -202,9 +207,8 @@ pub(crate) mod crypto_hash_shared_vm;
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_hash_source_shared_vm;
 
-pub(crate) mod abort_dependencies_shared_vm;
 
-pub(crate) mod abort_timeout_shared_vm;
+pub(crate) mod abort_controller_shared_vm;
 
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_argon2;

@@ -220,12 +220,8 @@ pub(crate) fn argument_value_error_units(
     reason: &str,
 ) -> Result<RootedError, RootedError> {
     const MAX_INSPECTED_VALUE_UNITS: usize = 128;
-    let inspect = internal_inspect(context)?;
-    let undefined = context.undefined();
-    let inspected = context.call_rooted(inspect, undefined, &[value])?;
-    let mut detail = context
-        .string_code_units(inspected)?
-        .ok_or_else(|| RootedError::host("inspect returned a non-string"))?;
+    let inspected = super::console_format_shared_vm::inspect(context, value, Default::default())?;
+    let mut detail = inspected.encode_utf16().collect::<Vec<_>>();
     if detail.len() > MAX_INSPECTED_VALUE_UNITS {
         detail.truncate(MAX_INSPECTED_VALUE_UNITS);
         detail.extend("...".encode_utf16());
@@ -293,14 +289,8 @@ pub(crate) fn argument_type_description(
                 "an instance of Object".to_owned()
             }
         } else {
-            let inspect = internal_inspect(context)?;
-            let options = context.null_object_rooted()?;
-            let depth = context.string_rooted("depth");
-            let shallow = context.number(-1.0);
-            context.define_data_property_rooted(options, depth, shallow, true, true, true)?;
-            let undefined = context.undefined();
-            let text = context.call_rooted(inspect, undefined, &[root, options])?;
-            context.to_string(text)?
+            let shallow = super::console_format_shared_vm::Options { depth: Some(-1.0), ..Default::default() };
+            super::console_format_shared_vm::inspect(context, root, shallow)?
         }
     } else {
         format!("type bigint ({}n)", context.to_string(root)?)
@@ -329,10 +319,7 @@ pub(crate) fn range_error_received(
             },
         );
     }
-    let inspect = internal_inspect(context)?;
-    let undefined = context.undefined();
-    let inspected = context.call_rooted(inspect, undefined, &[value])?;
-    let text = context.to_string(inspected)?;
+    let text = super::console_format_shared_vm::inspect(context, value, Default::default())?;
     if !context.is_object_rooted(value)? {
         if let Some(integer) = text.strip_suffix('n') {
             let magnitude = integer.strip_prefix('-').unwrap_or(integer);

@@ -431,13 +431,6 @@ pub(crate) fn constructor(
     context.host_function_data()
 }
 
-pub(crate) fn brand(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    Ok(context.boolean(true))
-}
 
 /// A coded error's `toString()`: `${name} [${code}]: ${message}`.
 pub(crate) fn to_string(
@@ -614,4 +607,13 @@ pub(crate) fn trigger_uncaught_exception(
 ) -> Result<RootId, RootedError> {
     super::process_fatal_exception_route::dispatch(context, this, args)?;
     Ok(context.undefined())
+}
+
+/// A coded error's brand getter (`kIsNodeError`): every coded error is one.
+pub(crate) fn brand(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.boolean(true))
 }

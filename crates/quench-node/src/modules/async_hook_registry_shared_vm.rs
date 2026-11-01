@@ -407,7 +407,7 @@ pub(super) fn emit(
     state.borrow_mut().async_hooks.registry.depth += 1;
     let result = (|| {
         let callback_key = key(context, api, kind)?;
-        for hook in super::events_shared_vm::listener_records(context, snapshot)? {
+        for hook in context.array_like_values_rooted(snapshot)? {
             let callback = context.get_property_rooted(hook, callback_key)?;
             if context.is_callable_rooted(callback)? {
                 let callback = context.get_property_rooted(hook, callback_key)?;
