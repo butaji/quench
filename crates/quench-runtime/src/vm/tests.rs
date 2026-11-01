@@ -14203,6 +14203,39 @@ print(total + " " + w.arr.slice(35, 50).join(","));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_elements_kinds_narrow_after_a_scan_and_widen_on_wider_stores() {
+    // `fill` makes holes before it fills them, which widens the kind; the reader's region
+    // narrows it back by one scan. `spoil` stores doubles in a region of its own, which widens
+    // the kind at its entry, so the reader compiled for `i32` elements must widen, not misread.
+    let source = r#"
+(function () {
+function fill(n) { var a = []; var i = n; while (--i >= 0) a[i] = i * 3; return a; }
+function sum(a, n) { var s = 0; for (var r = 0; r < 4; r++) for (var i = 0; i < n; i++) s = (s + (a[i] & 0xffff)) | 0; return s; }
+function spoil(a, n) { for (var i = 0; i < n; i++) a[i] = a[i] + 0.5; }
+var t = 0, a = fill(48);
+for (var q = 0; q < 2000; q++) t = (t + sum(a, 48)) | 0;
+spoil(a, 48);
+var after = 0;
+for (var q = 0; q < 2000; q++) after = (after + sum(a, 48)) | 0;
+for (var q = 0; q < 300; q++) { var b = fill(48); spoil(b, 48); after = (after + sum(b, 48)) | 0; }
+print(t + " " + after);
+})();
+"#;
+    let program = Engine::specialize(source, "osr-elements-kinds.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_bounded_entries_prove_products_and_widen_beyond_their_bound() {
     // `xh` is an `i32` the loop never writes, a factor of products with 14-bit values: a
     // bound checked at entry proves them exact. A later call's `xh` beyond that bound must

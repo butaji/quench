@@ -7182,7 +7182,7 @@ fn lane_loop_entry<H: Host>(
                 return None;
             }
             let elements = super::index::mutable_array_elements(elements);
-            entry.push_array(elements.as_mut_ptr(), elements.len(), elements.capacity())?;
+            entry.push_array(elements.native_values(), elements.len(), elements.capacity())?;
         } else {
             let elements = vm.heap.record_array(value)?.elements().as_slice();
             entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len())?;

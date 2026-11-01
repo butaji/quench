@@ -726,10 +726,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let elements = super::index::mutable_array_elements(elements);
-        let old = elements.as_mut_ptr();
+        let old = elements.native_values();
         let before = elements.capacity();
         elements.reserve(1);
-        let backing = elements.as_mut_ptr();
+        let backing = elements.native_values();
         let capacity = elements.capacity();
         self.heap.charge_payload_growth((capacity - before) * size_of::<Value>());
         Some((old, backing, length, capacity))
@@ -766,7 +766,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         if index < length {
-            super::index::mutable_array_elements(object.elements_mut())[index] = value;
+            super::index::mutable_array_elements(object.elements_mut()).set(index, value);
             return true;
         }
         self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
@@ -805,7 +805,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
-        super::index::mutable_array_elements(object.elements_mut())[index] = value;
+        super::index::mutable_array_elements(object.elements_mut()).set(index, value);
         true
     }
 

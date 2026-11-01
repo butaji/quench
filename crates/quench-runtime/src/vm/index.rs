@@ -461,7 +461,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements)[index] = value;
+        mutable_array_elements(elements).set(index, value);
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
         true
@@ -479,7 +479,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements)[index] = value;
+        mutable_array_elements(elements).set(index, value);
         if mapped {
             self.sync_mapped_argument(object, index, value);
         }
@@ -616,7 +616,7 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .array_write_ownership(elements.owner_count() != 1);
-            mutable_array_elements(elements)[index] = value;
+            mutable_array_elements(elements).set(index, value);
             self.sync_mapped_argument(object, index, value);
             return true;
         }

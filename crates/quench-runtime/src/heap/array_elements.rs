@@ -12,6 +12,34 @@ struct Header {
     owners: u32,
     len: u32,
     capacity: u32,
+    /// What every value of the backing is (`ElementsKind`), kept by each write: a kind only
+    /// widens while the backing lives, so code that checked it once at entry reads values
+    /// of that kind without checking each.
+    kind: u32,
+}
+
+/// What every value of an array backing is, as its header holds it. A wider kind admits
+/// every value a narrower one does; the empty backing is the narrowest.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ElementsKind {
+    /// Every value is an `i32` (`Value::as_int`).
+    Int32 = 0,
+    /// Any value.
+    Tagged = 1,
+}
+
+impl ElementsKind {
+    /// The narrowest kind that admits `value`.
+    #[inline(always)]
+    fn of(value: Value) -> Self {
+        if value.as_int().is_some() { Self::Int32 } else { Self::Tagged }
+    }
+
+    /// The narrowest kind that admits every value of `values`.
+    fn of_all(values: &[Value]) -> Self {
+        if values.iter().all(|value| value.as_int().is_some()) { Self::Int32 } else { Self::Tagged }
+    }
 }
 
 /// The values start right after the header, at their own alignment.
@@ -21,12 +49,16 @@ const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length: native code that
 /// appends within capacity advances the length there.
 pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
+/// The byte offset from a backing's first value to its `u32` kind (`ElementsKind`), which
+/// native code reads once at entry and widens where it may store a wider value.
+pub(crate) const KIND_FROM_VALUES: i32 = std::mem::offset_of!(Header, kind) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
     owners: 0,
     len: 0,
     capacity: 0,
+    kind: ElementsKind::Int32 as u32,
 };
 
 /// The smallest capacity a growing backing takes, as `Vec` grows from empty.
@@ -73,7 +105,7 @@ impl ArrayElements {
         if values.is_empty() {
             return Self::new();
         }
-        let elements = Self::allocate(values.len(), values.len());
+        let elements = Self::allocate(values.len(), values.len(), ElementsKind::of_all(values));
         // SAFETY: the new allocation holds `values.len()` slots after the header.
         unsafe {
             std::ptr::copy_nonoverlapping(values.as_ptr(), elements.values(), values.len());
@@ -92,12 +124,15 @@ impl ArrayElements {
         if len == 0 {
             return Self::new();
         }
-        let elements = Self::allocate(len, len);
+        let mut elements = Self::allocate(len, len, ElementsKind::Int32);
+        let mut kind = ElementsKind::Int32;
         for slot in 0..len {
             let written = value(slot);
+            kind = kind.max(ElementsKind::of(written));
             // SAFETY: the new allocation holds `len` slots after the header.
             unsafe { elements.values().add(slot).write(written) };
         }
+        elements.set_kind(kind);
         elements
     }
 
@@ -109,8 +144,9 @@ impl ArrayElements {
         .expect("array backing overflow")
     }
 
-    /// A backing of one owner with room for `capacity` values, the first `len` uninitialized.
-    fn allocate(capacity: usize, len: usize) -> Self {
+    /// A backing of one owner with room for `capacity` values, the first `len` uninitialized,
+    /// of the `kind` its writer gives them.
+    fn allocate(capacity: usize, len: usize, kind: ElementsKind) -> Self {
         debug_assert!(capacity > 0 && len <= capacity);
         let capacity_word = u32::try_from(capacity).expect("array backing capacity overflow");
         let layout = Self::layout(capacity);
@@ -125,6 +161,7 @@ impl ArrayElements {
                 owners: 1,
                 len: len as u32,
                 capacity: capacity_word,
+                kind: kind as u32,
             });
         }
         Self { header }
@@ -151,6 +188,21 @@ impl ArrayElements {
     #[inline(always)]
     pub(crate) fn capacity(&self) -> usize {
         self.header().capacity as usize
+    }
+
+    /// What every value of the backing is.
+    #[inline(always)]
+    pub(crate) fn kind(&self) -> ElementsKind {
+        if self.header().kind == ElementsKind::Int32 as u32 { ElementsKind::Int32 } else { ElementsKind::Tagged }
+    }
+
+    /// Records `kind`; the shared empty header, which holds no value, keeps its own.
+    #[inline(always)]
+    fn set_kind(&mut self, kind: ElementsKind) {
+        if self.capacity() != 0 {
+            // SAFETY: a backing with a capacity is an allocation its owners write.
+            unsafe { (*self.header.as_ptr()).kind = kind as u32 };
+        }
     }
 
     /// Whether this array alone owns its backing, so writes reach no other array.
@@ -288,7 +340,7 @@ impl UniqueElements {
         let old = self.0.capacity();
         if old == 0 {
             // The shared empty header: a fresh backing of its own.
-            self.0 = ArrayElements::allocate(capacity, 0);
+            self.0 = ArrayElements::allocate(capacity, 0, ElementsKind::Int32);
             return;
         }
         let layout = ArrayElements::layout(capacity);
@@ -305,9 +357,34 @@ impl UniqueElements {
         unsafe { (*header.as_ptr()).capacity = capacity_word };
     }
 
+    /// Widens the kind to admit `kind`'s values.
+    #[inline(always)]
+    fn admit(&mut self, kind: ElementsKind) {
+        if kind > self.0.kind() {
+            self.0.set_kind(kind);
+        }
+    }
+
+    /// Writes `value` at `index`, below the length.
+    #[inline(always)]
+    pub(crate) fn set(&mut self, index: usize, value: Value) {
+        assert!(index < self.0.len(), "array element index out of bounds");
+        self.admit(ElementsKind::of(value));
+        // SAFETY: the index is below the length of this unique backing.
+        unsafe { self.0.values().add(index).write(value) };
+    }
+
+    /// The values for native code, which keeps the kind itself: it widens the kind before
+    /// it may store a wider value (`KIND_FROM_VALUES`).
+    #[inline(always)]
+    pub(crate) fn native_values(&mut self) -> *mut Value {
+        self.0.values()
+    }
+
     pub(crate) fn push(&mut self, value: Value) {
         let len = self.0.len();
         self.reserve(1);
+        self.admit(ElementsKind::of(value));
         // SAFETY: `reserve` made room for one more value.
         unsafe { self.0.values().add(len).write(value) };
         self.set_len(len + 1);
@@ -333,6 +410,7 @@ impl UniqueElements {
             return;
         }
         self.reserve(len - current);
+        self.admit(ElementsKind::of(value));
         // SAFETY: `reserve` made room for the values up to `len`.
         unsafe {
             for slot in current..len {
@@ -345,6 +423,7 @@ impl UniqueElements {
     pub(crate) fn extend_from_slice(&mut self, values: &[Value]) {
         let len = self.0.len();
         self.reserve(values.len());
+        self.admit(ElementsKind::of_all(values));
         // SAFETY: `reserve` made room; `values` cannot alias this unique backing's spare room.
         unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(len), values.len()) };
         self.set_len(len + values.len());
@@ -372,6 +451,7 @@ impl UniqueElements {
             self.reserve(values.len() - removed);
         }
         let new_len = len - removed + values.len();
+        self.admit(ElementsKind::of_all(values));
         // SAFETY: the tail moves within the reserved allocation, then `values` fills the gap.
         unsafe {
             let base = self.0.values();
@@ -398,6 +478,8 @@ impl std::ops::Deref for UniqueElements {
 impl std::ops::DerefMut for UniqueElements {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [Value] {
+        // A write through the slice may store any value.
+        self.admit(ElementsKind::Tagged);
         // SAFETY: the backing is this array's own (or empty), and the first `len` values are
         // initialized.
         unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }
@@ -417,6 +499,42 @@ impl Extend<Value> for UniqueElements {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elements_kind_widens_with_each_write_and_never_narrows() {
+        let int = Value::integer(7);
+        let double = Value::number(0.5);
+        assert_eq!(ArrayElements::new().kind(), ElementsKind::Int32);
+        assert_eq!(ArrayElements::from_slice(&[int, int]).kind(), ElementsKind::Int32);
+        assert_eq!(ArrayElements::from_slice(&[int, double]).kind(), ElementsKind::Tagged);
+        assert_eq!(ArrayElements::from_fn(3, |slot| if slot == 2 { double } else { int }).kind(), ElementsKind::Tagged);
+        // Growth from the shared empty backing records the first value's kind.
+        let mut elements = ArrayElements::new();
+        elements.make_mut().push(double);
+        assert_eq!(elements.kind(), ElementsKind::Tagged);
+        let mut elements = ArrayElements::new();
+        elements.make_mut().push(int);
+        elements.make_mut().extend_from_slice(&[int]);
+        assert_eq!(elements.kind(), ElementsKind::Int32);
+        elements.make_mut().set(0, int);
+        assert_eq!(elements.kind(), ElementsKind::Int32);
+        elements.make_mut().set(1, double);
+        assert_eq!(elements.kind(), ElementsKind::Tagged);
+        // Removing the wider value leaves the kind as wide.
+        elements.make_mut().pop();
+        assert_eq!(elements.kind(), ElementsKind::Tagged);
+        // A write through the slice may store anything.
+        let mut elements = ArrayElements::from_slice(&[int]);
+        elements.make_mut()[0] = int;
+        assert_eq!(elements.kind(), ElementsKind::Tagged);
+        // A copy made for writing keeps an exact kind.
+        let shared = ArrayElements::from_slice(&[int]);
+        let mut copy = shared.clone();
+        copy.make_mut().resize(4, int);
+        assert_eq!((shared.kind(), copy.kind()), (ElementsKind::Int32, ElementsKind::Int32));
+        copy.make_mut().splice(0..1, &[double]);
+        assert_eq!((shared.kind(), copy.kind()), (ElementsKind::Int32, ElementsKind::Tagged));
+    }
 
     #[test]
     fn native_layout_matches_header_and_dense_backing() {

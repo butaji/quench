@@ -116,7 +116,7 @@ const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
     /// The not-entered word of an entry guard's widening: an array's elements are named by
-    /// the entry scan of an array whose reads drop their guard (`Lowering::scan_int32`).
+    /// the entry check of an array whose reads drop their guard (`Lowering::elements_kinds`).
     fn code(self) -> u32 {
         match self {
             Self::Register(register) => (WIDEN_REGISTER | u64::from(register)) as u32,
@@ -4060,7 +4060,7 @@ struct Lowering<'a, 'b> {
     /// The registers innermost nested counted loops park (`Parking`).
     parking: Parking,
     /// The arrays whose elements entry found all `i32`s, which the region keeps so, so
-    /// their reads need no tag guard (`Lowering::scan_int32`).
+    /// their reads need no tag guard (`Lowering::elements_kinds`).
     int32_arrays: std::collections::BTreeSet<Register>,
     widenings: std::collections::BTreeMap<u32, Widening>,
     /// Per block, the first block of the chain it continues: each block after the first
@@ -4582,14 +4582,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.ins().return_(&[status]);
     }
 
-    /// Proves at entry, for each array an innermost nested loop reads as `i32`s, that every
-    /// element is one, when every store of the region stores an `i32` (so each stays one,
-    /// whichever array it writes): the reads then take the payload with no tag guard. A
-    /// region without nested loops runs too few iterations per entry to repay the scan. An
-    /// element of another kind, or a hole, widens the array's reads for the next compilation.
-    fn scan_int32(&mut self) {
+    /// Keeps each array's kind (`ElementsKind`) and reads it once, at entry. A region that may
+    /// store a value other than an `i32` widens every array it writes to `Tagged` first, as
+    /// any of them may be the one it stores into. A region whose stores are all `i32`s keeps
+    /// each kind for its whole run, so an array whose kind is `Int32` at entry holds only
+    /// `i32`s throughout: its reads take the payload with no tag guard. An array of a wider
+    /// kind (one that held a hole, say, since filled) is scanned once: all `i32`s narrow its
+    /// kind back, so later entries read the kind alone; any other value widens the array's
+    /// reads for the next compilation.
+    fn elements_kinds(&mut self) {
         let region = self.region;
-        let nested = self.counted.iter().any(|counted| counted.header != region.header);
         let stores_int32 = (region.header..=region.backedge).all(|pc| {
             let instruction = region.instructions[(pc - region.header) as usize];
             instruction.op() != Op::SetIndex || {
@@ -4597,7 +4599,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.representations[web] == Representation::Int32
             }
         });
-        if !nested || !stores_int32 {
+        if !stores_int32 {
+            let tagged = self.body.builder.ins().iconst(types::I32, crate::heap::ElementsKind::Tagged as i64);
+            for array in region.arrays.iter().filter(|array| array.written) {
+                let Some(view) = self.array_view(array.register) else { continue };
+                self.body.builder.ins().store(flags(), tagged, view.elements, crate::heap::KIND_FROM_VALUES);
+            }
             return;
         }
         let read_int32: std::collections::BTreeSet<Register> = region
@@ -4609,22 +4616,27 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     && element_representation(instruction, self.observation) == Representation::Int32
             })
             .filter_map(|instruction| instruction.operand_b().register_index())
-            .filter(|register| !self.resident.arrays.contains_key(register))
             .collect();
         for register in read_int32 {
-            let Some(view) = self.arrays.get(&register).copied() else { continue };
-            let length = self.length(view);
+            let Some(view) = self.array_view(register) else { continue };
             let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
+            let scan = self.cold_block();
             let test = self.body.builder.create_block();
             let element = self.body.builder.create_block();
             let next = self.body.builder.create_block();
+            let narrow = self.body.builder.create_block();
             let done = self.body.builder.create_block();
+            let kind = self.body.builder.ins().load(types::I32, flags(), view.elements, crate::heap::KIND_FROM_VALUES);
+            let int32 = self.body.builder.ins().icmp_imm_u(IntCC::Equal, kind, crate::heap::ElementsKind::Int32 as i64);
+            self.body.builder.ins().brif(int32, done, &[], scan, &[]);
+            self.body.builder.switch_to_block(scan);
+            let length = self.length(view);
             let index = self.body.builder.append_block_param(test, types::I64);
             let zero = self.body.builder.ins().iconst(types::I64, 0);
             self.body.builder.ins().jump(test, &[ir::BlockArg::Value(zero)]);
             self.body.builder.switch_to_block(test);
             let finished = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
-            self.body.builder.ins().brif(finished, done, &[], element, &[]);
+            self.body.builder.ins().brif(finished, narrow, &[], element, &[]);
             self.body.builder.switch_to_block(element);
             let offset = self.body.builder.ins().imul_imm_u(index, i64::from(WORD_BYTES));
             let address = self.body.builder.ins().iadd(view.elements, offset);
@@ -4636,6 +4648,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.body.builder.switch_to_block(next);
             let stepped = self.body.builder.ins().iadd_imm_s(index, 1);
             self.body.builder.ins().jump(test, &[ir::BlockArg::Value(stepped)]);
+            self.body.builder.switch_to_block(narrow);
+            // Every value is an `i32` now: the backing's kind says so from here on.
+            let int32_kind = self.body.builder.ins().iconst(types::I32, crate::heap::ElementsKind::Int32 as i64);
+            self.body.builder.ins().store(flags(), int32_kind, view.elements, crate::heap::KIND_FROM_VALUES);
+            self.body.builder.ins().jump(done, &[]);
             self.body.builder.switch_to_block(done);
             self.chains.insert(done, head);
             self.int32_arrays.insert(register);
@@ -4871,7 +4888,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.reside(self.resident.fields[index], value);
             self.fields.push(Typed { value, representation });
         }
-        self.scan_int32();
+        self.elements_kinds();
         if let Some(inlining) = &self.region.inlining {
             // The scratch registers' address follows arrays and field-store slots; each
             // field-resolved callee is still the function it held when the region was made.
