@@ -56,6 +56,15 @@ members!(Member, "webAdapters", [
     NodeDestroyLater,
     NodeThrowLater,
     Ignore,
+    // pipeline's pumpToWeb
+    PumpResult,
+    PumpSyncValue,
+    PumpReady,
+    PumpDrained,
+    PumpClosed,
+    PumpFailed,
+    PumpAborted,
+    PumpAbortFailed,
 ]);
 
 /// The adapters' closure state.
@@ -869,7 +878,166 @@ pub(crate) fn member(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome
             Err(c.throw(error))
         }
         Member::Ignore => Ok(c.undefined()),
+        Member::PumpResult => {
+            let [state] = captured(c)?;
+            let result = arg(c, args, 0);
+            let done = get(c, result, "done")?;
+            if c.truthy_rooted(done)? {
+                pump_done(c, state)?;
+            } else {
+                let value = get(c, result, "value")?;
+                pump_chunk(c, state, value)?;
+            }
+            Ok(c.undefined())
+        }
+        Member::PumpSyncValue => {
+            let [state, done] = captured(c)?;
+            if c.truthy_rooted(done)? {
+                pump_done(c, state)?;
+            } else {
+                let value = arg(c, args, 0);
+                pump_chunk(c, state, value)?;
+            }
+            Ok(c.undefined())
+        }
+        Member::PumpReady => {
+            let [state, chunk] = captured(c)?;
+            let writer = get(c, state, pump::WRITER)?;
+            let written = writable::writer_write(c, writer, chunk)?;
+            super::mark_handled(c, written)?;
+            if let Err(error) = super::attempt(pump_next(c, state))? {
+                pump_abort(c, state, error)?;
+            }
+            Ok(c.undefined())
+        }
+        Member::PumpDrained => {
+            let [state] = captured(c)?;
+            if flag(c, state, pump::END)? {
+                let writer = get(c, state, pump::WRITER)?;
+                let closed = writable::writer_close(c, writer)?;
+                react(c, closed, Member::PumpClosed, Member::PumpFailed, &[state])?;
+            } else {
+                pump_finish(c, state, None)?;
+            }
+            Ok(c.undefined())
+        }
+        Member::PumpClosed => {
+            let [state] = captured(c)?;
+            pump_finish(c, state, None)?;
+            Ok(c.undefined())
+        }
+        Member::PumpFailed => {
+            let [state] = captured(c)?;
+            let error = arg(c, args, 0);
+            pump_abort(c, state, error)?;
+            Ok(c.undefined())
+        }
+        Member::PumpAborted => {
+            let [state, error] = captured(c)?;
+            pump_finish(c, state, Some(error))?;
+            Ok(c.undefined())
+        }
+        Member::PumpAbortFailed => {
+            let [state] = captured(c)?;
+            let error = arg(c, args, 0);
+            pump_finish(c, state, Some(error))?;
+            Ok(c.undefined())
+        }
     }
+}
+
+/// A pump's fields (pipeline's `pumpToWeb`).
+mod pump {
+    pub(super) const ITERATOR: &str = "iterator";
+    pub(super) const SYNC: &str = "sync";
+    pub(super) const WRITER: &str = "writer";
+    pub(super) const STREAM: &str = "stream";
+    pub(super) const FINISH: &str = "finish";
+    pub(super) const END: &str = "end";
+}
+
+/// pipeline's `pumpToWeb(readable, writable, finish, { end })`: `for await` over
+/// `readable` into the web `writable` (or a TransformStream's writable side) through a
+/// writer, honoring its backpressure, then closes it when `end`; `finish` is called with
+/// the failure, if any.
+pub(crate) fn pump_to_web(c: &mut Context<'_>, readable: RootId, writable: RootId, finish: RootId, end: bool) -> Result<(), RootedError> {
+    let writable = if let Some(transform) = state_of(c, writable, Brand::TransformStream)? {
+        super::transform::side(c, transform, false)?
+    } else {
+        writable
+    };
+    let stream = slots(c, writable)?;
+    let writer = writable::writer(c, stream)?;
+    let end = c.boolean(end);
+    let state = record(c, &[(pump::WRITER, writer), (pump::STREAM, stream), (pump::FINISH, finish), (pump::END, end)])?;
+    if let Err(error) = super::attempt(pump_open(c, state, readable))? {
+        pump_abort(c, state, error)?;
+    }
+    Ok(())
+}
+
+/// `for await (const chunk of readable)`'s iterator, then its first step.
+fn pump_open(c: &mut Context<'_>, state: RootId, readable: RootId) -> Result<(), RootedError> {
+    let global = c.global_root()?;
+    let symbol = get(c, global, "Symbol")?;
+    let async_key = get(c, symbol, "asyncIterator")?;
+    let method = c.get_property_rooted(readable, async_key)?;
+    let (method, sync) = if is_nullish(c, method) {
+        let sync_key = get(c, symbol, "iterator")?;
+        (c.get_property_rooted(readable, sync_key)?, true)
+    } else {
+        (method, false)
+    };
+    let iterator = c.call_rooted(method, readable, &[])?;
+    put(c, state, pump::ITERATOR, iterator)?;
+    put_flag(c, state, pump::SYNC, sync)?;
+    pump_next(c, state)
+}
+
+fn pump_next(c: &mut Context<'_>, state: RootId) -> Result<(), RootedError> {
+    let iterator = get(c, state, pump::ITERATOR)?;
+    let result = call(c, iterator, "next", &[])?;
+    if flag(c, state, pump::SYNC)? {
+        let done = get(c, result, "done")?;
+        let value = get(c, result, "value")?;
+        let value = super::resolved(c, value)?;
+        react(c, value, Member::PumpSyncValue, Member::PumpFailed, &[state, done])?;
+        return Ok(());
+    }
+    let result = super::resolved(c, result)?;
+    react(c, result, Member::PumpResult, Member::PumpFailed, &[state])?;
+    Ok(())
+}
+
+/// One chunk: `await writer.ready; writer.write(chunk).catch(() => {})`.
+fn pump_chunk(c: &mut Context<'_>, state: RootId, chunk: RootId) -> Result<(), RootedError> {
+    let writer = get(c, state, pump::WRITER)?;
+    let ready = get(c, writer, READY)?;
+    react(c, ready, Member::PumpReady, Member::PumpFailed, &[state, chunk])?;
+    Ok(())
+}
+
+/// The loop ended: `await writer.ready; if (end) await writer.close(); finish()`.
+fn pump_done(c: &mut Context<'_>, state: RootId) -> Result<(), RootedError> {
+    let writer = get(c, state, pump::WRITER)?;
+    let ready = get(c, writer, READY)?;
+    react(c, ready, Member::PumpDrained, Member::PumpFailed, &[state])?;
+    Ok(())
+}
+
+fn pump_finish(c: &mut Context<'_>, state: RootId, error: Option<RootId>) -> Result<(), RootedError> {
+    let finish = get(c, state, pump::FINISH)?;
+    let undefined = c.undefined();
+    let args: Vec<RootId> = error.into_iter().collect();
+    c.call_rooted(finish, undefined, &args).map(drop)
+}
+
+/// The catch: `await writer.abort(err); finish(err)`, or `finish` with the abort's failure.
+fn pump_abort(c: &mut Context<'_>, state: RootId, error: RootId) -> Result<(), RootedError> {
+    let stream = get(c, state, pump::STREAM)?;
+    let aborted = writable::abort(c, stream, error)?;
+    react(c, aborted, Member::PumpAborted, Member::PumpAbortFailed, &[state, error])?;
+    Ok(())
 }
 
 /// Installs `toWeb` and `fromWeb` on the stream classes.
