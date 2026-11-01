@@ -884,6 +884,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
     }
     let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
     let mut captured_registers = [None; MAX_REGISTERS];
+    let mut parameter_unchanged = [true; MAX_REGISTERS];
     let mut branch_seen = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
         if packed.is_wide() {
@@ -907,7 +908,8 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 JsJitFieldReceiver::This
             } else if let Some(parameter) = base
                 .register_index()
-                .filter(|parameter| *parameter < function.params)
+                .filter(|parameter| *parameter < function.params
+                    && parameter_unchanged.get(usize::from(*parameter)).copied().unwrap_or(false))
             {
                 JsJitFieldReceiver::Parameter(parameter)
             } else if let Some(register) = base.register_index() {
@@ -972,18 +974,16 @@ pub(super) fn cached_numeric_field_inputs_candidate(
             }
             branch_seen = true;
         }
-        if !matches!(instruction.op(), Op::LoadCapture) {
-            let result_register = match instruction.op() {
-                Op::LoadConst
-                | Op::Move
-                | Op::GetField
-                | Op::Binary
-                | Op::NumericAdd
-                | Op::NumericMultiply
-                | Op::Unary => Some(instruction.result_register()),
-                _ => None,
-            };
-            if let Some(register) = result_register {
+        let result_register = match instruction.op() {
+            Op::LoadConst | Op::LoadCapture | Op::Move | Op::GetField | Op::Binary
+            | Op::NumericAdd | Op::NumericMultiply | Op::Unary => Some(instruction.result_register()),
+            _ => None,
+        };
+        if let Some(register) = result_register {
+            if usize::from(register) < usize::from(function.params) {
+                *parameter_unchanged.get_mut(usize::from(register))? = false;
+            }
+            if instruction.op() != Op::LoadCapture {
                 *captured_registers.get_mut(usize::from(register))? = None;
             }
         }

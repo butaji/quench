@@ -14656,6 +14656,27 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn js_jit_field_guard_observes_reassigned_parameter() {
+    let source = r#"
+      function read(object, replacement) { object = replacement; return object.value + 1; }
+      const object = {value: 7};
+      for (let i = 0; i < 40; i++) {
+        if (read(object, object) !== 8) throw Error('receiver cache warmup');
+      }
+      for (let i = 0; i < 80; i++) {
+        if (!Number.isNaN(read(object, 5))) throw Error('reassigned field receiver');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-reassigned-receiver.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn js_jit_compiles_guarded_boolean_fields_and_captures() {
     let source = r#"
       function make(mask, expected) {
