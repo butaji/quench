@@ -2018,6 +2018,10 @@ pub(crate) struct Vm<H> {
     /// collection empties it, as `recent_atom_strings`. A loop building a string a unit at a
     /// time (V8-v7 Crypto's hex conversion) had allocated each unit's string anew.
     ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
+    /// The slots of a bound function's target, receiver and arguments in the shape its
+    /// environment object has (`Vm::bound_function_parts`): every `bind` gives its environment
+    /// the three in one order, so they share it. Shape compaction renumbers shapes and empties it.
+    bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by

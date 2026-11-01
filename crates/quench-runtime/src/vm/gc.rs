@@ -974,6 +974,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn compact_live_shapes(&mut self, live_shapes: Vec<u32>) {
+        self.bound_parts_layout.set(None);
         let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
         #[cfg(feature = "profile-memory")]
         let old_shape_count = old_shapes.len();
