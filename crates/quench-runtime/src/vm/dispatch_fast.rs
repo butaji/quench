@@ -59,6 +59,8 @@ const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::si
 #[derive(Clone, Copy)]
 union LaneOperand {
     imm: u32,
+    /// Immutable candidates for a string selector, owned by the lane view.
+    string_case_filter: *const string_case_filter::StringCaseFilter,
     /// A `GetField` record's immediate and the receiver shape of its own-field hint
     /// (`LaneInstruction::field_hint`).
     field: FieldOperand,
@@ -245,6 +247,7 @@ pub(super) struct LaneView {
     /// The facts of its body a frameless call target records (`TargetBody`), found on its
     /// first resolution: every closure of the function shares them.
     target_body: std::cell::OnceCell<TargetBody>,
+    _string_case_filters: Box<[string_case_filter::StringCaseFilter]>,
     /// The window of an environment activation, when its local and closure records also run
     /// in one (`specialize_environment_window`).
     environment_window: Option<EnvironmentWindow>,
@@ -2373,6 +2376,8 @@ fn frame_window_local<H: Host>(vm: &Vm<H>, frame: usize, slot: usize, environmen
     };
     (!value.is_deleted()).then_some(value)
 }
+
+mod string_case_filter;
 
 script_handler! {
     /// A local load of a function an environment activation may run
@@ -10031,6 +10036,7 @@ fn lane_frame_state<H: Host>(
                     function,
                     code,
                     constants,
+                    &vm.heap,
                     kind,
                     live,
                     sites,
@@ -10823,6 +10829,7 @@ impl<H: Host> Vm<H> {
                 function,
                 code,
                 constants,
+                &self.heap,
                 kind,
                 live,
                 sites,
@@ -17059,6 +17066,7 @@ fn derive_lane_view<'live, H: Host>(
     function_id: u32,
     function: &Function,
     constants: &[Value],
+    heap: &crate::heap::Heap,
     kind: crate::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     sites: &[crate::bytecode::FieldSite],
@@ -18127,6 +18135,7 @@ fn derive_lane_view<'live, H: Host>(
         })
         .map(|(pc, _)| pc as u32)
         .collect();
+    let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &mut records);
     let records: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
         records.into_iter().map(std::cell::UnsafeCell::new).collect();
     let first = std::cell::UnsafeCell::raw_get(records.as_ptr()).cast_const();
@@ -18136,6 +18145,7 @@ fn derive_lane_view<'live, H: Host>(
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
+        _string_case_filters: string_case_filters,
         environment_window,
         loops,
         start: std::cell::Cell::new(first),
@@ -19137,6 +19147,7 @@ impl<H: Host> Vm<H> {
                     function,
                     code,
                     constants,
+                    &self.heap,
                     kind,
                     live,
                     sites,

@@ -313,7 +313,16 @@ impl Heap {
     pub(crate) fn string(&self, value: Value) -> Option<&crate::vm::wtf16::JsString> {
         let record_id = value.direct_string_index()?;
         // SAFETY: string Values come only from `alloc_string` and stay live while reachable.
-        Some(unsafe { self.string_records.get_live(record_id) })
+        Some(unsafe { self.string_record_by_id(record_id) })
+    }
+
+    /// A string whose record identity was already resolved.
+    ///
+    /// # Safety
+    /// `record_id` names a live string, retained by a reachable Value.
+    #[inline(always)]
+    pub(crate) unsafe fn string_record_by_id(&self, record_id: u32) -> &crate::vm::wtf16::JsString {
+        unsafe { self.string_records.get_live(record_id) }
     }
 
     /// Whether `value` is a string.
