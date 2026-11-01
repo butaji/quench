@@ -287,7 +287,10 @@ const PROMISES_GLOB_LENGTH: f64 = 2.0;
 /// The access constants `fs` also exposes at its top level.
 const ACCESS_CONSTANTS: [(&str, i32); 4] = [("F_OK", libc::F_OK), ("R_OK", libc::R_OK), ("W_OK", libc::W_OK), ("X_OK", libc::X_OK)];
 
-/// The stream classes `fs` defines on first use, and the names that reach each.
+/// The stream classes `fs` defines on first use: the cache key of each and its builder.
+const STREAM_CLASSES: [(&str, fn(&mut Context<'_>) -> Outcome); 2] =
+    [("\0fs:ReadStream", streams::read_stream_class), ("\0fs:WriteStream", streams::write_stream_class)];
+/// The names that reach each stream class, by its index in `STREAM_CLASSES`.
 const STREAM_ACCESSORS: [(&str, usize); 4] = [("ReadStream", 0), ("WriteStream", 1), ("FileReadStream", 0), ("FileWriteStream", 1)];
 
 fn define(c: &mut Context<'_>, target: RootId, name: &str, value: RootId, writable: bool, configurable: bool) -> Result<(), RootedError> {
@@ -326,7 +329,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         }
         let value = match name {
             "createReadStream" | "createWriteStream" => {
-                let index = c.number(if name == "createReadStream" { 0.0 } else { 1.0 });
+                let (_, index) = STREAM_ACCESSORS[usize::from(name == "createWriteStream")];
+                let index = c.number(index as f64);
                 c.host_function_named_with_data(crate::host::shared_vm::operation("fsCreateStream"), name, index)?
             }
             "lchmod" | "lchmodSync" => c.undefined(),
@@ -395,14 +399,14 @@ pub(crate) fn promises_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outc
 
 /// The stream class an accessor's data names, made on first use.
 fn stream_class(c: &mut Context<'_>, index: usize) -> Outcome {
-    const KEYS: [&str; 2] = ["\0fs:ReadStream", "\0fs:WriteStream"];
+    let (key, build) = STREAM_CLASSES[index];
     let shared = c.host_mut().shared_state();
-    if let Some(class) = shared.borrow().builtin_cache.get(KEYS[index]).copied() {
+    if let Some(class) = shared.borrow().builtin_cache.get(key).copied() {
         return Ok(class);
     }
-    let class = if index == 0 { streams::read_stream_class(c)? } else { streams::write_stream_class(c)? };
+    let class = build(c)?;
     let retained = c.retain(class)?;
-    shared.borrow_mut().builtin_cache.insert(KEYS[index].to_owned(), retained);
+    shared.borrow_mut().builtin_cache.insert(key.to_owned(), retained);
     Ok(class)
 }
 
@@ -419,11 +423,10 @@ pub(crate) fn stream_class_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> 
 
 /// `set ReadStream(value)`: the module's stream class becomes `value`.
 pub(crate) fn stream_class_set(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    const KEYS: [&str; 2] = ["\0fs:ReadStream", "\0fs:WriteStream"];
-    let index = data_index(c)?;
+    let (key, _) = STREAM_CLASSES[data_index(c)?];
     let value = arg(c, args, 0);
     let retained = c.retain(value)?;
-    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(KEYS[index].to_owned(), retained);
+    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(key.to_owned(), retained);
     Ok(c.undefined())
 }
 
@@ -462,27 +465,6 @@ pub(crate) fn emit_deprecation(c: &mut Context<'_>, message: &str, code: &str, d
     let kind = c.string_rooted("DeprecationWarning");
     let code = c.string_rooted(code);
     crate::modules::stream_shared_vm::call_method(c, process, "emitWarning", &[message, kind, code, deprecated]).map(drop)
-}
-
-/// A whole-descriptor stream read: a new Buffer of what one read returns, or `null` at the
-/// end (`ReadStream.prototype._read` without `options.fs`).
-pub(crate) fn stream_read(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    const CHUNK_LIMIT: f64 = (64 * 1024) as f64;
-    let fd = arg(c, args, 0);
-    let fd = args::fd(c, fd)?;
-    let requested = arg(c, args, 1);
-    let size = c.rooted_value(requested).and_then(|value| value.as_number()).filter(|size| *size > 0.0).unwrap_or(CHUNK_LIMIT);
-    let position = arg(c, args, 2);
-    let position = c
-        .rooted_value(position)
-        .and_then(|value| value.as_number())
-        .filter(|position| *position >= 0.0)
-        .map(|position| position as u64);
-    let chunk = c.host_mut().shared_state().borrow().fs.read_stream_chunk(fd, size.min(CHUNK_LIMIT) as usize, position);
-    match failure::check(c, chunk, failure::Syscall::bare("read"))? {
-        Some(bytes) => crate::modules::buffer_shared_vm::from_vec(c, bytes),
-        None => Ok(c.null()),
-    }
 }
 
 #[cfg(all(test, not(target_os = "linux")))]

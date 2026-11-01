@@ -548,8 +548,7 @@ pub(crate) fn read(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
         c.call_rooted(read, operations, &[fd, buffer, zero, size, position, done])?;
         return Ok(c.undefined());
     }
-    let undefined = c.undefined();
-    let result = attempt(super::stream_read(c, undefined, &[fd, size, position]))?;
+    let result = attempt(host_read(c, &[fd, size, position]))?;
     match result {
         Ok(chunk) => {
             let null = c.null();
@@ -926,4 +925,25 @@ pub(crate) fn write_stream_class(c: &mut Context<'_>) -> Outcome {
     c.define_data_property_rooted(prototype, key, end, true, true, true)?;
     accessor(c, prototype, "pending", "fsStreamPending", None, true)?;
     Ok(constructor)
+}
+
+/// A whole-descriptor stream read: a new Buffer of what one read returns, or `null` at the
+/// end (`ReadStream.prototype._read` without `options.fs`).
+fn host_read(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
+    const CHUNK_LIMIT: f64 = (64 * 1024) as f64;
+    let fd = arg(c, args, 0);
+    let fd = super::args::fd(c, fd)?;
+    let requested = arg(c, args, 1);
+    let size = c.rooted_value(requested).and_then(|value| value.as_number()).filter(|size| *size > 0.0).unwrap_or(CHUNK_LIMIT);
+    let position = arg(c, args, 2);
+    let position = c
+        .rooted_value(position)
+        .and_then(|value| value.as_number())
+        .filter(|position| *position >= 0.0)
+        .map(|position| position as u64);
+    let chunk = c.host_mut().shared_state().borrow().fs.read_stream_chunk(fd, size.min(CHUNK_LIMIT) as usize, position);
+    match super::failure::check(c, chunk, super::failure::Syscall::bare("read"))? {
+        Some(bytes) => crate::modules::buffer_shared_vm::from_vec(c, bytes),
+        None => Ok(c.null()),
+    }
 }
