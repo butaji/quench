@@ -21280,3 +21280,91 @@ fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let function = vm.own_property(vm.realm.globals, atom).unwrap();
     assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[Value::integer(111)]).unwrap(), Value::integer(123));
 }
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/own-slot-proofs.js");
+    let typescript = source
+        .replace("function readPair(node)", "function readPair(node: {left: number, right: number}): number")
+        .replace("function update(value)", "function update(value: number): number");
+    for program in [Engine::specialize(source, "own-slot-proofs.js"),
+        Engine::specialize_typescript(&typescript, "own-slot-proofs.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let packed = global(&mut vm, "packed");
+        let arena = global(&mut vm, "arena");
+        let wider = global(&mut vm, "wider");
+        for name in ["readPair", "reassigned", "joined", "update"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32).expect("own-slot native artifact");
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, receiver, arguments: &[Value]| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in arguments.iter().copied().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).expect("register parameter");
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), receiver, std::ptr::null());
+                (pc, registers)
+            };
+            if name != "update" {
+                for object in [packed, arena] {
+                    for flag in [Value::FALSE, Value::TRUE] {
+                        let arguments = [object, if name == "reassigned" { wider } else { arena }, flag];
+                        let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                        let (pc, registers) = run(&mut vm, Value::UNDEFINED, &arguments[..usize::from(body.params)]);
+                        assert_eq!(instructions[pc].op(), Op::Return, "{name} left at {pc}: {instructions:?}");
+                        assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+                    }
+                }
+                if name == "readPair" {
+                    let effects = vm.intern_atom("effects");
+                    for (name, expected, count) in [("getter", 23, 1), ("proxy", 27, 2), ("extras", 10, 0)] {
+                        let object = global(&mut vm, name);
+                        let before = vm.own_property(vm.realm.globals, effects).unwrap().as_int().unwrap();
+                        let (pc, _) = run(&mut vm, Value::UNDEFINED, &[object]);
+                        assert_eq!(instructions[pc].op(), Op::GetField, "{name} leaves before the first read");
+                        assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before)));
+                        assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[object]).unwrap(), Value::integer(expected));
+                        assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before + count)));
+                    }
+                }
+                continue;
+            }
+            let left = vm.intern_atom("left");
+            let right = vm.intern_atom("right");
+            for object in [packed, arena] {
+                for value in [Value::integer(5), Value::integer(7)] {
+                    let before = vm.own_property(object, left).unwrap().as_number().unwrap();
+                    let other = vm.own_property(object, right).unwrap().as_number().unwrap();
+                    let expected = Value::number(before + value.as_number().unwrap() + other);
+                    let (pc, registers) = run(&mut vm, object, &[value]);
+                    assert_eq!(instructions[pc].op(), Op::Return, "alias store left at {pc}");
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], expected,
+                        "a layout proof must not snapshot writable packed contents");
+                    assert_eq!(vm.own_property(object, left), Some(value));
+                }
+            }
+            let (pc, _) = run(&mut vm, packed, &[Value::number(0.5)]);
+            assert!(matches!(instructions[pc].op(), Op::SetThisField | Op::SetThisFieldStrict),
+                "leave before packed storage widens, after proving its first read");
+            assert_eq!(vm.own_property(packed, left), Some(Value::integer(7)));
+            assert_eq!(vm.call_value(&program, function, packed, &[Value::number(0.5)]).unwrap(), Value::number(9.5));
+            let (pc, registers) = run(&mut vm, packed, &[Value::number(1.5)]);
+            assert_eq!(instructions[pc].op(), Op::Return, "the same artifact admits the new arena layout");
+            assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::number(4.0));
+        }
+    }
+}

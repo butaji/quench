@@ -54,13 +54,15 @@ use crate::specialize as typed_ir;
 mod facts;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+mod object_slots;
+pub(super) use object_slots::NativeFieldLoad;
 #[cfg(feature = "aot")]
 mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
@@ -1912,15 +1914,6 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
 }
 
-/// A receiver field site whose cache entry a lane body folds (Ershov's online division):
-/// the holderless exact shape and slot it proved when the body compiled, under the
-/// shape-layout epoch the body records.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ReceiverField {
-    shape: u32,
-    slot: u16,
-}
-
 /// What a lane body knows of its receiver from entry on: nothing in a body's run allocates
 /// or changes a shape (calls and stores that add properties leave it), so the record, exact
 /// shape and storage mode found at entry hold for the whole run.
@@ -1930,46 +1923,6 @@ struct LaneReceiver {
     inline: Variable,
     properties: Variable,
     properties_len: Variable,
-}
-
-/// Read own data slot `slot` of the object record at `object`, whose meta's inline-storage
-/// bits are `inline`, as `Object::inline_property` and arena storage hold it; `miss` where
-/// the payload carries extras or the slot is outside the arena.
-#[allow(clippy::too_many_arguments)]
-fn emit_object_slot_read(
-    builder: &mut FunctionBuilder<'_>,
-    object: ir::Value,
-    inline: ir::Value,
-    properties: ir::Value,
-    properties_len: ir::Value,
-    slot: u16,
-    miss: ir::Block,
-) -> ir::Value {
-    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
-    let extras = builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
-    let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
-    emit_js_guard(builder, plain, miss);
-    let inline_block = builder.create_block();
-    let arena_block = builder.create_block();
-    let join = builder.create_block();
-    let bits = builder.append_block_param(join, types::I64);
-    builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
-
-    builder.switch_to_block(inline_block);
-    if usize::from(slot) >= layout.inline_property_count {
-        builder.ins().jump(miss, &[]);
-    } else {
-        emit_packed_object_slot_read(builder, payload, slot, join);
-    }
-
-    builder.switch_to_block(arena_block);
-    let address = emit_arena_slot_address(builder, payload, properties, properties_len, slot, miss);
-    let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-    builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-
-    builder.switch_to_block(join);
-    bits
 }
 
 /// Decode a packed property using the canonical NarrowLayout, transferring
@@ -2007,27 +1960,6 @@ fn emit_packed_object_slot_read(
     let lower = builder.ins().uextend(types::I64, lower);
     let encoded = builder.ins().bor(upper, lower);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
-}
-
-/// The address of arena slot `slot` of an object whose payload word `payload` holds plain
-/// storage (`Object::plain_storage_start`); `miss` where it lies outside the arena.
-fn emit_arena_slot_address(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    properties: ir::Value,
-    properties_len: ir::Value,
-    slot: u16,
-    miss: ir::Block,
-) -> ir::Value {
-    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let start = builder.ins().ireduce(types::I32, payload);
-    let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
-    let position = builder.ins().iadd_imm_u(start, i64::from(slot));
-    let position = builder.ins().uextend(types::I64, position);
-    let inside = builder.ins().icmp(IntCC::UnsignedLessThan, position, properties_len);
-    emit_js_guard(builder, inside, miss);
-    let offset = builder.ins().imul_imm_u(position, layout.property_value_size as i64);
-    builder.ins().iadd(properties, offset)
 }
 
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
@@ -6815,7 +6747,7 @@ unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
 impl<H: Host> Vm<H> {
     /// The receiver field sites of `function` whose cache entries prove a holderless exact
     /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
-    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Vec<ReceiverField>> {
+    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Vec<NativeFieldLoad>> {
         let Some(body) = program.function_get(function as usize) else { return Vec::new() };
         body.code
             .iter()
@@ -6830,9 +6762,6 @@ impl<H: Host> Vm<H> {
                     _ => return Vec::new(),
                 };
                 self.native_field_load_descriptors(site)
-                    .into_iter()
-                    .map(|(shape, slot)| ReceiverField { shape, slot })
-                    .collect()
             })
             .collect()
     }

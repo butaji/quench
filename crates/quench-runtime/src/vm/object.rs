@@ -1459,13 +1459,13 @@ impl<H: Host> Vm<H> {
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
     /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
-    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<(u32, u16)> {
+    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
             return self.native_field_load_descriptor(site, None)
-                .map(|load| (load.shape, load.slot)).into_iter().collect();
+                .into_iter().collect();
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
@@ -1474,7 +1474,12 @@ impl<H: Host> Vm<H> {
         }
         set.recorded()
             .filter(|entry| entry.holder == NO_FIELD_HOLDER && entry.receiver != NO_FIELD_RECEIVER)
-            .map(|entry| (entry.receiver, entry.slot))
+            .filter_map(|entry| {
+                let storage_len = self.shapes.get(entry.receiver as usize)?.storage_len();
+                (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
+                    shape: entry.receiver, slot: entry.slot, storage_len, storage: None,
+                })
+            })
             .collect()
     }
 

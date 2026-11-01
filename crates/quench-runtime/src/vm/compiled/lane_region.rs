@@ -20,6 +20,7 @@
 use super::*;
 use crate::bytecode::FieldLayout;
 use crate::specialize::{BindingTime, Fact, Projection, Proof, Representation, Type};
+use super::object_slots::{CheckedObject, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
@@ -54,14 +55,17 @@ struct Registers {
 struct State {
     values: Vec<RegisterFact>,
     /// Registers proved to hold a direct object, this block: its record address and shape.
-    shapes: BTreeMap<Register, (ir::Value, ir::Value)>,
+    shapes: BTreeMap<Register, (ir::Value, ir::Value, ir::Value)>,
+    /// A fixed receiver (`None`) or register's complete own-slot projection.
+    layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
 }
 
 impl State {
     fn canonical(registers: usize) -> Self {
-        Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(), receivers: BTreeSet::new() }
+        Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(),
+            layouts: BTreeMap::new(), receivers: BTreeSet::new() }
     }
 }
 
@@ -89,7 +93,7 @@ struct Lowering<'a, 'f> {
     program: &'a ResidualProgram,
     function: &'a Function,
     helpers: LaneHelpers,
-    fields: &'a [Vec<ReceiverField>],
+    fields: &'a [Vec<NativeFieldLoad>],
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -180,6 +184,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.builder.def_var(variable, value);
         state.values[index] = fact;
         state.shapes.remove(&register);
+        state.layouts.retain(|(owner, _), _| *owner != Some(register));
         state.receivers.remove(&register);
     }
 
@@ -398,7 +403,7 @@ pub(super) fn compile(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
-    fields: &[Vec<ReceiverField>],
+    fields: &[Vec<NativeFieldLoad>],
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
     let (native, count) = lower(program, function_id, helpers, fields, &*isa)?;
@@ -412,10 +417,11 @@ fn lower(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
-    fields: &[Vec<ReceiverField>],
+    fields: &[Vec<NativeFieldLoad>],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
+    if fields.iter().flatten().any(|field| !field.valid()) { return None; }
     if function.code.is_empty() || function.code.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
@@ -688,11 +694,16 @@ impl Lowering<'_, '_> {
                     .then(|| self.builder.use_var(self.registers.tagged[usize::from(source)]));
                 let shape = state.shapes.get(&source).copied();
                 let receiver = state.receivers.contains(&source);
+                let layouts: Vec<_> = state.layouts.iter().filter_map(|((owner, shape), projection)|
+                    (*owner == Some(source)).then_some((*shape, *projection))).collect();
                 self.define(state, destination, value, fact);
                 if let Some(bits) = tagged {
                     self.builder.def_var(self.registers.tagged[usize::from(destination)], bits);
                 }
                 if let Some(shape) = shape { state.shapes.insert(destination, shape); }
+                for (shape, projection) in layouts {
+                    state.layouts.insert((Some(destination), shape), projection);
+                }
                 if receiver { state.receivers.insert(destination); }
                 Some(true)
             }
@@ -890,7 +901,8 @@ impl Lowering<'_, '_> {
             } else {
                 self.object_record(state, register.expect("a register base"), exit)
             };
-            let value = self.shape_switch_read(object, shape, inline, &shapes, exit);
+            let owner = if receiver { None } else { register };
+            let value = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit)?;
             self.set_tagged(state, destination, value);
             return Some(true);
         }
@@ -908,15 +920,32 @@ impl Lowering<'_, '_> {
     /// Read the slot `shapes` names for the record's `shape`; `exit` for any other shape.
     fn shape_switch_read(
         &mut self,
+        state: &mut State,
+        owner: Option<Register>,
         object: ir::Value,
         shape: ir::Value,
         inline: ir::Value,
-        shapes: &[ReceiverField],
+        shapes: &[NativeFieldLoad],
         exit: ir::Block,
-    ) -> ir::Value {
+    ) -> Option<ir::Value> {
         let entry = self.entry.as_ref().expect("entry facts");
         let properties = self.builder.use_var(entry.receiver.properties);
         let properties_len = self.builder.use_var(entry.receiver.properties_len);
+        if let [field] = shapes {
+            let key = (owner, field.shape);
+            let projection = match state.layouts.get(&key).copied() {
+                Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
+                _ => {
+                    let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+                    emit_js_guard(&mut self.builder, same, exit);
+                    let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
+                        properties_len, *field, PackedAccess::Reload, exit)?;
+                    state.layouts.insert(key, projection);
+                    projection
+                }
+            };
+            return Some(projection.read(&mut self.builder, field.slot));
+        }
         let join = self.builder.create_block();
         let value = self.builder.append_block_param(join, types::I64);
         for field in shapes {
@@ -925,44 +954,44 @@ impl Lowering<'_, '_> {
             let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
-            let read = emit_object_slot_read(&mut self.builder, object, inline, properties, properties_len, field.slot, exit);
+            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
+                properties_len, *field, PackedAccess::Reload, exit)?;
+            let read = projection.read(&mut self.builder, field.slot);
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
             self.builder.switch_to_block(next);
         }
         self.ins().jump(exit, &[]);
         self.builder.switch_to_block(join);
-        value
+        Some(value)
     }
 
     /// The record address, exact shape and inline-storage bits of the direct object in
     /// `register`, proved once per block (`State::shapes`).
     fn object_record(&mut self, state: &mut State, register: Register, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let (object, shape) = match state.shapes.get(&register).copied() {
-            Some(known) => known,
-            None => {
-                let bits = self.tagged(state, register);
-                let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-                let is_object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-                emit_js_guard(&mut self.builder, is_object, exit);
-                let record_id = self.ins().ireduce(types::I32, bits);
-                let in_range = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
-                emit_js_guard(&mut self.builder, in_range, exit);
-                let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-                let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-                emit_js_guard(&mut self.builder, present, exit);
-                let record_id = self.ins().uextend(types::I64, record_id);
-                let offset = self.ins().imul_imm_u(record_id, layout.record_size as i64);
-                let object = self.ins().iadd(records, offset);
-                // The exact shape carries the dictionary bit, so a dictionary never matches.
-                let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.auxiliary_offset as i32);
-                state.shapes.insert(register, (object, shape));
-                (object, shape)
-            }
-        };
+        if let Some(known) = state.shapes.get(&register).copied() { return known; }
+        let bits = self.tagged(state, register);
+        let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+        let is_object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+        emit_js_guard(&mut self.builder, is_object, exit);
+        let record_id = self.ins().ireduce(types::I32, bits);
+        let in_range = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
+        emit_js_guard(&mut self.builder, in_range, exit);
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+        emit_js_guard(&mut self.builder, present, exit);
+        let record_id = self.ins().uextend(types::I64, record_id);
+        let offset = self.ins().imul_imm_u(record_id, layout.record_size as i64);
+        let object = self.ins().iadd(records, offset);
+        // The exact shape carries the dictionary bit, so a dictionary never matches.
+        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.auxiliary_offset as i32);
         let meta = self.ins().load(types::I32, MemFlagsData::trusted(), object, layout.meta_offset as i32);
         let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        (object, shape, inline)
+        let projection = (object, shape, inline);
+        state.shapes.insert(register, projection);
+        state.values[usize::from(register)] = RegisterFact::definition(
+            Type::language(crate::ValueType::Object), Representation::Tagged);
+        projection
     }
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included;
@@ -986,9 +1015,8 @@ impl Lowering<'_, '_> {
         let value = self.tagged(state, source);
         let entry = self.entry.as_ref().expect("entry facts");
         if let Some(field) = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0])) {
-            let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
+            let projection = state.layouts.get(&(None, field.shape)).copied();
             let admitted = self.builder.use_var(entry.store_atoms[&atom]);
-            let inline = self.builder.use_var(entry.receiver.inline);
             let object = self.builder.use_var(entry.receiver.object);
             let properties = self.builder.use_var(entry.receiver.properties);
             let properties_len = self.builder.use_var(entry.receiver.properties_len);
@@ -996,9 +1024,10 @@ impl Lowering<'_, '_> {
             let direct = self.builder.create_block();
             let general = self.builder.create_block();
             let done = self.builder.create_block();
-            let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            let ok = self.ins().band(same, admitted);
-            let ok = self.ins().band(ok, arena);
+            let ok = if projection.is_some() { admitted } else {
+                let same = self.builder.use_var(entry.receiver_shapes[&field.shape]);
+                self.ins().band(same, admitted)
+            };
             // A proved Number needs no barrier; unknown values are tested once here.
             let ok = if barrier_free {
                 ok
@@ -1009,12 +1038,16 @@ impl Lowering<'_, '_> {
             };
             self.ins().brif(ok, direct, &[], general, &[]);
             self.builder.switch_to_block(direct);
-            let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-            let word = self.ins().load(types::I64, MemFlagsData::trusted(), object, layout.payload_offset as i32);
-            let extras = self.ins().band_imm_u(word, layout.extras_tag_mask as i64);
-            let plain_storage = self.ins().icmp_imm_u(IntCC::NotEqual, extras, layout.extras_tag as i64);
-            emit_js_guard(&mut self.builder, plain_storage, general);
-            let address = emit_arena_slot_address(&mut self.builder, word, properties, properties_len, field.slot, general);
+            let projection = match projection {
+                Some(projection) => projection,
+                None => {
+                    let inline = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.inline);
+                    let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
+                    CheckedObject::prove(&mut self.builder, object, inline, properties,
+                        properties_len, plan, PackedAccess::Reload, general)?
+                }
+            };
+            let Some(address) = projection.arena_address(&mut self.builder, field.slot, general) else { return None; };
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(general);
@@ -1153,6 +1186,35 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aliased_own_fields_share_the_complete_storage_bound() {
+        let program = crate::Engine::specialize(
+            include_str!("../../../tests/fixtures/own-slot-proofs.js"), "own-slot-proofs.js",
+        ).unwrap();
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "readPair")).unwrap();
+        let fields: Vec<_> = program.function(id).instructions().map(|instruction| {
+            if instruction.op() == Op::GetField
+                && let Some(FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+                && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
+                vec![NativeFieldLoad { shape: 0, slot: slot as u16, storage_len: 2, storage: None }]
+            } else { Vec::new() }
+        }).collect();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let (native, _) = lower(&program, id as u32,
+            LaneHelpers { field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+        let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|&instruction| {
+                let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
+                    = native.dfg.insts[instruction] else { return false };
+                let ir::ValueDef::Result(length, _) = native.dfg.value_def(native.dfg.resolve_aliases(args[1]))
+                    else { return false };
+                matches!(native.dfg.insts[length], ir::InstructionData::Load { offset, .. }
+                    if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, property_len) as i32)
+            }).count();
+        assert_eq!(bounds, 1, "two aliased own fields share one complete arena bound:\n{native}");
+    }
 
     #[test]
     fn number_loops_keep_f64_values_and_proofs_across_the_backedge() {

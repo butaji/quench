@@ -42,6 +42,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use super::typed_ir::{BindingTime, Fact as ValueFact, Projection, Proof, Representation, Type};
+use super::{NativeFieldLoad, object_slots::{CheckedObject, PackedAccess}};
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 /// The most iterations an innermost nested counted loop's proved copy runs between its
@@ -2378,14 +2379,6 @@ pub(crate) struct Observation<'a> {
     pub(crate) widened: &'a std::collections::BTreeSet<Widening>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeFieldLoad {
-    pub(crate) shape: u32,
-    pub(crate) slot: u16,
-    pub(crate) storage_len: usize,
-    pub(crate) storage: Option<crate::heap::PlainPropertyStorage>,
-}
-
 /// How native code holds the values the entry record carries, by their record order.
 struct EntryRepresentations {
     captures: Vec<Representation>,
@@ -3880,22 +3873,6 @@ enum NodeProof {
     InvalidConversion,
 }
 
-/// A checked receiver projection. Specialized forms prove storage and the full
-/// slot range; Generic retains checks at each load. The region cannot change
-/// object layouts or collect, and a new receiver SSA value needs its own proof.
-#[derive(Clone, Copy)]
-enum NativeObjectSlots {
-    Packed(ir::Value),
-    Arena(ir::Value),
-    Generic { payload: ir::Value, inline: ir::Value, base: ir::Value, length: ir::Value },
-}
-
-#[derive(Clone, Copy)]
-struct CheckedObject {
-    slots: NativeObjectSlots,
-    storage_len: usize,
-}
-
 struct Lowering<'a, 'b> {
     /// The shared native body: the builder, each register's views, which hold each web's value
     /// in its representation (`view_type`), and the interrupt check.
@@ -5380,15 +5357,11 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// Establish an object's header proof once for this SSA value and chain.
-    /// Specialized views also prove the complete slot range; generic views keep
-    /// the existing per-load storage/range checks. Packed payloads stay immutable
+    /// Every view proves the complete slot range. Packed payloads stay immutable
     /// because this tier admits stores only to existing flat slots.
     fn checked_object(&mut self, pc: u32, receiver: ir::Value, load: NativeFieldLoad) -> Option<CheckedObject> {
-        use crate::heap::PlainPropertyStorage;
+        if !load.valid() { return None; }
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        if usize::from(load.slot) >= load.storage_len
-            || (load.storage == Some(PlainPropertyStorage::PackedInline)
-                && load.storage_len > layout.inline_property_count) { return None; }
         let receiver = self.body.builder.func.dfg.resolve_aliases(receiver);
         let chain = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
         let key = (receiver, load.shape);
@@ -5413,104 +5386,31 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, auxiliary, i64::from(load.shape));
         self.guard(pc, wrong_shape);
         let meta = self.body.builder.ins().load(types::I32, flags(), object, layout.meta_offset as i32);
-        let payload = self.body.builder.ins().load(types::I64, flags(), object, layout.payload_offset as i32);
-        let extras = self.body.builder.ins().band_imm_u(payload, layout.extras_tag_mask as i64);
-        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, extras, layout.extras_tag as i64);
-        self.guard(pc, extras);
         let inline = self.body.builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        let slots = match load.storage {
-            Some(PlainPropertyStorage::PackedInline) => {
-                let wrong_storage = self.body.builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-                self.guard(pc, wrong_storage);
-                NativeObjectSlots::Packed(payload)
-            }
-            storage => {
-                let base = self.word(heap_base + 1);
-                let length = self.word(heap_base + 2);
-                let missing = self.body.builder.ins().icmp_imm_u(IntCC::Equal, base, 0);
-                self.guard(pc, missing);
-                if storage == Some(PlainPropertyStorage::Arena) {
-                    let wrong_storage = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, inline, 0);
-                    self.guard(pc, wrong_storage);
-                    let start = self.body.builder.ins().ireduce(types::I32, payload);
-                    let start = self.body.builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
-                    let start = self.body.builder.ins().uextend(types::I64, start);
-                    let end = self.body.builder.ins().iadd_imm_u(start, load.storage_len as i64);
-                    let out_of_bounds = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThan, end, length);
-                    self.guard(pc, out_of_bounds);
-                    let offset = self.body.builder.ins().imul_imm_u(start, layout.property_value_size as i64);
-                    NativeObjectSlots::Arena(self.body.builder.ins().iadd(base, offset))
-                } else {
-                    NativeObjectSlots::Generic { payload, inline, base, length }
-                }
-            }
-        };
-        let checked = CheckedObject { slots, storage_len: load.storage_len };
+        let base = self.word(heap_base + 1);
+        let length = self.word(heap_base + 2);
+        let exit = self.exit_block(pc);
+        let checked = CheckedObject::prove(&mut self.body.builder, object, inline, base, length,
+            load, PackedAccess::Snapshot, exit)?;
+        let current = self.body.builder.current_block().expect("checked projection");
+        self.chains.insert(current, chain);
         self.objects.insert(key, (checked, chain));
         Some(checked)
     }
 
-    /// Preserve the receiver proof across the shared packed decoder's branches.
-    fn packed_field_bits(&mut self, payload: ir::Value, slot: u16) -> ir::Value {
+    /// Preserve dominance through the shared projection's decoding branches.
+    fn object_field_bits(&mut self, object: CheckedObject, slot: u16) -> ir::Value {
         let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
-        let join = self.body.builder.create_block();
-        let bits = self.body.builder.append_block_param(join, types::I64);
-        super::emit_packed_object_slot_read(&mut self.body.builder, payload, slot, join);
-        self.body.builder.switch_to_block(join);
-        self.body.builder.seal_block(join);
-        self.chains.insert(join, head);
+        let bits = object.read(&mut self.body.builder, slot);
+        self.chains.insert(self.body.builder.current_block().expect("loaded field"), head);
         bits
-    }
-
-    fn object_field_bits(&mut self, pc: u32, object: CheckedObject, slot: u16) -> ir::Value {
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        match object.slots {
-            NativeObjectSlots::Packed(payload) => self.packed_field_bits(payload, slot),
-            NativeObjectSlots::Arena(base) => self.body.builder.ins().load(types::I64, flags(), base,
-                i32::from(slot) * layout.property_value_size as i32),
-            NativeObjectSlots::Generic { payload, inline, base, length } => {
-                let head = self.chain(self.body.builder.current_block().expect("lowering inside a block"));
-                let inline_block = self.body.builder.create_block();
-                let arena_block = self.body.builder.create_block();
-                let join = self.body.builder.create_block();
-                let bits = self.body.builder.append_block_param(join, types::I64);
-                self.body.builder.ins().brif(inline, inline_block, &[], arena_block, &[]);
-                self.body.builder.switch_to_block(inline_block);
-                self.body.builder.seal_block(inline_block);
-                self.chains.insert(inline_block, head);
-                if usize::from(slot) >= layout.inline_property_count {
-                    let exit = self.exit_block(pc);
-                    self.body.builder.ins().jump(exit, &[]);
-                } else {
-                    let loaded = self.packed_field_bits(payload, slot);
-                    self.body.builder.ins().jump(join, &[ir::BlockArg::Value(loaded)]);
-                }
-                self.body.builder.switch_to_block(arena_block);
-                self.body.builder.seal_block(arena_block);
-                self.chains.insert(arena_block, head);
-                let start = self.body.builder.ins().ireduce(types::I32, payload);
-                let start = self.body.builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
-                let position = self.body.builder.ins().iadd_imm_u(start, i64::from(slot));
-                let position = self.body.builder.ins().uextend(types::I64, position);
-                let out_of_bounds = self.body.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, position, length);
-                self.guard(pc, out_of_bounds);
-                let offset = self.body.builder.ins().imul_imm_u(position, layout.property_value_size as i64);
-                let address = self.body.builder.ins().iadd(base, offset);
-                let loaded = self.body.builder.ins().load(types::I64, flags(), address, 0);
-                self.body.builder.ins().jump(join, &[ir::BlockArg::Value(loaded)]);
-                self.body.builder.switch_to_block(join);
-                self.body.builder.seal_block(join);
-                self.chains.insert(join, head);
-                bits
-            }
-        }
     }
 
     /// Load through a checked receiver projection. Arena values are loaded afresh
     /// when the layout proof is reused, so admitted flat stores stay visible.
     fn native_dynamic_field(&mut self, pc: u32, index: usize, receiver: ir::Value, load: NativeFieldLoad) -> Option<Typed> {
         let object = self.checked_object(pc, receiver, load)?;
-        let bits = self.object_field_bits(pc, object, load.slot);
+        let bits = self.object_field_bits(object, load.slot);
         let representation = self.field_facts[index].representation;
         let value = match representation {
             Representation::Tagged => bits,
