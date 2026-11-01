@@ -157,7 +157,7 @@ fn reference_path(c: &mut Context<'_>, scope: &str, reference: RootId) -> Result
         }
         let undefined = c.undefined();
         let path = super::url_shared_vm::file_url_to_path(c, undefined, &[reference])?;
-        return Ok(c.string_text(path)?);
+        return c.string_text(path);
     }
     if c.has_builtin_brand_rooted(reference, quench_runtime::BuiltinBrand::ArrayBufferView)? {
         if !path_scope(scope) {

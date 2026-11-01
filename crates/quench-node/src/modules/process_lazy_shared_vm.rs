@@ -24,8 +24,7 @@ const METHODS: &[(&str, &str)] = &[
     ("unref", "processUnref"),
 ];
 
-/// `process.allowedNodeEnvironmentFlags`'s class prototype: name, operation, and whether
-/// the member is the `size` getter.
+/// `process.allowedNodeEnvironmentFlags`'s class prototype methods, each with its operation.
 const FLAG_SET_MEMBERS: &[(&str, &str)] = &[
     ("add", "processFlagsAdd"),
     ("delete", "processFlagsDelete"),
