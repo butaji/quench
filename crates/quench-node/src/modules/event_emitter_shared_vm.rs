@@ -787,13 +787,7 @@ fn unhandled_or_dispatch(
     if context.is_error_rooted(error)? {
         return Err(context.throw(error));
     }
-    let detail = match super::util_shared_vm::internal_inspect(context)
-        .and_then(|inspect| context.call_rooted(inspect, missing, &[error]))
-        .and_then(|text| context.to_string(text))
-    {
-        Ok(detail) => detail,
-        Err(_) => context.to_string(error)?,
-    };
+    let detail = super::console_format_shared_vm::inspect(context, error, Default::default())?;
     let unhandled = context.error_rooted(&format!("Unhandled error. ({detail})"))?;
     let code = context.string_rooted("ERR_UNHANDLED_ERROR");
     context.assign_named_property_rooted(unhandled, "code", code)?;

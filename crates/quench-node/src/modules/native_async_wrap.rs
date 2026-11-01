@@ -7,7 +7,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 type Context<'a> = NativeContext<'a, NodeHost>;
 const UNINITIALIZED_ASYNC_ID: i64 = -1; // AsyncWrap::kInvalidAsyncId.
                                         // Node src/async_wrap.h NODE_ASYNC_PROVIDER_TYPES, before crypto providers.
-const PROVIDER_TYPES: &[&str] = &[
+pub(crate) const PROVIDER_TYPES: &[&str] = &[
     "NONE",
     "DIRHANDLE",
     "DNSCHANNEL",

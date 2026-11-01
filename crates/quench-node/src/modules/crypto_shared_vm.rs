@@ -17,7 +17,7 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
         ))?;
         context.define_lazy_data_properties_rooted(
             global,
-            &["DOMException", "QuotaExceededError"],
+            &["DOMException"],
             false,
             exceptions,
         )?;

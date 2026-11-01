@@ -801,7 +801,6 @@ pub(crate) const WEB_API_GLOBALS: &[&str] = &[
     "__quenchBlobEnsureReadable",
     "Blob",
     "File",
-    "CustomEvent",
 ];
 pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
     "FormData",
@@ -1315,13 +1314,10 @@ fn require_for_module_inner(
             return Ok(module);
         }
         Some(BuiltinModule::Assert) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            return crate::modules::assert_shared_vm::module(context, util);
+            return crate::modules::assert_shared_vm::module(context);
         }
         Some(BuiltinModule::AssertStrict) => {
-            let util = cached_builtin(context, BuiltinModule::Util)?;
-            let module = crate::modules::assert_shared_vm::module(context, util)?;
-            return get(context, module, "strict");
+            return crate::modules::assert_shared_vm::strict_module(context);
         }
         Some(BuiltinModule::Path) => {
             return crate::modules::path_shared_vm::module(context);
@@ -2200,27 +2196,6 @@ fn cached_builtin(
     let previous = roots.borrow_mut().builtin_cache.insert(key.clone(), retained);
     if let Some(previous) = previous { context.release_root(previous); }
     // `fs` installs its library policy with the rest of its members (`initialize_module`).
-    if matches!(builtin, BuiltinModule::Events) {
-        let policy = context.with_startup_intrinsics(|context| {
-            let listener = get(context, module, "addAbortListener")?;
-            let data = context.array_rooted(&[module, listener])?;
-            let initialize = context.host_function_with_data(
-                crate::host::shared_vm::operation("eventsOnInitialize"),
-                data,
-            )?;
-            context.define_lazy_data_properties_rooted(
-                module,
-                &["on"],
-                true,
-                initialize,
-            )
-        });
-        if let Err(error) = policy {
-            roots.borrow_mut().builtin_cache.remove(&key);
-            context.release_root(retained);
-            return Err(error);
-        }
-    }
     Ok(module)
 }
 
@@ -2241,24 +2216,6 @@ pub(crate) fn cached_native_binding(
         .builtin_cache
         .insert(key.to_owned(), retained);
     Ok(value)
-}
-
-pub(crate) fn events_on_initialize(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let module = get(context, data, "0")?;
-    let listener = get(context, data, "1")?;
-    // The pinned public policy uses the same native abort authority as events.
-    // Capture it before guest replacement of the public alias, and load policy
-    // only when `on` is observed, through the VM's ordinary data-property model.
-    let abort = node_library_module(context, "events.js", "internal/events/abort_listener.js")?;
-    set(context, abort, "addAbortListener", listener)?;
-    let on = node_library_export(context, "events.js", "events.js", "on")?;
-    set(context, module, "on", on)?;
-    Ok(context.undefined())
 }
 
 /// Load a real configured standard-library export over this VM's native bindings.
@@ -2442,10 +2399,6 @@ pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError
 
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Buffer)
-}
-
-pub(crate) fn console_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached_builtin(context, BuiltinModule::Console)
 }
 
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -2873,6 +2826,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         // module does not use; until it is projected from it, it stays empty.
         BuiltinModule::Internal("_http_client") => context.object_rooted(),
         BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
+        BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
         // Every other such builtin is Node's own library module of that name.
         BuiltinModule::Internal(name) => {
             let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
@@ -2922,7 +2876,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
-        BuiltinModule::Readline => node_library_module(context, "readline.js", "readline.js"),
+        BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
         }
@@ -2940,19 +2894,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
         BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),
-        BuiltinModule::Zlib => {
-            let module = node_library_module(context, "zlib.js", "zlib.js")?;
-            // Node exposes the constants table as an immutable snapshot. The
-            // shared host's native-binding projection can materialize its
-            // properties as ordinary writable data properties, so freeze the
-            // public table after loading the Node-owned zlib implementation.
-            let constants = get(context, module, "constants")?;
-            let global = context.global_root()?;
-            let object = get(context, global, "Object")?;
-            let freeze = get(context, object, "freeze")?;
-            context.call_rooted(freeze, object, &[constants])?;
-            Ok(module)
-        }
+        BuiltinModule::Zlib => crate::modules::zlib_shared_vm::module(context),
         BuiltinModule::Crypto => {
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
             let transform_key = context.string_rooted("Transform");
@@ -4104,19 +4046,6 @@ fn load_with_resolution(
         }
         if library_relative == Some(Path::new("lib/diagnostics_channel.js")) {
             crate::modules::console_shared_vm::note_channels_loaded(context)?;
-        }
-        if library_relative == Some(Path::new("lib/internal/console/global.js")) {
-            // Node's bootstrap initializes the global console as it loads it; one loaded on
-            // first use binds its streams before any module writes to it.
-            let initialize = node_library_export(
-                context,
-                "internal/process/pre_execution.js",
-                "internal/console/constructor.js",
-                "initializeGlobalConsole",
-            )?;
-            let undefined = context.undefined();
-            context.call_rooted(initialize, undefined, &[exports])?;
-            crate::modules::console_shared_vm::adopt(context, module, exports)?;
         }
         let exports = get(context, module, "exports")?;
         if let Some(path) = library_relative {

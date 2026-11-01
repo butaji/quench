@@ -1,4 +1,4 @@
-use super::{get, resolve_shared_path, set, stream_io_error};
+use super::{resolve_shared_path, set, stream_io_error};
 use crate::host::NodeHost;
 use crate::modules::fs_ops as ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
@@ -26,16 +26,17 @@ pub(crate) fn initialize(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let module = context.host_function_data()?;
-    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let writable = get(context, streams, "Writable")?;
-    let factory = crate::host::removed_javascript("node:fs/shared-create-write-stream.js")?;
-    let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[writable, module])?;
-    let create = super::metadata_public::wrap(context, constructor, "createWriteStream")?;
+    let constructor = super::streams::write_stream_class(context)?;
+    let create = context.host_function_named_with_data(
+        crate::host::shared_vm::operation("fsCreateStream"), "createWriteStream", constructor,
+    )?;
+    let create = super::metadata_public::wrap(context, create, "createWriteStream")?;
     set(context, module, "createWriteStream", create)?;
     set(context, module, "WriteStream", constructor)?;
     super::define_legacy_alias(context, module, "FileWriteStream", constructor)?;
-    super::guard_permissions(context, module, Some(&["createWriteStream"]))?;
+    if super::permission_model_enabled(context) {
+        super::guard_permissions(context, module, Some(&["createWriteStream"]))?;
+    }
     Ok(context.undefined())
 }
 
