@@ -431,14 +431,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     context.scoped(install_performance_global)?;
     context.scoped(crate::modules::crypto_shared_vm::install_global)?;
-    if node_primordials_source(context).is_some() {
-        // Node 24 exposes these well-known disposal symbols before its
-        // primordial snapshot is built. The runtime may not provide them yet,
-        // so seed stable symbols for Node's internal modules first.
-        let seed_disposal_symbols = crate::host::removed_javascript("node:bootstrap/disposal-symbols.js")?;
-        let undefined = context.undefined();
-        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
     // Builtins built after this point see the intrinsics as they are now, whatever a
@@ -491,10 +483,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         }
         context.seal_startup_intrinsics();
     }
-    #[cfg(feature = "aot")]
-    if let Some(demands) = context.host_mut().native_source_staging.take() {
-        return crate::aot::stage_host_sources(context, demands);
-    }
     if let Some(kind) = context.host_mut().building_snapshot {
         return crate::host::startup_snapshot::preload(context, kind);
     }
@@ -505,6 +493,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
+    context.scoped(crate::modules::process_surface::configure)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;
     // IPC and cluster startup precede all user preloads and synchronous entry.
@@ -1351,39 +1340,6 @@ pub(crate) fn initialize_console_global(
 /// Public module.filename mutation cannot grant access to the timer adapter.
 /// The private global through which a builtin's ESM facade reads its exports.
 pub(crate) const BUILTIN_EXPORT_VALUES: &str = "\0quench:builtinExportValues";
-
-/// Capture SDK definitions behind the exports an imported builtin can expose.
-/// Reading a policy does not invoke its exported operations or train an app.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_builtin_exports(context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let key = context.string_rooted(BOOTSTRAP_REQUIRE);
-    let require = context.get_property_rooted(global, key)?;
-    let specifier = context.string_rooted(name);
-    let receiver = context.undefined();
-    let module = context.call_rooted(require, receiver, &[specifier])?;
-    for name in super::builtin_export_names(name.strip_prefix("node:").unwrap_or(name)) {
-        context.scoped(|context| {
-            let key = context.string_rooted(name);
-            let own = context.own_property_descriptor_rooted(module, key)?;
-            if !context.rooted_value(own).is_some_and(|value| value.is_undefined()) {
-                context.get_property_rooted(module, key)?;
-            }
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-
-/// Stage a dependency through the owner's actual SDK require protocol. Bundled
-/// virtual IDs and frozen resolution metadata follow the same path as execution.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_library_dependency(context: &mut Context<'_>, owner: &str, id: &str) -> Result<(), RootedError> {
-    let root = context.host_mut().node_library_root.clone();
-    let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    let specifier = context.string_rooted(id);
-    host_load(|| context.with_startup_intrinsics(|context| require_for_module(context, parent, &[specifier]).map(drop)))
-}
 
 /// The values of a builtin module's named exports (`args`: the module and the export names),
 /// aligned with the names. As lib/internal/bootstrap/realm.js `syncExports` does, each is read

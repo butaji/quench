@@ -45,6 +45,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let prototype = get(context, constructor, "prototype")?;
     context.set_prototype_rooted(prototype, emitter_prototype)?;
     context.set_prototype_rooted(process, prototype)?;
+    Ok(())
+}
+
+/// Process environment and invocation values belong to the running process,
+/// after the snapshot/source-capture boundary and before user preloads.
+pub(crate) fn configure(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
     let features = get(context, process, "features")?;
     let inspector = get(context, features, "inspector")?;
     let env = get(context, process, "env")?;

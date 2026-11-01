@@ -1548,16 +1548,6 @@ pub(crate) fn initialize_promises_glob_policy(
     Ok(context.undefined())
 }
 
-/// Definitions behind the SDK's lazyGlob and lazyMinimatch closures. Loading
-/// these modules builds policy; traversing a directory remains a guest operation.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_glob_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    for (owner, id) in [("fs.js", "internal/fs/glob"), ("internal/fs/glob.js", "internal/deps/minimatch/index")] {
-        crate::host::shared_vm::commonjs::stage_library_dependency(context, owner, id)?;
-    }
-    Ok(())
-}
-
 /// The private copy of Node's library members that the native readers call, whatever a script
 /// later assigns to the public module. It is filled from `lib/fs.js` on first use.
 fn directory_policy(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {

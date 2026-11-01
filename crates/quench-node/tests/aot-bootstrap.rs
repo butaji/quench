@@ -38,7 +38,7 @@ fn source_keys_reject_unknown_or_noncanonical_shapes() {
 }
 
 #[test]
-fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
+fn rust_sdk_contributes_no_guest_source_and_capture_does_not_run_the_entry() {
     use std::fs;
     let directory = std::env::temp_dir().join(format!("quench-warning-stage-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
@@ -47,19 +47,10 @@ fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
     let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
     let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
-    let warning = Path::new("lib/internal/process/warning.js");
-    assert!(staged.assets().files.keys().any(|path| path.ends_with(warning)));
-    assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(warning)));
-    assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/internal/process/report.js")));
-    assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/fs.js")));
-    assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with("lib/fs.js")));
-    for source in ["lib/internal/fs/glob.js", "deps/minimatch/index.js"] {
-        assert!(staged.assets().files.keys().any(|path| path.ends_with(source)), "{source}");
-        assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(source)), "{source}");
-    }
-    for source in ["lib/internal/fs/promises.js", "lib/internal/abort_controller.js"] {
-        assert!(staged.assets().views.keys().any(|(path, _)| path.ends_with(source)), "{source}");
-    }
+    assert_eq!(staged.units().len(), 0);
+    assert!(staged.assets().files.is_empty());
+    assert!(staged.assets().views.is_empty());
+    assert!(staged.assets().modules.is_empty());
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -173,10 +164,10 @@ fn framework_graphs_admit_original_js_and_ts_without_running_applications() {
 }
 
 #[test]
-fn node_bootstrap_manifest_compiles_to_native_objects_before_application_entry() {
+fn rust_bootstrap_entry_compiles_without_sdk_guest_units() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
     let manifest = SourceManifest::capture_bootstrap(&root).unwrap();
-    assert!(manifest.units().len() > 0, "bootstrap bypassed the source admission boundary");
+    assert_eq!(manifest.units().len(), 0, "Rust bootstrap must not generate guest code");
     let count = manifest.units().len();
     let compiled = manifest.compile().unwrap();
     assert_eq!(compiled.units.len(), count);

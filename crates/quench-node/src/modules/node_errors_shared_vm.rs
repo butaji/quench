@@ -208,15 +208,6 @@ pub(crate) fn forward_string<H: quench_runtime::Host>(c: &mut NativeContext<'_, 
     c.call_rooted(callback, undefined, &[receiver])
 }
 
-#[cfg(feature = "aot")]
-pub(crate) fn stage_coded_error_support(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    prepare_coded_error_support(context)?;
-    for presentation in ERROR_PRESENTATIONS {
-        presentation_factory(context, presentation)?;
-    }
-    Ok(())
-}
-
 fn coded_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
     code: &'static str,
