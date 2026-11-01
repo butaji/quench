@@ -9,10 +9,16 @@ use std::{
 quench_runtime::export_native_js_operations!(SystemHost, semantic_exports);
 
 static ENTRIES: AtomicUsize = AtomicUsize::new(0);
+static BOOLEAN_ENTRIES: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn native_image_entered(image: u64) {
     ENTRIES.fetch_or(1 << image, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn native_boolean_entered(image: u64) {
+    BOOLEAN_ENTRIES.fetch_or(1 << image, Ordering::Relaxed);
 }
 
 unsafe extern "C" {
@@ -46,6 +52,9 @@ fn run() -> Result<(), String> {
     let expected = (1 << images.len()) - 1;
     if ENTRIES.load(Ordering::Relaxed) != expected {
         return Err("program roots did not enter the linked objects".into());
+    }
+    if BOOLEAN_ENTRIES.load(Ordering::Relaxed) != expected {
+        return Err("guarded boolean calls did not enter both linked objects".into());
     }
     println!("native JS and TS images passed");
     Ok(())

@@ -6928,6 +6928,14 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
             } else {
                 None
             };
+            #[cfg(feature = "native-execution")]
+            let boolean_result = if SINGLE_OPERATION && dispatch.allow_inline_calls && is_call {
+                vm.native_boolean_call(&program, dispatch.program_id, dispatch.frame, current_instruction)
+            } else {
+                None
+            };
+            #[cfg(not(feature = "native-execution"))]
+            let boolean_result: Option<Value> = None;
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]
                     .registers
@@ -6935,6 +6943,12 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
                     .ok_or_else(|| JsError::validation(
                         "native JS capture result register is invalid".into(),
                     ))?;
+                *destination = value;
+                Ok(super::StepResult::Continue)
+            } else if let Some(value) = boolean_result {
+                let destination = vm.frames[dispatch.frame].registers
+                    .get_mut(usize::from(current_instruction.result_register()))
+                    .ok_or_else(|| JsError::validation("native JS call result register is invalid".into()))?;
                 *destination = value;
                 Ok(super::StepResult::Continue)
             } else if SINGLE_OPERATION {
@@ -12785,28 +12799,43 @@ impl<H: Host> Vm<H> {
     }
 
     /// Read guarded numeric captures without running guest code.
-    fn numeric_tier_captures(
+    fn append_numeric_tier_captures<I>(
         &mut self,
         captures: TierCaptures,
-        inputs: &[super::js_compiled::JsJitCaptureArgument],
-    ) -> Option<smallvec::SmallVec<[f64; 4]>> {
-        inputs.iter().map(|capture| {
-            self.tier_capture(captures, capture.depth, capture.slot)?.as_number()
-        }).collect()
+        inputs: I,
+        arguments: &mut smallvec::SmallVec<[f64; 8]>,
+    ) -> Option<()>
+    where
+        I: IntoIterator<Item = (u16, u16)>,
+    {
+        for (depth, slot) in inputs {
+            arguments.push(self.tier_capture(captures, depth, slot)?.as_number()?);
+        }
+        Some(())
     }
 
     /// Append only cached data-property Numbers; a miss leaves guest effects to the VM.
-    fn append_numeric_tier_fields(
+    fn append_numeric_tier_fields<I>(
         &mut self,
         program: &ResidualProgram,
         this: Option<Value>,
         parameters: &[Value],
         captures: TierCaptures,
-        inputs: &[super::js_compiled::JsJitNumericFieldInput],
+        inputs: I,
         arguments: &mut smallvec::SmallVec<[f64; 8]>,
-    ) -> Option<()> {
-        for input in inputs {
-            let receiver = match input.receiver {
+    ) -> Option<()>
+    where
+        I: IntoIterator<Item = (u16, super::js_compiled::JsJitFieldReceiver, u16)>,
+    {
+        let field_base = arguments.len();
+        for (index, (cache_site, receiver, source)) in inputs.into_iter().enumerate() {
+            let source = usize::from(source);
+            if source < index {
+                arguments.push(*arguments.get(field_base + source)?);
+                continue;
+            }
+            if source != index { return None; }
+            let receiver = match receiver {
                 super::js_compiled::JsJitFieldReceiver::This => this?,
                 super::js_compiled::JsJitFieldReceiver::Parameter(parameter) => {
                     *parameters.get(usize::from(parameter))?
@@ -12816,10 +12845,70 @@ impl<H: Host> Vm<H> {
                 }
             };
             let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(program, receiver, input.cache_site) else { return None; };
+                self.cached_field_hit(program, receiver, cache_site) else { return None; };
             arguments.push(value.as_number()?);
         }
         Some(())
+    }
+
+    /// Run a pure linked predicate at a call without allocating a callee frame.
+    /// Every guard is effect-free; a miss leaves the call to its ordinary path.
+    #[cfg(feature = "native-execution")]
+    fn native_boolean_call(
+        &mut self,
+        program: &ResidualProgram,
+        program_id: ProgramId,
+        frame: usize,
+        instruction: WideInstruction,
+    ) -> Option<Value> {
+        use super::native_program::NativeBooleanRegion;
+        use super::js_compiled::JsJitFieldReceiver;
+        if instruction.op() != Op::Call || instruction.direct_eval()
+            || instruction.result_flags() != 0 || instruction.call_window().count != 0
+            || self.direct_eval || self.parameter_eval
+            || frame + 1 != self.frames.len()
+            || self.frames[frame].function == super::ROOT_FUNCTION_ID
+        {
+            return None;
+        }
+        let code = self.programs.native_js_code(program_id)?;
+        if !code.has_boolean_regions() { return None; }
+        let callee = *self.frames[frame].registers.get(usize::from(instruction.register_b()))?;
+        let receiver = *self.frames[frame].registers.get(usize::from(instruction.register_c()))?;
+        // An ordinary object binds identically for strict and sloppy methods.
+        receiver.direct_object_index()?;
+        let (target_program, function, env) = self.same_realm_user_target(callee)?;
+        if target_program != program_id { return None; }
+        let region = code.boolean_region(function)?;
+        let captures = region.capture_slots[..usize::from(region.capture_count)]
+            .iter().map(|slot| (0, *slot));
+        let fields = region.field_sites[..usize::from(region.field_count)].iter()
+            .zip(&region.field_sources[..usize::from(region.field_count)])
+            .map(|(site, source)| (*site, JsJitFieldReceiver::This, *source));
+        let scope = TierCaptures::Environment(env);
+        let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+        self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
+        self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
+        if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
+            && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+        {
+            return None;
+        }
+        let _guard = crate::stack::GuestCallGuard::enter().ok()?;
+        if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        // SAFETY: the image binds this entry to these validated input descriptors;
+        // the pure region receives only scalar Numbers and performs no callout.
+        let encoded = unsafe { (region.entry)(arguments.as_ptr()) };
+        if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        Some(if encoded & super::js_compiled::BOOLEAN_REGION_RESULT_MASK != 0 {
+            Value::TRUE
+        } else {
+            Value::FALSE
+        })
     }
 
     /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
@@ -13383,16 +13472,19 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let capture_values = self.numeric_tier_captures(entry.captures, &capture_arguments);
-        let captures_numeric = capture_values.is_some();
-        let capture_values = capture_values.unwrap_or_default();
+        let mut capture_values: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+        let captures_numeric = self.append_numeric_tier_captures(
+            entry.captures, capture_arguments.iter().map(|capture| (capture.depth, capture.slot)),
+            &mut capture_values,
+        ).is_some();
         if captures_numeric {
             arguments.extend(capture_values.iter().copied());
         } else {
             numeric = false;
         }
         if self.append_numeric_tier_fields(
-            program, entry.this, &registers, entry.captures, &numeric_field_inputs, &mut arguments,
+            program, entry.this, &registers, entry.captures,
+            numeric_field_inputs.iter().map(|input| (input.cache_site, input.receiver, input.source)), &mut arguments,
         ).is_none() {
             numeric = false;
         }

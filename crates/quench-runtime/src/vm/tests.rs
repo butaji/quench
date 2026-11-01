@@ -14720,7 +14720,9 @@ fn js_jit_compiles_guarded_boolean_fields_and_captures() {
         panic!("guarded field and capture predicate should compile");
     };
     assert!(!compiled.is_general_dispatch());
-    assert!(!compiled.numeric_field_inputs().is_empty());
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
+    assert_eq!(compiled.numeric_field_inputs()[0].source, 0);
+    assert_eq!(compiled.numeric_field_inputs()[1].source, 0);
     assert!(compiled.native_entries() > 0);
 }
 

@@ -47,6 +47,8 @@ pub(super) struct JsJitNumericFieldInput {
     pub(super) cache_site: u16,
     pub(super) pc: usize,
     pub(super) receiver: JsJitFieldReceiver,
+    /// The earlier identical data-property read to reuse, or this input's index.
+    pub(super) source: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,8 +145,8 @@ const MAX_INSTRUCTIONS: usize = 256;
 const MAX_REGISTERS: usize = 256;
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
 const MAX_PARAMETERS: usize = 8;
-const MAX_CAPTURE_ARGUMENTS: usize = 4;
-const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
+pub(super) const MAX_CAPTURE_ARGUMENTS: usize = 4;
+pub(super) const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
 
 /// Compile `function_id` when all reachable behavior is represented by the
 /// supported straight-line bytecode subset. Every unsupported shape is left
@@ -883,6 +885,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
         return None;
     }
     let mut inputs: smallvec::SmallVec<[_; MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
+    let mut properties: smallvec::SmallVec<[(JsJitFieldReceiver, crate::bytecode::Atom); MAX_NUMERIC_FIELD_INPUTS]> = smallvec::SmallVec::new();
     let mut captured_registers = [None; MAX_REGISTERS];
     let mut parameter_unchanged = [true; MAX_REGISTERS];
     let mut branch_seen = false;
@@ -899,7 +902,7 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 return None;
             }
             let FieldLookup::Atom {
-                base, cache_site, ..
+                atom, base, cache_site,
             } = instruction.field_lookup()?
             else {
                 return None;
@@ -931,14 +934,18 @@ pub(super) fn cached_numeric_field_inputs_candidate(
                 // entry across forward control flow.
                 return None;
             }
+            if inputs.len() == MAX_NUMERIC_FIELD_INPUTS {
+                return None;
+            }
+            let source = properties.iter().position(|property| *property == (receiver, atom))
+                .unwrap_or(properties.len());
+            properties.push((receiver, atom));
             inputs.push(JsJitNumericFieldInput {
                 cache_site,
                 pc,
                 receiver,
+                source: u16::try_from(source).ok()?,
             });
-            if inputs.len() > MAX_NUMERIC_FIELD_INPUTS {
-                return None;
-            }
         } else if instruction.op() == Op::LoadCapture {
             if instruction.returns_from_frame() || instruction.result_flags() != 0 {
                 return None;
