@@ -15799,6 +15799,22 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
       const inherited = Object.create({ value: 40 });
       if (readField(inherited) !== 40) throw Error('prototype holder fallback');
 
+      const prototype = { value: 70, a: 1, b: 2 };
+      const child = Object.assign(Object.create(prototype), { a: 3, b: 4, c: 5 });
+      for (let index = 0; index < 64; index++) {
+        if (readField(child) !== 70) throw Error('prototype cache');
+      }
+      prototype.value = 71;
+      if (readField(child) !== 71) throw Error('prototype live value');
+      child.value = 72;
+      if (readField(child) !== 72) throw Error('own shadow');
+      delete child.value;
+      if (readField(child) !== 71) throw Error('remove shadow');
+      Object.defineProperty(prototype, 'value', { get() { return 73; }, configurable: true });
+      if (readField(child) !== 73) throw Error('prototype accessor');
+      Object.setPrototypeOf(child, { value: 74 });
+      if (readField(child) !== 74) throw Error('prototype replacement');
+
       let getterCalls = 0;
       const accessor = { other: 1, more: 2, get value() { getterCalls++; return 50; } };
       if (readField(accessor) !== 50 || getterCalls !== 1) throw Error('accessor fallback');

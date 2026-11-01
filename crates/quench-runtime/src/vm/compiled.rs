@@ -1454,14 +1454,11 @@ fn emit_js_dense_array_get(
     );
 }
 
-/// The address of the own data field a site's field cache entry names on the receiver in
-/// the frame word at `base_offset`, as the lane's own-field hits find it
-/// (`Vm::own_field_entry_hit`, `Vm::primary_own_field_store_hit`): a direct-object receiver
-/// whose exact shape is the entry's receiver, an entry naming no holder, and plain arena
-/// storage, whose slot the shape fixes. Plain storage carries no extras, so the receiver is
-/// neither a module namespace nor an arguments object. The entry, the record and the arena
-/// are read on every execution, so a cache refill, a receiver change or arena movement is
-/// seen; any failed proof branches to `fallback`.
+/// Read the cached slot of a direct object with plain arena storage. Stores require an own
+/// field; reads may also use an immediate object-record prototype whose exact shape matches
+/// the cached holder and whose slot is in the extras arena. These are the same shape proofs
+/// used by the VM's own-field and ordinary-holder cache hits. The receiver, holder, cache and
+/// arena are read on every execution; every unsupported or invalidated case falls back.
 #[derive(Clone, Copy)]
 enum JsFieldReceiver {
     Register(i32),
@@ -1476,12 +1473,13 @@ fn js_field_receiver(base: FieldBase, register_offset: &impl Fn(u16) -> Option<i
     }
 }
 
-fn emit_js_own_field_slot(
+fn emit_js_cached_field_slot(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
     receiver: JsFieldReceiver,
     site: u16,
+    allow_holder: bool,
     fallback: ir::Block,
 ) -> ir::Value {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -1531,7 +1529,9 @@ fn emit_js_own_field_slot(
     };
     let holder = entry_word(builder, CACHE.holder_offset, CACHE.holder_complement);
     let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
-    emit_js_guard(builder, own, fallback);
+    if !allow_holder {
+        emit_js_guard(builder, own, fallback);
+    }
     let receiver_shape = entry_word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
 
     let record_offset = builder.ins().imul_imm_u(
@@ -1567,6 +1567,68 @@ fn emit_js_own_field_slot(
     let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
     let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
     emit_js_guard(builder, plain, fallback);
+    let storage = if allow_holder {
+        let own_block = builder.create_block();
+        let holder_block = builder.create_block();
+        let join = builder.create_block();
+        builder.append_block_param(join, types::I64);
+        builder.ins().brif(own, own_block, &[], holder_block, &[]);
+        builder.switch_to_block(own_block);
+        builder.ins().jump(join, &[ir::BlockArg::Value(storage)]);
+
+        builder.switch_to_block(holder_block);
+        let proto = builder.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
+        let in_start = builder.ins().icmp_imm_u(
+            IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base),
+        );
+        let in_end = builder.ins().icmp_imm_u(
+            IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end),
+        );
+        let object_proto = builder.ins().band(in_start, in_end);
+        emit_js_guard(builder, object_proto, fallback);
+        let proto_id = builder.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
+        let proto_id = builder.ins().uextend(types::I64, proto_id);
+        let proto_offset = builder.ins().imul_imm_u(
+            proto_id, i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
+        );
+        let prototype = builder.ins().iadd(records, proto_offset);
+        let proto_shape = builder.ins().load(
+            types::I32, MemFlagsData::trusted(), prototype,
+            i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
+        );
+        let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
+        emit_js_guard(builder, same_holder, fallback);
+        let proto_meta = builder.ins().load(
+            types::I32, MemFlagsData::trusted(), prototype,
+            i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
+        );
+        let inline = builder.ins().band_imm_u(proto_meta, i64::from(OBJECT.inline_storage_mask));
+        let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+        emit_js_guard(builder, arena, fallback);
+        let proto_storage = builder.ins().load(
+            types::I64, MemFlagsData::trusted(), prototype,
+            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
+        );
+        let tag = builder.ins().band_imm_u(proto_storage, OBJECT.extras_tag_mask as i64);
+        let extras = builder.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
+        emit_js_guard(builder, extras, fallback);
+        let extras_pointer = builder.ins().band_imm_u(proto_storage, !OBJECT.extras_tag_mask as i64);
+        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
+        emit_js_guard(builder, present, fallback);
+        let start = builder.ins().load(
+            types::I32, MemFlagsData::trusted(), extras_pointer,
+            i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
+        );
+        let start = builder.ins().uextend(types::I64, start);
+        builder.ins().jump(join, &[ir::BlockArg::Value(start)]);
+        builder.seal_block(own_block);
+        builder.seal_block(holder_block);
+        builder.seal_block(join);
+        builder.switch_to_block(join);
+        builder.block_params(join)[0]
+    } else {
+        storage
+    };
     let slot = entry_word(builder, CACHE.slot_offset, CACHE.slot_complement);
     let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
     let slot = builder.ins().uextend(types::I64, slot);
@@ -1614,7 +1676,7 @@ impl JsExactFallback {
     }
 }
 
-/// Lower an own data-field read (`emit_js_own_field_slot`); the destination stays untouched
+/// Lower a cached data-field read (`emit_js_cached_field_slot`); the destination stays untouched
 /// on a failed proof, which resumes `Vm::step` at this GetField PC and may fill the cache.
 fn emit_js_own_field_get(
     builder: &mut FunctionBuilder<'_>,
@@ -1627,14 +1689,14 @@ fn emit_js_own_field_get(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_own_field_slot(builder, arguments, payload, receiver, site, fallback);
+    let address = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
 }
 
-/// Lower a returning own data-field read: the value `emit_js_own_field_slot` finds becomes
+/// Lower a returning data-field read: the value `emit_js_cached_field_slot` finds becomes
 /// the frame's result as the native `Return` makes it, a requested interrupt first taking
 /// the exact-PC callout; any failed proof resumes `Vm::step` at this GetField PC.
 fn emit_js_own_field_return(
@@ -1647,7 +1709,7 @@ fn emit_js_own_field_return(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_own_field_slot(builder, arguments, payload, receiver, site, fallback);
+    let address = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     let returns = builder.create_block();
     let interrupted = builder.interrupt_requested();
@@ -1667,7 +1729,7 @@ fn emit_js_own_field_return(
 /// Lower an own data-field store as the lane's store hit makes it
 /// (`Vm::primary_own_field_store_hit`, `Vm::cached_field_store_hit`): in specialized
 /// execution, of a name no method cache names (whose store would invalidate it), to the slot
-/// `emit_js_own_field_slot` finds. Only a value outside the heap is stored here, which the
+/// `emit_js_cached_field_slot` finds. Only a value outside the heap is stored here, which the
 /// write barrier never logs; a heap value, like every failed proof, resumes `Vm::step` at
 /// this SetField PC with nothing written.
 #[allow(clippy::too_many_arguments)]
@@ -1713,7 +1775,7 @@ fn emit_js_own_field_set(
     builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
-    let address = emit_js_own_field_slot(builder, arguments, payload, JsFieldReceiver::Register(base_offset), site, fallback);
+    let address = emit_js_cached_field_slot(builder, arguments, payload, JsFieldReceiver::Register(base_offset), site, false, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -6240,7 +6302,24 @@ fn native_field_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: Wi
         }
         let cache = vm.field_cache_entry(cache_site);
         if cache.holder != NO_FIELD_HOLDER {
-            "prototype-holder"
+            if cache.receiver != object.exact_shape() {
+                "prototype-receiver-shape-miss"
+            } else if let Some(record) = object.proto_link().object_record_id() {
+                let holder = vm.heap.object_record_by_id(record);
+                if holder.exact_shape() != cache.holder {
+                    "prototype-holder-shape-miss"
+                } else if holder.inline_properties().is_some() {
+                    "prototype-holder-inline"
+                } else if holder.extras_storage_start().is_some() {
+                    "prototype-holder-extras"
+                } else if holder.plain_storage_start().is_some() {
+                    "prototype-holder-plain"
+                } else {
+                    "prototype-holder-other-storage"
+                }
+            } else {
+                "prototype-non-record"
+            }
         } else if cache.receiver != object.exact_shape() {
             "own-shape-miss"
         } else {

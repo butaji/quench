@@ -107,6 +107,9 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
+    pub(crate) proto_mask: u32,
+    pub(crate) proto_record_base: u32,
+    pub(crate) proto_record_end: u32,
     pub(crate) property_value_size: usize,
     pub(crate) property_value_align: usize,
 }
@@ -127,6 +130,9 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
+    proto_mask: cell::NATIVE_OBJECT_PROTO_MASK,
+    proto_record_base: cell::NATIVE_OBJECT_PROTO_RECORD_BASE,
+    proto_record_end: cell::NATIVE_OBJECT_PROTO_RECORD_END,
     property_value_size: std::mem::size_of::<Value>(),
     property_value_align: std::mem::align_of::<Value>(),
 };
