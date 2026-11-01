@@ -6707,6 +6707,8 @@ struct JsStepDispatch {
     inlined: usize,
     /// A lane body's running lane context, which its native calls make activations in.
     lane_context: usize,
+    /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
+    returned_pc: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6763,9 +6765,8 @@ pub(super) enum LaneExit {
     /// A native call made its callee's activation and the lane continues in it
     /// (`dispatch_fast::lane_body_call`).
     Callee,
-    /// The returning call at `pc` completed natively: the activation completes with its
-    /// result, in the call's register.
-    Returned(usize),
+    /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
+    Returned { pc: usize, value: Value },
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
@@ -6773,9 +6774,10 @@ pub(super) enum LaneExit {
 const INLINED_EXIT: u64 = 1 << 63;
 /// The result word of a leave into a native call's callee activation.
 const CALLEE_EXIT: u64 = 1 << 62;
-/// The bit of a lane body's result word that marks a completion by the returning call at
-/// the PC below it.
-const RETURNED_EXIT: u64 = 1 << 61;
+/// The status of a lane body whose activation completes: its result word holds the value,
+/// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
+/// sits below the general dispatch's return statuses and above every small status.
+pub(super) const LANE_BODY_RETURNED: u32 = JS_GENERAL_RETURN_STATUS_BASE - 1;
 
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
@@ -6785,25 +6787,31 @@ pub(super) const LANE_CALL_MISSED: u64 = 1;
 pub(super) const LANE_CALL_LEFT: u64 = 2;
 
 impl LaneExit {
+    /// The caller PC a leave or completion is at, with a completion's value written to the
+    /// register its record names, where a test reads a `Return`'s result.
+    #[cfg(test)]
+    pub(super) fn settled(self, registers: &mut [Value], instructions: &[crate::bytecode::WideInstruction]) -> Option<usize> {
+        if let Self::Returned { pc, value } = self {
+            registers[usize::from(instructions[pc].register_a() & crate::bytecode::REGISTER_MASK)] = value;
+        }
+        self.caller_pc()
+    }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned(pc) => Some(pc), Self::Inlined { .. } | Self::Callee => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Inlined { .. } | Self::Callee => None }
     }
     pub(super) fn word(self) -> u64 {
         match self {
             Self::At(pc) => pc as u64,
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
-            Self::Returned(pc) => RETURNED_EXIT | pc as u64,
+            Self::Returned { .. } => unreachable!("a completion is a status, not a leave word"),
         }
     }
 
     fn decode(word: u64) -> Self {
         if word == CALLEE_EXIT {
             return Self::Callee;
-        }
-        if word & RETURNED_EXIT != 0 && word & INLINED_EXIT == 0 {
-            return Self::Returned(usize::try_from(word & !RETURNED_EXIT).unwrap_or(0));
         }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
@@ -6982,6 +6990,11 @@ impl<H: Host> Vm<H> {
             }
         };
         let status = unsafe { (method.entry)(&mut *context, start, 0, registers.cast_const().cast(), &mut word) };
+        if status == LANE_BODY_RETURNED {
+            // SAFETY: as above; the body wrote the record before it returned.
+            let pc = unsafe { (*frame).dispatch.returned_pc };
+            return LaneExit::Returned { pc, value: Value::from_bits(word) };
+        }
         Self::lane_method_exit(status, word)
     }
 
@@ -7105,6 +7118,7 @@ impl LaneFrame {
                 residual: 0,
                 inlined: 0,
                 lane_context: 0,
+                returned_pc: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7225,6 +7239,7 @@ impl JsStepDispatch {
             residual: 0,
             inlined: 0,
             lane_context: 0,
+            returned_pc: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

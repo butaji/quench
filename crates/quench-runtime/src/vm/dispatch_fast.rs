@@ -7084,11 +7084,9 @@ script_handler! {
                 carried.acc = Slot::of(unsafe { (*cx).callee_acc });
                 next!(cx, registers, resume, carried)
             }
-            super::compiled::LaneExit::Returned(pc) => {
-                // SAFETY: the body completed at a returning call record of its function.
-                let call = unsafe { base.add(pc) };
-                let value = r.get(unsafe { (*call).a } & crate::bytecode::REGISTER_MASK);
-                lane_return_value!(cx, call, value)
+            super::compiled::LaneExit::Returned { pc, value } => {
+                // SAFETY: the record that completes the activation is one of its function's.
+                lane_return_value!(cx, unsafe { base.add(pc) }, value)
             }
         };
         if pc as u32 == site.header {
@@ -13887,11 +13885,9 @@ script_handler! {
                 carried.acc = Slot::of(unsafe { (*cx).callee_acc });
                 next!(cx, registers, resume, carried)
             }
-            super::compiled::LaneExit::Returned(pc) => {
-                // SAFETY: the body completed at a returning call record of its function.
-                let call = unsafe { base.add(pc) };
-                let value = r.get(unsafe { (*call).a } & crate::bytecode::REGISTER_MASK);
-                lane_return_value!(cx, call, value)
+            super::compiled::LaneExit::Returned { pc, value } => {
+                // SAFETY: the record that completes the activation is one of its function's.
+                lane_return_value!(cx, unsafe { base.add(pc) }, value)
             }
         };
         // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
@@ -14126,10 +14122,8 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
             leave(resume, unsafe { carried.acc.get() })
         }
         super::compiled::LaneExit::Callee => LANE_CALL_LEFT,
-        super::compiled::LaneExit::Returned(pc) => {
-            // SAFETY: the body completed at a returning call record of its function.
-            let destination = unsafe { (*base.add(pc)).a } & crate::bytecode::REGISTER_MASK;
-            lane_return_to_body(cx, registers.get(destination)).expect("the call made a plain activation");
+        super::compiled::LaneExit::Returned { value, .. } => {
+            lane_return_to_body(cx, value).expect("the call made a plain activation");
             LANE_CALL_COMPLETED
         }
     }

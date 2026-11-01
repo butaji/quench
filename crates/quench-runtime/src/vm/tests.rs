@@ -21452,7 +21452,7 @@ fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
                     let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
                     registers[..arguments.len()].copy_from_slice(&arguments);
                     let pc = vm.run_lane_method(&method, super::compiled::LaneStart::First, super::program_store::ProgramId::MAIN,
-                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
+                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).settled(&mut registers, &instructions).expect("caller exit");
                     let instruction = instructions[pc];
                     assert_eq!(instruction.op(), Op::Return, "{name}({input}, {count}) exited at {pc}");
                     let actual = registers[usize::from(instruction.register_a())];
@@ -21541,7 +21541,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
             let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
             registers[0] = value;
             let pc = vm.run_lane_method(&method, super::compiled::LaneStart::First, super::program_store::ProgramId::MAIN,
-                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).caller_pc().expect("caller exit");
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null(), std::ptr::null_mut()).settled(&mut registers, &instructions).expect("caller exit");
             let instruction = instructions[pc];
             if name.starts_with("strict") || value.is_record() || value.heap_reference().is_none() {
                 assert_eq!(instruction.op(), Op::Return, "{name}({value_name}) exited at {pc}: {instructions:?}");

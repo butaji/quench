@@ -977,11 +977,9 @@ impl Lowering<'_, '_> {
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
         if instruction.returns_from_frame() {
-            let word = self.ins().iconst(types::I64, LaneExit::Returned(call_pc as usize).word() as i64);
-            let result = self.result;
-            self.ins().store(MemFlagsData::trusted(), word, result, 0);
-            let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-            self.ins().return_(&[stopped]);
+            let base = self.registers_base;
+            let value = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.result_register()));
+            self.return_value(call_pc, value);
             return false;
         }
         // The callee may have changed any object: block-local proofs of them retire.
@@ -994,24 +992,31 @@ impl Lowering<'_, '_> {
         true
     }
 
-    /// The activation completes with `register`, which the record at `pc` names: the body
-    /// leaves it in the file and stops (`LaneExit::Returned`). Only a caller record can: an
-    /// inlined callee's `Return` is the unit's move and jump.
+    /// The activation completes with `register`, which the record at `pc` names
+    /// (`LaneExit::Returned`). Only a caller record can: an inlined callee's `Return` is the
+    /// unit's move and jump.
     fn complete(&mut self, state: &mut State, pc: usize, register: Register) -> bool {
         let Some(super::lane_unit::Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
             self.exit(state, pc as u32);
             return false;
         };
         let bits = self.tagged(state, register);
-        let base = self.registers_base;
-        self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
-        let word = self.ins().iconst(types::I64, LaneExit::Returned(record as usize).word() as i64);
-        let result = self.result;
-        self.ins().store(MemFlagsData::trusted(), word, result, 0);
-        let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-        self.ins().return_(&[stopped]);
+        self.return_value(record, bits);
         self.native += 1;
         false
+    }
+
+    /// Stops with the activation's completion: `value` in the result word, `record` the
+    /// record that completes it (`LANE_BODY_RETURNED`).
+    fn return_value(&mut self, record: u32, value: ir::Value) {
+        let result = self.result;
+        self.ins().store(MemFlagsData::trusted(), value, result, 0);
+        let record = self.ins().iconst(types::I64, i64::from(record));
+        let payload = self.payload;
+        self.ins().store(MemFlagsData::trusted(), record, payload,
+            i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"));
+        let returned = self.ins().iconst(types::I32, i64::from(LANE_BODY_RETURNED));
+        self.ins().return_(&[returned]);
     }
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {
