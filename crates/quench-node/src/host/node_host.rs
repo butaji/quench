@@ -164,6 +164,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) tick_invocation: Option<quench_runtime::RootId>,
     /// The string `"error"`, which every EventEmitter `emit` compares its event with.
     pub(crate) error_event_name: Option<quench_runtime::RootId>,
+    /// The `stream` module's symbols, classes and scheduled operations (`stream_shared_vm`).
+    pub(crate) stream_intrinsics: Option<crate::modules::stream_shared_vm::Intrinsics>,
+    /// The high water marks `stream.getDefaultHighWaterMark` returns.
+    pub(crate) stream_high_water_marks: crate::modules::stream_shared_vm::state::DefaultHighWaterMarks,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -307,6 +311,8 @@ impl SharedNodeState {
         self.timer_handle_api = None;
         self.tick_invocation = None;
         self.error_event_name = None;
+        self.stream_intrinsics = None;
+        self.stream_high_water_marks = Default::default();
         self.emitter_keys = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
@@ -398,6 +404,8 @@ impl SharedNodeState {
             timer_handle_api: None,
             tick_invocation: None,
             error_event_name: None,
+            stream_intrinsics: None,
+            stream_high_water_marks: Default::default(),
             emitter_keys: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),

@@ -110,6 +110,16 @@ impl<T: HostSnap> HostSnap for Vec<T> {
     }
 }
 
+impl<T: HostSnap, const N: usize> HostSnap for [T; N] {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        self.iter().try_for_each(|value| value.write(writer))
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        let values = (0..N).map(|_| T::read(reader)).collect::<Result<Vec<_>, _>>()?;
+        values.try_into().map_err(|_| "snapshot array length".to_owned())
+    }
+}
+
 impl<A: HostSnap, B: HostSnap> HostSnap for (A, B) {
     fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         self.0.write(writer)?;

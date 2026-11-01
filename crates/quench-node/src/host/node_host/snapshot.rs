@@ -133,6 +133,8 @@ impl SharedNodeState {
             net_handle_identities,
             net_handle_close_callbacks,
             error_event_name,
+            stream_intrinsics,
+            stream_high_water_marks,
         } = self;
         require_quiescent(native_tasks.snapshot_quiescent(), "the native task pool")?;
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
@@ -195,6 +197,8 @@ impl SharedNodeState {
         timer_handle_api.write(writer)?;
         emitter_keys.write(writer)?;
         tick_invocation.write(writer)?;
+        stream_intrinsics.write(writer)?;
+        stream_high_water_marks.write(writer)?;
         timer_duration_warnings.write(writer)?;
         fetch.write_snapshot(writer)?;
         diagnostics.write(writer)?;
@@ -267,6 +271,8 @@ impl SharedNodeState {
         self.timer_handle_api = HostSnap::read(reader)?;
         self.emitter_keys = HostSnap::read(reader)?;
         self.tick_invocation = HostSnap::read(reader)?;
+        self.stream_intrinsics = HostSnap::read(reader)?;
+        self.stream_high_water_marks = HostSnap::read(reader)?;
         self.timer_duration_warnings = HostSnap::read(reader)?;
         self.fetch.read_snapshot(reader)?;
         self.diagnostics = HostSnap::read(reader)?;
