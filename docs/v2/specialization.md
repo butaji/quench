@@ -89,6 +89,74 @@ What the screen shows:
   publication is used. Folding dispatch alone is not enough while each semantic callout
   re-derives static facts (rule 4).
 
+## Verification on V8-v7 (JIT mode)
+
+V8-v7 under `--jit` is the acceptance workload for this design. The target is at least 1.20
+times the best of Node and Bun on Score, at no more than 0.80 times their peak RSS. The rules
+are in `jit-design.md`.
+
+Baseline screen of the merged branch: one round per engine through
+`quench-bench/v8-v7-rss.cjs`, Linux x86-64, 4 vCPUs, Node 22.23.4, Bun 1.4.4, release
+`quench-node`.
+
+| Fixture | Quench `--jit` | Best peer | Score ratio | Peak RSS |
+| --- | ---: | ---: | ---: | --- |
+| Richards | 1918 | 42539 | 0.045 | Below every peer |
+| DeltaBlue | 1999 | 82304 | 0.024 | Below every peer |
+| Crypto | 16779 | 45211 | 0.371 | Below every peer |
+| RayTrace | 4987 | 92795 | 0.054 | Below every peer |
+| EarleyBoyer | 6840 | 64774 | 0.106 | Below every peer |
+| RegExp | 3867 | 11910 | 0.325 | Below every peer |
+| Splay | 6140 | 23486 | 0.261 | Below every peer |
+| NavierStokes | 43999 | 40365 | 1.090 | Below every peer |
+
+Peak RSS already meets the bar on every fixture. Score meets it on none.
+
+What the diagnostics show:
+
+- **Richards has no native coverage.** `QUENCH_JS_JIT_STATS` reports zero native entries.
+  Every hot method is declined: the function tier admits numeric shapes, and OSR admits
+  Number webs that exit before every call.
+- **The scheduler loop is rejected for a single opcode, `LoadThis`.** Even if admitted, its
+  method calls would leave the region on every iteration.
+- **The general complete-semantics tier does not help yet.** Enabled with
+  `QUENCH_JS_JIT_GENERAL_DISPATCH=1`, it lowers Richards from about 1800 to 1566: it rarely
+  compiles within the run, and its bookkeeping costs more than it saves.
+- **Pricing is not what blocks it.** Removing the price
+  (`QUENCH_JS_JIT_UNPRICED_GENERAL_DISPATCH=1`) gives Richards' small methods native code,
+  and two paired runs score 1251 and 1381 against 1651 and 1864 without the general tier.
+  The cost is frame entry plus a semantic callout for every uncovered instruction, which
+  together exceed what the lane spends.
+- **The lane is where Richards' time goes.** Callgrind attributes most instructions to lane
+  handlers for script calls (about 15%), field gets and sets (over 30%) and returns.
+
+The conclusion for the design: on object-heavy code, the first projection has to fold what
+the online division may know behind guards. That means receiver shapes at field sites,
+callees at call sites, and int32 representations. A call has to stay native, without
+leaving the region. Folding dispatch alone cannot reach peer scores. The lane already
+removes decoding, and a residual of semantic calls is slower than the lane (see the screen
+above).
+
+### Critical path for V8-v7
+
+The plan steps keep their order for AOT and startup. For V8-v7 score, the critical path is
+step 5, widened:
+
+1. **An online method specializer** whose division folds Site contents behind guards.
+   - Guarded own and prototype field reads and writes.
+   - Monomorphic method calls that enter the callee's native code directly.
+   - Branches on tagged values.
+   - Every other instruction residualized through its semantic entry, so coverage is total.
+2. **A native-to-native call continuation** that keeps the activation frameless. A call no
+   longer exits to the VM; this is the rooted VM continuation that `jit-design.md` already
+   lists.
+3. **Inlining of small monomorphic callees** inside the specializer, with exact-PC frames for
+   recovery.
+
+This is the method-JIT foundation tracked by TOD-1219 (Richards), and DeltaBlue, RayTrace
+and EarleyBoyer depend on it too. Crypto and NavierStokes depend on the numeric OSR tier,
+which `v2-jit` is extending.
+
 ## Plan
 
 The plan is ordered by dependency, then by expected speed. Each step is a Linear sub-issue of
