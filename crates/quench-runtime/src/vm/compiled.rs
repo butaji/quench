@@ -6763,6 +6763,9 @@ pub(super) enum LaneExit {
     /// A native call made its callee's activation and the lane continues in it
     /// (`dispatch_fast::lane_body_call`).
     Callee,
+    /// The returning call at `pc` completed natively: the activation completes with its
+    /// result, in the call's register.
+    Returned(usize),
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
@@ -6770,6 +6773,9 @@ pub(super) enum LaneExit {
 const INLINED_EXIT: u64 = 1 << 63;
 /// The result word of a leave into a native call's callee activation.
 const CALLEE_EXIT: u64 = 1 << 62;
+/// The bit of a lane body's result word that marks a completion by the returning call at
+/// the PC below it.
+const RETURNED_EXIT: u64 = 1 << 61;
 
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
@@ -6781,19 +6787,23 @@ pub(super) const LANE_CALL_LEFT: u64 = 2;
 impl LaneExit {
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } | Self::Callee => None }
+        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } | Self::Callee | Self::Returned(_) => None }
     }
     pub(super) fn word(self) -> u64 {
         match self {
             Self::At(pc) => pc as u64,
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
             Self::Callee => CALLEE_EXIT,
+            Self::Returned(pc) => RETURNED_EXIT | pc as u64,
         }
     }
 
     fn decode(word: u64) -> Self {
         if word == CALLEE_EXIT {
             return Self::Callee;
+        }
+        if word & RETURNED_EXIT != 0 && word & INLINED_EXIT == 0 {
+            return Self::Returned(usize::try_from(word & !RETURNED_EXIT).unwrap_or(0));
         }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
@@ -6846,24 +6856,27 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
 }
 
 impl<H: Host> Vm<H> {
-    /// The receiver field sites of `function` whose cache entries prove a holderless exact
-    /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
-    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Vec<NativeFieldLoad>> {
-        let Some(body) = program.function_get(function as usize) else { return Vec::new() };
-        body.code
+    /// The field cache sites `unit` reads or writes, each with the holderless exact shapes and
+    /// slots its entries prove now (`Vm::native_field_load_descriptors`); a nested lookup
+    /// names one site per read of its chain.
+    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit) -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        unit.instructions
             .iter()
-            .map(|packed| {
-                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-                let site = match instruction.op() {
+            .flat_map(|instruction| -> Vec<u16> {
+                match instruction.op() {
                     Op::GetField => match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
-                        _ => return Vec::new(),
+                        Some(FieldLookup::Atom { cache_site, .. }) => vec![cache_site],
+                        Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
+                            [Some(site.first), site.second, site.sink].into_iter().flatten().map(|(_, cache)| cache).collect()
+                        }),
+                        None => Vec::new(),
                     },
-                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
-                    _ => return Vec::new(),
-                };
-                self.native_field_load_descriptors(site)
+                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![instruction.cache_site_index()],
+                    _ => Vec::new(),
+                }
             })
+            .map(|site| (site, self.native_field_load_descriptors(site)))
+            .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
     }
 
@@ -6893,17 +6906,8 @@ impl<H: Host> Vm<H> {
             Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
             None => None,
         };
-        let caller_fields = self.lane_receiver_fields(program, function);
-        let callee_fields: Vec<_> = unit.frames.iter().map(|frame| self.lane_receiver_fields(program, frame.target.function)).collect();
-        let receiver_fields: Vec<Vec<NativeFieldLoad>> = unit
-            .origins
-            .iter()
-            .map(|origin| match *origin {
-                lane_unit::Origin::Caller(pc) => caller_fields.get(pc as usize).cloned().unwrap_or_default(),
-                lane_unit::Origin::Inlined { frame, pc } => callee_fields[frame].get(pc as usize).cloned().unwrap_or_default(),
-            })
-            .collect();
-        let region = lane_region::compile(program, function, &unit, helpers, &receiver_fields, loop_entry);
+        let fields = self.lane_unit_fields(program, &unit);
+        let region = lane_region::compile(program, function, &unit, helpers, &fields, loop_entry);
         self.host.after_native_compilation();
         let region = region?;
         if region.native == 0 {
@@ -6919,7 +6923,7 @@ impl<H: Host> Vm<H> {
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
-        let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
+        let names_shapes = !fields.is_empty();
         let scratch_width = unit.frames.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
         Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes })
     }

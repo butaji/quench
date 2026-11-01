@@ -95,7 +95,8 @@ struct Lowering<'a, 'f> {
     program: &'a ResidualProgram,
     unit: &'a super::lane_unit::Unit,
     helpers: LaneHelpers,
-    fields: &'a [Vec<NativeFieldLoad>],
+    /// The proved shapes and slots of each field cache site the unit reads or writes.
+    fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -418,7 +419,7 @@ pub(super) fn compile(
     function_id: u32,
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
-    fields: &[Vec<NativeFieldLoad>],
+    fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     loop_entry: Option<usize>,
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
@@ -434,12 +435,12 @@ fn lower(
     function_id: u32,
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
-    fields: &[Vec<NativeFieldLoad>],
+    fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
     loop_entry: Option<usize>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
-    if fields.iter().flatten().any(|field| !field.valid()) { return None; }
+    if fields.values().flatten().any(|field| !field.valid()) { return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
@@ -636,7 +637,7 @@ impl Lowering<'_, '_> {
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.iter().flatten() {
+        for field in self.fields.values().flatten() {
             if receiver_shapes.contains_key(&field.shape) {
                 continue;
             }
@@ -646,12 +647,19 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variable, same);
             receiver_shapes.insert(field.shape, variable);
         }
-        // A direct store of an atom needs a specialized run and no method cache naming it;
-        // nothing in a run changes either (`emit_js_own_field_set`).
+        // A direct store of an atom needs a specialized run and no method cache naming it; a
+        // run that makes no call changes neither (`emit_js_own_field_set`, `store_field`).
         let mut store_atoms = BTreeMap::new();
-        for instruction in instructions {
-            if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) && !store_atoms.contains_key(&instruction.atom_index()) {
-                let atom = instruction.atom_index();
+        let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => Some(instruction.atom_index()),
+            Op::GetField if instruction.writes_current_this() => match instruction.field_lookup() {
+                Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
+                _ => None,
+            },
+            _ => None,
+        }).collect::<Vec<_>>();
+        for atom in stored {
+            if !store_atoms.contains_key(&atom) {
                 let admitted = self.emit_store_atom_admitted(atom);
                 let variable = self.builder.declare_var(types::I8);
                 self.builder.def_var(variable, admitted);
@@ -701,7 +709,9 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
-            Op::Call if plain && !instruction.direct_eval() && !instruction.parameter_eval() => Some(self.call(state, pc, instruction)),
+            Op::Call if (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
+                && !instruction.direct_eval()
+                && !instruction.parameter_eval() => Some(self.call(state, pc, instruction)),
             Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
@@ -753,7 +763,7 @@ impl Lowering<'_, '_> {
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
-            Op::GetField if plain && !instruction.writes_current_this() => self.get_field(state, pc, instruction),
+            Op::GetField if instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 => self.get_field(state, pc, instruction),
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction, instructions)
@@ -943,8 +953,8 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-        let call_pc = self.ins().iconst(types::I64, i64::from(call_pc));
-        let status = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.call, &[context, call_pc]);
+        let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
+        let status = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.call, &[context, call_word]);
         let completed = self.builder.create_block();
         let other = self.builder.create_block();
         let left = self.builder.create_block();
@@ -961,6 +971,16 @@ impl Lowering<'_, '_> {
         let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
         self.ins().return_(&[stopped]);
         self.builder.switch_to_block(completed);
+        // A returning call's completion is its activation's: the lane completes it with the
+        // result, which the call left in its register (`LaneExit::Returned`).
+        if instruction.returns_from_frame() {
+            let word = self.ins().iconst(types::I64, LaneExit::Returned(call_pc as usize).word() as i64);
+            let result = self.result;
+            self.ins().store(MemFlagsData::trusted(), word, result, 0);
+            let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
+            self.ins().return_(&[stopped]);
+            return false;
+        }
         // The callee may have changed any object: block-local proofs of them retire.
         state.shapes.clear();
         state.layouts.clear();
@@ -998,23 +1018,53 @@ impl Lowering<'_, '_> {
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { return None };
         if instruction.returns_from_frame() {
+            return None;
+        }
+        // A nested lookup is a chain of reads from one base, each through its own site; a
+        // guard that fails anywhere in it leaves at the instruction, whose reads have no effect.
+        // A nested lookup that writes the current `this` stores the chain's value to `this`'s
+        // sink field too, after its reads (`FieldSite::sink`).
+        let (base, parts, sink): (_, Vec<u16>, _) = match instruction.field_lookup()? {
+            FieldLookup::Atom { base, cache_site, .. } => (base, vec![cache_site], None),
+            FieldLookup::Site(index) => {
+                let site = *self.program.field_sites.get(index)?;
+                let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| cache).collect();
+                (site.base, reads, instruction.writes_current_this().then_some(site.sink).flatten())
+            }
+        };
+        if instruction.writes_current_this() && sink.is_none() {
+            return None;
+        }
+        let register = base.register_index();
+        if register.is_some_and(|register| register >= self.unit.registers)
+            || (base != crate::bytecode::FieldBase::THIS && register.is_none())
+        {
             return None;
         }
         let destination = instruction.result_register();
         let exit = self.guard_exit(state, pc as u32);
-        let shapes = self.fields.get(pc).cloned().unwrap_or_default();
-        let register = base.register_index();
-        if register.is_some_and(|register| register >= self.unit.registers) {
-            return None;
-        }
         let receiver = !self.native_calls
             && (base == crate::bytecode::FieldBase::THIS
                 || register.is_some_and(|register| state.receivers.contains(&register)));
-        if !shapes.is_empty() && (base == crate::bytecode::FieldBase::THIS || register.is_some()) {
-            // The site's proved shapes and slots, folded: one shape load of the object (the
-            // receiver's was proved at entry), a compare per shape, a direct read.
+        let (first, rest) = parts.split_first()?;
+        let mut value = self.base_field_read(state, register, receiver, *first, exit);
+        for site in rest {
+            value = self.object_field_read(state, value, *site, exit)?;
+        }
+        if let Some((atom, site)) = sink {
+            self.store_field(state, None, atom, site, value, false, exit)?;
+        }
+        self.set_tagged(state, destination, value);
+        Some(true)
+    }
+
+    /// The read through `site` of the base `register` names (`this` for `None`): folded to
+    /// the site's proved shapes and slots, with the base's record proved once (the
+    /// receiver's at entry), else the VM's cached read.
+    fn base_field_read(&mut self, state: &mut State, register: Option<Register>, receiver: bool, site: u16, exit: ir::Block) -> ir::Value {
+        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
+        if !shapes.is_empty() {
             let (object, shape, inline) = if receiver {
                 let entry = self.entry.as_ref().expect("entry facts");
                 (
@@ -1025,27 +1075,38 @@ impl Lowering<'_, '_> {
             } else {
                 self.object_record(state, register, exit)
             };
-            let owner = if receiver { None } else { register };
-            let value = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit)?;
-            self.set_tagged(state, destination, value);
-            return Some(true);
+            let owner = Some(if receiver { None } else { register });
+            if let Some(value) = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit) {
+                return value;
+            }
         }
-        let object_bits = if register.is_none() {
-            let entry = self.entry.as_ref().expect("entry facts");
-            self.builder.use_var(entry.this)
-        } else {
-            self.tagged(state, register?)
+        let object_bits = match register {
+            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+            Some(register) => self.tagged(state, register),
         };
-        let value = self.field_probe(object_bits, cache_site, exit);
-        self.set_tagged(state, destination, value);
-        Some(true)
+        self.field_probe(object_bits, site, exit)
     }
 
-    /// Read the slot `shapes` names for the record's `shape`; `exit` for any other shape.
+    /// The read through `site` of the object a previous read of a chain produced, whose
+    /// record nothing else names, so it is proved for this read alone.
+    fn object_field_read(&mut self, state: &mut State, object_bits: ir::Value, site: u16, exit: ir::Block) -> Option<ir::Value> {
+        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
+        if shapes.is_empty() {
+            return Some(self.field_probe(object_bits, site, exit));
+        }
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let header = ObjectHeader::prove(&mut self.builder, object_bits, records, exit);
+        self.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, exit)
+    }
+
+    /// Read the slot `shapes` names for the record's `shape`; `exit` for any other shape. A
+    /// single shape's layout proof is kept for `owner` (a register's object, or `this`'s for
+    /// `Some(None)`) until an effect retires it; an object no owner names keeps none.
+    #[allow(clippy::too_many_arguments)]
     fn shape_switch_read(
         &mut self,
         state: &mut State,
-        owner: Option<Register>,
+        owner: Option<Option<Register>>,
         object: ir::Value,
         shape: ir::Value,
         inline: ir::Value,
@@ -1056,15 +1117,17 @@ impl Lowering<'_, '_> {
         let properties = self.builder.use_var(entry.receiver.properties);
         let properties_len = self.builder.use_var(entry.receiver.properties_len);
         if let [field] = shapes {
-            let key = (owner, field.shape);
-            let projection = match state.layouts.get(&key).copied() {
+            let known = owner.and_then(|owner| state.layouts.get(&(owner, field.shape)).copied());
+            let projection = match known {
                 Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
                 _ => {
                     let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
                     emit_js_guard(&mut self.builder, same, exit);
                     let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
                         properties_len, *field, PackedAccess::Reload, exit)?;
-                    state.layouts.insert(key, projection);
+                    if let Some(owner) = owner {
+                        state.layouts.insert((owner, field.shape), projection);
+                    }
                     projection
                 }
             };
@@ -1089,8 +1152,6 @@ impl Lowering<'_, '_> {
         Some(value)
     }
 
-    /// The record address, exact shape and inline-storage bits of the direct object in
-    /// `register`, proved once per block (`State::shapes`).
     /// The record of `owner`'s object (a register's, or `this`'s), proved once until an
     /// effect that may change it retires the proof.
     fn object_record(&mut self, state: &mut State, owner: Option<Register>, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
@@ -1131,65 +1192,81 @@ impl Lowering<'_, '_> {
             Some(self.unit.frames[*frame].receiver)
         } else { None };
         if register.is_some_and(|register| register >= self.unit.registers) { return None; }
-        let receiver = register.is_none() || (!self.native_calls && register.is_some_and(|register| state.receivers.contains(&register)));
-        let owner = if receiver { None } else { register };
         let exit = self.guard_exit(state, pc as u32);
-        let atom = instruction.atom_index();
         let barrier_free = state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER);
         let value = self.tagged(state, source);
-        let object_bits = if register.is_none() {
-            self.builder.use_var(self.entry.as_ref().expect("entry facts").this)
-        } else { self.tagged(state, register.expect("register receiver")) };
-        let field = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
-        let header = if field.is_some() && !receiver {
-            Some(self.object_record(state, register, exit))
-        } else { None };
-        let entry = self.entry.as_ref().expect("entry facts");
-        if let Some(field) = field {
-            let projection = state.layouts.get(&(owner, field.shape)).copied();
-            let admitted = self.builder.use_var(entry.store_atoms[&atom]);
-            let (object, shape, inline) = header.unwrap_or_else(|| (
-                self.builder.use_var(entry.receiver.object),
-                self.builder.use_var(entry.receiver.shape),
-                self.builder.use_var(entry.receiver.inline),
-            ));
-            let properties = self.builder.use_var(entry.receiver.properties);
-            let properties_len = self.builder.use_var(entry.receiver.properties_len);
-            let direct = self.builder.create_block();
-            let general = self.builder.create_block();
-            let done = self.builder.create_block();
-            let ok = if projection.is_some() { admitted } else {
-                let same = if receiver { self.builder.use_var(entry.receiver_shapes[&field.shape]) }
-                    else { self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape)) };
-                self.ins().band(same, admitted)
-            };
-            self.ins().brif(ok, direct, &[], general, &[]);
-            self.builder.switch_to_block(direct);
-            if !barrier_free {
-                let record_id = self.ins().ireduce(types::I32, object_bits);
-                let record_id = self.ins().uextend(types::I64, record_id);
-                let payload = self.payload;
-                emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
-            }
-            let projection = match projection {
-                Some(projection) => projection,
-                None => {
-                    let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
-                    CheckedObject::prove(&mut self.builder, object, inline, properties,
-                        properties_len, plan, PackedAccess::Reload, general)?
-                }
-            };
-            let Some(address) = projection.arena_address(&mut self.builder, field.slot, general) else { return None; };
-            self.ins().store(MemFlagsData::trusted(), value, address, 0);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(general);
-            self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
-            return Some(true);
-        }
-        self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit);
+        self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, barrier_free, exit)?;
         Some(true)
+    }
+
+    /// The store of `value` through `site` to the field `atom` of the object `register` names
+    /// (`this` for `None`): the site's one proved shape and slot written directly, with the
+    /// object's record proved once (the receiver's at entry, in a body that makes no call),
+    /// else the VM's own-field store hit; anything else leaves through `exit`.
+    #[allow(clippy::too_many_arguments)]
+    fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
+        value: ir::Value, barrier_free: bool, exit: ir::Block) -> Option<()> {
+        let receiver = !self.native_calls
+            && (register.is_none() || register.is_some_and(|register| state.receivers.contains(&register)));
+        let owner = if receiver { None } else { register };
+        let object_bits = match register {
+            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+            Some(register) => self.tagged(state, register),
+        };
+        let field = self.fields.get(&site).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
+        let Some(field) = field else {
+            self.store_helper(object_bits, atom, site, value, exit);
+            return Some(());
+        };
+        let header = (!receiver).then(|| self.object_record(state, register, exit));
+        // A run that calls may meet a method cache that names the atom only after a call;
+        // one that does not tests it once, at entry (`Lowering::entry_facts`).
+        let admitted = if self.native_calls {
+            self.emit_store_atom_admitted(atom)
+        } else {
+            self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])
+        };
+        let entry = self.entry.as_ref().expect("entry facts");
+        let projection = state.layouts.get(&(owner, field.shape)).copied();
+        let (object, shape, inline) = header.unwrap_or_else(|| (
+            self.builder.use_var(entry.receiver.object),
+            self.builder.use_var(entry.receiver.shape),
+            self.builder.use_var(entry.receiver.inline),
+        ));
+        let properties = self.builder.use_var(entry.receiver.properties);
+        let properties_len = self.builder.use_var(entry.receiver.properties_len);
+        let direct = self.builder.create_block();
+        let general = self.builder.create_block();
+        let done = self.builder.create_block();
+        let ok = if projection.is_some() { admitted } else {
+            let same = if receiver { self.builder.use_var(entry.receiver_shapes[&field.shape]) }
+                else { self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape)) };
+            self.ins().band(same, admitted)
+        };
+        self.ins().brif(ok, direct, &[], general, &[]);
+        self.builder.switch_to_block(direct);
+        if !barrier_free {
+            let record_id = self.ins().ireduce(types::I32, object_bits);
+            let record_id = self.ins().uextend(types::I64, record_id);
+            let payload = self.payload;
+            emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
+        }
+        let projection = match projection {
+            Some(projection) => projection,
+            None => {
+                let plan = NativeFieldLoad { storage: Some(crate::heap::PlainPropertyStorage::Arena), ..field };
+                CheckedObject::prove(&mut self.builder, object, inline, properties,
+                    properties_len, plan, PackedAccess::Reload, general)?
+            }
+        };
+        let address = projection.arena_address(&mut self.builder, field.slot, general)?;
+        self.ins().store(MemFlagsData::trusted(), value, address, 0);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(general);
+        self.store_helper(object_bits, atom, site, value, exit);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        Some(())
     }
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
@@ -1325,12 +1402,12 @@ mod tests {
         ).unwrap();
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "readPair")).unwrap();
-        let fields: Vec<_> = program.function(id).instructions().map(|instruction| {
+        let fields: BTreeMap<u16, Vec<NativeFieldLoad>> = program.function(id).instructions().filter_map(|instruction| {
             if instruction.op() == Op::GetField
-                && let Some(FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+                && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                vec![NativeFieldLoad { shape: 0, slot: slot as u16, storage_len: 2, storage: None }]
-            } else { Vec::new() }
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, slot: slot as u16, storage_len: 2, storage: None }]))
+            } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
@@ -1358,7 +1435,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

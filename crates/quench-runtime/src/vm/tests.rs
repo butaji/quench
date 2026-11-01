@@ -21316,11 +21316,24 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
       let shared = 0;
       Node.prototype.bump = function (k) { for (let i = 0; i < 2; i++) { shared = (shared + k + i) & MASK; } return shared; };
       Node.prototype.reads = function (k) { const before = shared; const r = this.bump(k); return (before + shared + r) & MASK; };
+      Node.prototype.tail = function (k) { const j = (k + this.id) & 7; if (j === 3) { return this.deep(1); } return this.outer(j); };
+      Node.prototype.chain = function () { return this.next === null ? this.id : this.next.v & 15; };
+      Node.prototype.grow = function (k) { if (k === 40 && this.extra === undefined) { this.extra = k; } return 1; };
+      Node.prototype.copy = function (k) {
+        this.v = (this.v + 1) & MASK;
+        this.grow(k);
+        this.v = (this.v + 2) & MASK;
+        this.mirror = this.next === null ? 0 : this.next.v;
+        if (this.next !== null) { this.peer = this.next.next; }
+        return this.v + (this.mirror & 3);
+      };
       Node.prototype.top = function (k) {
         let s = this.outer(k);
         s = (s + this.deep(DEPTH)) & MASK;
         s = (s + Math.max(k, this.id)) & MASK;
         s = (s + this.reads(k)) & MASK;
+        s = (s + this.tail(k) + this.chain()) & MASK;
+        s = (s + this.copy(k)) & MASK;
         try { s = (s + this.risky(k)) & MASK; } catch (e) { s = s + 1; }
         this.v = (this.v + s) & MASK;
         return s;

@@ -7013,10 +7013,7 @@ script_handler! {
     }
 }
 
-/// Gives a loop site that will not enter native code again its plain backward jump back,
-/// so each iteration takes the jump without the site's checks. The shared JS baseline
-/// observes every backward jump of a site (`note_js_general_dispatch_backedge`), so while
-/// it runs the site stays.
+
 /// A loop no region runs (`lane_loop_jump`) runs in its function's lane body, entered at its
 /// header (`lane_loop_body_jump`), where lane bodies are enabled and the body specializes
 /// with that entry; else its backward jump retires to the interpreter's.
@@ -7087,6 +7084,12 @@ script_handler! {
                 carried.acc = Slot::of(unsafe { (*cx).callee_acc });
                 next!(cx, registers, resume, carried)
             }
+            super::compiled::LaneExit::Returned(pc) => {
+                // SAFETY: the body completed at a returning call record of its function.
+                let call = unsafe { base.add(pc) };
+                let value = r.get(unsafe { (*call).a } & crate::bytecode::REGISTER_MASK);
+                lane_return_value!(cx, call, value)
+            }
         };
         if pc as u32 == site.header {
             site.exits.set(site.exits.get() + 1);
@@ -7106,6 +7109,10 @@ script_handler! {
     }
 }
 
+/// Gives a loop site that will not enter native code again its plain backward jump back,
+/// so each iteration takes the jump without the site's checks. The shared JS baseline
+/// observes every backward jump of a site (`note_js_general_dispatch_backedge`), so while
+/// it runs the site stays.
 fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     if unsafe { vm(cx) }.programs.js_jit_general_dispatch_enabled() {
@@ -13880,6 +13887,12 @@ script_handler! {
                 carried.acc = Slot::of(unsafe { (*cx).callee_acc });
                 next!(cx, registers, resume, carried)
             }
+            super::compiled::LaneExit::Returned(pc) => {
+                // SAFETY: the body completed at a returning call record of its function.
+                let call = unsafe { base.add(pc) };
+                let value = r.get(unsafe { (*call).a } & crate::bytecode::REGISTER_MASK);
+                lane_return_value!(cx, call, value)
+            }
         };
         // SAFETY: the body leaves at a PC of the function, whose records are contiguous.
         let resume = unsafe { base.add(pc) };
@@ -14058,7 +14071,12 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
-    if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) || vm.with_scope_entered {
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if !unsafe { (*cx).script_calls }
+        || lane_constructing(vm, callee)
+        || vm.with_scope_entered
+        || (returns && !lane_returning_call_admitted(cx))
+    {
         return LANE_CALL_MISSED;
     }
     let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else { return LANE_CALL_MISSED };
@@ -14101,7 +14119,7 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
                 .and_then(|body| body.code.get(pc).map(|packed| decoded_instruction(body, *packed)))
                 .filter(|instruction| instruction.op() == Op::Return && instruction.result_flags() == 0);
             if let Some(instruction) = returned
-                && lane_return_plain(cx, registers.get(instruction.register_a())).is_some()
+                && lane_return_to_body(cx, registers.get(instruction.register_a())).is_some()
             {
                 return LANE_CALL_COMPLETED;
             }
@@ -14118,6 +14136,12 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
             leave(resume, unsafe { carried.acc.get() })
         }
         super::compiled::LaneExit::Callee => LANE_CALL_LEFT,
+        super::compiled::LaneExit::Returned(pc) => {
+            // SAFETY: the body completed at a returning call record of its function.
+            let destination = unsafe { (*base.add(pc)).a } & crate::bytecode::REGISTER_MASK;
+            lane_return_to_body(cx, registers.get(destination)).expect("the call made a plain activation");
+            LANE_CALL_COMPLETED
+        }
     }
 }
 
@@ -15089,7 +15113,15 @@ lane_handler! {
 /// activation the same way (`lane_complete_cross_activation`).
 #[inline(always)]
 fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false>(cx, value)
+    lane_return_from::<H, false, false>(cx, value)
+}
+
+/// `lane_return_plain` into a running lane body's call (`lane_body_call`): a returning
+/// call's register takes the result too, since the body completes its own activation with
+/// it next (`LaneExit::Returned`).
+#[inline(always)]
+fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+    lane_return_from::<H, false, true>(cx, value)
 }
 
 /// `lane_complete_plain_activation` of an activation of another program than its caller's
@@ -15098,15 +15130,16 @@ fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
 /// carries none of the program switch.
 #[inline(always)]
 fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let (registers, next) = lane_return_from::<H, true>(cx, value)?;
+    let (registers, next) = lane_return_from::<H, true, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
 /// `lane_return_plain` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
-/// (`Completion::Cross`), which enters the caller's program first.
+/// (`Completion::Cross`), which enters the caller's program first. `INTO_BODY` admits a
+/// returning call too (`lane_return_to_body`).
 #[inline(always)]
-fn lane_return_from<H: Host, const CROSSES: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
     let top = stack.activations.last()?;
@@ -15118,9 +15151,10 @@ fn lane_return_from<H: Host, const CROSSES: bool>(cx: *mut LaneContext<H>, value
     }
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
-    if destination & crate::bytecode::RETURN_REGISTER != 0 {
+    if !INTO_BODY && destination & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
+    let destination = destination & crate::bytecode::REGISTER_MASK;
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window);
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
     let caller_program = top.caller_program;
