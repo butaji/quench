@@ -1462,6 +1462,16 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsContextSetOptions" (0) => crate::modules::tls_shared_vm::contexts::set_options,
         method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
         method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicDecrypt" (2) => crate::modules::crypto_node::sign::public_decrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoPublicEncrypt" (2) => crate::modules::crypto_node::sign::public_encrypt,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransform" (1) => crate::modules::crypto_node::hash::lazy_transform_constructor,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransformGet" (0) => crate::modules::crypto_node::hash::lazy_transform_get,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoLazyTransformSet" (1) => crate::modules::crypto_node::hash::lazy_transform_set,
         method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
         #[cfg(quench_openssl_provider)]
         method "get crypto" (0) => crate::modules::crypto_node::webcrypto_getter,

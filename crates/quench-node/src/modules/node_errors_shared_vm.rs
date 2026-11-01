@@ -294,34 +294,6 @@ pub(super) fn decorate_range_error(
     decorate_coded_error(context, error, code, ErrorClass::RangeError, &[])
 }
 
-/// Resolve the shared coded-error policy before native staging.
-pub(crate) fn prepare_coded_error_support(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<(), RootedError> {
-    super::util_shared_vm::module(context).map(drop)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MessageOrder {
-    BeforeCode,
-    AfterConstructorFields,
-}
-
-pub(super) fn decorate_formatted_range_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootId,
-    code: &'static str,
-) -> Result<(), RootedError> {
-    decorate_ordered_error(
-        context,
-        error,
-        code,
-        ErrorClass::RangeError,
-        &[],
-        MessageOrder::BeforeCode,
-    )
-}
-
 fn decorate_coded_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
@@ -329,32 +301,12 @@ fn decorate_coded_error(
     class: ErrorClass,
     fields: &[(&str, RootId)],
 ) -> Result<(), RootedError> {
-    decorate_ordered_error(
-        context,
-        error,
-        code,
-        class,
-        fields,
-        MessageOrder::AfterConstructorFields,
-    )
-}
-
-fn decorate_ordered_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootId,
-    code: &'static str,
-    class: ErrorClass,
-    fields: &[(&str, RootId)],
-    order: MessageOrder,
-) -> Result<(), RootedError> {
     let prototype = coded_error_prototype(context, code, class)?;
     context.set_prototype_rooted(error, prototype)?;
     // Node's variadic error constructor installs its code field before message.
     let message_key = context.string_rooted("message");
     let message = context.get_property_rooted(error, message_key)?;
-    if order == MessageOrder::AfterConstructorFields {
-        context.delete_property_rooted(error, message_key)?;
-    }
+    context.delete_property_rooted(error, message_key)?;
     let code = context.string_rooted(code);
     let key = context.string_rooted("code");
     context.define_data_property_rooted(error, key, code, true, true, true)?;

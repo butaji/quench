@@ -3298,8 +3298,6 @@ fn drain_shared_jobs(
             super::crypto_signature_shared_vm::prune(runtime);
             super::crypto_secret_job_shared_vm::prune(runtime);
             #[cfg(quench_openssl_provider)]
-            super::crypto_hash_shared_vm::prune(runtime);
-            #[cfg(quench_openssl_provider)]
             super::crypto_node::prune(runtime);
             super::zlib_native_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
