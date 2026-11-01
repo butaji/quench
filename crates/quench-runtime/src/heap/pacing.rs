@@ -751,7 +751,12 @@ const THROUGHPUT_MAXIMUM_YOUNG: usize = 1 << 20;
 /// collections of the whole live set (v2-cloud-c, x86_64 4 vCPU). At 2^21 a server's promoted
 /// request objects, which die soon after their first young collection, wait that long for a
 /// full one (`THROUGHPUT_MAXIMUM_YOUNG`'s rows).
-const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 18;
+/// Lowered to 2^15 (TOD-1229): with the young floor at 2^12 small heaps promote garbage that
+/// waited 2^18 allocations for a full collection. V8-v7 no-JIT max RSS DeltaBlue 5916-6092 ->
+/// 3984-4344 KiB, EarleyBoyer 9048-9092 -> 7404-7488, Splay and Richards unchanged, Scores
+/// within the runs' spread (static incremental production build, pinned, x86_64 4 vCPU,
+/// 2026-11-01). Larger heaps' full intervals follow their live sets, not this floor.
+const THROUGHPUT_MINIMUM_FULL_INTERVAL: usize = 1 << 15;
 /// Smoothed young survival past which throughput collects fully (`Regime::FullOnly`): three
 /// quarters. npm module loading keeps about 52% of each young generation (QUENCH_GC_TRACE,
 /// typescript-eslint: 531/1024), and at half the heap went FullOnly and fully re-marked the
