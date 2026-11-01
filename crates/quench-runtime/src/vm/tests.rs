@@ -12876,6 +12876,67 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
+    // A loop walks a list, storing a field of each node it reaches and reading the same name
+    // through the node it moved to (V8-v7 Splay's `splay_` rotations): each store goes through
+    // the cached store at its instruction and each read sees the current slot; a node of
+    // another shape leaves at the store with nothing written.
+    let source = r#"
+      function Node(v) { this.v = v; this.next = null; this.seen = 0; }
+      function walk(head) {
+        var node = head, total = 0;
+        while (node) {
+          node.seen = node.v * 2 + 1;
+          total = total + node.seen;
+          node = node.next;
+        }
+        return total;
+      }
+      var head = null;
+      for (var i = 0; i < 64; i++) { var n = new Node(i); n.next = head; head = n; }
+      var odd = { v: 5, next: null, other: 1, seen: 0 };
+      var sum = 0;
+      for (var r = 0; r < 400; r++) {
+        if (r === 300) { odd.next = head; head = odd; }
+        sum = (sum + walk(head)) | 0;
+      }
+      print(sum + " " + head.seen + " " + odd.seen);
+    "#;
+    let program = Engine::specialize(source, "osr-dynamic-store.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    let expected = interpreted.borrow().clone();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk"))
+        .unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), expected, "{policy:?}");
+        if !super::compiled::loop_tier_compiles(policy) {
+            continue;
+        }
+        let views = compiled
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .expect("main program lane views");
+        let osr = views
+            .get(function_id)
+            .and_then(super::program_store::derived_lane_view)
+            .expect("hot walk lane view")
+            .osr_diagnostics();
+        assert!(osr.native_region_runs > 0, "no native walk under {policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
     // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
     // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
