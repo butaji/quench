@@ -2939,7 +2939,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::worker_shared_vm::module(context, &markers)
         }
         BuiltinModule::Url => node_library_module(context, "url.js", "url.js"),
-        BuiltinModule::Querystring => node_library_module(context, "querystring.js", "querystring.js"),
+        BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
         BuiltinModule::Readline => node_library_module(context, "readline.js", "readline.js"),
         BuiltinModule::StreamConsumers => {
             crate::modules::web_stream_consumers_shared_vm::module(context)
