@@ -170,12 +170,15 @@ pub(crate) fn heap_space_statistics(c: &mut Context<'_>, _: RootId, args: &[Root
 
 /// `ScriptCompiler::CachedDataVersionTag()`: Quench's code cache format is its own, so the
 /// tag names this engine build rather than V8's.
-pub(crate) fn cached_data_version_tag(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn cached_data_tag() -> u32 {
     const FNV_OFFSET: u32 = 0x811c_9dc5;
     const FNV_PRIME: u32 = 0x0100_0193;
     let identity = concat!("quench-", env!("CARGO_PKG_VERSION"));
-    let tag = identity.bytes().fold(FNV_OFFSET, |hash, byte| (hash ^ u32::from(byte)).wrapping_mul(FNV_PRIME));
-    Ok(c.number(f64::from(tag)))
+    identity.bytes().fold(FNV_OFFSET, |hash, byte| (hash ^ u32::from(byte)).wrapping_mul(FNV_PRIME))
+}
+
+pub(crate) fn cached_data_version_tag(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(c.number(f64::from(cached_data_tag())))
 }
 
 pub(crate) fn is_string_one_byte_representation(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
