@@ -2444,19 +2444,13 @@ pub(crate) fn node_library_export(
 /// or frozen them since (`with_startup_intrinsics` restores even nonconfigurable ones).
 pub(crate) fn node_library_module(
     context: &mut Context<'_>,
-    owner: &str,
+    _owner: &str,
     relative: &str,
 ) -> Result<RootId, RootedError> {
     if relative == "internal/histogram.js" {
         return cached_builtin(context, BuiltinModule::PerfHooks);
     }
-    let root = context.host_mut().node_library_root.clone();
-    let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    host_load(|| {
-        context.with_startup_intrinsics(|context| {
-            load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
-        })
-    })
+    crate::host::removed_javascript(format!("node:{}", relative.trim_end_matches(".js")))
 }
 
 /// Runs a load of host code: a library module or a builtin the host builds. A load on first
