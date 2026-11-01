@@ -649,6 +649,29 @@ print(out.join("|"));
 }
 
 #[test]
+fn integer_stores_into_typed_arrays_wrap_and_clamp() {
+    // An integer stored into an integer typed array writes its low bytes, a Uint8Clamped
+    // clamps it, a float view converts it, and a store past the end writes nothing
+    // (`typed_array_set_integer`), through views sharing one buffer too.
+    let source = r#"
+const out = [];
+const kinds = [Uint8Array, Int8Array, Uint8ClampedArray, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array];
+const values = [0, 1, -1, 127, 128, 255, 256, -129, 65535, 65536, -32769, 2147483647, -2147483648, 300];
+const put = (view, i, v) => { view[i] = v; };
+for (const Kind of kinds) {
+  const view = new Kind(values.length + 1);
+  for (let round = 0; round < 2; round++) values.forEach((v, i) => put(view, i, v));
+  put(view, values.length + 5, 7);
+  out.push(Kind.name + ":" + Array.from(view).join(","));
+}
+const shared = new Uint8Array(4); const alias = new Uint8Array(shared.buffer, 1, 2);
+put(alias, 0, 513); put(alias, 1, -2); out.push(Array.from(shared).join(","));
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["Uint8Array:0,1,255,127,128,255,0,127,255,0,255,255,0,44,0|Int8Array:0,1,-1,127,-128,-1,0,127,-1,0,-1,-1,0,44,0|Uint8ClampedArray:0,1,0,127,128,255,255,0,255,255,0,255,0,255,0|Uint16Array:0,1,65535,127,128,255,256,65407,65535,0,32767,65535,0,300,0|Int16Array:0,1,-1,127,128,255,256,-129,-1,0,32767,-1,0,300,0|Uint32Array:0,1,4294967295,127,128,255,256,4294967167,65535,65536,4294934527,2147483647,2147483648,300,0|Int32Array:0,1,-1,127,128,255,256,-129,65535,65536,-32769,2147483647,-2147483648,300,0|Float32Array:0,1,-1,127,128,255,256,-129,65535,65536,-32769,2147483648,-2147483648,300,0|0,1,254,0".to_string()]);
+}
+
+#[test]
 fn typed_array_length_sites_read_the_intrinsic_getter() {
     // A `length` site that read a typed array's reads the intrinsic getter's geometry first
     // (`lane_get_length_typed`): an own `length`, a subclass getter, arrays and strings at the

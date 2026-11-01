@@ -520,6 +520,11 @@ impl<H: Host> Vm<H> {
     /// effect, so the write needs neither a root nor a conversion. False leaves the store to
     /// `typed_array_set`.
     pub(super) fn typed_array_set_number(&mut self, object: Value, index: usize, value: Value) -> bool {
+        if let Some(integer) = value.as_int()
+            && self.typed_array_set_integer(object, index, integer)
+        {
+            return true;
+        }
         let Some(number) = value.as_number() else {
             return false;
         };
@@ -530,6 +535,47 @@ impl<H: Host> Vm<H> {
             }
             _ => false,
         }
+    }
+
+    /// `typed_array_set_number` of an integer into an integer typed array whose buffer the
+    /// view owns alone (`BufferBytes::lane_mut`): an integer's ToInt8 through ToUint32 is its
+    /// low bytes, and Uint8Clamped clamps it, so the store makes no float conversion, as ws's
+    /// frame masking stores each byte. False leaves the store to the general write.
+    #[inline]
+    fn typed_array_set_integer(&mut self, object: Value, index: usize, integer: i32) -> bool {
+        let Some(Cell::TypedArray { kind, object: view_object, buffer, length, length_tracking }) = self.heap.get(object)
+        else {
+            return false;
+        };
+        let view = TypedArrayView {
+            kind: *kind,
+            buffer: *buffer,
+            offset: view_object.offset,
+            length: *length,
+            length_tracking: *length_tracking,
+        };
+        // The element's bytes in the buffer's native order, as `typed_array_element_bytes`
+        // writes them.
+        let mut encoded = [0; MAX_TYPED_ARRAY_ELEMENT_WIDTH];
+        match view.kind {
+            TypedArrayKind::Uint8Clamped => encoded[0] = integer.clamp(0, i32::from(u8::MAX)) as u8,
+            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => encoded[0] = integer as u8,
+            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => encoded[..2].copy_from_slice(&(integer as u16).to_ne_bytes()),
+            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => encoded[..4].copy_from_slice(&(integer as u32).to_ne_bytes()),
+            _ => return false,
+        }
+        let Some(Cell::ArrayBuffer { bytes: store, detached: false, .. }) = self.heap.get_mut(view.buffer) else {
+            return false;
+        };
+        let Some(store) = store.lane_mut() else {
+            return false;
+        };
+        // An index past the view's end, or of a shrunken buffer, writes nothing, as the
+        // general write does.
+        if let Some(start) = view.element(index, store.len()) {
+            store_element(store, start, view.kind.width(), &encoded);
+        }
+        true
     }
 
     pub(super) fn typed_array_write_element(
