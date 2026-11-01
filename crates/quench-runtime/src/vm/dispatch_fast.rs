@@ -5068,7 +5068,29 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let receiver = r.get(i.b);
         let Some(length) = vm.arguments_object_length(receiver).or_else(|| vm.plain_function_length(receiver)) else {
+            // A site that reads a typed array's length mostly reads typed arrays, as a loop
+            // over one does: it reads the intrinsic getter's geometry first from now on.
+            if let Some(length) = vm.typed_array_geometry_read(receiver, vm.length_atom) {
+                requicken::<H>(ip, lane_get_length_typed::<H>);
+                r.set(i.a, length);
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, length);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_length` at a site that read a typed array's length
+    /// (`lane_get_length_arguments`): the intrinsic `length` getter's value for a typed array
+    /// that shadows it nowhere (`Vm::typed_array_geometry_read`); any other receiver takes
+    /// `lane_get_length`.
+    fn lane_get_length_typed<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(length) = vm.typed_array_geometry_read(r.get(i.b), vm.length_atom) else {
+            sibling!(lane_get_length::<H>, r, ip, view)
         };
         r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script(cx))

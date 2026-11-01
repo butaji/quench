@@ -649,6 +649,27 @@ print(out.join("|"));
 }
 
 #[test]
+fn typed_array_length_sites_read_the_intrinsic_getter() {
+    // A `length` site that read a typed array's reads the intrinsic getter's geometry first
+    // (`lane_get_length_typed`): an own `length`, a subclass getter, arrays and strings at the
+    // same site, a length-tracking view across a resize and a detached buffer read as before.
+    let source = r#"
+const out = [];
+const len = (v) => v.length;
+const a = new Uint8Array(3), b = new Float64Array(5);
+const own = new Int16Array(2); Object.defineProperty(own, "length", { value: 99 });
+class Odd extends Uint8Array { get length() { return -1; } }
+const values = [a, b, own, new Odd(4), [1, 2], "abcd", new Uint8Array(new ArrayBuffer(8), 2, 3)];
+for (let round = 0; round < 3; round++) out.push(values.map(len).join());
+const buffer = new ArrayBuffer(8, { maxByteLength: 16 }); const tracking = new Uint8Array(buffer);
+out.push(len(tracking)); buffer.resize(12); out.push(len(tracking));
+const detachable = new Uint8Array(4); detachable.buffer.transfer(); out.push(len(detachable));
+print(out.join("|"));
+"#;
+    assert_eq!(output(source), ["3,5,99,-1,2,4,3|3,5,99,-1,2,4,3|3,5,99,-1,2,4,3|8|12|0".to_string()]);
+}
+
+#[test]
 fn typed_array_index_sites_read_elements_before_array_probes() {
     // A `GetIndex` site that reads a typed array tries its element first
     // (`lane_get_index_typed`): an element, or `undefined` past the end or at a
