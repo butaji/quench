@@ -101,14 +101,25 @@ impl Registry {
         loop {
             self.synchronize(&read_generation)?;
             let before = self.generation.ok_or(DigestError::Unsupported)?;
-            if let Some((digest,id)) = id.filter(|id|*id != -1).and_then(|id|self.get(id,before).map(|digest|(digest,id))) {
-                if before == read_generation() { return Ok((digest,id)); }
+            if let Some((digest, id)) = id
+                .filter(|id| *id != -1)
+                .and_then(|id| self.get(id, before).map(|digest| (digest, id)))
+            {
+                if before == read_generation() {
+                    return Ok((digest, id));
+                }
                 continue;
             }
             let digest = self.resolve(name, &read_generation)?;
-            let index = self.entries.iter().position(|entry|entry.identity()==digest.identity()).ok_or(DigestError::Unsupported)?;
+            let index = self
+                .entries
+                .iter()
+                .position(|entry| entry.identity() == digest.identity())
+                .ok_or(DigestError::Unsupported)?;
             let id = (self.first_id + index as u32) as i32;
-            if self.generation == Some(read_generation()) { return Ok((digest,id)); }
+            if self.generation == Some(read_generation()) {
+                return Ok((digest, id));
+            }
         }
     }
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {

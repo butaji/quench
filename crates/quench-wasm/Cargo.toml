@@ -17,3 +17,6 @@ jit = ["quench-runtime/jit"]
 quench-runtime = { path = "../quench-runtime", default-features = false }
 wasmparser = "0.247"
 wast = "247"
+
+[lints]
+workspace = true

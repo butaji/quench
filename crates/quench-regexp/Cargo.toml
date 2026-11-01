@@ -19,3 +19,6 @@ regex = { version = "1.11", default-features = false, features = ["std", "unicod
 
 [build-dependencies]
 icu_casemap = { version = "2.2", features = ["compiled_data"] }
+
+[lints]
+workspace = true

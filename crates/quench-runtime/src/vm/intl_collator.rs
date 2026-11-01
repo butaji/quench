@@ -545,7 +545,7 @@ fn validate_collator_option<H: Host>(
     if allowed.contains(&value) {
         Ok(())
     } else {
-        Err(vm.range_error(p, format!("invalid {name}").into()))
+        Err(vm.range_error(p, format!("invalid {name}")))
     }
 }
 

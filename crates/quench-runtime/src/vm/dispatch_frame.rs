@@ -369,7 +369,7 @@ impl<H: Host> Vm<H> {
             + usize::from(function.registers))
         .saturating_mul(std::mem::size_of::<Value>());
         let call_guard = crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
-            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
+            .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let program = self.active_program;
         let with_base = self.with_stack.len();
         let mut frame = self
@@ -471,7 +471,7 @@ impl<H: Host> Vm<H> {
         self.activate_user_frame(p, id, parent, this, args, context)?;
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget rather than a native transition.
-        crate::stack::GuestCallGuard::enter().or_else(|()| Err(self.unwind_exhausted_push(p)))
+        crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.unwind_exhausted_push(p))
     }
 
     /// Pops an in-loop activation the guest-call budget refused and yields the error.
@@ -499,6 +499,13 @@ impl<H: Host> Vm<H> {
         context: CallContext,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
+        // Some VM entry paths (notably host callbacks and nested eval) still
+        // execute a user function by recursively entering `run_user_frame`
+        // instead of pushing it onto the active dispatch loop. Count those
+        // activations against the same guest budget so a small Node
+        // `--stack_size` cannot exhaust the native worker stack first.
+        let _call_guard =
+            crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let result = self.run_frame_general(p, frame_index);
         self.complete_user_frame(p, result, capture_constructor_this)
@@ -1264,7 +1271,7 @@ impl<H: Host> Vm<H> {
             .is_some_and(Vec::is_empty)
             && self.programs.residual(program).is_some_and(|p| {
                 p.function_get(function as usize).is_some_and(|function| {
-                    function.names_resolve_statically(&p)
+                    function.names_resolve_statically(p)
                 })
             });
         let owner = if never_binds_dynamically {
@@ -1584,14 +1591,14 @@ impl<H: Host> Vm<H> {
             .saturating_mul(std::mem::size_of::<Value>());
             Some(
                 crate::stack::GuestCallGuard::enter_with_storage(frame_storage_bytes)
-                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
+                    .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?,
             )
         } else {
             None
         };
         let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
             crate::stack::StackGuard::enter()
-                .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
+                .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
         } else {
             self.enter_stack()?
         };
@@ -2340,9 +2347,12 @@ impl<H: Host> Vm<H> {
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 Op::Call if allow_inline_calls => {
-                    match self.try_inline_user_call(p, frame, ins, pc) {
+                    match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
-                        None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        None => match self.try_inline_user_call(p, frame, ins, pc) {
+                            Some(result) => result,
+                            None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                        },
                     }
                 }
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
@@ -2532,10 +2542,9 @@ impl<H: Host> Vm<H> {
                     // here: its frame becomes the continuation its promise's reaction resumes,
                     // and its caller continues with the promise, as `call_user_maybe_async`
                     // makes both for a call it runs apart.
-                    if pending_calls.last().is_some_and(|pending| {
+                    if let Some(mut pending) = pending_calls.pop_if(|pending| {
                         pending.settles.is_some() && pending.generator.is_none() && !pending.returns && pending.caller + 1 == frame
                     }) {
-                        let mut pending = pending_calls.pop().expect("the awaiting frame's pending call");
                         self.frames[frame].pc = pc;
                         self.frames[frame].pc_is_resume = true;
                         let mut suspended = self.frames.pop().expect("the awaiting frame is the innermost");

@@ -342,7 +342,7 @@ impl Value {
     #[inline(always)]
     pub(crate) fn shared_environment_owner(self) -> Option<Self> {
         (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
-            .then(|| Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
+            .then_some(Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
     }
 
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN

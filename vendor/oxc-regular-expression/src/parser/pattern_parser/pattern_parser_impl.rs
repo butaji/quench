@@ -40,7 +40,7 @@ impl<'a> PatternParser<'a> {
     }
 
     fn enter_stack(&self) -> Result<quench_stack::StackGuard> {
-        quench_stack::StackGuard::enter().map_err(|()| {
+        quench_stack::StackGuard::enter().map_err(|quench_stack::StackExhausted| {
             let offset = self.reader.offset();
             diagnostics::stack_exhausted(self.span_factory.create(offset, offset))
         })

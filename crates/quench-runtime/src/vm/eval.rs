@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
             let pattern_units = &units[start..end];
             let flag_units = literal.flags.encode_utf16().collect::<Vec<_>>();
             if let (Ok(pattern), Ok(flags)) = (
-                String::from_utf16(&pattern_units),
+                String::from_utf16(pattern_units),
                 String::from_utf16(&flag_units),
             ) && quench_regexp::validate_property_escapes(&pattern, &flags)
                 .is_err_and(|error| quench_regexp::is_stack_exhaustion_message(&error))
@@ -232,7 +232,13 @@ impl<H: Host> Vm<H> {
             _ => return Ok(source),
         };
         let cache_source = (!self.direct_eval).then(|| source_text.clone());
-        let text = source_text.host_string();
+        let host_text = source_text.host_string();
+        let text = if self.host.allows_natives_syntax() {
+            strip_v8_optimization_intrinsics(host_text)
+        } else {
+            std::borrow::Cow::Borrowed(host_text)
+        };
+        let text = text.as_ref();
         let inherited_strict = self.direct_eval
             && (self.in_class_initializer(p)
                 || self.frames.last()
@@ -728,7 +734,7 @@ impl<H: Host> Vm<H> {
         if !self.prepared_script_is_current(prepared) {
             return Err(self.type_error(&program, "prepared Script belongs to a different runtime state".into()));
         }
-        let Some(program_id) = self.store_prepared_script(&prepared)? else {
+        let Some(program_id) = self.store_prepared_script(prepared)? else {
             return Err(self.type_error(&program, "dynamic program store is full".into()));
         };
         self.run_global_eval_program(&program, program_id)
@@ -889,7 +895,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if caller_scope {
-                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms());
+                self.prepare_direct_eval_var_bindings(root_function.global_var_atoms());
             }
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {
@@ -1266,6 +1272,87 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(value_root);
         result
     }
+}
+
+/// Node accepts a small set of V8 optimization directives in eval strings
+/// when `--allow-natives-syntax` is enabled. Quench does not expose V8's
+/// optimizing compiler, but these directives can still be represented as
+/// `void(argument)` so their argument expressions retain their normal
+/// evaluation and the residual compiler can parse the surrounding code.
+/// Keep the replacement the same byte length to preserve source locations.
+fn strip_v8_optimization_intrinsics(source: &str) -> std::borrow::Cow<'_, str> {
+    const DIRECTIVES: [&str; 2] = [
+        "%PrepareFunctionForOptimization",
+        "%OptimizeFunctionOnNextCall",
+    ];
+    const REPLACEMENT_KEYWORD: &str = "void";
+    if !DIRECTIVES.iter().any(|directive| source.contains(directive)) {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    let bytes = source.as_bytes();
+    let mut output = source.to_owned();
+    let mut index = 0;
+    let mut quote = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
+            if byte == delimiter {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if matches!(byte, b'\'' | b'"' | b'`') {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            index += 2;
+            while index + 1 < bytes.len() && !bytes[index..].starts_with(b"*/") {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+
+        let Some(directive) = DIRECTIVES
+            .iter()
+            .find(|directive| bytes[index..].starts_with(directive.as_bytes()))
+        else {
+            index += 1;
+            continue;
+        };
+        let end = index + directive.len();
+        let mut next = end;
+        while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+            next += 1;
+        }
+        if next == bytes.len() || bytes[next] != b'(' {
+            index = end;
+            continue;
+        }
+        output.replace_range(
+            index..end,
+            &format!(
+                "{REPLACEMENT_KEYWORD}{}",
+                " ".repeat(directive.len() - REPLACEMENT_KEYWORD.len())
+            ),
+        );
+        index = end;
+    }
+    std::borrow::Cow::Owned(output)
 }
 
 #[cfg(test)]

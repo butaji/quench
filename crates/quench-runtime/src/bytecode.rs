@@ -3151,7 +3151,12 @@ pub(crate) enum LexicalBindingKind {
 }
 
 impl LexicalBindingKind {
-    pub(crate) const ALL: [Self; 4] = [Self::Mutable, Self::Immutable, Self::FunctionName, Self::PrivateName];
+    pub(crate) const ALL: [Self; 4] = [
+        Self::Mutable,
+        Self::Immutable,
+        Self::FunctionName,
+        Self::PrivateName,
+    ];
 
     pub(crate) fn capture_prefix(self) -> &'static str {
         match self {
@@ -3299,7 +3304,11 @@ impl FieldBase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldPart { First, Second, Sink }
+pub(crate) enum FieldPart {
+    First,
+    Second,
+    Sink,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FieldSite {
@@ -3311,7 +3320,11 @@ pub(crate) struct FieldSite {
 }
 impl FieldSite {
     pub(crate) fn source(self, part: FieldPart) -> Option<(u32, u32)> {
-        self.sources[match part { FieldPart::First => 0, FieldPart::Second => 1, FieldPart::Sink => 2 }]
+        self.sources[match part {
+            FieldPart::First => 0,
+            FieldPart::Second => 1,
+            FieldPart::Sink => 2,
+        }]
     }
 }
 
@@ -4039,8 +4052,9 @@ impl ResidualProgram {
             }
         };
         if let Some(unlowered) = unlowered {
-            assert!(crate::DYNAMIC_EXECUTION_ENABLED,
-                "native function {index} of {} was not lowered before linking", self.source_name);
+            if !crate::DYNAMIC_EXECUTION_ENABLED {
+                panic!("native function {index} of {} was not lowered before linking", self.source_name);
+            }
             let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
@@ -4057,8 +4071,9 @@ impl ResidualProgram {
                 panic!("function {index} of {} does not decode: {error}", self.source_name)
             }),
             None => {
-                assert!(crate::DYNAMIC_EXECUTION_ENABLED,
-                    "native function {index} of {} has no archived record", self.source_name);
+                if !crate::DYNAMIC_EXECUTION_ENABLED {
+                    panic!("native function {index} of {} has no archived record", self.source_name);
+                }
                 crate::compile::replay::recompile(self, index as u32)
                 .unwrap_or_else(|error| {
                     panic!("function {index} of {} does not compile again: {error}", self.source_name)
@@ -4165,7 +4180,10 @@ impl ResidualProgram {
         self.adjust_source_position(position)
     }
 
-    pub(crate) fn adjust_source_position(&self, mut position: SourcePosition) -> Option<SourcePosition> {
+    pub(crate) fn adjust_source_position(
+        &self,
+        mut position: SourcePosition,
+    ) -> Option<SourcePosition> {
         if let Some(source) = &self.source {
             position.line = position
                 .line

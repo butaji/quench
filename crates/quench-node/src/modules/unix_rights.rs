@@ -113,7 +113,7 @@ pub(crate) fn receive(socket: BorrowedFd<'_>, payload: &mut [u8]) -> io::Result<
             }
             if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
                 let bytes = length - base;
-                malformed |= bytes % size_of::<RawFd>() != 0;
+                malformed |= !bytes.is_multiple_of(size_of::<RawFd>());
                 for index in 0..bytes / size_of::<RawFd>() {
                     let fd = std::ptr::read_unaligned(
                         libc::CMSG_DATA(header).cast::<RawFd>().add(index),
@@ -143,8 +143,22 @@ pub(crate) fn receive(socket: BorrowedFd<'_>, payload: &mut [u8]) -> io::Result<
     })
 }
 
-pub(crate) fn socket_type(fd:&std::os::fd::OwnedFd)->std::io::Result<libc::c_int> {
+pub(crate) fn socket_type(fd: &std::os::fd::OwnedFd) -> std::io::Result<libc::c_int> {
     use std::os::fd::AsRawFd;
-    let mut kind:libc::c_int=0;let mut length=std::mem::size_of_val(&kind) as libc::socklen_t;
-    if unsafe {libc::getsockopt(fd.as_raw_fd(),libc::SOL_SOCKET,libc::SO_TYPE,(&mut kind as *mut libc::c_int).cast(),&mut length)}<0 {Err(std::io::Error::last_os_error())}else{Ok(kind)}
+    let mut kind: libc::c_int = 0;
+    let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut kind as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    } < 0
+    {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(kind)
+    }
 }

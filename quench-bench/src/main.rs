@@ -2384,7 +2384,7 @@ fn run_fixed_work_attempt(
     let mut setup_only_samples = BTreeMap::new();
     let mut execution_order = Vec::with_capacity(engines.len() * 2);
     for engine in &order {
-        let work_first = (round + attempt) % FIXED_WORK_SAMPLE_ORDER_PERIOD == 0;
+        let work_first = (round + attempt).is_multiple_of(FIXED_WORK_SAMPLE_ORDER_PERIOD);
         let sample_order = if work_first {
             [FixedWorkSampleKind::Work, FixedWorkSampleKind::SetupOnly]
         } else {
@@ -3316,7 +3316,7 @@ fn sha256_directory(root: &Path) -> Option<String> {
 
     let mut entries = Vec::new();
     collect(root, &mut entries).ok()?;
-    entries.sort_by(|left, right| relative_name(root, left).cmp(&relative_name(root, right)));
+    entries.sort_by_key(|left| relative_name(root, left));
 
     let mut child = Command::new("sha256sum")
         .stdin(std::process::Stdio::piped())
@@ -4507,6 +4507,8 @@ mod tests {
     }
 
     #[test]
+    // `wait_child` reaps the child by pid through wait4 (its usage is what is measured).
+    #[allow(clippy::zombie_processes)]
     fn wait4_reports_exit_status_and_resource_usage() {
         let mut command = Command::new("sh");
         command.arg("-c").arg("exit 7");
@@ -4520,6 +4522,8 @@ mod tests {
     }
 
     #[test]
+    // `wait_child` kills and reaps the child's process group by pid through wait4.
+    #[allow(clippy::zombie_processes)]
     fn timeout_terminates_the_process_group() {
         let mut command = Command::new("sh");
         command.arg("-c").arg("sleep 5");

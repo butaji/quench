@@ -95,7 +95,9 @@ macro_rules! handle_string_literal {
                 cold_branch(|| {
                     debug_assert!(matches!(next_byte, b'\r' | b'\n'));
                     $lexer.consume_char();
-                    $lexer.error(diagnostics::unterminated_string($lexer.unterminated_range()));
+                    $lexer.error(diagnostics::unterminated_string(
+                        $lexer.unterminated_range(),
+                    ));
                     Kind::Undetermined
                 })
             }

@@ -10,3 +10,6 @@ description = "Shared pure calendrical algorithms for Quench runtimes"
 doctest = false
 
 [dependencies]
+
+[lints]
+workspace = true

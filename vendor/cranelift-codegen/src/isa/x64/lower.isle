@@ -508,6 +508,18 @@
 (rule 6 (lower (bor ty @ (multi_lane _bits _lanes) x y))
       (sse_or ty x y))
 
+;; Rotating each i64 lane by half its width swaps its two i32 halves.
+;; PSHUFD selector 0xb1 selects lanes [1, 0, 3, 2]. Keep the input in a
+;; register so legacy PSHUFD does not strengthen the source load's alignment.
+(rule 10 (lower (bor $I8X16
+                    (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))
+                    (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst 32)))))
+      (x64_pshufd (put_in_xmm x) 0xb1))
+(rule 9 (lower (bor $I8X16
+                   (bitcast $I8X16 (little_or_native_endian _) (ushr $I64X2 x (u8_from_iconst 32)))
+                   (bitcast $I8X16 (little_or_native_endian _) (ishl $I64X2 x (u8_from_iconst 32)))))
+      (x64_pshufd (put_in_xmm x) 0xb1))
+
 ;; `{i,b}128`.
 
 (decl or_i128 (ValueRegs ValueRegs) ValueRegs)
@@ -1294,13 +1306,29 @@
         (x64_punpcklwd lo hi)))
 
 ;; Special case for `i64x2.extmul_low_i32x4_u`.
-(rule 1 (lower (imul (multi_lane 64 2) (uwiden_low _ (and (value_type (multi_lane 32 4))
+;; Prefer the widening pattern even with AVX-512: pmuludq consumes the 32-bit
+;; lanes directly, avoiding two extensions and a full-width vpmullq.
+(rule 4 (lower (imul (multi_lane 64 2) (uwiden_low _ (and (value_type (multi_lane 32 4))
                                               x))
                              (uwiden_low _ (and (value_type (multi_lane 32 4))
                                               y))))
-      (let ((x2 Xmm (x64_pshufd x 0x50))
-            (y2 Xmm (x64_pshufd y 0x50)))
-        (x64_pmuludq x2 y2)))
+      (x64_pmuludq (unsigned_low_widen_mul_operand x)
+                   (unsigned_low_widen_mul_operand y)))
+
+;; pmuludq reads the even 32-bit lanes. If a preceding shuffle already selects
+;; lanes 0 and 2 into its low two lanes, it and the widening multiply's packing
+;; shuffle cancel for every lane the multiply reads. Upper shuffle lanes do not
+;; contribute to the product. Otherwise keep the ordinary packing shuffle.
+(decl unsigned_low_widen_mul_operand (Value) Xmm)
+(rule (unsigned_low_widen_mul_operand value) (x64_pshufd value 0x50))
+(rule 2 (unsigned_low_widen_mul_operand
+         (bitcast _ _ (shuffle _ x y (pshufd_lhs_imm imm))))
+      (if-let 8 (u8_and imm 15))
+      x)
+(rule 1 (unsigned_low_widen_mul_operand
+         (bitcast _ _ (shuffle _ x y (pshufd_rhs_imm imm))))
+      (if-let 8 (u8_and imm 15))
+      y)
 
 ;;;; Rules for `iabs` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

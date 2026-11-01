@@ -103,7 +103,9 @@ impl<T> Pipe<T> {
         if !matches!(self.phase, Phase::Open(_)) {
             return Err(io::Error::from_raw_os_error(libc::EPIPE));
         }
-        if !self.writes.is_empty() || bytes.is_empty() { return Ok(0); }
+        if !self.writes.is_empty() || bytes.is_empty() {
+            return Ok(0);
+        }
         let socket = self.socket().expect("open Pipe owns socket");
         let mut plain = PendingHandle::from_optional(None);
         loop {
@@ -197,8 +199,7 @@ impl<T> Pipe<T> {
             return progress;
         }
         if self.reading {
-            loop {
-                let Some(socket) = self.socket() else { break };
+            while let Some(socket) = self.socket() {
                 let mut bytes = vec![0; IPC_READ_BYTES];
                 match rights::receive(socket.as_fd(), &mut bytes) {
                     Ok(read) if read.bytes == 0 => {

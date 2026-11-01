@@ -774,7 +774,7 @@ fn forgiving_base64(units: &[u16]) -> Result<Vec<u8>, f64> {
     for unit in units.iter().filter(|unit| !ASCII_WHITESPACE.contains(unit)) {
         data.push(u8::try_from(*unit).map_err(|_| ATOB_INVALID_CHARACTER)?);
     }
-    if data.len() % BASE64_QUANTUM == 0 {
+    if data.len().is_multiple_of(BASE64_QUANTUM) {
         for _ in 0..2 {
             if data.last() == Some(&BASE64_PADDING) {
                 data.pop();

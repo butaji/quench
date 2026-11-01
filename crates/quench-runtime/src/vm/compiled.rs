@@ -55,7 +55,7 @@ mod scalar_region;
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
 pub(super) use osr_loop::{
-    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
+    ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
 
@@ -258,34 +258,61 @@ pub(super) fn emit_number_relation(
     )
 }
 
+/// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
+struct EmitArithmetic<'a, 'f, const CHECKED: bool> {
+    builder: &'a mut FunctionBuilder<'f>,
+}
+
+macro_rules! emit_arithmetic_stages {
+    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
+        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, false> {
+            type Output = ir::Value;
+            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+                self.builder.ins().$float(left, right)
+            })+
+        }
+        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, true> {
+            type Output = (ir::Value, ir::Value);
+            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+                emit_arithmetic_stages!(@checked self, left, right, $overflow)
+            })+
+        }
+    };
+    (@checked $stage:ident, $left:ident, $right:ident, None) => {
+        { let _ = ($left, $right); unreachable!("division has a Float64 result") }
+    };
+    (@checked $stage:ident, $left:ident, $right:ident, $opcode:ident) => {
+        $stage.builder.ins().$opcode($left, $right)
+    };
+}
+super::operations::number_arithmetic_rows!(emit_arithmetic_stages);
+
 pub(super) fn emit_number_arithmetic_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: super::operations::NumberArithmetic,
     left: ir::Value,
     right: ir::Value,
 ) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-    }
+    operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
+}
 
-    impl crate::vm::operations::NumberArithmeticStage<ir::Value> for Emit<'_, '_> {
-        type Output = ir::Value;
-
-        fn add(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fadd(left, right)
-        }
-        fn subtract(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fsub(left, right)
-        }
-        fn multiply(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fmul(left, right)
-        }
-        fn divide(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().fdiv(left, right)
-        }
-    }
-
-    operation.apply(&mut Emit { builder }, left, right)
+/// The shared Number remainder denotation, after the caller's Number guards.
+/// Native entries use the host calling convention. This pure scalar helper cannot
+/// enter the VM or collect, so it does not introduce an effect/recovery boundary.
+pub(super) fn emit_number_remainder(
+    builder: &mut FunctionBuilder<'_>,
+    pointer: ir::Type,
+    left: ir::Value,
+    right: ir::Value,
+) -> ir::Value {
+    let mut signature = Signature::new(builder.func.signature.call_conv);
+    signature.params.extend([AbiParam::new(types::F64), AbiParam::new(types::F64)]);
+    signature.returns.push(AbiParam::new(types::F64));
+    let signature = builder.import_signature(signature);
+    let address = super::operations::number_remainder as *const () as usize as i64;
+    let target = builder.ins().iconst(pointer, address);
+    let call = builder.ins().call_indirect(signature, target, &[left, right]);
+    builder.inst_results(call)[0]
 }
 
 pub(super) fn emit_number_unary_operation(
@@ -880,21 +907,18 @@ pub(super) fn lower_js_numeric_region(
                 );
                 let value = if let Some(operation) = arithmetic {
                     emit_number_arithmetic_operation(&mut body.builder, operation, left, right)
-                } else if let Some(operation) =
-                    super::operations::NumberBitwise::from_js_instruction(
+                } else {
+                    let operation = super::operations::NumberBitwise::from_js_instruction(
                         instruction.op(),
                         op,
                     )
                     .filter(|operation| {
                         int32_bitwise
                             && operation.in_signed_int32_domain()
-                    })
-                {
+                    })?;
                     let left = body.builder.ins().fcvt_to_sint(types::I32, left);
                     let right = body.builder.ins().fcvt_to_sint(types::I32, right);
                     emit_number_bitwise_operation(&mut body.builder, operation, left, right)
-                } else {
-                    return None;
                 };
                 if instruction.returns_from_frame() {
                     emit_f64_entry_return(&mut body.builder, result_pointer, value);
@@ -1216,39 +1240,23 @@ fn emit_js_int32_arithmetic(
     builder.switch_to_block(integer);
     let left_narrow = builder.ins().ireduce(types::I32, left_bits);
     let right_narrow = builder.ins().ireduce(types::I32, right_bits);
-    let left = builder.ins().sextend(types::I64, left_narrow);
-    let right = builder.ins().sextend(types::I64, right_narrow);
-    let wide = match arithmetic {
-        A::Add => builder.ins().iadd(left, right),
-        A::Subtract => builder.ins().isub(left, right),
-        A::Multiply => builder.ins().imul(left, right),
-        A::Divide => unreachable!("integer lowering is only used for add, subtract and multiply"),
-    };
-    let above_minimum = builder.ins().icmp_imm_s(
-        IntCC::SignedGreaterThanOrEqual,
-        wide,
-        i64::from(i32::MIN),
+    let (payload, overflow) = arithmetic.apply(
+        &mut EmitArithmetic::<true> { builder }, left_narrow, right_narrow,
     );
-    let below_maximum = builder.ins().icmp_imm_s(
-        IntCC::SignedLessThanOrEqual,
-        wide,
-        i64::from(i32::MAX),
-    );
-    let fits_i32 = builder.ins().band(above_minimum, below_maximum);
-    builder.ins().brif(fits_i32, result, &[], float, &[]);
+    builder.ins().brif(overflow, float, &[], result, &[]);
 
     builder.switch_to_block(result);
-    let payload = builder.ins().ireduce(types::I32, wide);
     let payload = builder.ins().uextend(types::I64, payload);
     let integer_bits = builder
         .ins()
         .bor_imm_u(payload, crate::value::ValueLayout::INT_TAG as i64);
     let encoded = if arithmetic == A::Multiply {
-        let left_negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, left, 0);
-        let right_negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, right, 0);
-        let signs_differ = builder.ins().icmp(IntCC::NotEqual, left_negative, right_negative);
-        let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, wide, 0);
-        let negative_zero = builder.ins().band(signs_differ, is_zero);
+        let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, payload, 0);
+        let zero_sign = super::operations::int32_zero_product_sign!(
+            left_narrow, right_narrow, |l, r| builder.ins().bor(l, r),
+            |signs| builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0)
+        );
+        let negative_zero = builder.ins().band(zero_sign, is_zero);
         let minus_zero = builder.ins().iconst(
             types::I64,
             Value::number(-0.0).to_bits() as i64,
@@ -1307,6 +1315,20 @@ fn emit_js_guard(
     builder.ins().brif(condition, passed, &[], fallback, &[]);
     builder.switch_to_block(passed);
     builder.seal_block(passed);
+}
+
+/// Byte offset of a Value element in native address arithmetic.
+fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) -> ir::Value {
+    let stride = std::mem::size_of::<Value>();
+    assert!(stride.is_power_of_two());
+    // Widen before scaling: an in-bounds int32 index can have a byte offset
+    // larger than u32::MAX. Scaling in the key's type would wrap to another slot.
+    let index = match builder.func.dfg.value_type(index) {
+        types::I32 => builder.ins().uextend(types::I64, index),
+        types::I64 => index,
+        _ => unreachable!("Value element indices are i32 or i64"),
+    };
+    builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
 }
 
 /// Lower a present dense own-array read. The receiver and key come from the
@@ -1418,8 +1440,7 @@ fn emit_js_dense_array_get(
         .icmp(IntCC::UnsignedLessThan, index, length);
     emit_js_guard(builder, index_is_present, fallback);
 
-    let value_offset = builder.ins().ishl_imm_u(index, 3);
-    let value_offset = builder.ins().uextend(types::I64, value_offset);
+    let value_offset = emit_value_index_offset(builder, index);
     let values = builder.ins().iadd_imm_s(
         header,
         i64::try_from(ARRAY.header_values_offset).expect("array values offset fits i64"),
@@ -3397,6 +3418,9 @@ fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::Wa
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
     Value(Kind),
+    /// An unsigned memory32 index plus a validated memory32 offset, without wrapping.
+    /// Moves preserve this proof; arithmetic and mixed joins discard it.
+    Memory32Address,
     /// A 128-bit SIMD value. Only SIMD instructions, moves and vector accesses read it, so
     /// it never meets a call, a return or a scalar view (`Emitter::vector`).
     Vector,
@@ -3419,15 +3443,19 @@ impl Slot {
     const DEFAULT: Self = Self::Value(Kind::I32);
 
     fn join(self, other: Self) -> Self {
-        if self == other { self } else { Self::Conflict }
+        match (self, other) {
+            (a, b) if a == b => a,
+            (Self::Memory32Address, Self::Value(Kind::I64))
+            | (Self::Value(Kind::I64), Self::Memory32Address) => Self::Value(Kind::I64),
+            _ => Self::Conflict,
+        }
     }
 }
 
 /// Register facts at one bytecode position. Most Wasm temporaries have the
 /// default i32 representation, so retaining a full `registers`-sized vector
 /// at every reachable instruction wastes memory. This stores only deviations
-/// from that default; joins still apply the same `Slot` lattice to every
-/// register because two different deviations meet at `Conflict`.
+/// from that default; joins apply the same `Slot` lattice to every register.
 #[derive(Clone, Debug)]
 struct AnalysisState {
     slots: Vec<(u16, Slot)>,
@@ -4071,6 +4099,8 @@ type OsrProbeCallout = unsafe extern "C" fn(*mut CallContext, u64, u64, *mut u64
 
 #[repr(C)]
 struct OsrProbePayload {
+    region: *const LoopRegion,
+    entry: *mut LoopEntry,
     function: u32,
     frame: usize,
     program: Option<Rc<ResidualProgram>>,
@@ -4080,8 +4110,14 @@ struct OsrProbePayload {
 /// The OSR probe's first word is otherwise a cache site, which is bounded by `u16`.
 /// `u64::MAX` selects an initialized frame-owned local read; the second word is its slot.
 const OSR_INITIALIZED_LOCAL_READ: u64 = u64::MAX;
+/// Reserve one dense append without storing a value or collecting.
+const OSR_RESERVE_ARRAY_APPEND: u64 = u64::MAX - 1;
+/// Read a present own dense element without allocation, coercion or collection.
+const OSR_DENSE_ARRAY_READ: u64 = u64::MAX - 2;
 
-/// A no-guest-effect JavaScript OSR helper. For a field probe, `receiver_bits` is passed in
+/// A no-guest-effect JavaScript OSR helper. Capacity reserve may relocate a backing but
+/// never stores a guest value or collects; it refreshes all entry aliases and exits on debt.
+/// For a field probe, `receiver_bits` is passed in
 /// the ABI's arguments word as a raw `Value` and the first word is its cache site. For an
 /// initialized-local read, the first word is `OSR_INITIALIZED_LOCAL_READ` and the second is
 /// a local slot. A miss returns before a guest-visible operation runs.
@@ -4104,6 +4140,27 @@ unsafe extern "C" fn osr_probe<H: Host>(
         let payload = unsafe { &*context_ref.adapter_payload.cast::<OsrProbePayload>() };
         let program = payload.program.as_deref()?;
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if cache_site == OSR_DENSE_ARRAY_READ {
+            // The generated caller seeds the scratch word with the tagged key. Neither
+            // lookup nor a miss allocates, collects, invokes guest code, or retains pointers.
+            // The current array record/backing is resolved anew after every native store.
+            let key = Value::from_bits(unsafe { result.read() });
+            return vm.dense_array_element(Value::from_bits(receiver_bits), key);
+        }
+        if cache_site == OSR_RESERVE_ARRAY_APPEND {
+            let receiver = Value::from_bits(receiver_bits);
+            let (old, elements, length, capacity) = vm.reserve_native_array_append(receiver, osr_loop::MAX_INDEXED_LENGTH)?;
+            // SAFETY: both pointers refer to the current synchronous native invocation.
+            // No guest code or collector ran, so all entry identities remain rooted and live.
+            unsafe { (&mut *payload.entry).refresh_array_backing(&*payload.region, old, elements, length, capacity) };
+            let due = vm.heap.should_collect();
+            if payload.diagnostics_enabled && std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                eprintln!("QUENCH_JS_JIT_OSR_ARRAY_RESERVE function={} length={length} capacity={capacity} gc_due={due}", payload.function);
+            }
+            // Collection is never performed with native SSA values unrooted. A debt exit
+            // writes live values back at this SetIndex before the VM performs its store.
+            return (!due).then_some(Value::UNDEFINED);
+        }
         if cache_site == OSR_INITIALIZED_LOCAL_READ {
             if vm.lane_has_activations()
                 || vm.frames.get(payload.frame).is_none_or(|frame| frame.function != payload.function)
@@ -4351,7 +4408,7 @@ fn note_compiled_callout(counter: *mut u64) {
 }
 
 fn native_entry_sample_due(entry_count: u64) -> bool {
-    entry_count > 0 && entry_count % JIT_NATIVE_ENTRY_SAMPLE_INTERVAL == 0
+    entry_count > 0 && entry_count.is_multiple_of(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL)
 }
 
 unsafe fn note_import_callout_target(
@@ -5851,12 +5908,14 @@ impl CompiledOsrRegion {
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
     /// long; `entry` was built for this region from the current values of its arrays and
-    /// captures, which nothing changes while the call runs; `vm` and `interrupt` belong to
+    /// captures. Capacity helpers may refresh array backing words without collecting;
+    /// `vm` and `interrupt` belong to
     /// this lane activation, which excludes other mutable VM access while native code runs.
     pub(super) unsafe fn run<H: Host>(
         &self,
         registers: *mut crate::value::Value,
         entry: &mut LoopEntry,
+        region: &LoopRegion,
         vm: *mut Vm<H>,
         program: ProgramId,
         function: u32,
@@ -5873,6 +5932,8 @@ impl CompiledOsrRegion {
             (vm.programs.get(program), vm.programs.js_jit_diagnostics_enabled())
         };
         let mut payload = OsrProbePayload {
+            region,
+            entry,
             function,
             frame,
             program: program_data,
@@ -5922,7 +5983,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse]) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
@@ -7801,9 +7862,9 @@ impl CompiledJsFunction {
 struct Plan {
     params: Vec<crate::WasmType>,
     result: Option<crate::WasmType>,
-    /// Per instruction, `None` when unreachable, else what its `b` register
-    /// holds on entry: the one analysis fact a denotation reads (a moved or
-    /// selected value's kind, a global's binding, an import reference). The
+    /// Per instruction, `None` when unreachable, else the denotation's operand
+    /// fact: `c` for vector memory accesses (effective address), `b` otherwise
+    /// (a moved value's kind, a global's binding, an import reference). The
     /// full register states exist only while planning.
     operands: Vec<Option<Slot>>,
 }
@@ -7823,7 +7884,7 @@ impl Plan {
         self.operands[pc].is_some()
     }
 
-    /// The analysis fact for the `b` register of reachable instruction `pc`.
+    /// The selected operand fact of reachable instruction `pc`.
     fn operand(&self, pc: usize) -> Slot {
         self.operands[pc].expect("reachable")
     }
@@ -8074,12 +8135,10 @@ fn affine_pair_loop(
         if u64::from(*second_destination) != u64::from(*destination) + 4 {
             continue;
         }
-        let (left, right) = if u64::from(second_sources[0]) == u64::from(sources[0]) + 4
-            && u64::from(second_sources[1]) == u64::from(sources[1]) + 4
-        {
-            (sources[0], sources[1])
-        } else if u64::from(second_sources[0]) == u64::from(sources[1]) + 4
-            && u64::from(second_sources[1]) == u64::from(sources[0]) + 4
+        let (left, right) = if (u64::from(second_sources[0]) == u64::from(sources[0]) + 4
+            && u64::from(second_sources[1]) == u64::from(sources[1]) + 4)
+            || (u64::from(second_sources[0]) == u64::from(sources[1]) + 4
+                && u64::from(second_sources[1]) == u64::from(sources[0]) + 4)
         {
             (sources[0], sources[1])
         } else {
@@ -8257,7 +8316,8 @@ impl<H: Host> Analysis<'_, H> {
 
     /// The byte offset a vector access adds to its address (`Op::WasmMemoryAddress`).
     fn memory_offset(&self, index: usize) -> Option<u64> {
-        self.vm.decode_bits64(self.constant(index)?)
+        let offset = self.vm.decode_bits64(self.constant(index)?)?;
+        u32::try_from(offset).ok().map(u64::from)
     }
 
     /// A shuffle's lane selectors: sixteen byte indices into its two operands.
@@ -8453,11 +8513,11 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                Some(
-                    state
-                        .get(instruction.b(), function.registers)
-                        .unwrap_or(Slot::Conflict),
-                )
+                let operand = match instruction.op() {
+                    Op::WasmMemoryLoad | Op::WasmMemoryStore => instruction.c(),
+                    _ => instruction.b(),
+                };
+                Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
         if let Some(started) = plan_started {
@@ -8516,6 +8576,7 @@ impl<H: Host> Analysis<'_, H> {
         let value =
             |state: &AnalysisState, register: u16| match state.get(register, function.registers)? {
                 Slot::Value(kind) => Some(kind),
+                Slot::Memory32Address => Some(Kind::I64),
                 _ => None,
             };
         let i32_value = |state: &AnalysisState, register: u16| {
@@ -8620,7 +8681,9 @@ impl<H: Host> Analysis<'_, H> {
                 set(state, instruction.a(), Slot::Value(result))
             }
             Op::Move => match state.get(instruction.b(), function.registers)? {
-                Slot::Vector => set(state, instruction.a(), Slot::Vector),
+                slot @ (Slot::Vector | Slot::Memory32Address) => {
+                    set(state, instruction.a(), slot)
+                }
                 _ => {
                     let kind = value(state, instruction.b())?;
                     set(state, instruction.a(), Slot::Value(kind))
@@ -8645,7 +8708,7 @@ impl<H: Host> Analysis<'_, H> {
                 self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
                 self.memory_offset(instruction.constant_index())?;
                 i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I64))
+                set(state, instruction.a(), Slot::Memory32Address)
             }
             Op::WasmMemoryLoad | Op::WasmMemoryStore => {
                 self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
@@ -9694,6 +9757,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn operand_kind(&self, pc: usize) -> Kind {
         match self.plan.operand(pc) {
             Slot::Value(kind) => kind,
+            Slot::Memory32Address => Kind::I64,
             _ => Kind::I32,
         }
     }
@@ -10535,7 +10599,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let done = self.body.core.builder.create_block();
         let status_slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
             ir::StackSlotKind::ExplicitSlot,
-            types::I64.bytes() as u32,
+            types::I64.bytes(),
             types::I64.bytes().trailing_zeros() as u8,
         ));
         self.body.core.builder
@@ -10992,10 +11056,18 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.body.core.builder.ins().bitcast(ty, flags, value)
     }
 
-    /// The address of a vector access at the 64-bit effective address `register`, after
-    /// trapping unless all of its bytes are in the memory.
-    fn vector_address(&mut self, register: u16) -> ir::Value {
+    /// Address and effect flags for a full-width vector access. A proven memory32
+    /// address fits the guard reservation, including the vector's last byte. Keep
+    /// this access trapping: even an unused load must fault before later effects.
+    fn vector_address(&mut self, pc: usize, register: u16) -> (ir::Value, MemFlagsData) {
         let address = self.read(register, Kind::I64);
+        if self.guarded && self.plan.operand(pc) == Slot::Memory32Address {
+            let flags = MemFlagsData::new()
+                .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
+                .with_endianness(ir::Endianness::Little)
+                .with_alias_region(Some(self.regions[Region::LinearMemory as usize]));
+            return (self.body.core.builder.ins().iadd(self.base, address), flags);
+        }
         let end = self
             .body.core.builder
             .ins()
@@ -11011,7 +11083,8 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .ins()
                 .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        self.body.core.builder.ins().iadd(self.base, address)
+        let address = self.body.core.builder.ins().iadd(self.base, address);
+        (address, self.flags(Region::LinearMemory))
     }
 
     /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
@@ -11048,15 +11121,13 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.write(a, Kind::I64, address);
             }
             Op::WasmMemoryLoad => {
-                let address = self.vector_address(c);
-                let flags = self.flags(Region::LinearMemory);
+                let (address, flags) = self.vector_address(pc, c);
                 let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
                 self.write_vector(a, value);
             }
             Op::WasmMemoryStore => {
-                let address = self.vector_address(c);
+                let (address, flags) = self.vector_address(pc, c);
                 let value = self.read_vector(a);
-                let flags = self.flags(Region::LinearMemory);
                 self.body.core.builder.ins().store(flags, value, address, 0);
             }
             Op::WasmSimdShuffle => {
@@ -13081,8 +13152,8 @@ impl<H: Host> Vm<H> {
                 instructions,
             );
         }
-        if allow_inline_calls && (general_candidate || promote_general) {
-            if let Some(outcome) = self.js_jit_general_dispatch_at_entry(
+        if allow_inline_calls && (general_candidate || promote_general)
+            && let Some(outcome) = self.js_jit_general_dispatch_at_entry(
                 program, frame, 0, true, promote_general,
             ) {
                 return match outcome {
@@ -13090,7 +13161,6 @@ impl<H: Host> Vm<H> {
                     JsNativeDispatchResult::Resume(pc) => JsTierFrameEntry::NativeResume(pc),
                 };
             }
-        }
         let (program_id, function_id) = (self.frames[frame].program, self.frames[frame].function);
         self.programs
             .record_js_jit_fallback_entry(program_id, function_id);
@@ -13252,9 +13322,7 @@ impl<H: Host> Vm<H> {
         if key_value.as_number().is_none() || index_value.as_int().is_none() {
             return None;
         }
-        let Some(key_hash) = hash_value.as_number() else {
-            return None;
-        };
+        let key_hash = hash_value.as_number()?;
         let array = match self.cached_field_hit(program, receiver, candidate.list_cache) {
             super::object::FieldCacheProbe::Hit(value) => value,
             super::object::FieldCacheProbe::Ineligible => {
@@ -13264,9 +13332,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         };
-        let Some(mut entry) = self.direct_array_index_data(array, index_value) else {
-            return None;
-        };
+        let mut entry = self.direct_array_index_data(array, index_value)?;
         let mut cached_equals_function = None;
         let mut equal_arguments = [Value::UNDEFINED; 2];
         equal_arguments[0] = key_value;
@@ -13289,16 +13355,9 @@ impl<H: Host> Vm<H> {
                 }
                 return Some((candidate.return_pc, candidate.return_register, entry));
             }
-            if self.heap.object(entry).is_none() {
-                return None;
-            }
+            self.heap.object(entry)?;
             let entry_hash = match self.cached_field_hit(program, entry, candidate.hash_cache) {
-                super::object::FieldCacheProbe::Hit(value) => {
-                    let Some(value) = value.as_number() else {
-                        return None;
-                    };
-                    value
-                }
+                super::object::FieldCacheProbe::Hit(value) => value.as_number()?,
                 super::object::FieldCacheProbe::Ineligible => {
                     return None;
                 }
@@ -13332,15 +13391,11 @@ impl<H: Host> Vm<H> {
                         return None;
                     }
                 };
-                if entry_key.as_number().is_none() {
-                    return None;
-                }
+                entry_key.as_number()?;
                 equal_arguments[1] = entry_key;
                 let equal =
                     self.js_jit_compiled_call(program, (program_id, equals_function), false, &equal_arguments);
-                let Some(equal) = equal else {
-                    return None;
-                };
+                let equal = equal?;
                 if equal == Value::TRUE {
                     if self.programs.js_jit_diagnostics_enabled() {
                         self.programs
@@ -13460,8 +13515,8 @@ impl<H: Host> Vm<H> {
                 );
                 field_return_diagnostic_entry_recorded = true;
             }
-            if let Some(receiver) = entry.this {
-                if let super::object::FieldCacheProbe::Hit(value) =
+            if let Some(receiver) = entry.this
+                && let super::object::FieldCacheProbe::Hit(value) =
                     self.cached_field_hit(program, receiver, candidate.cache_site)
                 {
                     if self.programs.js_jit_diagnostics_enabled() {
@@ -13470,7 +13525,6 @@ impl<H: Host> Vm<H> {
                     }
                     return Some((candidate.return_pc, candidate.return_register, value));
                 }
-            }
         }
         let tier = self.programs.js_tier(program_id, function_id);
         let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
@@ -13670,10 +13724,7 @@ impl<H: Host> Vm<H> {
                 first_argument.is_some_and(|value| self.heap.is_string(value))
             });
         let string_transform_units = string_transform.and_then(|_| {
-            let Some(string) = first_argument.and_then(|value| self.heap.string(value))
-            else {
-                return None;
-            };
+            let string = first_argument.and_then(|value| self.heap.string(value))?;
             Some(string.units())
         });
         if let Some((entries, reason)) = rejected_entry {
@@ -13933,12 +13984,9 @@ impl<H: Host> Vm<H> {
                 let value = if !matched {
                     first_argument?
                 } else {
-                    let Some(string) = first_argument
+                    let string = first_argument
                         .and_then(|value| self.heap.string(value))
-                        .cloned()
-                    else {
-                        return None;
-                    };
+                        .cloned()?;
                     let units = string.units();
                     match transform {
                         super::js_compiled::JsJitStringTransform::PrefixUnderscore => {
@@ -14424,11 +14472,12 @@ impl<H: Host> Vm<H> {
             }
             let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
-            if root.is_some() && body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
+            if let Some(root) = root
+                && body_projected_len > MAX_JIT_ROOT_CODE_BYTES
+            {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
-                        root.expect("root mode checked")
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
                 }
                 return None;
@@ -14439,11 +14488,12 @@ impl<H: Host> Vm<H> {
             spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
-            if root.is_some() && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
+            if let Some(root) = root
+                && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES
+            {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
-                        root.expect("root mode checked")
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
                 }
                 return None;
@@ -16627,6 +16677,265 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", unix))]
+    fn native_value_index_offset_preserves_large_indices() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I32, types::I64] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.push(AbiParam::new(types::I64));
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let index = builder.block_params(block)[0];
+            let index = if ty == types::I32 { builder.ins().ireduce(ty, index) } else { index };
+            let offset = emit_value_index_offset(&mut builder, index);
+            builder.ins().return_(&[offset]);
+            builder.finalize(isa.frontend_config());
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: the generated function has this signature, accesses no memory,
+            // and its executable allocation remains live throughout these calls.
+            let offset = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64) -> u64>(code.pointer()) };
+            for index in [0, 1, (1 << 29) - 1, 1 << 29, (1 << 29) + 1, i32::MAX as u64] {
+                assert_eq!(unsafe { offset(index) }, index * std::mem::size_of::<Value>() as u64, "{ty}: index {index}");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", unix))]
+    fn native_checked_signed_multiply_preserves_product_and_overflow() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I16, types::I32, types::I64] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let args = builder.block_params(block).to_vec();
+            let left = if ty == types::I64 { args[0] } else { builder.ins().ireduce(ty, args[0]) };
+            let right = if ty == types::I64 { args[1] } else { builder.ins().ireduce(ty, args[1]) };
+            let (product, overflow) = builder.ins().smul_overflow(left, right);
+            let product = if ty == types::I64 { product } else { builder.ins().sextend(types::I64, product) };
+            let overflow = builder.ins().uextend(types::I64, overflow);
+            builder.ins().store(MemFlagsData::trusted(), product, args[2], 0);
+            builder.ins().store(MemFlagsData::trusted(), overflow, args[2], std::mem::size_of::<i64>() as i32);
+            builder.ins().return_(&[]);
+            builder.finalize(isa.frontend_config());
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: the generated signature is (i64, i64, pointer) -> void; its only
+            // memory accesses write the two i64 slots supplied below. Code stays live.
+            let multiply = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(i64, i64, *mut i64)>(code.pointer()) };
+            let bits = ty.bits();
+            let min = -(1i128 << (bits - 1));
+            let max = (1i128 << (bits - 1)) - 1;
+            let cases = [min, min + 1, -46341, -2, -1, 0, 1, 2, 46341, max - 1, max];
+            for left in cases.into_iter().filter(|value| (min..=max).contains(value)) {
+                for right in cases.into_iter().filter(|value| (min..=max).contains(value)) {
+                    let exact = left * right;
+                    let wrapped = (exact << (128 - bits)) >> (128 - bits);
+                    let mut actual = [0i64; 2];
+                    unsafe { multiply(left as i64, right as i64, actual.as_mut_ptr()) };
+                    assert_eq!(actual, [wrapped as i64, i64::from(!(min..=max).contains(&exact))], "{ty}: {left} * {right}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", unix))]
+    fn native_vector_rotations_preserve_near_matches_and_unaligned_accesses() {
+        #[derive(Clone, Copy, Debug)]
+        enum Shape { Rotate, DistinctInputs, SignedRight, NonComplementaryShift }
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        // A baseline x86-64 target has no optional SSSE3: it must retain
+        // the existing shifts/OR lowering while producing the same values.
+        let baseline = cranelift_codegen::isa::lookup(isa.triple().clone())
+            .unwrap().finish(isa.flags().clone()).unwrap();
+        for isa in [isa, baseline] {
+        let cases = [0, 1, 2, u32::MAX as u64, 1 << 32, 1 << 63, i64::MAX as u64, u64::MAX, 0x0123_4567_89ab_cdef, 0xaaaa_5555_aaaa_5555];
+        for rotate in 0..u64::BITS {
+            for reversed in [false, true] {
+                for shape in [Shape::Rotate, Shape::DistinctInputs, Shape::SignedRight, Shape::NonComplementaryShift] {
+                    let mut signature = Signature::new(isa.default_call_conv());
+                    signature.params.extend([AbiParam::new(types::I64); 3]);
+                    let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+                    let mut context = FunctionBuilderContext::new();
+                    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                    let block = builder.create_block();
+                    builder.append_block_params_for_function_params(block);
+                    builder.switch_to_block(block);
+                    builder.seal_block(block);
+                    let args = builder.block_params(block).to_vec();
+                    let memory = MemFlagsData::new().with_notrap();
+                    let cast = MemFlagsData::new().with_endianness(ir::Endianness::Little);
+                    let first = builder.ins().load(types::I8X16, memory, args[0], 0);
+                    let first = builder.ins().bitcast(types::I64X2, cast, first);
+                    let second = if matches!(shape, Shape::DistinctInputs) {
+                        let value = builder.ins().load(types::I8X16, memory, args[1], 0);
+                        builder.ins().bitcast(types::I64X2, cast, value)
+                    } else { first };
+                    let left_amount = u64::BITS - rotate - u32::from(matches!(shape, Shape::NonComplementaryShift));
+                    let left_count = builder.ins().iconst(types::I32, i64::from(left_amount));
+                    let right_count = builder.ins().iconst(types::I32, i64::from(rotate));
+                    let left = builder.ins().ishl(first, left_count);
+                    let right = if matches!(shape, Shape::SignedRight) {
+                        builder.ins().sshr(second, right_count)
+                    } else { builder.ins().ushr(second, right_count) };
+                    let left = builder.ins().bitcast(types::I8X16, cast, left);
+                    let right = builder.ins().bitcast(types::I8X16, cast, right);
+                    let value = if reversed { builder.ins().bor(right, left) } else { builder.ins().bor(left, right) };
+                    builder.ins().store(memory, value, args[2], 0);
+                    builder.ins().return_(&[]);
+                    builder.finalize(isa.frontend_config());
+                    let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+                    // SAFETY: generated code accesses exactly sixteen bytes at
+                    // each pointer, promises no alignment, and stays live here.
+                    let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u8, *const u8, *mut u8)>(code.pointer()) };
+                    for offset in [0, 1, 7] {
+                        for (index, input) in cases.into_iter().enumerate() {
+                            let left = [input, cases[(index + 3) % cases.len()]];
+                            let right = if matches!(shape, Shape::DistinctInputs) { [!left[1], !left[0]] } else { left };
+                            let mut first = [0u8; 32];
+                            let mut second = [0u8; 32];
+                            let mut output = [0xa5u8; 32];
+                            for lane in 0..2 {
+                                let start = offset + lane * std::mem::size_of::<u64>();
+                                first[start..start + 8].copy_from_slice(&left[lane].to_le_bytes());
+                                second[start..start + 8].copy_from_slice(&right[lane].to_le_bytes());
+                            }
+                            unsafe { run(first.as_ptr().add(offset), second.as_ptr().add(offset), output.as_mut_ptr().add(offset)) };
+                            for lane in 0..2 {
+                                let right = if matches!(shape, Shape::SignedRight) { (right[lane] as i64).wrapping_shr(rotate) as u64 } else { right[lane].wrapping_shr(rotate) };
+                                let expected = left[lane].wrapping_shl(left_amount) | right;
+                                let start = offset + lane * std::mem::size_of::<u64>();
+                                assert_eq!(&output[start..start + 8], &expected.to_le_bytes(), "{shape:?}, rotate={rotate}, reversed={reversed}, offset={offset}");
+                            }
+                            assert!(output[..offset].iter().chain(output[offset + 16..].iter()).all(|byte| *byte == 0xa5));
+                        }
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    #[test]
+    fn native_alias_regions_preserve_overlapping_untagged_accesses() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for tagged_load in [false, true] {
+            for tagged_store in [false, true] {
+                let mut signature = Signature::new(isa.default_call_conv());
+                signature.params.push(AbiParam::new(types::I64));
+                signature.returns.push(AbiParam::new(types::I64));
+                let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+                let region = function.dfg.alias_regions.insert(ir::AliasRegionData {
+                    user_id: 0,
+                    description: "overlapping test accesses".into(),
+                });
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                let block = builder.create_block();
+                builder.append_block_params_for_function_params(block);
+                builder.switch_to_block(block);
+                builder.seal_block(block);
+                let address = builder.block_params(block)[0];
+                let load_flags = MemFlagsData::trusted().with_alias_region(tagged_load.then_some(region));
+                let store_flags = MemFlagsData::trusted().with_alias_region(tagged_store.then_some(region));
+                let first = builder.ins().load(types::I64, load_flags, address, 0);
+                let zero = builder.ins().iconst(types::I64, 0);
+                builder.ins().store(store_flags, zero, address, 0);
+                let second = builder.ins().load(types::I64, load_flags, address, 0);
+                let result = builder.ins().iadd(first, second);
+                builder.ins().return_(&[result]);
+                builder.finalize(isa.frontend_config());
+                let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+                // SAFETY: the generated function reads and writes one live u64,
+                // and its executable mapping remains alive throughout each call.
+                let run = unsafe {
+                    std::mem::transmute::<*mut u8, unsafe extern "C" fn(*mut u64) -> u64>(code.pointer())
+                };
+                for input in [0, 1, 42, i64::MAX as u64, u64::MAX] {
+                    let mut memory = input;
+                    assert_eq!(unsafe { run(&mut memory) }, input, "load tagged={tagged_load}, store tagged={tagged_store}");
+                    assert_eq!(memory, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_unsigned_widening_multiply_preserves_lane_products() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        // Exhaust both single-input shuffle encodings and all lane selectors,
+        // including the unaffected cases, against scalar unsigned products.
+        for shuffle in std::iter::once(None).chain(
+            (0..=u8::MAX).flat_map(|mask| [Some((mask, false)), Some((mask, true))]),
+        ) {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+            let args = builder.block_params(block).to_vec();
+            let mut input = |address| {
+                let value = builder.ins().load(types::I8X16, MemFlagsData::trusted(), address, 0);
+                let value = if let Some((selector, rhs)) = shuffle {
+                    let lanes: Vec<u8> = (0..16).map(|byte| {
+                        ((selector >> ((byte / 4) * 2)) & 3) * 4 + byte % 4 + if rhs { 16 } else { 0 }
+                    }).collect();
+                    let mask = builder.func.dfg.immediates.push(ir::ConstantData::from(lanes));
+                    let poison = builder.func.dfg.constants.insert(ir::ConstantData::from(vec![0x5a; 16]));
+                    let poison = builder.ins().vconst(types::I8X16, poison);
+                    let (left, right) = if rhs { (poison, value) } else { (value, poison) };
+                    builder.ins().shuffle(left, right, mask)
+                } else { value };
+                builder.ins().bitcast(types::I32X4, MemFlagsData::new().with_endianness(ir::Endianness::Little), value)
+            };
+            let left = input(args[0]);
+            let right = input(args[1]);
+            let left = builder.ins().uwiden_low(left);
+            let right = builder.ins().uwiden_low(right);
+            let product = builder.ins().imul(left, right);
+            builder.ins().store(MemFlagsData::trusted(), product, args[2], 0);
+            builder.ins().return_(&[]);
+            builder.finalize(isa.frontend_config());
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            // SAFETY: generated code reads two four-u32 inputs and writes two u64 outputs.
+            // All arrays below outlive the call, as does the executable code mapping.
+            let multiply = unsafe {
+                std::mem::transmute::<*mut u8, unsafe extern "C" fn(*const u32, *const u32, *mut u64)>(code.pointer())
+            };
+            let cases = [0, 1, 2, 0xffff, 0x10000, 0x7fff_ffff, 0x8000_0000, u32::MAX];
+            for a in cases {
+                for b in cases {
+                    // Different lane values and poisoned unused lanes expose lane selection
+                    // errors as well as accidental signed extension or truncation.
+                    let left = [a, !b, u32::MAX, 0];
+                    let right = [b, !a, 0, u32::MAX];
+                    let mut actual = [0u64; 2];
+                    unsafe { multiply(left.as_ptr(), right.as_ptr(), actual.as_mut_ptr()) };
+                    let indices = shuffle.map_or([0, 1], |(selector, _)| [usize::from(selector & 3), usize::from((selector >> 2) & 3)]);
+                    let expected = indices.map(|index| u64::from(left[index]) * u64::from(right[index]));
+                    assert_eq!(actual, expected, "shuffle {shuffle:?}, inputs {left:?} * {right:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn native_entry_sampling_is_sparse_and_deterministic() {
         assert!(!native_entry_sample_due(0));
         assert!(!native_entry_sample_due(1));
@@ -16881,9 +17190,15 @@ mod tests {
 
     #[test]
     fn sparse_analysis_states_preserve_register_joins() {
-        const FACTS: [Slot; 7] = [
+        assert_eq!(Slot::Memory32Address.join(Slot::Memory32Address), Slot::Memory32Address);
+        assert_eq!(Slot::Memory32Address.join(Slot::Value(Kind::I64)), Slot::Value(Kind::I64));
+        assert_eq!(Slot::Value(Kind::I64).join(Slot::Memory32Address), Slot::Value(Kind::I64));
+        assert_eq!(Slot::Memory32Address.join(Slot::DEFAULT), Slot::Conflict);
+        const FACTS: [Slot; 9] = [
             Slot::DEFAULT,
             Slot::Value(Kind::I64),
+            Slot::Memory32Address,
+            Slot::Vector,
             Slot::Binding(7),
             Slot::Memory,
             Slot::Import(9),

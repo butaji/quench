@@ -22,6 +22,8 @@ profile-memory = ["quench-runtime/profile-memory"]
 profile-native-ops = ["native-execution", "quench-runtime/profile-native-ops"]
 verify-replay = ["quench-runtime/verify-replay"]
 profile-allocator = ["quench-runtime/profile-allocator"]
+# Reads the memory-first compile-release knobs from the environment (measurement builds only).
+release-tuning = []
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
@@ -54,6 +56,7 @@ brotli = "7"
 encoding_rs = "0.8"
 crc32fast = "1"
 idna = "1"
+unicode-normalization = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
@@ -70,3 +73,6 @@ pkg-config = "0.3"
 # measured 0.7-2.1% lower maximum RSS and 2.6-4.7% higher throughput (TOD-173 npm rows).
 [target.'cfg(unix)'.dependencies]
 quench-alloc = { path = "../quench-alloc" }
+
+[lints]
+workspace = true

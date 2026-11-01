@@ -21,6 +21,12 @@ members = [
     "crates/quench-wasm-test",
 ]
 
+# Function arity and type size are not review caps here (AGENTS.md: no mandatory
+# complexity caps); every other clippy lint stays at its default level.
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
 [workspace.dependencies]
 oxc = "=0.153.0"
 oxc_allocator = "=0.153.0"

@@ -8,3 +8,6 @@ description = "Shared recursion budget and worker stack policy for Quench runtim
 [lib]
 # No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
 doctest = false
+
+[lints]
+workspace = true

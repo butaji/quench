@@ -200,7 +200,7 @@ impl Compiler<'_> {
             global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions.into(),
+            source_positions: function.source_positions,
             environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,

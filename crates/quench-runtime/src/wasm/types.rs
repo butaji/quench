@@ -247,18 +247,16 @@ impl WasmTypes {
                 HeapType::Abstract { shared: false, ty },
             ) => self.get(source as usize).is_some_and(|declaration| {
                 !declaration.composite_type.shared
-                    && match (ty, &declaration.composite_type.inner) {
-                        (wasmparser::AbstractHeapType::Func, CompositeInnerType::Func(_)) => true,
-                        (
-                            wasmparser::AbstractHeapType::Any | wasmparser::AbstractHeapType::Eq,
-                            CompositeInnerType::Struct(_) | CompositeInnerType::Array(_),
-                        ) => true,
-                        (wasmparser::AbstractHeapType::Struct, CompositeInnerType::Struct(_))
-                        | (wasmparser::AbstractHeapType::Array, CompositeInnerType::Array(_)) => {
-                            true
-                        }
-                        _ => false,
-                    }
+                    && matches!(
+                        (ty, &declaration.composite_type.inner),
+                        (wasmparser::AbstractHeapType::Func, CompositeInnerType::Func(_))
+                            | (
+                                wasmparser::AbstractHeapType::Any | wasmparser::AbstractHeapType::Eq,
+                                CompositeInnerType::Struct(_) | CompositeInnerType::Array(_),
+                            )
+                            | (wasmparser::AbstractHeapType::Struct, CompositeInnerType::Struct(_))
+                            | (wasmparser::AbstractHeapType::Array, CompositeInnerType::Array(_))
+                    )
             }),
             (
                 HeapType::Abstract { shared: false, ty },

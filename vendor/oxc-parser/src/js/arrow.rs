@@ -248,13 +248,21 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         );
 
         if self.cur_token().is_on_new_line() {
-            self.error(diagnostics::lineterminator_before_arrow(self.cur_token().span()));
+            self.error(diagnostics::lineterminator_before_arrow(
+                self.cur_token().span(),
+            ));
         }
 
         self.expect(Kind::Arrow);
 
         self.parse_arrow_function_expression_body(
-            ArrowFunctionHead { type_parameters: None, params, return_type: None, r#async, start },
+            ArrowFunctionHead {
+                type_parameters: None,
+                params,
+                return_type: None,
+                r#async,
+                start,
+            },
             allow_return_type_in_arrow_function,
         )
     }
@@ -270,12 +278,17 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.parse_ts_type_parameters_with_trailing_comma();
 
         if let Some(type_params) = &type_parameters
-            && matches!(self.source_type.extension(), Some(FileExtension::Mts | FileExtension::Cts))
+            && matches!(
+                self.source_type.extension(),
+                Some(FileExtension::Mts | FileExtension::Cts)
+            )
             && type_params.params.len() == 1
             && type_params.params[0].constraint.is_none()
             && !has_trailing_comma
         {
-            self.error(diagnostics::jsx_type_parameter_in_mts_cts(type_params.params[0].name.span));
+            self.error(diagnostics::jsx_type_parameter_in_mts_cts(
+                type_params.params[0].name.span,
+            ));
         }
 
         let (this_param, params) = self.parse_formal_parameters(
@@ -285,20 +298,34 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
         if let Some(this_param) = this_param {
             // const x = (this: number) => {};
-            self.error(diagnostics::ts_arrow_function_this_parameter(this_param.span));
+            self.error(diagnostics::ts_arrow_function_this_parameter(
+                this_param.span,
+            ));
         }
 
-        let return_type = if self.is_ts { self.parse_ts_return_type_annotation() } else { None };
+        let return_type = if self.is_ts {
+            self.parse_ts_return_type_annotation()
+        } else {
+            None
+        };
 
         self.ctx = self.ctx.and_await(has_await);
 
         if self.cur_token().is_on_new_line() {
-            self.error(diagnostics::lineterminator_before_arrow(self.cur_token().span()));
+            self.error(diagnostics::lineterminator_before_arrow(
+                self.cur_token().span(),
+            ));
         }
 
         self.expect(Kind::Arrow);
 
-        ArrowFunctionHead { type_parameters, params, return_type, r#async, start }
+        ArrowFunctionHead {
+            type_parameters,
+            params,
+            return_type,
+            r#async,
+            start,
+        }
     }
 
     /// [ConciseBody](https://tc39.es/ecma262/#prod-ConciseBody)
@@ -311,8 +338,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         arrow_function_head: ArrowFunctionHead<'a>,
         allow_return_type_in_arrow_function: bool,
     ) -> Expression<'a> {
-        let ArrowFunctionHead { type_parameters, params, return_type, r#async, start } =
-            arrow_function_head;
+        let ArrowFunctionHead {
+            type_parameters,
+            params,
+            return_type,
+            r#async,
+            start,
+        } = arrow_function_head;
         let has_await = self.ctx.has_await();
         let has_yield = self.ctx.has_yield();
         self.ctx = self.ctx.and_await(r#async).and_yield(false);

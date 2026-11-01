@@ -439,9 +439,9 @@ impl<H: Host> Vm<H> {
                     let PropertyKey::String(atom) = key else { continue };
                     let value = vm.get_property(p, holder, atom)?;
                     let entries = vm.heap.array_elements(listeners).map(|elements| elements.to_vec()).unwrap_or_default();
-                    for entry in entries.chunks_exact(2) {
+                    for &[listener, argument] in entries.as_chunks::<2>().0 {
                         vm.with_call_roots([value], |vm| {
-                            vm.call_value(p, entry[0], Value::UNDEFINED, &[entry[1], value])
+                            vm.call_value(p, listener, Value::UNDEFINED, &[argument, value])
                         })?;
                     }
                 }

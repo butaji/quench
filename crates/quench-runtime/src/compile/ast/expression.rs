@@ -75,7 +75,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::Super(_) => self.super_base(),
             Expression::FunctionExpression(value) => {
                 let function = self.function_expression(value);
-                if value.id.is_none() { if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); } }
+                if value.id.is_none() && let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); }
                 function
             },
             Expression::ArrowFunctionExpression(value) => {

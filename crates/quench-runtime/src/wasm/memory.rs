@@ -42,8 +42,9 @@ pub(crate) const MEMORY32_LIMIT: usize = u32::MAX as usize + 1;
 pub(crate) const HOST_PAGE: usize = 4096;
 
 /// The reservation a guarded memory32 needs: every index plus offset plus
-/// the widest scalar access, rounded up to a host page.
+/// a full SIMD access, rounded up to a host page.
 pub(crate) const GUARDED_RESERVATION: usize = MEMORY32_LIMIT * 2 + HOST_PAGE;
+const _: () = assert!(super::V128_BYTES <= HOST_PAGE);
 
 /// Where a guarded reservation is asked to start: low enough that its base
 /// fits a signed 32-bit displacement, so compiled code can address the
@@ -277,7 +278,7 @@ impl std::ops::Deref for MemoryRead<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
-            Self::Buffer(bytes)=>bytes,
+            Self::Buffer(bytes) => bytes,
             Self::Memory(bytes) => bytes,
         }
     }
@@ -424,7 +425,7 @@ loads! { word;
 
 impl MemoryLoad {
     pub(crate) fn read_atomic(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
-        if address % self.width() as u64 != 0 {
+        if !address.is_multiple_of(self.width() as u64) {
             return Err(WasmTrap::UnalignedAtomic);
         }
         self.read(bytes, address)
@@ -568,7 +569,7 @@ pub(super) fn direct_access_memory(
 ) -> Option<usize> {
     let index = direct_access(operator)
         .map(|(_, memarg)| memarg.memory)
-        .or_else(|| match operator {
+        .or(match operator {
             wasmparser::Operator::MemorySize { mem } | wasmparser::Operator::MemoryFill { mem } => {
                 Some(*mem)
             }

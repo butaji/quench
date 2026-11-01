@@ -357,7 +357,7 @@ mod tests {
             "#).unwrap();
             let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
             assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::node_sources::NODE_SOURCE_DIR);
             SourceManifest::capture_for_graph(&root, &graph).unwrap();
             fs::remove_dir_all(directory).unwrap();
         }).unwrap().join().unwrap();
@@ -374,7 +374,7 @@ mod tests {
             let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
             assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
             assert!(graph.esm_builtins.contains("node:module"));
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::node_sources::NODE_SOURCE_DIR);
             let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
             assert!(staged.assets().files.keys().any(|path|path.ends_with("lib/internal/url.js")));
             fs::remove_dir_all(directory).unwrap();
@@ -392,7 +392,7 @@ mod tests {
             for name in ["performance", "TextEncoder", "TextDecoder", "EventTarget"] {
                 assert!(graph.host_globals.contains(name), "missing {name}: {:?}", graph.host_globals);
             }
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::node_sources::NODE_SOURCE_DIR);
             let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
             assert!(staged.units().any(|key| key.name() == "node:perf_hooks.js"));
             assert!(staged.assets().files.keys().any(|path|path.ends_with("lib/internal/blob.js")));

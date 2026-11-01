@@ -132,6 +132,7 @@ pub(crate) fn prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             for (name, op) in [
                 ("getAsyncId", "nativeAsyncWrapId"),
                 ("getProviderType", "nativeAsyncWrapProvider"),
+                ("asyncReset", "nativeAsyncWrapReset"),
             ] {
                 let method = c.host_function_named(crate::host::shared_vm::operation(op), name)?;
                 put(c, prototype, name, method)?;
@@ -163,14 +164,16 @@ pub(crate) fn require_construct(c: &mut Context<'_>) -> Result<(), RootedError> 
 }
 pub(crate) fn view(c: &mut Context<'_>, receiver: RootId) -> Result<View, RootedError> {
     match super::pipe_binding::resource_view(c, receiver)? {
-        View::NotNative => {}, other => return Ok(other),
+        View::NotNative => {}
+        other => return Ok(other),
     }
     match super::udp_binding::resource_view(c, receiver)? {
         View::NotNative => {}
         other => return Ok(other),
     }
-    match super::stream_binding::resource_view(c,receiver)? {
-        View::NotNative=>{}, other=>return Ok(other),
+    match super::stream_binding::resource_view(c, receiver)? {
+        View::NotNative => {}
+        other => return Ok(other),
     }
     if let Some(endpoint) = super::net_reference_shared_vm::optional_handle_id(c, receiver)? {
         if let Some(resource) = tcp_resource(&c.host_mut().shared_state(), endpoint) {
@@ -204,6 +207,29 @@ pub(crate) fn get_provider(
             .expect("NONE provider ABI"),
     };
     Ok(c.number(provider as f64))
+}
+
+/// HTTP Agent reuses a native socket handle under a fresh async identity.
+pub(crate) fn async_reset(
+    c: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(endpoint) = super::net_reference_shared_vm::optional_handle_id(c, receiver)? else {
+        return Ok(c.undefined());
+    };
+    let Some(old) = tcp_resource(&c.host_mut().shared_state(), endpoint) else {
+        return Ok(c.undefined());
+    };
+    super::async_hooks_shared_vm::complete_callback_context(c, old.id)?;
+    let shared = c.host_mut().shared_state();
+    let id = super::async_hooks_shared_vm::create_context(&shared);
+    if let Some(handle) = shared.borrow_mut().native_async_wrap.tcp.get_mut(&endpoint) {
+        handle.resource.id = id;
+    }
+    let resource = args.first().copied().unwrap_or(receiver);
+    super::async_hooks_shared_vm::emit_init(c, resource, old.provider.name(), id)?;
+    Ok(receiver)
 }
 pub(crate) fn initialize_tcp(
     c: &mut Context<'_>,
@@ -242,7 +268,7 @@ pub(crate) fn tcp_resource(
 /// The callback lease is the last native request/close owner. Detach only after
 /// guest callback+after hooks, including all throwing paths.
 pub(crate) fn detach(runtime: &mut Runtime<NodeHost>, id: u64) {
-    super::pipe_binding::detach(runtime,id);
+    super::pipe_binding::detach(runtime, id);
     let shared = runtime.host_mut().shared_state();
     let endpoints = shared
         .borrow()
@@ -262,7 +288,7 @@ pub(crate) fn detach(runtime: &mut Runtime<NodeHost>, id: u64) {
         }
     }
     super::udp_binding::detach_resource(&shared, id);
-    super::stream_binding::detach_resource(&shared,id);
+    super::stream_binding::detach_resource(&shared, id);
 }
 pub(crate) fn collect_tcp(runtime: &mut Runtime<NodeHost>, endpoint: u64) {
     let shared = runtime.host_mut().shared_state();

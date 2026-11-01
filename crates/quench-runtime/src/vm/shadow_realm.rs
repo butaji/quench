@@ -370,8 +370,12 @@ impl<H: Host> Vm<H> {
             let result = (|| {
                 let formatter = self.initialize_host_shadow_realm(global_root)?;
                 let global = self.heap.root_value(global_root).unwrap();
-                self.realm.intrinsics.error_intrinsics.get_mut(&global)
-                    .expect("new realm Error intrinsics").host_formatter = formatter;
+                self.realm
+                    .intrinsics
+                    .error_intrinsics
+                    .get_mut(&global)
+                    .expect("new realm Error intrinsics")
+                    .host_formatter = formatter;
                 let prototype = self.heap.root_value(prototype_root).unwrap();
                 let caller_global = self.heap.root_value(caller_root).unwrap();
                 Ok(self.heap.alloc(Cell::ShadowRealm {
@@ -595,7 +599,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.get_property(p, realm, constructor_atom);
         let message_value = self.heap.alloc_string(JsString::from_str(message));
         let error = match constructor {
-            Ok(constructor) if self.is_constructable(p, constructor) => self
+            Ok(constructor) if self.is_constructable(constructor) => self
                 .construct_value_with_new_target(p, constructor, constructor, &[message_value])
                 .map(|value| JsError::thrown(value, format!("{name}: {message}"))),
             _ => Err(self.type_error(p, message.into())),

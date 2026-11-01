@@ -146,18 +146,30 @@ pub(super) struct LegacyRegExpSnapshot {
 
 impl<H: Host> Vm<H> {
     pub(super) fn snapshot_regexp_legacy(&self) -> LegacyRegExpSnapshot {
-        match self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) {
+        match self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+        {
             Some(state) => LegacyRegExpSnapshot {
-                input: state.legacy_input.clone(), matched: state.legacy_match.clone(),
+                input: state.legacy_input.clone(),
+                matched: state.legacy_match.clone(),
             },
             None => LegacyRegExpSnapshot {
-                input: Some(JsString::from_units(&[])), matched: LegacyRegExpMatch::Empty,
+                input: Some(JsString::from_units(&[])),
+                matched: LegacyRegExpMatch::Empty,
             },
         }
     }
 
     pub(super) fn restore_regexp_legacy(&mut self, snapshot: LegacyRegExpSnapshot) {
-        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
+        if let Some(state) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get_mut(&self.realm.globals)
+        {
             state.legacy_input = snapshot.input;
             state.legacy_match = snapshot.matched;
         }
@@ -1109,13 +1121,12 @@ impl<H: Host> Vm<H> {
         // life once replaced: 837 KiB of RegExp's 4.3 MB malloc peak (massif, 2026-10-22).
         let input = &input.unkept_flat();
         let subject = self.regexp_subject(input, matcher);
-        if let FastReplacement::Template(template) = replacement {
-            if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
+        if let FastReplacement::Template(template) = replacement
+            && !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
                     p, receiver, input, &subject, template, matcher, flags, result_used,
                 );
             }
-        }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
             self.regexp_global_matches(
                 p,
@@ -1702,7 +1713,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         input: &JsString,
     ) -> Option<(Rc<quench_regexp::Regex>, RegExpFlags)> {
-        if input.units().len() == 0 {
+        if input.units().is_empty() {
             return None;
         }
         let intrinsic = self.regexp_intrinsic_constructor();
@@ -1751,7 +1762,7 @@ impl<H: Host> Vm<H> {
                 if species.is_undefined() || species.is_null() {
                     return Ok(vm.regexp_intrinsic_constructor());
                 }
-                if !vm.is_constructable(p, species) {
+                if !vm.is_constructable(species) {
                     return Err(vm.type_error(p, "RegExp species is not a constructor".into()));
                 }
                 Ok(species)
@@ -2326,7 +2337,7 @@ impl<H: Host> Vm<H> {
         let source = self
             .programs
             .constant(program, site.pattern_constant as usize)
-            .and_then(|value| self.heap.string(value).map(|source| source.clone()))
+            .and_then(|value| self.heap.string(value).cloned())
             .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
         let flags_text = self
             .programs
@@ -2521,7 +2532,7 @@ impl<H: Host> Vm<H> {
         let Some(input) = self.heap.string(value) else {
             return Err(self.type_error(program, "RegExp.escape requires a string value".into()));
         };
-        Ok(self.heap.alloc_string(escape_regexp_string(&input)))
+        Ok(self.heap.alloc_string(escape_regexp_string(input)))
     }
 
     pub(super) fn regexp_test(
@@ -2617,13 +2628,10 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         }
         let subject = self.regexp_subject(input, &regex);
+        // A Unicode-mode start inside a surrogate pair is the pair's lead (RegExpBuiltinExec's
+        // inputIndex), where a sticky match may start and a search starts.
         let matched = if sticky {
-            // A start inside a surrogate pair resolves to the next code point, which a
-            // sticky match may not move to.
-            regex
-                .find_sticky_in_subject(&subject, start)
-                .next()
-                .filter(|matched| matched.range.start == start)
+            regex.find_sticky_in_subject(&subject, start).next()
         } else {
             regex.find_in_subject(&subject, start).next()
         };

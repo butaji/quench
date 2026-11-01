@@ -31,16 +31,12 @@ struct StringEntry {
     atom: Atom,
 }
 
+#[derive(Default)]
 pub(super) struct NameAtomMemo {
     entries: super::shape_memo::DirectMappedTable<Entry, NAME_ATOM_MEMO_ENTRIES>,
     strings: super::shape_memo::DirectMappedTable<StringEntry, STRING_ATOM_MEMO_ENTRIES>,
 }
 
-impl Default for NameAtomMemo {
-    fn default() -> Self {
-        Self { entries: Default::default(), strings: Default::default() }
-    }
-}
 
 impl NameAtomMemo {
     fn index(name: &str) -> usize {

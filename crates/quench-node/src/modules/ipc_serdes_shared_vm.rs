@@ -148,7 +148,7 @@ impl DeserializerDelegate<NodeHost> for IpcDeserializer {
         };
         // Views over aligned bytes share the frame's buffer; others get a copy.
         let offset_in_buffer = self.frame_offset + offset;
-        let (buffer, offset_in_buffer) = if offset_in_buffer % element_size == 0 {
+        let (buffer, offset_in_buffer) = if offset_in_buffer.is_multiple_of(element_size) {
             (self.buffer, offset_in_buffer)
         } else {
             let bytes = c.bytes_prefix_rooted(self.buffer, offset_in_buffer + byte_length).unwrap_or_default();

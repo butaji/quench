@@ -61,12 +61,12 @@ pub const CLASS_COUNT: usize = 24;
 const GRANULE_CLASSES_MAX_BYTES: usize = 256;
 
 const _: () = assert!(PAGE_HEADER_BYTES >= std::mem::size_of::<Page>());
-const _: () = assert!(PAGE_HEADER_BYTES % GRANULE_BYTES == 0);
+const _: () = assert!(PAGE_HEADER_BYTES.is_multiple_of(GRANULE_BYTES));
 const _: () = assert!(CLASS_SIZES[CLASS_COUNT - 1] == MAX_SMALL_BYTES);
 const _: () = assert!(
     CLASS_SIZES[GRANULE_CLASSES_MAX_BYTES / GRANULE_BYTES - 1] == GRANULE_CLASSES_MAX_BYTES
 );
-const _: () = assert!(CHUNK_BYTES % PAGE_BYTES == 0);
+const _: () = assert!(CHUNK_BYTES.is_multiple_of(PAGE_BYTES));
 
 /// The size class serving `size` bytes, or `None` above `MAX_SMALL_BYTES`.
 pub fn class_of(size: usize) -> Option<usize> {
@@ -171,7 +171,7 @@ impl LockedHeap {
 /// Serves threads whose own heap is already abandoned.
 static ORPHAN: LockedHeap = LockedHeap {
     locked: AtomicBool::new(false),
-    heap: UnsafeCell::new(Heap::EMPTY),
+    heap: UnsafeCell::new(Heap::empty()),
 };
 
 /// Heaps of exited threads, linked through `next_abandoned`; the lock flag and the head.
@@ -257,7 +257,7 @@ fn thread_heap_slow() -> *mut Heap {
         }
         let heap = mapped.cast::<Heap>();
         // SAFETY: fresh writable memory sized and aligned (page-aligned) for a heap.
-        unsafe { heap.write(Heap::EMPTY) };
+        unsafe { heap.write(Heap::empty()) };
         heap
     } else {
         adopted
@@ -400,19 +400,21 @@ impl Default for QuenchAlloc {
 }
 
 impl Heap {
-    const EMPTY: Self = Self {
-        current: [ptr::null_mut(); CLASS_COUNT],
-        partial: [ptr::null_mut(); CLASS_COUNT],
-        empty: ptr::null_mut(),
-        chunk_next: 0,
-        chunk_end: 0,
-        remote_pages: AtomicPtr::new(ptr::null_mut()),
-        next_abandoned: ptr::null_mut(),
-        decommitted: ptr::null_mut(),
-        decommitted_len: 0,
-        taken: 0,
-        taken_before: 0,
-    };
+    const fn empty() -> Self {
+        Self {
+            current: [ptr::null_mut(); CLASS_COUNT],
+            partial: [ptr::null_mut(); CLASS_COUNT],
+            empty: ptr::null_mut(),
+            chunk_next: 0,
+            chunk_end: 0,
+            remote_pages: AtomicPtr::new(ptr::null_mut()),
+            next_abandoned: ptr::null_mut(),
+            decommitted: ptr::null_mut(),
+            decommitted_len: 0,
+            taken: 0,
+            taken_before: 0,
+        }
+    }
 
     /// A block of `class`, or null when no page can be had.
     #[inline(always)]

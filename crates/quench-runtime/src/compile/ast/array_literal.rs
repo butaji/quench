@@ -62,7 +62,10 @@ impl FunctionCompiler<'_, '_> {
 
     /// ArrayAccumulation into a fresh array: the elements before the first spread have static
     /// indices; the rest append at the array's length, which tracks the next index.
-    pub(super) fn accumulated_array(&mut self, elements: &[AccumulatedElement<'_, '_>]) -> Register {
+    pub(super) fn accumulated_array(
+        &mut self,
+        elements: &[AccumulatedElement<'_, '_>],
+    ) -> Register {
         let dst = self.reg();
         let prefix = elements
             .iter()

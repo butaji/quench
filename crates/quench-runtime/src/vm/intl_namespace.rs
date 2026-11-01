@@ -28,7 +28,9 @@ impl<H: Host> Vm<H> {
             .insert(global, prototype);
         let fallback_symbol = self
             .heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some("IntlLegacyConstructedSymbol".into()))));
+            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(
+                "IntlLegacyConstructedSymbol".into(),
+            ))));
         self.realm
             .intrinsics
             .intl_number_format_fallback_symbols
@@ -405,7 +407,7 @@ impl<H: Host> Vm<H> {
                     ]
                 };
                 let result = self.object();
-                self.set_named(p, result, "firstDay", Value::number(first_day as f64))?;
+                self.set_named(p, result, "firstDay", Value::number(first_day))?;
                 let weekend = self.new_array(weekend);
                 self.set_named(p, result, "weekend", weekend)?;
                 Ok(result)
@@ -875,7 +877,7 @@ fn option_value<H: Host>(
     }) {
         Ok(value.to_ascii_lowercase())
     } else {
-        Err(vm.range_error(p, format!("invalid {name}").into()))
+        Err(vm.range_error(p, format!("invalid {name}")))
     }
 }
 

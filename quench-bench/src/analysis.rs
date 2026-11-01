@@ -959,11 +959,11 @@ fn validate_diagnostic_ab(input: &SuiteInput, config: DiagnosticAbConfig) -> Res
     if off_engine
         .environment
         .get(config.switch_env)
-        .map_or(true, |value| value != config.off_value)
+        .is_none_or(|value| value != config.off_value)
         || on_engine
             .environment
             .get(config.switch_env)
-            .map_or(true, |value| value != config.on_value)
+            .is_none_or(|value| value != config.on_value)
     {
         return Err(format!(
             "{} must explicitly set its experiment environment to 0 and 1",
@@ -1653,7 +1653,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let middle = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[middle - 1] + sorted[middle]) / 2.0
     } else {
         sorted[middle]

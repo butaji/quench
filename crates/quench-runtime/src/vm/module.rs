@@ -309,10 +309,7 @@ impl ModuleEvaluationStack {
     }
 
     pub(crate) fn cycle_to(&self, module: &ModuleIdentity) -> Option<&[ModuleIdentity]> {
-        let start = self
-            .0
-            .iter()
-            .position(|active| active == module)?;
+        let start = self.0.iter().position(|active| active == module)?;
         Some(&self.0[start..])
     }
 }

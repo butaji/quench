@@ -618,6 +618,95 @@ impl Test262Host for Test262RuntimeHost {
     }
 }
 
+impl Test262RuntimeHost {
+    fn take_next_timer(&mut self) -> Option<TestTimer> {
+        let (index, deadline) = self
+            .timers
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, timer)| (timer.deadline, timer.id))
+            .map(|(index, timer)| (index, timer.deadline))?;
+        let delay = deadline.saturating_duration_since(Instant::now());
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
+        }
+        Some(self.timers.remove(index))
+    }
+
+    fn cancel_timer(&mut self, id: u64) -> Option<TestTimer> {
+        let index = self.timers.iter().position(|timer| timer.id == id)?;
+        Some(self.timers.remove(index))
+    }
+
+    fn take_all_timers(&mut self) -> Vec<TestTimer> {
+        std::mem::take(&mut self.timers)
+    }
+}
+
+fn set_timeout(
+    context: &mut NativeContext<'_, Test262RuntimeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(callback) = args.first().copied() else {
+        let error = context.type_error_rooted("setTimeout callback is not callable")?;
+        return Err(context.throw(error));
+    };
+    if !context.is_callable_rooted(callback)? {
+        let error = context.type_error_rooted("setTimeout callback is not callable")?;
+        return Err(context.throw(error));
+    }
+    let delay = args
+        .get(1)
+        .copied()
+        .map(|value| context.to_number(value))
+        .transpose()?
+        .unwrap_or(0.0);
+    let delay = if !delay.is_finite() || delay <= 0.0 {
+        TIMER_MIN_DELAY_MS
+    } else {
+        delay.clamp(TIMER_MIN_DELAY_MS, TIMER_MAX_DELAY_MS)
+    };
+    let callback = context.retain(callback)?;
+    let mut retained_args = Vec::with_capacity(args.len().saturating_sub(2));
+    for arg in args.iter().skip(2).copied() {
+        retained_args.push(context.retain(arg)?);
+    }
+    let host = context.host_mut();
+    let id = host.next_timer_id;
+    host.next_timer_id = id
+        .checked_add(1)
+        .ok_or_else(|| RootedError::host("Test262 timer identifier space exhausted"))?;
+    host.timers.push(TestTimer {
+        id,
+        callback,
+        args: retained_args,
+        deadline: Instant::now() + Duration::from_secs_f64(delay / 1000.0),
+    });
+    Ok(context.number(id as f64))
+}
+
+fn clear_timeout(
+    context: &mut NativeContext<'_, Test262RuntimeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .copied()
+        .map(|value| context.to_number(value))
+        .transpose()?;
+    if let Some(id) = id.filter(|id| id.is_finite() && *id >= 0.0) {
+        if let Some(timer) = context.host_mut().cancel_timer(id as u64) {
+            context.release_root(timer.callback);
+            for arg in timer.args {
+                context.release_root(arg);
+            }
+        }
+    }
+    Ok(context.undefined())
+}
+
 #[cfg(test)]
 mod tests {
     use super::Test262RuntimeHost;
@@ -1126,8 +1215,7 @@ mod tests {
 
     #[test]
     fn async_timer_is_a_macrotask_and_then_reactions_stay_microtasks() {
-        let mut host = Test262RuntimeHost::default();
-        host.async_test = true;
+        let mut host = Test262RuntimeHost { async_test: true, ..Default::default() };
         host.execute(
             r#"
               const order = [];
@@ -1149,93 +1237,4 @@ mod tests {
         )
         .unwrap();
     }
-}
-
-impl Test262RuntimeHost {
-    fn take_next_timer(&mut self) -> Option<TestTimer> {
-        let (index, deadline) = self
-            .timers
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, timer)| (timer.deadline, timer.id))
-            .map(|(index, timer)| (index, timer.deadline))?;
-        let delay = deadline.saturating_duration_since(Instant::now());
-        if !delay.is_zero() {
-            std::thread::sleep(delay);
-        }
-        Some(self.timers.remove(index))
-    }
-
-    fn cancel_timer(&mut self, id: u64) -> Option<TestTimer> {
-        let index = self.timers.iter().position(|timer| timer.id == id)?;
-        Some(self.timers.remove(index))
-    }
-
-    fn take_all_timers(&mut self) -> Vec<TestTimer> {
-        std::mem::take(&mut self.timers)
-    }
-}
-
-fn set_timeout(
-    context: &mut NativeContext<'_, Test262RuntimeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(callback) = args.first().copied() else {
-        let error = context.type_error_rooted("setTimeout callback is not callable")?;
-        return Err(context.throw(error));
-    };
-    if !context.is_callable_rooted(callback)? {
-        let error = context.type_error_rooted("setTimeout callback is not callable")?;
-        return Err(context.throw(error));
-    }
-    let delay = args
-        .get(1)
-        .copied()
-        .map(|value| context.to_number(value))
-        .transpose()?
-        .unwrap_or(0.0);
-    let delay = if !delay.is_finite() || delay <= 0.0 {
-        TIMER_MIN_DELAY_MS
-    } else {
-        delay.clamp(TIMER_MIN_DELAY_MS, TIMER_MAX_DELAY_MS)
-    };
-    let callback = context.retain(callback)?;
-    let mut retained_args = Vec::with_capacity(args.len().saturating_sub(2));
-    for arg in args.iter().skip(2).copied() {
-        retained_args.push(context.retain(arg)?);
-    }
-    let host = context.host_mut();
-    let id = host.next_timer_id;
-    host.next_timer_id = id
-        .checked_add(1)
-        .ok_or_else(|| RootedError::host("Test262 timer identifier space exhausted"))?;
-    host.timers.push(TestTimer {
-        id,
-        callback,
-        args: retained_args,
-        deadline: Instant::now() + Duration::from_secs_f64(delay / 1000.0),
-    });
-    Ok(context.number(id as f64))
-}
-
-fn clear_timeout(
-    context: &mut NativeContext<'_, Test262RuntimeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = args
-        .first()
-        .copied()
-        .map(|value| context.to_number(value))
-        .transpose()?;
-    if let Some(id) = id.filter(|id| id.is_finite() && *id >= 0.0) {
-        if let Some(timer) = context.host_mut().cancel_timer(id as u64) {
-            context.release_root(timer.callback);
-            for arg in timer.args {
-                context.release_root(arg);
-            }
-        }
-    }
-    Ok(context.undefined())
 }

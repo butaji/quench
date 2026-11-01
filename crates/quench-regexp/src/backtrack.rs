@@ -1088,7 +1088,7 @@ impl StartRanges {
             ranges.low[ranges.count] = low as u8;
             ranges.high[ranges.count] = (low + length - 1) as u8;
             ranges.count += 1;
-            rest &= rest.wrapping_add(rest & rest.wrapping_neg());
+            rest &= rest.wrapping_add(rest.isolate_lowest_one());
         }
         Some(ranges)
     }
@@ -1501,7 +1501,7 @@ impl Program {
     ) -> Result<Option<Found>, Exhausted> {
         self.search(text, first, sticky, budget, |registers| {
             registers[..2 * self.capture_count]
-                .chunks_exact(2)
+                .as_chunks::<2>().0.iter()
                 .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
                 .collect()
         })

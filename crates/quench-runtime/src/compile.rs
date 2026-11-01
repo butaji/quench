@@ -326,7 +326,7 @@ pub(crate) struct EvalRegExpLiteral {
 /// parentheses, after which a Script of one parenthesized regular expression literal may
 /// still begin: the literal's own `/`, and the starts of the comments this scan leaves to
 /// the parser (Annex B's `<!--` and `-->`, and a hashbang `#!`).
-const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = [b'/', b'<', b'-', b'#'];
+const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = *b"/<-#";
 
 /// Whether `source` may be a Script of one (possibly parenthesized) regular expression
 /// literal, which `Engine::eval_single_regexp_literal` then parses to decide: false only when
@@ -1133,7 +1133,7 @@ impl Engine {
                 .map(|error| Diagnostic::parse_failure(name, &normalized, error))
                 .collect());
         }
-        stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
+        stack::validate(&parsed.program).map_err(|crate::stack::StackExhausted| vec![Diagnostic::stack_exhausted(name)])?;
         if source_type.is_typescript()
             && let Some((span, message)) = typescript::unsupported_runtime_syntax(&parsed.program)
         {
@@ -1601,6 +1601,14 @@ fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
             self.0 = true;
         }
 
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            // `for await` suspends just like an explicit top-level await.
+            // Include it in the async-module decision so the root compiler
+            // context lowers its loop body with await support enabled.
+            self.0 |= statement.r#await;
+            oxc_ast_visit::walk::walk_for_of_statement(self, statement);
+        }
+
         fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
             self.0 |= declaration.kind == VariableDeclarationKind::AwaitUsing;
             oxc_ast_visit::walk::walk_variable_declaration(self, declaration);
@@ -1990,10 +1998,10 @@ fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
 fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
     const WORD: usize = size_of::<u64>();
     const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
-    let mut words = bytes.chunks_exact(WORD);
+    let (words, _) = bytes.as_chunks::<WORD>();
     let mut offset = 0;
-    for word in &mut words {
-        if u64::from_ne_bytes(word.try_into().expect("a whole word")) & HIGH_BITS != 0 {
+    for word in words {
+        if u64::from_ne_bytes(*word) & HIGH_BITS != 0 {
             break;
         }
         offset += WORD;
@@ -3960,19 +3968,17 @@ impl<'a> Compiler<'a> {
             // Field initializers and static blocks cannot name `arguments` (an early error),
             // so they have no binding to materialize.
             None
+        } else if parameter_shadows_arguments {
+            None
+        } else if has_arguments_binding {
+            locals
+                .iter()
+                .position(|atom| *atom == arguments)
+                .map(|slot| slot as u16)
         } else {
-            if parameter_shadows_arguments {
-                None
-            } else if has_arguments_binding {
-                locals
-                    .iter()
-                    .position(|atom| *atom == arguments)
-                    .map(|slot| slot as u16)
-            } else {
-                locals.push(arguments);
-                function_scope.insert(arguments);
-                Some((locals.len() - 1) as u16)
-            }
+            locals.push(arguments);
+            function_scope.insert(arguments);
+            Some((locals.len() - 1) as u16)
         };
         let environment_atoms = locals
             .iter()
@@ -4197,7 +4203,7 @@ impl<'a> Compiler<'a> {
             global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions.into(),
+            source_positions: function.source_positions,
             environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,

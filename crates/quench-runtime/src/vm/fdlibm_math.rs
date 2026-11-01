@@ -44,7 +44,7 @@ pub(super) fn cbrt(x: f64) -> f64 {
     let mut t = f64::from_bits(u64::from(sign | rough) << u32::BITS);
     let r = (t * t) * (t / x);
     let [p0, p1, p2, p3, p4] = COEFFICIENTS;
-    t = t * ((p0 + r * (p1 + r * p2)) + ((r * r) * r) * (p3 + r * p4));
+    t *= (p0 + r * (p1 + r * p2)) + ((r * r) * r) * (p3 + r * p4);
     t = f64::from_bits((t.to_bits() + ROUND_AWAY_BIAS) & ROUND_AWAY_MASK);
     let s = t * t;
     let r = x / s;

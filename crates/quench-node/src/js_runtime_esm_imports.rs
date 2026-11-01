@@ -118,7 +118,7 @@ pub fn transform_esm_module(source: &str) -> String {
                 .trim_start_matches("let ")
                 .trim_start_matches("var ")
                 .split(',')
-                .filter_map(|name| name.trim().split_whitespace().next())
+                .filter_map(|name| name.split_whitespace().next())
                 .filter(|name| !name.is_empty());
             for name in names {
                 out.push_str(indent);
@@ -156,14 +156,10 @@ pub fn transform_esm_module(source: &str) -> String {
 }
 
 fn skip_chars(s: &str, n: usize) -> &str {
-    let mut i = 0;
-    for (idx, _) in s.char_indices() {
-        if i == n {
-            return &s[idx..];
-        }
-        i += 1;
+    match s.char_indices().nth(n) {
+        Some((idx, _)) => &s[idx..],
+        None => s,
     }
-    s
 }
 
 fn convert_import_statement(after: &str) -> Option<(String, String)> {
@@ -304,11 +300,10 @@ fn convert_import_spec(spec: &str) -> Option<String> {
         if let Some(inner) = rest_part.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             let names = parse_import_names(inner);
             out.push_str(&format!("const {{ {names} }} = {default_binding};"));
-        } else if let Some(namespace) = rest_part.strip_prefix("* as ") {
+        } else {
+            let namespace = rest_part.strip_prefix("* as ")?;
             let local = namespace.trim();
             out.push_str(&format!("const {local} = {default_binding};"));
-        } else {
-            return None;
         }
         return Some(out);
     }
@@ -443,11 +438,10 @@ fn strip_import_with_clause(rest: &str) -> &str {
             }
             None => match c {
                 b'"' | b'\'' | b'`' => in_string = Some(c),
-                b'w' => {
-                    if bytes[i..].starts_with(b"with ") {
+                b'w'
+                    if bytes[i..].starts_with(b"with ") => {
                         return rest[..i].trim();
                     }
-                }
                 _ => {}
             },
         }

@@ -134,7 +134,7 @@ impl<H: Host> NativeJsProgram<H> {
         program: ResidualProgram,
         image: *const u8,
     ) -> Result<Self, String> {
-        if image.is_null() || image.addr() % std::mem::align_of::<NativeJsFunctionEntry>() != 0 {
+        if image.is_null() || !image.addr().is_multiple_of(std::mem::align_of::<NativeJsFunctionEntry>()) {
             return Err("native image table is missing or misaligned".into());
         }
         let header_bytes =

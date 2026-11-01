@@ -873,11 +873,10 @@ impl<H: Host> Vm<H> {
                 } else {
                     None
                 };
-                if let Some(index) = self.map_entry_index(this, key) {
-                    if let Some(Cell::Map { entries, .. }) = self.heap.get(this) {
+                if let Some(index) = self.map_entry_index(this, key)
+                    && let Some(Cell::Map { entries, .. }) = self.heap.get(this) {
                         return Ok(entries.value_at(index));
                     }
-                }
                 let value = match native {
                     Native::MapGetOrInsert => args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     Native::MapGetOrInsertComputed => {
@@ -885,11 +884,10 @@ impl<H: Host> Vm<H> {
                         let canonical_key = canonicalize_keyed_collection_key(key);
                         let computed =
                             self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
-                        if let Some(index) = self.map_entry_index(this, key) {
-                            if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
+                        if let Some(index) = self.map_entry_index(this, key)
+                            && let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
                                 entries.set_value(index, computed);
                             }
-                        }
                         computed
                     }
                     _ => unreachable!("Map get-or-insert dispatch is exhaustive"),

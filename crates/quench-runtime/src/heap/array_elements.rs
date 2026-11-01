@@ -16,7 +16,7 @@ struct Header {
 
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
-const _: () = assert!(VALUES_OFFSET % align_of::<Value>() == 0);
+const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length: native code that
 /// appends within capacity advances the length there.
@@ -448,7 +448,7 @@ mod tests {
                 .cast::<Value>()
                 .cast_const()
         };
-        assert_eq!(empty_values, (&*empty).as_ptr());
+        assert_eq!(empty_values, (*empty).as_ptr());
         assert_eq!(empty.len(), 0);
 
         let values = [Value::integer(7), Value::integer(9)];
@@ -462,7 +462,7 @@ mod tests {
                 .cast::<Value>()
                 .cast_const()
         };
-        assert_eq!(current_values, (&*dense).as_ptr());
+        assert_eq!(current_values, (*dense).as_ptr());
         // The header pointer belongs to this ArrayElements value; re-reading it observes the
         // new header/backing after copy-on-write mutation.
         let mut shared = dense.clone();
@@ -476,7 +476,7 @@ mod tests {
                 .cast::<Value>()
                 .cast_const()
         };
-        assert_eq!(current_values, (&*shared).as_ptr());
+        assert_eq!(current_values, (*shared).as_ptr());
         assert_eq!(shared.len(), 3);
     }
 
