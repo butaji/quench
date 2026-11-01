@@ -810,10 +810,6 @@ fn byob_read(c: &mut Context<'_>, reader: RootId, view: RootId, minimum: usize, 
 
 // ---- The byte tee
 
-fn tee_flag(c: &mut Context<'_>, tee: RootId, name: &str) -> Result<bool, RootedError> {
-    flag(c, tee, name)
-}
-
 /// `readableByteStreamTee(stream)`.
 pub(crate) fn tee(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let reader = readable::default_reader(c, stream)?;
@@ -850,7 +846,7 @@ fn branch_controller(c: &mut Context<'_>, tee: RootId, second: bool) -> Outcome 
 }
 
 fn canceled(c: &mut Context<'_>, tee: RootId, second: bool) -> Result<bool, RootedError> {
-    tee_flag(c, tee, if second { tee::CANCELED2 } else { tee::CANCELED1 })
+    flag(c, tee, if second { tee::CANCELED2 } else { tee::CANCELED1 })
 }
 
 fn pull_with_default_reader(c: &mut Context<'_>, tee: RootId) -> Done {
@@ -885,7 +881,7 @@ fn pull_with_byob_reader(c: &mut Context<'_>, tee: RootId, view: RootId, second:
 }
 
 fn tee_pull(c: &mut Context<'_>, tee: RootId, second: bool) -> Outcome {
-    if tee_flag(c, tee, tee::READING)? {
+    if flag(c, tee, tee::READING)? {
         put_flag(c, tee, if second { tee::READ_AGAIN2 } else { tee::READ_AGAIN1 }, true)?;
         return resolved_undefined(c);
     }
@@ -907,7 +903,7 @@ fn tee_cancel(c: &mut Context<'_>, tee: RootId, reason: RootId, second: bool) ->
         if second { (tee::CANCELED2, tee::REASON2, tee::CANCELED1) } else { (tee::CANCELED1, tee::REASON1, tee::CANCELED2) };
     put_flag(c, tee, mine, true)?;
     put(c, tee, reason_field, reason)?;
-    if tee_flag(c, tee, other)? {
+    if flag(c, tee, other)? {
         let reason1 = get(c, tee, tee::REASON1)?;
         let reason2 = get(c, tee, tee::REASON2)?;
         let composite = c.array_rooted(&[reason1, reason2])?;
@@ -985,9 +981,9 @@ fn tee_chunk_task(c: &mut Context<'_>, request: RootId, chunk: RootId) -> Done {
         }
     }
     put_flag(c, tee, tee::READING, false)?;
-    if tee_flag(c, tee, tee::READ_AGAIN1)? {
+    if flag(c, tee, tee::READ_AGAIN1)? {
         tee_pull(c, tee, false)?;
-    } else if tee_flag(c, tee, tee::READ_AGAIN2)? {
+    } else if flag(c, tee, tee::READ_AGAIN2)? {
         tee_pull(c, tee, true)?;
     }
     Ok(())

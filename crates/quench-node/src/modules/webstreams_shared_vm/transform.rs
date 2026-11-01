@@ -2,12 +2,12 @@
 //! (`lib/internal/webstreams/transformstream.js`).
 
 use super::readable::field::{CONTROLLER, HIGH_WATER_MARK, SELF, SIZE, STORED_ERROR, STREAM};
-use super::readable::{self, default_can_close_or_enqueue, default_controller_close, default_controller_enqueue, default_controller_error};
-use super::writable::{self, controller_error_if_needed};
+use super::readable::{self, can_close_or_enqueue, default_controller_close, default_controller_enqueue, default_controller_error};
+use super::writable::{self, error_if_needed};
 use super::{
     algorithm, arg, attach, callback, class, custom_inspect, deferred, dictionary, flag, get, install, instance,
     is_undefined, literal, optional, put, put_flag, record, run_algorithm, settle_undefined,
-    size_algorithm, slots, this_state, throw, upon, Brand, ClassMember, Context, Dictionary, Done, Outcome, WebError,
+    size_algorithm, this_state, throw, upon, Brand, ClassMember, Context, Dictionary, Done, Outcome, WebError,
 };
 use crate::modules::host_members::{captured, current, function, members};
 use quench_runtime::RootId;
@@ -111,7 +111,7 @@ fn error_writable_and_unblock_write(c: &mut Context<'_>, stream: RootId, failure
     clear_algorithms(c, controller)?;
     let writable = get(c, stream, WRITABLE)?;
     let writable_controller = get(c, writable, CONTROLLER)?;
-    controller_error_if_needed(c, writable_controller, failure)?;
+    error_if_needed(c, writable_controller, failure)?;
     unblock_write(c, stream)
 }
 
@@ -134,7 +134,7 @@ fn clear_algorithms(c: &mut Context<'_>, controller: RootId) -> Done {
 fn enqueue(c: &mut Context<'_>, controller: RootId, chunk: RootId) -> Done {
     let stream = get(c, controller, STREAM)?;
     let readable_controller = readable_controller(c, stream)?;
-    if !default_can_close_or_enqueue(c, readable_controller)? {
+    if !can_close_or_enqueue(c, readable_controller)? {
         return Err(throw(c, WebError::InvalidState("Unable to enqueue")));
     }
     if super::attempt(default_controller_enqueue(c, readable_controller, chunk))?.is_err() {
@@ -331,11 +331,6 @@ pub(crate) fn side(c: &mut Context<'_>, stream: RootId, readable: bool) -> Outco
     get(c, side, SELF)
 }
 
-/// The slots of a transform stream's object, for the encoding and compression classes.
-pub(crate) fn stream_slots(c: &mut Context<'_>, object: RootId) -> Outcome {
-    slots(c, object)
-}
-
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let member: Member = current(c)?;
     match member {
@@ -477,7 +472,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
                 super::fail(c, promise, stored)?;
             } else {
                 let controller = get(c, writable, CONTROLLER)?;
-                controller_error_if_needed(c, controller, reason)?;
+                error_if_needed(c, controller, reason)?;
                 unblock_write(c, stream)?;
                 settle_undefined(c, promise)?;
             }
@@ -488,7 +483,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let failure = arg(c, args, 0);
             let writable = get(c, stream, WRITABLE)?;
             let controller = get(c, writable, CONTROLLER)?;
-            controller_error_if_needed(c, controller, failure)?;
+            error_if_needed(c, controller, failure)?;
             unblock_write(c, stream)?;
             super::fail(c, promise, failure)?;
             Ok(c.undefined())

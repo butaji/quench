@@ -521,16 +521,12 @@ fn chunk_size(c: &mut Context<'_>, controller: RootId, chunk: RootId) -> Outcome
     }
 }
 
-fn error_if_needed(c: &mut Context<'_>, controller: RootId, error: RootId) -> Done {
+pub(crate) fn error_if_needed(c: &mut Context<'_>, controller: RootId, error: RootId) -> Done {
     let stream = get(c, controller, STREAM)?;
     if state(c, stream)? == State::Writable {
         controller_error(c, controller, error)?;
     }
     Ok(())
-}
-
-pub(crate) fn controller_error_if_needed(c: &mut Context<'_>, controller: RootId, error: RootId) -> Done {
-    error_if_needed(c, controller, error)
 }
 
 fn controller_error(c: &mut Context<'_>, controller: RootId, error: RootId) -> Done {

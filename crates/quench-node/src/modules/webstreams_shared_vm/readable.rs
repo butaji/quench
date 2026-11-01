@@ -270,12 +270,8 @@ fn hook(c: &mut Context<'_>, request: RootId, member: &str, value: RootId) -> Do
 
 // ---- The stream
 
-fn stream_state(c: &mut Context<'_>, stream: RootId) -> Result<State, RootedError> {
-    Ok(State::from(num(c, stream, STATE)?))
-}
-
 pub(crate) fn state(c: &mut Context<'_>, stream: RootId) -> Result<State, RootedError> {
-    stream_state(c, stream)
+    Ok(State::from(num(c, stream, STATE)?))
 }
 
 fn set_state(c: &mut Context<'_>, stream: RootId, state: State) -> Done {
@@ -359,7 +355,7 @@ pub(crate) fn fulfill_request(c: &mut Context<'_>, stream: RootId, chunk: RootId
 /// `readableStreamCancel(stream, reason)`.
 pub(crate) fn cancel(c: &mut Context<'_>, stream: RootId, reason: RootId) -> Outcome {
     put_flag(c, stream, DISTURBED, true)?;
-    match stream_state(c, stream)? {
+    match state(c, stream)? {
         State::Closed => return resolved_undefined(c),
         State::Errored => {
             let error = get(c, stream, STORED_ERROR)?;
@@ -444,7 +440,7 @@ fn initialize_reader(c: &mut Context<'_>, object: RootId, brand: Brand, stream_o
         }
     }
     let requests = list::new(c)?;
-    let closed = match stream_state(c, stream)? {
+    let closed = match state(c, stream)? {
         State::Readable => deferred(c)?,
         State::Closed => resolved_undefined(c)?,
         State::Errored => {
@@ -499,7 +495,7 @@ pub(crate) fn construct_byob_reader(c: &mut Context<'_>, this: RootId, stream: R
 pub(crate) fn generic_release(c: &mut Context<'_>, reader: RootId) -> Done {
     let stream = get(c, reader, STREAM)?;
     let released = released_error(c, key::READER_RELEASED, "Reader released")?;
-    if stream_state(c, stream)? == State::Readable {
+    if state(c, stream)? == State::Readable {
         let closed = get(c, reader, CLOSED)?;
         super::fail(c, closed, released)?;
     } else {
@@ -534,7 +530,7 @@ pub(crate) fn reader_release(c: &mut Context<'_>, reader: RootId) -> Done {
 pub(crate) fn default_reader_read(c: &mut Context<'_>, reader: RootId, request: RootId) -> Done {
     let stream = get(c, reader, STREAM)?;
     put_flag(c, stream, DISTURBED, true)?;
-    match stream_state(c, stream)? {
+    match state(c, stream)? {
         State::Closed => {
             let undefined = c.undefined();
             close_steps(c, request, undefined)
@@ -624,22 +620,18 @@ pub(crate) fn create_readable_shell(c: &mut Context<'_>) -> Outcome {
     initialize_stream(c, object)
 }
 
-fn can_close_or_enqueue(c: &mut Context<'_>, controller: RootId) -> Result<bool, RootedError> {
+pub(crate) fn can_close_or_enqueue(c: &mut Context<'_>, controller: RootId) -> Result<bool, RootedError> {
     if flag(c, controller, CLOSE_REQUESTED)? {
         return Ok(false);
     }
     let stream = get(c, controller, STREAM)?;
-    Ok(stream_state(c, stream)? == State::Readable)
-}
-
-pub(crate) fn default_can_close_or_enqueue(c: &mut Context<'_>, controller: RootId) -> Result<bool, RootedError> {
-    can_close_or_enqueue(c, controller)
+    Ok(state(c, stream)? == State::Readable)
 }
 
 /// The desired size of a default or byte controller: `None` when errored.
 pub(crate) fn desired_size(c: &mut Context<'_>, controller: RootId) -> Result<Option<f64>, RootedError> {
     let stream = get(c, controller, STREAM)?;
-    Ok(match stream_state(c, stream)? {
+    Ok(match state(c, stream)? {
         State::Errored => None,
         State::Closed => Some(0.0),
         State::Readable => Some(num(c, controller, HIGH_WATER_MARK)? - num(c, controller, QUEUE_SIZE)?),
@@ -749,7 +741,7 @@ pub(crate) fn default_controller_enqueue(c: &mut Context<'_>, controller: RootId
 /// `readableStreamDefaultControllerError(controller, error)`.
 pub(crate) fn default_controller_error(c: &mut Context<'_>, controller: RootId, failure: RootId) -> Done {
     let stream = get(c, controller, STREAM)?;
-    if stream_state(c, stream)? == State::Readable {
+    if state(c, stream)? == State::Readable {
         reset_queue(c, controller)?;
         clear_algorithms(c, controller)?;
         error(c, stream, failure)?;
@@ -868,7 +860,7 @@ fn inspect(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let stream = stream_of(c, this)?;
     let locked = is_locked(c, stream)?;
     let locked = c.boolean(locked);
-    let state = stream_state(c, stream)?.name();
+    let state = state(c, stream)?.name();
     let state = c.string_rooted(state);
     let controller = get(c, stream, CONTROLLER)?;
     let byob = !is_undefined(c, controller) && flag(c, controller, super::byte::field::BYTE)?;
@@ -906,16 +898,12 @@ fn values(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(iterator, key, method, true, true, true)?;
     }
-    let key = intrinsic_get(c, key::ASYNC_ITERATOR_KEY)?;
+    let key = intrinsic(c, key::ASYNC_ITERATOR_KEY)?;
     let method = function(c, Member::IteratorSelf, "[Symbol.asyncIterator]", &[])?;
     c.define_data_property_rooted(iterator, key, method, true, true, true)?;
-    let base = intrinsic_get(c, key::ASYNC_ITERATOR)?;
+    let base = intrinsic(c, key::ASYNC_ITERATOR)?;
     c.set_prototype_rooted(iterator, base)?;
     Ok(iterator)
-}
-
-fn intrinsic_get(c: &mut Context<'_>, name: &str) -> Outcome {
-    super::intrinsic(c, name)
 }
 
 /// The iterator's queued steps: `current = current ? then(current, steps, steps) : steps()`.
@@ -1159,7 +1147,7 @@ fn get_async_iterator(c: &mut Context<'_>, iterable: RootId) -> Outcome {
     if is_nullish(c, iterable) {
         return Err(not_iterable(c));
     }
-    let async_key = intrinsic_get(c, key::ASYNC_ITERATOR_KEY)?;
+    let async_key = intrinsic(c, key::ASYNC_ITERATOR_KEY)?;
     let method = c.get_property_rooted(iterable, async_key)?;
     let (method, sync) = if is_nullish(c, method) {
         let global = c.global_root()?;
@@ -1279,7 +1267,7 @@ pub(super) fn build(c: &mut Context<'_>, table: RootId) -> Done {
     let prototype = get(c, stream, "prototype")?;
     install(c, prototype, &STREAM_MEMBERS)?;
     let values = get(c, prototype, "values")?;
-    let key = intrinsic_get(c, key::ASYNC_ITERATOR_KEY)?;
+    let key = intrinsic(c, key::ASYNC_ITERATOR_KEY)?;
     c.define_data_property_rooted(prototype, key, values, true, false, true)?;
     for (symbol, member, name) in [
         (key::IS_DISTURBED, Member::IsDisturbed, "get [nodejs.stream.disturbed]"),
@@ -1305,21 +1293,16 @@ pub(super) fn build(c: &mut Context<'_>, table: RootId) -> Done {
     Ok(())
 }
 
-/// A reader's internal slots, for either reader brand.
-pub(crate) fn reader_slots(c: &mut Context<'_>, this: RootId, brand: Brand) -> Result<Option<RootId>, RootedError> {
-    state_of(c, this, brand)
-}
-
 /// The shared `closed`, `cancel` and `releaseLock` members of both readers.
 pub(crate) fn reader_closed(c: &mut Context<'_>, this: RootId, brand: Brand) -> Outcome {
-    match reader_slots(c, this, brand)? {
+    match state_of(c, this, brand)? {
         Some(reader) => get(c, reader, CLOSED),
         None => rejected_with(c, WebError::InvalidThis(brand.name())),
     }
 }
 
 pub(crate) fn reader_cancel(c: &mut Context<'_>, this: RootId, brand: Brand, reason: RootId) -> Outcome {
-    let Some(reader) = reader_slots(c, this, brand)? else {
+    let Some(reader) = state_of(c, this, brand)? else {
         return rejected_with(c, WebError::InvalidThis(brand.name()));
     };
     let stream = get(c, reader, STREAM)?;
@@ -1389,8 +1372,8 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let stream = slots(c, this)?;
             let value = match member {
                 Member::IsDisturbed => flag(c, stream, DISTURBED)?,
-                Member::IsErrored => stream_state(c, stream)? == State::Errored,
-                _ => stream_state(c, stream)? == State::Readable,
+                Member::IsErrored => state(c, stream)? == State::Errored,
+                _ => state(c, stream)? == State::Readable,
             };
             Ok(c.boolean(value))
         }

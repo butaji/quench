@@ -2,7 +2,7 @@
 //! `CompressionStream`, `DecompressionStream` over the zlib streams
 //! (`lib/internal/webstreams/compression.js`).
 
-use super::transform::{controller_enqueue, create_transform, side, stream_slots};
+use super::transform::{controller_enqueue, create_transform, side};
 use super::{
     arg, attach, class_with, custom_inspect, get, install, is_undefined, key, literal, put, record, slots,
     this_state, throw, Brand, ClassMember, Context, Done, Outcome, WebError,
@@ -152,7 +152,7 @@ fn codec_transform(c: &mut Context<'_>, state: RootId, transform: Member, flush:
     c.set_prototype_rooted(object, prototype)?;
     let undefined = c.undefined();
     create_transform(c, object, transform, flush, undefined)?;
-    let stream = stream_slots(c, object)?;
+    let stream = slots(c, object)?;
     let readable = side(c, stream, true)?;
     let writable = side(c, stream, false)?;
     put(c, state, TRANSFORM, object)?;

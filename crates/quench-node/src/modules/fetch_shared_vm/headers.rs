@@ -332,7 +332,7 @@ pub(crate) fn fill(c: &mut Context<'_>, state: RootId, init: RootId) -> Result<(
             continue;
         }
         let enumerable = c.own_property_descriptor_rooted(init, key)?;
-        if is_undefined(c, enumerable) || !super::flag_of(c, enumerable, "enumerable")? {
+        if is_undefined(c, enumerable) || !crate::modules::webstreams_shared_vm::flag(c, enumerable, "enumerable")? {
             continue;
         }
         let value = c.get_property_rooted(init, key)?;

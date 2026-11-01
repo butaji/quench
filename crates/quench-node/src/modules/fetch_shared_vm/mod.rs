@@ -115,11 +115,6 @@ pub(crate) fn usv_string(c: &mut Context<'_>, value: RootId) -> Result<String, R
     Ok(String::from_utf16_lossy(&units))
 }
 
-pub(crate) fn flag_of(c: &mut Context<'_>, object: RootId, name: &str) -> Result<bool, RootedError> {
-    let value = get(c, object, name)?;
-    c.truthy_rooted(value)
-}
-
 /// A class named `name` constructed by `member`, with `Symbol.toStringTag` and custom
 /// inspection.
 pub(crate) fn class<M: Members>(c: &mut Context<'_>, member: M, name: &str, length: u32, inspect: M) -> Outcome {
