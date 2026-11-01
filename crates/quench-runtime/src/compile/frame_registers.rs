@@ -148,12 +148,33 @@ pub(super) fn promote<'a>(
         }
     }
     // New registers follow the existing ones while liveness still covers the function and
-    // operands can name them.
+    // operands can name them. A function whose registers already outnumber what liveness
+    // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain
+    // bounds it: React SSR's `pushStartInstance` (188 registers) keeps its switch and
+    // iteration slots in registers and runs without a frame.
+    let uncovered = function.registers >= ROOT_MAP_REGISTERS;
+    // A slot no instruction or handler names (a local compilation already promoted) needs no
+    // register: nothing reads or writes it, and each register costs every activation a fill.
+    let mut accessed = vec![false; eligible.len()];
+    let mut access = |slot: usize| {
+        if let Some(accessed) = accessed.get_mut(slot) {
+            *accessed = true;
+        }
+    };
+    for instruction in function.instructions() {
+        instruction.addressed_local_slots().for_each(|slot| access(usize::from(slot)));
+    }
+    for handler in &function.handlers {
+        if let Some(ThrownValueSlot::Local(slot)) = handler.slot {
+            access(usize::from(slot));
+        }
+    }
     let mut next = function.registers;
     let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
     for (slot, register) in registers.iter_mut().enumerate() {
         if eligible[slot]
-            && next < ROOT_MAP_REGISTERS
+            && accessed[slot]
+            && (uncovered || next < ROOT_MAP_REGISTERS)
             && next <= Operand::PAYLOAD_MASK
             && next <= REGISTER_MASK
         {
