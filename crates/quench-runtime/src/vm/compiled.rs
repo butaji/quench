@@ -6528,19 +6528,15 @@ impl<H: Host> Vm<H> {
             }
             let dispatch = &mut frame.dispatch;
             dispatch.inlined = frame.scratch.as_mut_ptr().addr();
-            dispatch.program_id = program;
             dispatch.native_registers = registers;
             dispatch.receiver = receiver.to_bits();
             dispatch.captures = captures as usize;
             dispatch.vm = (self as *mut Self).addr();
             dispatch.residual = residual as *const ResidualProgram as usize;
-            dispatch.refresh_heap_bases(self);
+            dispatch.refresh_lane_bases(self, program, &mut frame.program);
             let context = &mut frame.context;
             context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
             context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
-            let constants = self.programs.constants(program);
-            context.js_constants = constants.as_ptr();
-            context.js_constant_count = constants.len();
             let mut word = 0_u64;
             // SAFETY: the body was compiled for this function, never allocates or
             // collects, and reads only the registers, constants and heap bases set above.
@@ -6570,6 +6566,8 @@ struct LaneFrame {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
+    /// The program whose own facts the dispatch holds (`JsStepDispatch::refresh_lane_bases`).
+    program: Option<ProgramId>,
 }
 
 impl LaneFrame {
@@ -6611,6 +6609,7 @@ impl LaneFrame {
                 outcome: None,
             },
             scratch: Vec::new(),
+            program: None,
         }
     }
 }
@@ -6710,6 +6709,24 @@ impl JsStepDispatch {
     }
     /// Reads the heap bases generated code uses again, after anything that may have grown,
     /// compacted or replaced them.
+    /// The words a lane body reads (`lane_region`), for a run of `program`: the heap bases,
+    /// which allocation between runs may move, every run; the program's own facts only when
+    /// the running program changes.
+    fn refresh_lane_bases<H: Host>(&mut self, vm: &Vm<H>, program: ProgramId, refreshed: &mut Option<ProgramId>) {
+        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        let (values, len) = vm.heap.native_property_values();
+        (self.property_values, self.property_len) = (values as usize, len);
+        let atoms = vm.method_cache_atoms.words();
+        (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+        if *refreshed != Some(program) {
+            *refreshed = Some(program);
+            self.program_id = program;
+            self.stores_specialized = usize::from(
+                vm.specialized && vm.programs.residual(program).is_some_and(|program| program.specialized),
+            );
+        }
+    }
+
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
