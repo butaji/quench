@@ -172,8 +172,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn host_function_constructible(&self, environment: Value) -> bool {
-        self.heap.environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
-            .and_then(Value::as_bool) == Some(true)
+        self.heap
+            .environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
+            .and_then(Value::as_bool)
+            == Some(true)
     }
 
     pub(crate) fn host_function_data(&self) -> Result<Value, JsError> {
@@ -245,8 +247,12 @@ impl<H: Host> Vm<H> {
         let mut context = NativeContext::new(self);
         let callback = H::initialize_shadow_realm(&mut context, global)
             .map_err(|error| context.finish_error(error))?;
-        callback.map(|root| context.rooted_value(root)
-            .ok_or_else(|| JsError("Host realm formatter root expired".into())))
+        callback
+            .map(|root| {
+                context
+                    .rooted_value(root)
+                    .ok_or_else(|| JsError("Host realm formatter root expired".into()))
+            })
             .transpose()
     }
 

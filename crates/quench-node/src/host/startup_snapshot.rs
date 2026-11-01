@@ -337,11 +337,18 @@ pub(crate) fn preload(
     context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
     kind: SnapshotKind,
 ) -> Result<(), quench_runtime::RootedError> {
+    preload_named(context, kind.builtins())
+}
+
+pub(crate) fn preload_named(
+    context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
+    builtins: &[&str],
+) -> Result<(), quench_runtime::RootedError> {
     let global = context.global_root()?;
     let key = context.string_rooted(crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE);
     let require = context.get_property_rooted(global, key)?;
     let undefined = context.undefined();
-    for name in kind.builtins() {
+    for name in builtins {
         context.scoped(|context| {
             let specifier = context.string_rooted(name);
             context.call_rooted(require, undefined, &[specifier]).map(drop)
@@ -349,7 +356,7 @@ pub(crate) fn preload(
     }
     // Node's `fs` loads its option policy and defines its members with it; Quench's at their
     // first use.
-    if kind.builtins().contains(&"fs") {
+    if builtins.iter().any(|name| name.strip_prefix("node:").unwrap_or(name) == "fs") {
         context.scoped(crate::modules::fs_policy_shared_vm::capture)?;
         context.scoped(crate::modules::fs_shared_vm::materialize)?;
     }

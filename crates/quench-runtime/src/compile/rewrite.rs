@@ -116,6 +116,9 @@ fusion_recipes! {
                     site.sink = Some(sink);
                 }
                 crate::bytecode::FieldLookup::Atom { atom, base, cache_site } => {
+                    // Field-site validation and scope projections do not support local bases.
+                    // Keep the checked local read and this write as separate operations.
+                    if base.local_index().is_some() { return None; }
                     fields.push(FieldSite {
                         base,
                         first: (atom, cache_site),
@@ -221,9 +224,9 @@ fn remove_dead_moves(
         .filter(|entry| entry.local < function.params)
         .fold(0, |mask, entry| mask | register_bit(entry.register));
     let mut changed = Vec::new();
-    for pc in 0..function.code.len() {
+    for (pc, &is_protected) in protected.iter().enumerate().take(function.code.len()) {
         let mov = function.code[pc];
-        if mov.op() != Op::Move || mov.is_wide() || protected[pc] {
+        if mov.op() != Op::Move || mov.is_wide() || is_protected {
             continue;
         }
         let destination = register_bit(mov.result_register());
@@ -540,7 +543,7 @@ fn coalesce_distant_producer_moves(
         }
         if pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(function, &live, target, mov.as_wide()) & register_bit(source)
+            || liveness::live_out(function, live, target, mov.as_wide()) & register_bit(source)
                 != 0
         {
             continue;
@@ -672,7 +675,7 @@ fn forward_move_sources(
                     && !in_handler(pc + 1)
                     && register_bit(destination) & storage == 0
                     && read & register_bit(destination) != 0
-                    && liveness::live_out(function, &live, pc + 1, consumer.as_wide())
+                    && liveness::live_out(function, live, pc + 1, consumer.as_wide())
                         & register_bit(destination)
                         == 0;
                 let rewritten = substitute_register_read(consumer, destination, source)?;
@@ -1070,15 +1073,20 @@ fn apply_rule(
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
-    if matches!(rule.recipe, Recipe::GetSetThis) {
-        if let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let at = |pc: usize| positions.partition_point(|p| p.pc as usize <= pc)
-                .checked_sub(1).map(|index| (positions[index].line, positions[index].column));
+    if matches!(rule.recipe, Recipe::GetSetThis)
+        && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
+            let at = |pc: usize| {
+                positions
+                    .partition_point(|p| p.pc as usize <= pc)
+                    .checked_sub(1)
+                    .map(|index| (positions[index].line, positions[index].column))
+            };
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() { site.sources[0] = at(pc); }
+            if site.sources[0].is_none() {
+                site.sources[0] = at(pc);
+            }
             site.sources[2] = at(pc + 1);
         }
-    }
     Some(replacement)
 }
 
@@ -1176,7 +1184,9 @@ fn relocate_source_positions(
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && fixed_width(old_code[anchor], wide).op().control_flow_layout()
+            && fixed_width(old_code[anchor], wide)
+                .op()
+                .control_flow_layout()
                 != crate::bytecode::ControlFlowLayout::Call
         {
             continue;
@@ -1198,6 +1208,50 @@ fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conditional_local_field_copy_keeps_valid_native_metadata() {
+        let cases = [
+            ("value", "const factory = () => ({model:42}); function Copy() { const result = factory(); if (result === null) {} this.model = result.model; } if (new Copy().model !== 42) throw Error('field copy failed');"),
+            ("effects", r#"
+                const events = [], poison = {};
+                let fail = false;
+                const factory = () => ({get model() { events.push('get'); if (fail) throw poison; return 42; }});
+                function Copy() { const result = factory(); if (result === null) {} this.model = result.model; }
+                Object.defineProperty(Copy.prototype, 'model', {set(value) { events.push('set:' + value); }});
+                new Copy(); fail = true;
+                try { new Copy(); throw Error('missing getter error'); } catch (error) { if (error !== poison) throw error; }
+                if (events.join('|') !== 'get|set:42|get') throw Error('field copy reordered effects');
+            "#),
+        ];
+        for (name, source) in cases {
+            for generic in [false, true] {
+                let program = if generic {
+                    crate::Engine::specialize_unspecialized(source, "local-field-copy.js")
+                } else {
+                    crate::Engine::specialize(source, "local-field-copy.js")
+                }.unwrap();
+                assert!(program.validate().is_ok(), "{:?}", program.field_sites);
+                let path = std::env::temp_dir().join(format!("quench-local-field-copy-{}-{name}-{generic}", std::process::id()));
+                program.write_binary(&path).unwrap();
+                let program = crate::ResidualProgram::read_binary(&path).unwrap();
+                std::fs::remove_file(path).unwrap();
+                for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+                    let mut runtime = crate::Runtime::new(crate::SystemHost);
+                    runtime.set_execution_mode(mode);
+                    runtime.execute(&program).unwrap();
+                }
+                #[cfg(feature = "aot")]
+                {
+                    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+                    let mut runtime = crate::Runtime::new(crate::SystemHost);
+                    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+                    runtime.execute_native(&native).unwrap();
+                    assert_eq!(runtime.native_execution_rejections(), 0);
+                }
+            }
+        }
+    }
 
     #[test]
     fn wide_jump_targets_are_protected_and_relocated() {
@@ -1662,5 +1716,4 @@ mod tests {
             SourcePosition { pc: 1, line: 1, column: 69 },
         ]);
     }
-
 }

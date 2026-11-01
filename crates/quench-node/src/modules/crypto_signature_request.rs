@@ -2,7 +2,7 @@
 //! the existing task-pool boundary; sync byte views are supplied at run time.
 use super::{
     crypto_asymmetric::{KeyError, OwnedKey},
-    crypto_asymmetric_operations::{SignatureOptions, sign, verify},
+    crypto_asymmetric_operations::{sign, verify, SignatureOptions},
     crypto_digest::Digest,
 };
 use foreign_types::ForeignType;
@@ -111,6 +111,43 @@ impl Request {
     pub(crate) fn run(self, data: Vec<u8>, signature: Vec<u8>) -> Result<Output, KeyError> {
         if self.context.as_ref().is_none_or(Vec::is_empty) {
             if let Some(digest) = self.digest.as_ref() {
+                // The streaming Sign API uses an incremental MdCtx, while
+                // WebCrypto one-shot RSA-PSS uses a direct digest-sign path.
+                // OpenSSL providers can reject that path for ordinary RSA
+                // keys even though the equivalent PkeyCtx operation works.
+                // Hash the supplied bytes once and use the same prehashed
+                // operation as Sign.final() for RSA-PSS.
+                if self.options.padding == Some(openssl::rsa::Padding::PKCS1_PSS)
+                    && matches!(
+                        self.key.public_ref().id(),
+                        openssl::pkey::Id::RSA | openssl::pkey::Id::RSA_PSS
+                    )
+                {
+                    let digest_bytes = digest.hash(&data, None).map_err(|error| match error {
+                        super::crypto_digest::DigestError::OpenSsl(stack) => {
+                            KeyError::OpenSsl(stack)
+                        }
+                        _ => KeyError::Unsupported("RSA-PSS digest operation failed"),
+                    })?;
+                    return if self.verify {
+                        super::crypto_asymmetric_operations::verify_prehashed(
+                            &self.key,
+                            digest,
+                            &digest_bytes,
+                            &signature,
+                            &self.options,
+                        )
+                        .map(Output::Verified)
+                    } else {
+                        super::crypto_asymmetric_operations::sign_prehashed(
+                            &self.key,
+                            digest,
+                            &digest_bytes,
+                            &self.options,
+                        )
+                        .map(Output::Signature)
+                    };
+                }
                 return if self.verify {
                     verify(&self.key, digest, &data, &signature, &self.options)
                         .map(Output::Verified)

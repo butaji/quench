@@ -8,7 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
 };
@@ -105,9 +105,22 @@ impl<H: Host> Runtime<H> {
     }
 
     /// Construct the Vm on this thread with an owned cancellation authority.
-    pub fn new_with_execution_interrupt(host:H,interrupt:crate::ExecutionInterrupt)->Self { Self { vm:Vm::new_with_execution_interrupt(host,interrupt) } }
+    pub fn new_with_execution_interrupt(host: H, interrupt: crate::ExecutionInterrupt) -> Self {
+        Self {
+            vm: Vm::new_with_execution_interrupt(host, interrupt),
+        }
+    }
 
-    pub fn execution_interrupt_handle(&self)->crate::ExecutionInterrupt { self.vm.execution_interrupt_handle() }
+    pub fn execution_interrupt_handle(&self) -> crate::ExecutionInterrupt {
+        self.vm.execution_interrupt_handle()
+    }
+
+    /// Native-only requests rejected during this runtime's lifetime, including
+    /// guest-caught source-compilation errors. A conformance host must not
+    /// mistake those capability rejections for expected JavaScript errors.
+    pub fn native_execution_rejections(&self) -> u64 {
+        self.vm.native_execution_rejections()
+    }
 
     pub fn execution_mode(&self) -> crate::ExecutionMode {
         self.vm.execution_mode()
@@ -139,6 +152,48 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Stage thread-local native artifacts without moving code ownership into
+    /// the host. Missing keys defer to Host::kept_native_program; errors do not.
+    #[cfg(feature = "native-execution")]
+    pub fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
+        self.vm.set_native_program_resolver(resolver);
+    }
+
+    /// Adopt an already type-erased resolver without allocating another wrapper.
+    #[cfg(feature = "native-execution")]
+    pub fn set_native_program_resolver_boxed(&mut self, resolver: Box<crate::NativeProgramResolver<H>>) {
+        self.vm.set_native_program_resolver_boxed(resolver);
+    }
+
+    /// Execute an entry whose known functions are already native, retaining its
+    /// code owner for closures and jobs that outlive this call.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        self.vm.execute_native_program(program, true).map(drop)
+    }
+
+    /// Run a native entry while leaving jobs queued for the host event loop's
+    /// checkpoints, just as `execute_deferred_jobs` does for a residual entry.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_deferred_jobs(&mut self, program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        self.vm.execute_native_program(program, false).map(drop)
+    }
+
+    /// Run precompiled global Scripts before a native entry in the same realm.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_after_scripts(&mut self, scripts: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>) -> Result<(), JsError> {
+        self.vm.execute_native_after_scripts(scripts, program).map(drop)
+    }
+
+    /// Admit a precompiled dependency graph before global harness Scripts and
+    /// the entry run. Native code stays owned by this runtime's module records.
+    #[cfg(feature = "native-execution")]
+    pub fn execute_native_module_graph(
+        &mut self, scripts: &[crate::NativeJsProgram<H>], modules: &[crate::NativeJsProgram<H>], program: &crate::NativeJsProgram<H>,
+    ) -> Result<(), JsError> {
+        self.vm.execute_native_module_graph(scripts, modules, program).map(drop)
+    }
+
     /// Evaluate each `(source, name)` as a global Script of the entry's realm,
     /// in order, then execute the entry. A module entry and the modules it
     /// loads observe the scripts' global bindings, as with host-run harnesses.
@@ -162,6 +217,10 @@ impl<H: Host> Runtime<H> {
         &mut self,
         request: ExecutionRequest<'_>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED {
+            return Err(vec![Diagnostic::unsupported(request.name,
+                "native guest code required: entry source compilation is unavailable")]);
+        }
         let goal = match request.kind {
             SourceKind::Script => "script",
             SourceKind::Module => "module",
@@ -1596,7 +1655,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(new Bytes([1,2,3]).join(','));
             print(new List('a','b').join(','));
             "#,
-            &["0,false,false,true","0,false,false,true","0,false,false,true","0,false,false,true","1,2,3","true","1,2,3","a,b"],
+            &[
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "0,false,false,true",
+                "1,2,3",
+                "true",
+                "1,2,3",
+                "a,b",
+            ],
         );
     }
 
@@ -1627,8 +1695,14 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(JSON.stringify(Object.getOwnPropertyDescriptor(ArityDerived, 'length')));
             "#,
             &[
-                "true", "true", "42", "true", "true", "42",
-                "[0,2,0,0,0]", "[1,2]",
+                "true",
+                "true",
+                "42",
+                "true",
+                "true",
+                "42",
+                "[0,2,0,0,0]",
+                "[1,2]",
                 r#"{"value":0,"writable":false,"enumerable":false,"configurable":true}"#,
             ],
         );
@@ -4932,15 +5006,39 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("entry.mjs", SOURCE),
-            ("a.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs")),
-            ("b.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs")),
-            ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
-            ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
-            ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
-            ("missing-export.mjs", "import { missing } from './effect.mjs';"),
+            (
+                "a.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/a.mjs"),
+            ),
+            (
+                "b.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/b.mjs"),
+            ),
+            (
+                "alias.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs"),
+            ),
+            (
+                "barrel.mjs",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs"),
+            ),
+            (
+                "config.json",
+                include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json"),
+            ),
+            (
+                "missing-export.mjs",
+                "import { missing } from './effect.mjs';",
+            ),
             ("syntax-failure.mjs", "export const = 1;"),
-            ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
-            ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
+            (
+                "evaluation-failure.mjs",
+                "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');",
+            ),
+            (
+                "effect.mjs",
+                "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;",
+            ),
         ];
         let modules = |host: TestHost| {
             host.without_globals()
@@ -4975,13 +5073,34 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("setup.mjs", "globalThis.log = [];"),
-            ("deferred.mjs", "import './async.mjs'; log.push('deferred'); export const value = 1;"),
-            ("async.mjs", "log.push('async start'); await 0; log.push('async end');"),
-            ("deferred-self.mjs", "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;"),
-            ("source-1.mjs", "import source source from '<source>'; export { source };"),
-            ("source-2.mjs", "import source source from '<source>'; export { source };"),
-            ("source-reexport.mjs", "export * from './source-1.mjs'; export * from './source-2.mjs';"),
-            ("harness-reader.mjs", "export const harness = typeof harnessGlobal;"),
+            (
+                "deferred.mjs",
+                "import './async.mjs'; log.push('deferred'); export const value = 1;",
+            ),
+            (
+                "async.mjs",
+                "log.push('async start'); await 0; log.push('async end');",
+            ),
+            (
+                "deferred-self.mjs",
+                "import defer * as self from './deferred-self.mjs'; try { self.value; } catch (error) { globalThis.selfAccess = error instanceof TypeError; } export const value = 2;",
+            ),
+            (
+                "source-1.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-2.mjs",
+                "import source source from '<source>'; export { source };",
+            ),
+            (
+                "source-reexport.mjs",
+                "export * from './source-1.mjs'; export * from './source-2.mjs';",
+            ),
+            (
+                "harness-reader.mjs",
+                "export const harness = typeof harnessGlobal;",
+            ),
         ];
         let modules = |host: TestHost| {
             host

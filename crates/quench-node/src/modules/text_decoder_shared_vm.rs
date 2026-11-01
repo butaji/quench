@@ -81,6 +81,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
+pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder", "TextEncoder"];
+
 /// Installs `TextDecoder` and `TextEncoder` as lazy data properties, built on first use.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let initializer =
@@ -88,7 +90,7 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
     let global = context.global_root()?;
     context.define_lazy_data_properties_rooted(
         global,
-        &["TextDecoder", "TextEncoder"],
+        GLOBAL_NAMES,
         false,
         initializer,
     )?;
@@ -103,14 +105,17 @@ pub(crate) fn initialize(
 ) -> Result<RootId, RootedError> {
     #[cfg(quench_icu)]
     let constructors = crate::host::shared_vm::commonjs::node_library_module(
-        context, "util.js", "internal/encoding.js"
+        context,
+        "util.js",
+        "internal/encoding.js",
     )?;
     #[cfg(not(quench_icu))]
     let constructors = {
         let canonical = context.host_function(crate::host::shared_vm::operation(
             "textDecoderCanonicalEncoding",
         ))?;
-        let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
+        let decode =
+            context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
         let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
         let undefined = context.undefined();
         let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;

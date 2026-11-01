@@ -60,11 +60,17 @@ fn only_trivia(source: &str) -> bool {
 }
 
 
-/// Names a specialized script's parse goal in its compile-cache key, apart from a host
-/// script's and an application entry's (`Runtime::compile_entry`).
-const SPECIALIZED_SCRIPT_GOAL: &str = "specialized-script";
-
 impl<H: Host> Vm<H> {
+    #[inline(always)]
+    pub(super) fn require_source_compilation(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        if self.execution_mode.allows_dynamic_execution() {
+            Ok(())
+        } else {
+            self.record_native_execution_rejection();
+            Err(self.type_error(p, "native guest code required: source compilation is unavailable".into()))
+        }
+    }
+
     pub(super) fn eval_script_native(
         &mut self,
         p: &ResidualProgram,
@@ -100,6 +106,32 @@ impl<H: Host> Vm<H> {
         source: &str,
         source_name: &str,
     ) -> Result<Value, JsError> {
+        #[cfg(feature = "native-execution")]
+        {
+            let native = match self.resolve_native_program(
+                crate::GLOBAL_SCRIPT_SOURCE_NAME,
+                &[self.specialization_part(), crate::GLOBAL_SCRIPT_GOAL, source],
+            ) {
+                Ok(native) => native,
+                Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(p, &message),
+                Err(error) => return Err(JsError::validation(error.to_string())),
+            };
+            if let Some(native) = native {
+                if native.residual().kind != crate::bytecode::ProgramKind::Script {
+                    return Err(JsError::validation("native global Script has a different parse goal".into()));
+                }
+                let mut prepared = self.prepare_native_script(native)?;
+                if only_trivia(source) {
+                    return Ok(Value::UNDEFINED);
+                }
+                Rc::make_mut(&mut prepared.program).source_name = source_name.to_owned();
+                let Some(id) = self.store_prepared_script(&prepared)? else {
+                    return Err(self.type_error(p, "dynamic program store is full".into()));
+                };
+                return self.run_global_script_program(id);
+            }
+        }
+        self.require_source_compilation(p)?;
         if only_trivia(source) {
             return Ok(Value::UNDEFINED);
         }
@@ -127,10 +159,12 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
-        let residual = self
-            .programs
-            .get(program_id)
-            .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
+        self.run_global_script_program(program_id)
+    }
+
+    fn run_global_script_program(&mut self, program_id: super::ProgramId) -> Result<Value, JsError> {
+        let residual = self.programs.get(program_id)
+            .ok_or_else(|| JsError::validation("global Script program is unavailable".into()))?;
         let eval_script_context = std::mem::replace(&mut self.eval_script_context, true);
         let active_program = self.replace_active_program(program_id);
         let result = (|| {
@@ -165,6 +199,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if self.heap.string(source).is_some() {
+            self.require_source_compilation(p)?;
+        }
         if let Some(source_text) = self.heap.string(source).cloned()
             && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
         {
@@ -175,7 +212,7 @@ impl<H: Host> Vm<H> {
             let pattern_units = &units[start..end];
             let flag_units = literal.flags.encode_utf16().collect::<Vec<_>>();
             if let (Ok(pattern), Ok(flags)) = (
-                String::from_utf16(&pattern_units),
+                String::from_utf16(pattern_units),
                 String::from_utf16(&flag_units),
             ) && quench_regexp::validate_property_escapes(&pattern, &flags)
                 .is_err_and(|error| quench_regexp::is_stack_exhaustion_message(&error))
@@ -195,7 +232,13 @@ impl<H: Host> Vm<H> {
             _ => return Ok(source),
         };
         let cache_source = (!self.direct_eval).then(|| source_text.clone());
-        let text = source_text.host_string();
+        let host_text = source_text.host_string();
+        let text = if self.host.allows_natives_syntax() {
+            strip_v8_optimization_intrinsics(host_text)
+        } else {
+            std::borrow::Cow::Borrowed(host_text)
+        };
+        let text = text.as_ref();
         let inherited_strict = self.direct_eval
             && (self.in_class_initializer(p)
                 || self.frames.last()
@@ -249,6 +292,19 @@ impl<H: Host> Vm<H> {
         cache_source: Option<JsString>,
         host_script: bool,
     ) -> Result<Value, JsError> {
+        let host_script = host_script && !self.direct_eval;
+        let mode = self.specialization_part();
+        #[cfg(feature = "native-execution")]
+        if host_script
+            && let Some(native) = self.resolve_native_program(source_name, &[mode, source]).map_err(|error| JsError::validation(error.to_string()))?
+        {
+            let prepared = self.prepare_native_script(native)?;
+            let Some(id) = self.store_prepared_script(&prepared)? else {
+                return Err(self.type_error(p, "dynamic program store is full".into()));
+            };
+            return self.run_global_eval_instance(p, id, cache_source);
+        }
+        self.require_source_compilation(p)?;
         if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
             return self.run_global_eval_program(p, program);
         }
@@ -279,8 +335,6 @@ impl<H: Host> Vm<H> {
         };
         // A host script compiles from its text alone: it is no direct eval, so it has no
         // caller context, private names or Annex B restrictions.
-        let host_script = host_script && !self.direct_eval;
-        let mode = self.specialization_part();
         let kept = host_script
             .then(|| self.host.kept_compiled_program(source_name, &[mode, source]))
             .flatten()
@@ -328,6 +382,14 @@ impl<H: Host> Vm<H> {
         {
             self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
         }
+        self.run_global_eval_instance(p, program_id, cache_source)
+    }
+
+    /// Install the caller/source identity once for either a compiled or native
+    /// eval instance, then enter the same global declaration/evaluation path.
+    fn run_global_eval_instance(
+        &mut self, p: &ResidualProgram, program_id: ProgramId, cache_source: Option<JsString>,
+    ) -> Result<Value, JsError> {
         let origin = self.capture_eval_origin(p)?;
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
         // Eval code belongs to its caller's Script or Module (PerformEval).
@@ -355,6 +417,15 @@ impl<H: Host> Vm<H> {
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
+    pub(crate) fn evaluate_embedding_typescript_script_with_origin(
+        &mut self, source: &str, name: &str, origin: Option<(u32, u32)>, keep_records: bool,
+    ) -> Result<Value, JsError> {
+        let prepared = self.prepare_embedding_specialized_script_retaining(
+            source, name, origin, None, keep_records, true,
+        )?;
+        self.evaluate_embedding_prepared_script(&prepared)
+    }
+
     /// `evaluate_embedding_specialized_script_with_origin` for a program whose functions keep
     /// their compiled records instead of compiling again on first call: an application's
     /// entry, whose own functions mostly run.
@@ -365,7 +436,7 @@ impl<H: Host> Vm<H> {
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
         let prepared =
-            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true)?;
+            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true, false)?;
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
@@ -380,7 +451,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
-        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true)
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true, false)
     }
 
     /// `prepare_embedding_library_body` through the host's compile cache
@@ -390,10 +461,14 @@ impl<H: Host> Vm<H> {
         &mut self, prefix: &str, body: crate::bytecode::SourceText, suffix: &str, name: &str,
     ) -> Result<crate::PreparedScript, JsError> {
         let parts = [self.specialization_part(), prefix, &*body, suffix];
+        #[cfg(feature = "native-execution")]
+        if let Some(native) = self.resolve_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
+            return self.prepare_native_script(native);
+        }
         if let Some(bytes) = self.host.kept_compiled_program(name, &parts)
             && let Ok(program) = self.decode_cached_program(bytes, body.clone(), prefix.len(), name, self.specialized)
         {
-            return Ok(crate::PreparedScript { program: Rc::new(program) });
+            return Ok(crate::PreparedScript { program: Rc::new(program), #[cfg(feature = "native-execution")] native: None });
         }
         let prepared = self.prepare_embedding_library_body(prefix, body.clone(), suffix, name)?;
         if let Some(bytes) = self.encode_cached_program(&prepared.program) {
@@ -487,30 +562,37 @@ impl<H: Host> Vm<H> {
             source.line_offset = line_offset;
             source.column_offset = column_offset;
         }
-        Some(crate::PreparedScript { program: Rc::new(kept) })
+        Some(crate::PreparedScript { program: Rc::new(kept), #[cfg(feature = "native-execution")] native: None })
     }
 
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
-        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false)
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false, false)
     }
 
     /// `retained` names static text the program keeps in place of its compiled source, and
     /// the compiled byte offset where that text starts.
-    fn prepare_embedding_specialized_script_retaining(
+    pub(super) fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(crate::bytecode::SourceText, u32)>,
         keep_records: bool,
+        typescript: bool,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
         // A script compiled from its own text (a package's module, an application's entry) goes
         // through the host's compile cache, keyed by its name, its text and what else shapes
         // its program: its origin and whether its functions keep their records.
-        let cache_key = retained.is_none().then(|| {
-            let (line, column) = origin.unwrap_or_default();
-            format!("{SPECIALIZED_SCRIPT_GOAL}:{line}:{column}:{keep_records}")
-        });
+        let options = crate::compile::HostScriptOptions { origin, keep_records, typescript };
+        let cache_key = retained.is_none().then(|| options.cache_goal());
+        #[cfg(feature = "native-execution")]
+        if let Some(goal) = &cache_key {
+            let parts = [self.specialization_part(), goal, source];
+            if let Some(native) = self.resolve_native_program(name, &parts).map_err(|error| JsError::validation(error.to_string()))? {
+                return self.prepare_native_script(native);
+            }
+        }
+        self.require_source_compilation(&program)?;
         if let Some(goal) = &cache_key
             && let Some(kept) = self.kept_script(source, name, goal, origin)
         {
@@ -518,12 +600,9 @@ impl<H: Host> Vm<H> {
         }
         // A program keeping only static text cannot compile its functions again from it. One
         // the host's compile cache keeps encodes each record its load releases.
-        let compiled = if keep_records {
-            crate::Engine::specialize_kept_script_with_atom_prefix(source, name, &*self)
-        } else {
-            let released = self.released_records(cache_key.is_some());
-            crate::Engine::specialize_script_with_atom_prefix(source, name, &*self, released)
-        };
+        let compiled = crate::Engine::specialize_host_script(
+            source, name, &*self, options, self.released_records(cache_key.is_some()),
+        );
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
@@ -575,7 +654,16 @@ impl<H: Host> Vm<H> {
         if !retain_profile_records {
             residual.release_replayable_records();
         }
-        Ok(crate::PreparedScript { program: Rc::new(residual) })
+        Ok(crate::PreparedScript { program: Rc::new(residual), #[cfg(feature = "native-execution")] native: None })
+    }
+
+    pub(super) fn store_prepared_script(&mut self, prepared: &crate::PreparedScript) -> Result<Option<ProgramId>, JsError> {
+        let Some(id) = self.store_dynamic_program_shared(prepared.program.clone()) else { return Ok(None); };
+        #[cfg(feature = "native-execution")]
+        if let Some(code) = &prepared.native {
+            self.programs.attach_native_js(id, code.clone()).map_err(JsError::validation)?;
+        }
+        Ok(Some(id))
     }
 
     pub(crate) fn compile_embedding_host_script(
@@ -583,7 +671,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::CompiledScript, JsError> {
         let prepared = self.prepare_embedding_specialized_script(source, name, Some(origin))?;
         let context = self.embedding_program()?;
-        let Some(source) = self.store_dynamic_program_shared(prepared.program.clone()) else {
+        let Some(source) = self.store_prepared_script(&prepared)? else {
             return Err(self.type_error(&context, "dynamic program store is full".into()));
         };
         let state = Rc::new(crate::api::CompiledScriptState { program: prepared.program, source });
@@ -610,6 +698,10 @@ impl<H: Host> Vm<H> {
                 let Some(id) = self.store_dynamic_program_shared(script.state.program.clone()) else {
                     return Err(self.type_error(&context, "dynamic program store is full".into()));
                 };
+                #[cfg(feature = "native-execution")]
+                if let Some(code) = self.programs.native_js_code(script.state.source).cloned() {
+                    self.programs.attach_native_js(id, code).map_err(JsError::validation)?;
+                }
                 self.programs.bind_script_instance(script.state.source, realm, id);
                 id
             }
@@ -621,6 +713,20 @@ impl<H: Host> Vm<H> {
         prepared.program.atoms.belongs_to(&self.atom_sequence)
     }
 
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn evaluate_prepared_global_script(
+        &mut self, prepared: &crate::PreparedScript,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        if !self.prepared_script_is_current(prepared) {
+            return Err(self.type_error(&program, "prepared Script belongs to a different runtime state".into()));
+        }
+        let Some(program_id) = self.store_prepared_script(prepared)? else {
+            return Err(self.type_error(&program, "global Script program store is full".into()));
+        };
+        self.run_global_script_program(program_id)
+    }
+
     pub(crate) fn evaluate_embedding_prepared_script(
         &mut self, prepared: &crate::PreparedScript,
     ) -> Result<Value, JsError> {
@@ -628,7 +734,7 @@ impl<H: Host> Vm<H> {
         if !self.prepared_script_is_current(prepared) {
             return Err(self.type_error(&program, "prepared Script belongs to a different runtime state".into()));
         }
-        let Some(program_id) = self.store_dynamic_program_shared(prepared.program.clone()) else {
+        let Some(program_id) = self.store_prepared_script(prepared)? else {
             return Err(self.type_error(&program, "dynamic program store is full".into()));
         };
         self.run_global_eval_program(&program, program_id)
@@ -789,7 +895,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             if caller_scope {
-                self.prepare_direct_eval_var_bindings(&root_function.global_var_atoms());
+                self.prepare_direct_eval_var_bindings(root_function.global_var_atoms());
             }
             let parent = if direct_eval {
                 if let Some(frame) = self.frames.len().checked_sub(1) {
@@ -1166,6 +1272,87 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(value_root);
         result
     }
+}
+
+/// Node accepts a small set of V8 optimization directives in eval strings
+/// when `--allow-natives-syntax` is enabled. Quench does not expose V8's
+/// optimizing compiler, but these directives can still be represented as
+/// `void(argument)` so their argument expressions retain their normal
+/// evaluation and the residual compiler can parse the surrounding code.
+/// Keep the replacement the same byte length to preserve source locations.
+fn strip_v8_optimization_intrinsics(source: &str) -> std::borrow::Cow<'_, str> {
+    const DIRECTIVES: [&str; 2] = [
+        "%PrepareFunctionForOptimization",
+        "%OptimizeFunctionOnNextCall",
+    ];
+    const REPLACEMENT_KEYWORD: &str = "void";
+    if !DIRECTIVES.iter().any(|directive| source.contains(directive)) {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    let bytes = source.as_bytes();
+    let mut output = source.to_owned();
+    let mut index = 0;
+    let mut quote = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
+            if byte == delimiter {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if matches!(byte, b'\'' | b'"' | b'`') {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            index += 2;
+            while index + 1 < bytes.len() && !bytes[index..].starts_with(b"*/") {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+
+        let Some(directive) = DIRECTIVES
+            .iter()
+            .find(|directive| bytes[index..].starts_with(directive.as_bytes()))
+        else {
+            index += 1;
+            continue;
+        };
+        let end = index + directive.len();
+        let mut next = end;
+        while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+            next += 1;
+        }
+        if next == bytes.len() || bytes[next] != b'(' {
+            index = end;
+            continue;
+        }
+        output.replace_range(
+            index..end,
+            &format!(
+                "{REPLACEMENT_KEYWORD}{}",
+                " ".repeat(directive.len() - REPLACEMENT_KEYWORD.len())
+            ),
+        );
+        index = end;
+    }
+    std::borrow::Cow::Owned(output)
 }
 
 #[cfg(test)]

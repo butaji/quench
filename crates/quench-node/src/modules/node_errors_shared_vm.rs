@@ -145,6 +145,23 @@ const PROTOTYPE: &str = quench_js_check::checked_js!(
     }.prototype"#
 );
 
+fn presentation_factory(context: &mut NativeContext<'_, NodeHost>, presentation: ErrorPresentation) -> Result<RootId, RootedError> {
+    let (source, name) = match presentation {
+        ErrorPresentation::Direct => (PROTOTYPE, "node:internal/errors/argument-prototype.js"),
+        ErrorPresentation::HiddenStackFrames => (HIDDEN_PROTOTYPE, "node:internal/errors/validator-prototype.js"),
+    };
+    context.evaluate_script_rooted(source, name)
+}
+
+#[cfg(feature = "aot")]
+pub(crate) fn stage_coded_error_support(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    prepare_coded_error_support(context)?;
+    for presentation in ERROR_PRESENTATIONS {
+        presentation_factory(context, presentation)?;
+    }
+    Ok(())
+}
+
 fn coded_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
     code: &'static str,
@@ -199,8 +216,7 @@ fn coded_error_prototype(
         crate::host::shared_vm::operation("nodeErrorToString"),
         code_root,
     )?;
-    let factory =
-        context.evaluate_script_rooted(PROTOTYPE, "node:internal/errors/argument-prototype.js")?;
+    let factory = presentation_factory(context, ErrorPresentation::Direct)?;
     let undefined = context.undefined();
     let prototype =
         context.call_rooted(factory, undefined, &[base, constructor, brand, string, key])?;
@@ -255,10 +271,7 @@ fn hide_error(
             crate::host::shared_vm::operation("nodeErrorConstructor"),
             constructor,
         )?;
-        let factory = context.evaluate_script_rooted(
-            HIDDEN_PROTOTYPE,
-            "node:internal/errors/validator-prototype.js",
-        )?;
+        let factory = presentation_factory(context, ErrorPresentation::HiddenStackFrames)?;
         let undefined = context.undefined();
         let prototype = context.call_rooted(factory, undefined, &[constructor])?;
         context.set_prototype_rooted(prototype, base)?;
@@ -345,6 +358,15 @@ fn decorate_coded_error(
     )
 }
 
+/// Every coded native error uses this shared utility policy, including errors
+/// reached only by invalid inputs. Native staging must close the same source
+/// obligation without exercising an application operation to provoke an error.
+pub(crate) fn prepare_coded_error_support(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    super::util_shared_vm::module(context).map(drop)
+}
+
 fn decorate_ordered_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
@@ -353,7 +375,7 @@ fn decorate_ordered_error(
     fields: &[(&str, RootId)],
     order: MessageOrder,
 ) -> Result<(), RootedError> {
-    super::util_shared_vm::module(context)?;
+    prepare_coded_error_support(context)?;
     let prototype = coded_error_prototype(context, code, class)?;
     context.set_prototype_rooted(error, prototype)?;
     // Node's variadic error constructor installs its code field before message.
@@ -465,8 +487,12 @@ pub(crate) fn source_positions(
     };
     let line = context.number(f64::from(position.line_number));
     let column = context.number(f64::from(position.column_number.saturating_sub(1)));
-    for (name, value) in [("sourceLine", source_line), ("scriptResourceName", resource),
-        ("lineNumber", line), ("startColumn", column)] {
+    for (name, value) in [
+        ("sourceLine", source_line),
+        ("scriptResourceName", resource),
+        ("lineNumber", line),
+        ("startColumn", column),
+    ] {
         let key = context.string_rooted(name);
         context.define_data_property_rooted(result, key, value, true, true, true)?;
     }
@@ -474,15 +500,32 @@ pub(crate) fn source_positions(
 }
 
 pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0binding:errors", build_binding)
+    crate::host::shared_vm::commonjs::cached_native_binding(
+        context,
+        "\0binding:errors",
+        build_binding,
+    )
 }
 
 fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let function = context.host_function_named(
-        crate::host::shared_vm::operation("errorSourcePositions"), "getErrorSourcePositions",
+        crate::host::shared_vm::operation("errorSourcePositions"),
+        "getErrorSourcePositions",
     )?;
     let key = context.string_rooted("getErrorSourcePositions");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let function = context.host_function_named(
+        crate::host::shared_vm::operation("errorSetSourceMapsEnabled"),
+        "setSourceMapsEnabled",
+    )?;
+    let key = context.string_rooted("setSourceMapsEnabled");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let function = context.host_function_named(
+        crate::host::shared_vm::operation("errorTriggerUncaughtException"),
+        "triggerUncaughtException",
+    )?;
+    let key = context.string_rooted("triggerUncaughtException");
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
     let codes = context.object_rooted()?;
     for &(name, code) in super::node_protocol_constants::EXIT_CODES {
@@ -529,4 +572,27 @@ impl crate::host::startup_snapshot::HostSnap for NodeErrorApi {
         }
         Ok(Self { brand, prototypes })
     }
+}
+
+/// Node's source-map cache calls this internal engine hook after validating
+/// the boolean option. Quench has no V8 source-map toggle, so the native hook
+/// is intentionally inert while the JavaScript stack formatter remains in
+/// control of stack presentation.
+pub(crate) fn set_source_maps_enabled(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
+/// Node's internal errors binding routes Promise callback failures through the
+/// same fatal-exception policy used by top-level unhandled Promise rejections.
+pub(crate) fn trigger_uncaught_exception(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    super::process_fatal_exception_route::dispatch(context, this, args)?;
+    Ok(context.undefined())
 }

@@ -47,7 +47,7 @@ fn is_normal_file_name(name: &str) -> bool {
 
 /// The text of `name`'s module identity (`normalize(name).text()`), borrowed when `name`
 /// already spells it.
-pub(crate) fn normalized_text(name: &str) -> Cow<'_, str> {
+pub fn normalized_text(name: &str) -> Cow<'_, str> {
     if is_url_name(name) || is_normal_file_name(name) {
         Cow::Borrowed(name)
     } else {

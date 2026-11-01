@@ -5,7 +5,8 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 pub(crate) fn install(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let data = c.null_object_rooted()?;
-    let getter = c.host_constructor_with_data(crate::host::shared_vm::operation("tlsBundledRoots"), data)?;
+    let getter =
+        c.host_constructor_with_data(crate::host::shared_vm::operation("tlsBundledRoots"), data)?;
     let key = c.string_rooted("name");
     let name = c.string_rooted("cacheBundledRootCertificates");
     c.define_data_property_rooted(getter, key, name, false, false, true)?;
@@ -30,7 +31,9 @@ pub(crate) fn bundled(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Ro
     let mut certificates = Vec::new();
     for pem in include_str!("bundled-roots.pem").split_inclusive("-----END CERTIFICATE-----") {
         let pem = pem.trim();
-        if !pem.is_empty() { certificates.push(c.string_rooted(pem)); }
+        if !pem.is_empty() {
+            certificates.push(c.string_rooted(pem));
+        }
     }
     let array = c.array_rooted(&certificates)?;
     // This is a fresh ordinary array. Freeze its actual own descriptors without

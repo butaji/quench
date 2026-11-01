@@ -12,6 +12,24 @@ use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::{fmt, ops::Range};
+/// Source-shaping inputs shared by host Script preparation and native compilation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostScriptOptions {
+    pub origin: Option<(u32, u32)>,
+    pub keep_records: bool,
+    pub typescript: bool,
+}
+
+impl HostScriptOptions {
+    /// Middle component of the host compile-cache/native-image key; source text
+    /// and the specialization mode remain separate components.
+    pub fn cache_goal(self) -> String {
+        let (line, column) = self.origin.unwrap_or_default();
+        format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
+            if self.typescript { ":typescript" } else { "" })
+    }
+}
+
 /// The most registers a function's promoted locals may take: half of the register domain,
 /// leaving the other half for the temporaries of any one statement.
 const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
@@ -19,6 +37,16 @@ mod annex_b_targets;
 mod arrow;
 mod ast;
 mod atoms;
+#[cfg(feature = "aot")]
+mod native_sources;
+#[cfg(feature = "aot")]
+pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+/// The parse goal shared by module compile-cache and linked native source keys.
+pub const STATIC_MODULE_GOAL: &str = "static-module";
+pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
+/// Global Script identity is independent of its invocation's diagnostic name.
+pub const GLOBAL_SCRIPT_GOAL: &str = "global-script";
+pub const GLOBAL_SCRIPT_SOURCE_NAME: &str = "<global-script>";
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
@@ -32,6 +60,7 @@ mod lazy_bodies;
 #[cfg(feature = "verify-replay")]
 mod free_names;
 mod syntax_message;
+pub(crate) mod source_syntax;
 pub(crate) mod liveness;
 mod locals;
 mod numeric;
@@ -45,6 +74,7 @@ mod sequence;
 pub(crate) mod stack;
 mod string;
 mod template;
+mod typescript;
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
 pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
@@ -92,6 +122,8 @@ pub(crate) fn eval_context_source(
     private_names: &[(String, String)],
     super_calls: bool,
 ) -> String {
+    let normalized = early::normalize_hashbang(source);
+    let source = normalized.as_ref();
     let declarations = private_names
         .iter()
         .map(|(label, _)| format!("#{label};"))
@@ -104,6 +136,7 @@ pub(crate) fn eval_context_source(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiagnosticKind {
+    Syntax,
     Compilation,
     StackExhausted,
 }
@@ -117,13 +150,18 @@ pub struct Diagnostic {
 impl Diagnostic {
     fn message(&self) -> &str {
         match self.kind {
-            DiagnosticKind::Compilation => &self.message,
+            DiagnosticKind::Syntax | DiagnosticKind::Compilation => &self.message,
             DiagnosticKind::StackExhausted => crate::stack::STACK_EXHAUSTED_MESSAGE,
         }
     }
 
-    /// The message of the SyntaxError this diagnostic throws, without the class name some
-    /// compiler messages carry.
+    /// Whether parsing or ECMAScript early-error validation rejected the source.
+    /// Backend limits and unsupported syntax are separate compilation failures.
+    pub fn is_syntax_error(&self) -> bool {
+        self.kind == DiagnosticKind::Syntax
+    }
+
+    /// The diagnostic message without a leading SyntaxError class name.
     pub fn syntax_message(&self) -> &str {
         let message = self.message();
         message.strip_prefix(SYNTAX_ERROR_PREFIX).unwrap_or(message)
@@ -133,7 +171,7 @@ impl Diagnostic {
     fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
         let offset = error.labels.first().map_or(0, |label| label.offset());
         Self {
-            kind: DiagnosticKind::Compilation,
+            kind: DiagnosticKind::Syntax,
             source: source_name.into(),
             message: syntax_message::parse_failure(source, error),
             span: Span::new(offset, offset),
@@ -189,12 +227,15 @@ pub struct Engine;
 const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DynamicFunctionKind {
+pub enum DynamicFunctionKind {
     Ordinary,
     Async,
     Generator,
     AsyncGenerator,
 }
+
+#[cfg(feature = "native-execution")]
+pub(crate) const DYNAMIC_FUNCTION_GOAL: &str = "dynamic-function";
 
 pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 
@@ -230,6 +271,19 @@ impl DynamicFunctionSource {
 }
 
 impl DynamicFunctionKind {
+    #[cfg(feature = "aot")]
+    const ALL: [Self; 4] = [Self::Ordinary, Self::Async, Self::Generator, Self::AsyncGenerator];
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn from_source_prefix(prefix: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.source_prefix() == prefix)
+    }
+
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn native_parts<'a>(self, mode: &'a str, parameters: &'a str, body: &'a str) -> [&'a str; 5] {
+        [mode, DYNAMIC_FUNCTION_GOAL, self.source_prefix(), parameters, body]
+    }
+
     fn source_prefix(self) -> &'static str {
         match self {
             Self::Ordinary => "function",
@@ -272,7 +326,7 @@ pub(crate) struct EvalRegExpLiteral {
 /// parentheses, after which a Script of one parenthesized regular expression literal may
 /// still begin: the literal's own `/`, and the starts of the comments this scan leaves to
 /// the parser (Annex B's `<!--` and `-->`, and a hashbang `#!`).
-const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = [b'/', b'<', b'-', b'#'];
+const SINGLE_REGEXP_LITERAL_STARTS: [u8; 4] = *b"/<-#";
 
 /// Whether `source` may be a Script of one (possibly parenthesized) regular expression
 /// literal, which `Engine::eval_single_regexp_literal` then parses to decide: false only when
@@ -326,14 +380,15 @@ struct StaticModuleTextKey {
     length: usize,
     hash: u64,
     name: Box<str>,
+    typescript: bool,
 }
 
 impl StaticModuleTextKey {
-    fn of(source: &str, module_name: &str) -> Self {
+    fn of(source: &str, module_name: &str, typescript: bool) -> Self {
         use std::hash::{Hash, Hasher};
         let mut hasher = rustc_hash::FxHasher::default();
         source.hash(&mut hasher);
-        Self { length: source.len(), hash: hasher.finish(), name: module_name.into() }
+        Self { length: source.len(), hash: hasher.finish(), name: module_name.into(), typescript }
     }
 }
 impl Engine {
@@ -414,7 +469,7 @@ impl Engine {
     /// memoized for the thread by the text and name: linking and evaluating a module asks for
     /// it several times (a module graph parsed each module three times, 12% of a Babel run).
     pub(crate) fn static_module_analysis(source: &str, module_name: &str) -> Rc<StaticModuleAnalysis> {
-        Self::static_module_analysis_with(source, module_name, |analyze| analyze())
+        Self::static_module_analysis_with(source, module_name, false, |analyze| analyze())
     }
 
     /// `static_module_analysis`, whose memo misses `obtain`, which analyzes the text with the
@@ -422,26 +477,31 @@ impl Engine {
     pub(crate) fn static_module_analysis_with(
         source: &str,
         module_name: &str,
+        typescript: bool,
         obtain: impl FnOnce(&dyn Fn() -> StaticModuleAnalysis) -> StaticModuleAnalysis,
     ) -> Rc<StaticModuleAnalysis> {
         thread_local! {
             static ANALYSES: std::cell::RefCell<FxHashMap<StaticModuleTextKey, Rc<StaticModuleAnalysis>>> =
                 std::cell::RefCell::default();
         }
-        let key = StaticModuleTextKey::of(source, module_name);
+        let key = StaticModuleTextKey::of(source, module_name, typescript);
         if let Some(analysis) = ANALYSES.with(|analyses| analyses.borrow().get(&key).cloned()) {
             return analysis;
         }
-        let analysis = Rc::new(obtain(&|| Self::analyze_static_module(source, module_name)));
+        let analysis = Rc::new(obtain(&|| Self::analyze_static_module(source, module_name, typescript)));
         ANALYSES.with(|analyses| analyses.borrow_mut().insert(key, analysis.clone()));
         analysis
     }
 
-    fn analyze_static_module(source: &str, module_name: &str) -> StaticModuleAnalysis {
+    fn analyze_static_module(source: &str, module_name: &str, typescript: bool) -> StaticModuleAnalysis {
         let unbounded = StaticModuleAnalysis { early_error: None, plan: None };
+        // No source-derived proof is available in execution-only support.
+        // Archived analysis may still satisfy static_module_analysis_with;
+        // otherwise execution must use linked code or fail its admission guard.
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return unbounded; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
+        let mut parsed = Parser::new(&allocator, &normalized, SourceType::mjs().with_typescript(typescript)).parse();
         if stack::validate_parsed(&parsed).is_err() {
             return unbounded;
         }
@@ -457,6 +517,8 @@ impl Engine {
         if let Some(error) = semantic.diagnostics.first() {
             return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
+        drop(semantic);
+        Self::erase_type_only_module_syntax(&mut parsed.program);
         StaticModuleAnalysis {
             early_error: None,
             plan: Some(StaticModulePlan {
@@ -465,6 +527,50 @@ impl Engine {
                 has_top_level_await: has_top_level_await(&parsed.program.body),
             }),
         }
+    }
+
+    /// Project typed module syntax onto runtime edges and bindings while
+    /// retaining the source positions used by the compiler and replay.
+    pub fn erase_type_only_module_syntax(program: &mut Program<'_>) {
+        if program.source_type.is_typescript() { typescript::erase_module_types(program); }
+    }
+
+    /// A host that wraps a typed body must erase type-only module declarations
+    /// before placing it in function grammar. Keep byte positions and line breaks;
+    /// the module-declaration verdict comes from the same AST projection as linking.
+    pub fn project_typescript_module_syntax(source: &str) -> Option<(std::borrow::Cow<'_, str>, bool)> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+        let allocator = Allocator::default();
+        let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
+            .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
+        if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
+        let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
+        Self::erase_type_only_module_syntax(&mut parsed.program);
+        let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
+            let span = statement.span(); (span.start, span.end)
+        }).collect();
+        let has_module_declarations = parsed.program.body.iter().any(Statement::is_module_declaration);
+        let mut erased = spans.into_iter().filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
+        if erased.peek().is_none() { return Some((source.into(), has_module_declarations)); }
+        let mut projected = String::with_capacity(source.len());
+        let mut cursor = 0;
+        for span in erased {
+            let start = span.start as usize;
+            let end = span.end as usize;
+            projected.push_str(&source[cursor..start]);
+            for character in source[start..end].chars() {
+                if oxc_syntax::line_terminator::is_line_terminator(character) { projected.push(character); }
+                else { for _ in 0..character.len_utf8() { projected.push(' '); } }
+            }
+            cursor = end;
+        }
+        projected.push_str(&source[cursor..]);
+        Some((projected.into(), has_module_declarations))
+    }
+
+    /// Runtime requests after type-only module syntax has been erased.
+    pub fn module_requests(program: &Program<'_>) -> Vec<ModuleRequest> {
+        module_requests(&program.body)
     }
 
     fn module_link_plan(statements: &[Statement<'_>], module_name: &str) -> Option<ModuleLinkPlan> {
@@ -513,6 +619,7 @@ impl Engine {
     }
 
     pub(crate) fn static_module_throw(source: &str) -> Option<StaticModuleThrow> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
@@ -548,17 +655,12 @@ impl Engine {
                             let message = match expression.arguments.as_slice() {
                                 [] => None,
                                 [oxc_ast::ast::Argument::SpreadElement(_)] => return None,
-                                [argument] => Some(
-                                    binding_time::expression(argument.as_expression()?)
-                                        .static_value()?,
-                                ),
+                                [argument] => Some(binding_time::expression(argument.as_expression()?)?),
                                 _ => return None,
                             };
                             StaticModuleThrow::Error { name, message }
                         }
-                        expression => StaticModuleThrow::Value(
-                            binding_time::expression(expression).static_value()?,
-                        ),
+                        expression => StaticModuleThrow::Value(binding_time::expression(expression)?),
                     };
                     thrown = Some(value);
                 }
@@ -572,6 +674,7 @@ impl Engine {
         source: &str,
         module_name: &str,
     ) -> Option<Vec<(String, Constant)>> {
+        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
@@ -626,7 +729,7 @@ impl Engine {
                         Expression::Identifier(identifier) => {
                             bindings.get(identifier.name.as_str())?.clone()
                         }
-                        expression => binding_time::expression(expression).static_value()?,
+                        expression => binding_time::expression(expression)?,
                     };
                     exports.push(("\0quench:module-default".into(), "default".into()));
                     bindings.insert("\0quench:module-default".into(), value);
@@ -657,6 +760,39 @@ impl Engine {
         lazy_bodies::syntax_valid(source, source_type)
     }
 
+    /// Parse TypeScript directly: annotations remain available to analysis and
+    /// replay. They do not establish runtime representation invariants.
+    pub fn specialize_typescript(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode(
+            source, name, SpecializationMode::Enabled, &NoAtomPrefix,
+            SourceType::script().with_typescript(true), false, false, false,
+        )
+    }
+
+    pub(crate) fn specialize_host_script(
+        source: &str, name: &str, prefix: &dyn AtomPrefix,
+        options: HostScriptOptions, released: ReleasedRecords,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        if options.typescript {
+            Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
+        } else if options.keep_records {
+            Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
+        } else {
+            Self::specialize_script_with_atom_prefix(source, name, prefix, released)
+        }
+    }
+
+    pub(crate) fn specialize_typescript_script_with_atom_prefix(
+        source: &str, name: &str, atom_prefix: &dyn AtomPrefix,
+        keep_records: bool, released: ReleasedRecords,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_script_shaped(
+            source, name, atom_prefix,
+            if keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any },
+            released, SourceType::script().with_typescript(true),
+        )
+    }
+
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(
             source,
@@ -676,7 +812,7 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script())
     }
 
     /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
@@ -686,7 +822,7 @@ impl Engine {
         name: &str,
         atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped)
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
     }
 
     fn specialize_script_shaped(
@@ -695,13 +831,14 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         shape: ParsedProgramShape,
         released: ReleasedRecords,
+        source_type: SourceType,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
             SpecializationMode::of(atom_prefix),
             atom_prefix,
-            SourceType::script(),
+            source_type,
             false,
             true,
             false,
@@ -735,6 +872,8 @@ impl Engine {
         private_names: &[(String, String)],
         annex_b_forbidden_names: &[String],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        let normalized = early::normalize_hashbang(source);
+        let source = normalized.as_ref();
         let method_source;
         let raw_source_len = source.len();
         let ordinary_private_context = context.home_atom.is_none()
@@ -800,6 +939,7 @@ impl Engine {
     pub(crate) fn specialize_module_with_atom_prefix(
         source: &str,
         name: &str,
+        typescript: bool,
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -808,7 +948,7 @@ impl Engine {
             name,
             SpecializationMode::of(atom_prefix),
             atom_prefix,
-            SourceType::mjs(),
+            SourceType::mjs().with_typescript(typescript),
             true,
             false,
             false,
@@ -941,7 +1081,10 @@ impl Engine {
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
         // not compile with them compiles eagerly, which reports its own diagnostics.
+        // TypeScript admission currently validates runtime-changing syntax over the
+        // complete AST, including declarations inside functions, before execution.
         if matches!(expected_shape, ParsedProgramShape::Any)
+            && !source_type.is_typescript()
             && lazy_bodies::enabled()
             && let Ok(program) = compile(true)
         {
@@ -985,12 +1128,19 @@ impl Engine {
                 .map(|error| Diagnostic::parse_failure(name, &normalized, error))
                 .collect());
         }
-        stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
+        stack::validate(&parsed.program).map_err(|crate::stack::StackExhausted| vec![Diagnostic::stack_exhausted(name)])?;
+        if source_type.is_typescript()
+            && let Some((span, message)) = typescript::unsupported_runtime_syntax(&parsed.program)
+        {
+            let mut diagnostic = Diagnostic::unsupported(name, message);
+            diagnostic.span = span;
+            return Err(vec![diagnostic]);
+        }
         if let Some(error) = early::regexp_early_error(&parsed.program) {
             return Err(vec![match error {
                 early::RegExpEarlyError::StackExhausted => Diagnostic::stack_exhausted(name),
                 early::RegExpEarlyError::Syntax(message) => Diagnostic {
-                    kind: DiagnosticKind::Compilation,
+                    kind: DiagnosticKind::Syntax,
                     source: name.into(),
                     message,
                     span: Span::default(),
@@ -1002,7 +1152,7 @@ impl Engine {
             && let Some(span) = early::eval_return_outside_function(&parsed.program)
         {
             return Err(vec![Diagnostic {
-                kind: DiagnosticKind::Compilation,
+                kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: return outside function in eval".into(),
                 span,
@@ -1011,11 +1161,11 @@ impl Engine {
         if capture_script_completion {
             // CommonJS provides OXC's inherited new.target parsing context;
             // eval still has Script semantics for declarations and scopes.
-            parsed.program.source_type = SourceType::script();
+            parsed.program.source_type = SourceType::script().with_typescript(source_type.is_typescript());
         }
         if let Some(span) = annex_b_targets::invalid_target(&parsed.program) {
             return Err(vec![Diagnostic {
-                kind: DiagnosticKind::Compilation,
+                kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: invalid assignment target".into(),
                 span,
@@ -1055,10 +1205,12 @@ impl Engine {
             }
         };
         if !dynamic_function_shape {
-            return Err(vec![Diagnostic::unsupported(
-                name,
-                "SyntaxError: invalid dynamic Function source shape",
-            )]);
+            return Err(vec![Diagnostic {
+                kind: DiagnosticKind::Syntax,
+                source: name.into(),
+                message: "SyntaxError: invalid dynamic Function source shape".into(),
+                span: Span::default(),
+            }]);
         }
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);
@@ -1070,7 +1222,7 @@ impl Engine {
                 .diagnostics
                 .into_iter()
                 .map(|error| Diagnostic {
-                    kind: DiagnosticKind::Compilation,
+                    kind: DiagnosticKind::Syntax,
                     source: name.into(),
                     message: format!("SyntaxError: {error}"),
                     span: Span::default(),
@@ -1120,7 +1272,14 @@ impl Engine {
             .collect();
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
+        #[cfg(feature = "aot")]
+        let native_requests = atom_prefix.native_source_requests().map(|pending| {
+            (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
+        });
         drop(semantic);
+        Self::erase_type_only_module_syntax(&mut parsed.program);
+        #[cfg(feature = "aot")]
+        let mut native_requests = native_requests;
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time before code
             // generation (`lazy_bodies::body_facts`).
@@ -1135,9 +1294,16 @@ impl Engine {
                 source_type,
                 root_strict,
                 first_private_id,
+                #[cfg(feature = "aot")]
+                atom_prefix.native_source_requests().map(|_| atom_prefix.specialized()),
+                #[cfg(feature = "aot")]
+                atom_prefix.native_global_script_calls(),
             ) else {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             };
+            #[cfg(feature = "aot")]
+            if let Some((_, requests)) = facts.native_source_requests
+                && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids);
             private_name_labels.extend(facts.private_name_labels);
             prototype_unobservable.extend(facts.prototype_unobservable);
@@ -1160,7 +1326,7 @@ impl Engine {
                 parsed.program.directives = directives;
                 if let Some(span) = early::eval_return_outside_function(&parsed.program) {
                     return Err(vec![Diagnostic {
-                        kind: DiagnosticKind::Compilation,
+                        kind: DiagnosticKind::Syntax,
                         source: name.into(),
                         message: "SyntaxError: return outside function in eval".into(),
                         span,
@@ -1211,13 +1377,16 @@ impl Engine {
         drop(allocator);
         let (compiler, module) = emitted?;
         let program = compiler.finish(module)?;
+        #[cfg(feature = "aot")]
+        if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]
         replay::verify(&program);
         Ok(program)
     }
 
     pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
-        let strict_source = format!("'use strict';\n{source}");
+        let normalized = early::normalize_hashbang(source);
+        let strict_source = format!("'use strict';\n{normalized}");
         let source = strict_source.as_str();
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(
@@ -1427,6 +1596,14 @@ fn has_top_level_await(statements: &[Statement<'_>]) -> bool {
             self.0 = true;
         }
 
+        fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+            // `for await` suspends just like an explicit top-level await.
+            // Include it in the async-module decision so the root compiler
+            // context lowers its loop body with await support enabled.
+            self.0 |= statement.r#await;
+            oxc_ast_visit::walk::walk_for_of_statement(self, statement);
+        }
+
         fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
             self.0 |= declaration.kind == VariableDeclarationKind::AwaitUsing;
             oxc_ast_visit::walk::walk_variable_declaration(self, declaration);
@@ -1458,7 +1635,7 @@ fn static_module_bindings(
             return None;
         };
         let value = match &declarator.init {
-            Some(expression) => binding_time::expression(expression).static_value()?,
+            Some(expression) => binding_time::expression(expression)?,
             None => Constant::Undefined,
         };
         let name = identifier.name.to_string();
@@ -1816,10 +1993,10 @@ fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
 fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
     const WORD: usize = size_of::<u64>();
     const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
-    let mut words = bytes.chunks_exact(WORD);
+    let (words, _) = bytes.as_chunks::<WORD>();
     let mut offset = 0;
-    for word in &mut words {
-        if u64::from_ne_bytes(word.try_into().expect("a whole word")) & HIGH_BITS != 0 {
+    for word in words {
+        if u64::from_ne_bytes(*word) & HIGH_BITS != 0 {
             break;
         }
         offset += WORD;
@@ -2170,7 +2347,7 @@ impl<'a> Compiler<'a> {
                 declaration: crate::bytecode::EvalBindingDeclaration::Variable,
             });
         }
-        bindings.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut bindings);
         bindings
     }
 
@@ -2776,22 +2953,7 @@ impl<'a> Compiler<'a> {
     /// Locate a delimiter between OXC-owned expression boundaries. Comment text
     /// is excluded using OXC's own spans, including comments containing delimiters.
     fn source_delimiter(&self, start: u32, end: u32, delimiter: char) -> u32 {
-        let mut cursor = start as usize;
-        let end = (end as usize).min(self.text.len());
-        let mut comment = self.source_comments.partition_point(|span| span.end <= start);
-        while cursor < end {
-            if let Some(span) = self.source_comments.get(comment) {
-                if span.start as usize <= cursor && cursor < span.end as usize {
-                    cursor = span.end as usize;
-                    comment += 1;
-                    continue;
-                }
-            }
-            let Some(character) = self.text[cursor..end].chars().next() else { break; };
-            if character == delimiter { return cursor as u32; }
-            cursor += character.len_utf8();
-        }
-        start
+        source_syntax::delimiter(self.text, &self.source_comments, start, end, delimiter)
     }
 
     fn source_position(&self, offset: u32) -> SourcePosition {
@@ -2950,11 +3112,11 @@ impl<'a> Compiler<'a> {
         }
         let global_lexical_atoms: Vec<_> = global_lexical_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let global_immutable_atoms: Vec<_> = global_immutable_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let global_function_names: Vec<_> = program
             .body
@@ -2969,7 +3131,7 @@ impl<'a> Compiler<'a> {
             .collect();
         let global_function_atoms = global_function_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let mut global_var_names = early::collect_var_names(&program.body);
         let mut global_annex_b_var_names = Vec::new();
@@ -3006,11 +3168,11 @@ impl<'a> Compiler<'a> {
         global_var_names.dedup();
         let global_var_atoms = global_var_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         let global_annex_b_var_atoms = global_annex_b_var_names
             .iter()
-            .filter_map(|name| self.atoms.find(name))
+            .map(|name| self.atom(name))
             .collect();
         if let Some(root) = self.functions.first_mut() {
             root.global_declarations = crate::bytecode::GlobalDeclarations {
@@ -3063,6 +3225,25 @@ impl<'a> Compiler<'a> {
         }
         if !self.errors.is_empty() {
             return Err(self.errors);
+        }
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
+            // Per-function-count structures, at the point the whole module has been lowered:
+            // the tables that grow with the number of functions rather than with the source.
+            let records = self.functions.len();
+            eprintln!(
+                "{{\"kind\":\"quench-compiler-memory\",\"name\":{:?},\"functions\":{},\"early_replays\":{},\"early_replay_capacity\":{},\"function_exits\":{},\"function_facts\":{},\"atoms_added\":{},\"atom_index\":{},\"atom_index_capacity\":{},\"deferred_name_bindings\":{}}}",
+                self.source,
+                records,
+                self.early_replays.len(),
+                self.early_replays.capacity(),
+                self.function_exits.capacity() * std::mem::size_of::<replay::TableCursors>(),
+                self.function_facts.capacity() * std::mem::size_of::<capture_layout::FunctionFacts>(),
+                self.atoms.len(),
+                self.atoms.index_len(),
+                self.atoms.index_capacity(),
+                self.deferred_name_bindings.len(),
+            );
         }
         Ok((
             self,
@@ -3260,10 +3441,12 @@ impl<'a> Compiler<'a> {
             source_name: self.source.to_owned(),
             source: Some(crate::bytecode::ProgramSource {
                 text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
                 line_starts: Default::default(),
+                call_sites: Default::default(),
             }),
             atoms,
             constants,
@@ -3546,6 +3729,14 @@ impl<'a> Compiler<'a> {
             span,
         });
     }
+    fn reject_syntax(&mut self, span: Span, message: impl Into<String>) {
+        self.errors.push(Diagnostic {
+            kind: DiagnosticKind::Syntax,
+            source: self.source.into(),
+            message: message.into(),
+            span,
+        });
+    }
     pub(super) fn collect_body_lexical_bindings(
         &mut self,
         body: &[Statement<'_>],
@@ -3772,19 +3963,17 @@ impl<'a> Compiler<'a> {
             // Field initializers and static blocks cannot name `arguments` (an early error),
             // so they have no binding to materialize.
             None
+        } else if parameter_shadows_arguments {
+            None
+        } else if has_arguments_binding {
+            locals
+                .iter()
+                .position(|atom| *atom == arguments)
+                .map(|slot| slot as u16)
         } else {
-            if parameter_shadows_arguments {
-                None
-            } else if has_arguments_binding {
-                locals
-                    .iter()
-                    .position(|atom| *atom == arguments)
-                    .map(|slot| slot as u16)
-            } else {
-                locals.push(arguments);
-                function_scope.insert(arguments);
-                Some((locals.len() - 1) as u16)
-            }
+            locals.push(arguments);
+            function_scope.insert(arguments);
+            Some((locals.len() - 1) as u16)
         };
         let environment_atoms = locals
             .iter()
@@ -4009,7 +4198,7 @@ impl<'a> Compiler<'a> {
             global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions.into(),
+            source_positions: function.source_positions,
             environment_clones: environment_clones.into(),
             code: function.code,
             wide: function.wide,

@@ -38,6 +38,15 @@ impl Output {
             usage: Usage::Guest,
         }
     }
+    /// Whether the guest has asked for this pipe's next chunk. Readiness for an
+    /// idle pipe must not wake the event loop.
+    pub(crate) fn wants_read(&self) -> bool {
+        match &self.phase {
+            Phase::Closed => false,
+            Phase::Open { demand, .. } => matches!(demand, Demand::Requested),
+        }
+    }
+
     pub(crate) fn descriptor(&self) -> Option<i32> {
         match &self.phase {
             Phase::Open { file, .. } => Some(file.as_raw_fd()),
@@ -55,6 +64,9 @@ impl Output {
     }
     pub(crate) fn inherited(&self) -> bool {
         matches!(self.usage, Usage::Inherited)
+    }
+    pub(crate) fn is_closed(&self) -> bool {
+        matches!(self.phase, Phase::Closed)
     }
     pub(crate) fn is_referenced(&self) -> bool {
         match &self.phase {
@@ -105,7 +117,7 @@ impl Output {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    return Progress::Idle
+                    return Progress::Idle;
                 }
                 Err(_) => {
                     self.close();

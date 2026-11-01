@@ -428,8 +428,13 @@ impl Regex {
         // takes max RSS from 9544 to 8660 KiB and Score from 869 to 971, and on the npm top
         // 300 they add up to 5 MiB (semver 20.5 -> 25.4). They stay available, as a
         // linear-time bound on backtracking, for embedders that ask for them.
+        // The byte backend recognizes only LF as a multiline anchor boundary;
+        // ECMAScript also recognizes CR, LS, and PS. Keep multiline patterns
+        // on the semantic matcher so anchors behave correctly for every line
+        // terminator (including the CRLF pair).
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
+            && !flags.multiline
             && std::env::var_os("QUENCH_COMPILED_REGEXP").is_some();
         let compiled_serves_matches = backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
@@ -648,8 +653,10 @@ impl Regex {
         RangeSearcher { regex: self, subject, backend }
     }
 
-    /// The match that starts exactly at `start`, as a sticky (`y`) search requires. Only that
-    /// position is tried, so a failing sticky match costs no scan of the rest of the text.
+    /// The match that starts exactly at `start`, as a sticky (`y`) search requires, or in
+    /// Unicode mode at the lead of the surrogate pair `start` lies inside
+    /// (`first_unit_at`). Only that position is tried, so a failing sticky match costs no
+    /// scan of the rest of the text.
     pub fn find_sticky_in_subject(&self, subject: &Subject, start: usize) -> Matches {
         if start > subject.len() {
             return Matches { item: None };
@@ -770,13 +777,7 @@ impl Regex {
             return Some(None);
         }
         let found = program.find(units, first, sticky, None).ok()?;
-        Some(found.and_then(|found| {
-            // A sticky match must start at `start` itself, not inside a surrogate pair.
-            if sticky && units.get(found.start).map_or(subject.len(), |unit| unit.offset_start) != start {
-                return None;
-            }
-            Some(self.unit_match(units, found.start, found.end, found.captures))
-        }))
+        Some(found.map(|found| self.unit_match(units, found.start, found.end, found.captures)))
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
@@ -1071,9 +1072,7 @@ impl RangeSearcher<'_> {
                     return None;
                 }
                 if let Some(literal) = complete.required_bytes.as_ref() {
-                    if literal.find(&bytes[start..]).is_none() {
-                        return None;
-                    }
+                    literal.find(&bytes[start..])?;
                 }
                 let budget = linear.then(|| backtrack::Program::budget(bytes.len()));
                 match program.find_bounds(bytes, start, false, budget) {
@@ -1670,9 +1669,11 @@ fn contains_literal(input: &[Unit], literal: &[u32]) -> bool {
     })
 }
 
-/// The index of the first decoded unit at or after UTF-16 offset `start`.
+/// The index of the decoded unit holding offset `start` (`units.len()` at the end): a
+/// Unicode-mode start inside a surrogate pair is the pair's lead, as RegExpBuiltinExec
+/// reads `lastIndex` as the character holding that element.
 fn first_unit_at(units: &[Unit], start: usize) -> usize {
-    units.partition_point(|unit| unit.offset_start < start)
+    units.partition_point(|unit| unit.offset_end <= start)
 }
 
 fn units_from_utf16(input: &[u16], unicode: bool) -> Vec<Unit> {
@@ -1763,7 +1764,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 greedy: quantifier.greedy,
             }
         }
-        ast::Term::Character(character) => lower_character(character, &lowering.source),
+        ast::Term::Character(character) => lower_character(character, lowering.source),
         ast::Term::Dot(_) => Expr::Dot,
         ast::Term::CharacterClassEscape(escape) => Expr::Class(ClassExpr {
             negative: false,
@@ -1775,7 +1776,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
             kind: ClassKind::Union,
             items: vec![ClassItem::property(property)],
         }),
-        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, &lowering.source)),
+        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, lowering.source)),
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
             lowering.next_capture += 1;
@@ -2973,7 +2974,12 @@ fn escape_matches(
 }
 
 pub fn property_matches(name: &str, value: Option<&str>, character: u32) -> bool {
-    resolved_property_matches(compile_property_matcher(name, value), name, value, character)
+    resolved_property_matches(
+        compile_property_matcher(name, value),
+        name,
+        value,
+        character,
+    )
 }
 
 /// `property_matches` with the ICU matcher for `name`/`value` already resolved.
@@ -3267,6 +3273,19 @@ mod tests {
     }
 
     #[test]
+    fn multiline_end_anchor_accepts_crlf_and_other_ecmascript_terminators() {
+        let regex = Regex::with_flags(r"^Connection: close\r\n$", Flags::from("m")).unwrap();
+        for subject in [
+            "A\r\nConnection: close\r\n\r\n",
+            "A\nConnection: close\r\n\n",
+            "A\u{2028}Connection: close\r\n\u{2028}",
+            "A\u{2029}Connection: close\r\n\u{2029}",
+        ] {
+            assert!(regex.find_from(subject, 0).next().is_some(), "{subject:?}");
+        }
+    }
+
+    #[test]
     fn new_unicode_script_normalization_borrows_unrelated_patterns() {
         for pattern in [r"\s+", r"\p{Letter}", r"\p{Script=Latin}"] {
             assert!(matches!(
@@ -3304,7 +3323,13 @@ mod tests {
         // the range, while its members (all Greek lowercase letters here) still match.
         for flags in ["i", "iu"] {
             let regex = Regex::with_flags(r"^[\u0391-\u03ce]+$", Flags::from(flags)).unwrap();
-            assert!(regex.find_from("αβγδεζηθικλμνξοπρςστυφχψω", 0).next().is_some(), "{flags}");
+            assert!(
+                regex
+                    .find_from("αβγδεζηθικλμνξοπρςστυφχψω", 0)
+                    .next()
+                    .is_some(),
+                "{flags}"
+            );
             let ascii = Regex::with_flags(r"^[a-z]+$", Flags::from(flags)).unwrap();
             assert!(ascii.find_from("QUENCH", 0).next().is_some(), "{flags}");
         }
@@ -3317,7 +3342,14 @@ mod tests {
         assert!(regex.find_sticky_in_subject(&subject, 0).next().is_none());
         let digits = regex.find_sticky_in_subject(&subject, 2).next().unwrap();
         assert_eq!(digits.range, 2..4);
-        assert_eq!(regex.find_sticky_in_subject(&subject, 4).next().unwrap().range, 4..5);
+        assert_eq!(
+            regex
+                .find_sticky_in_subject(&subject, 4)
+                .next()
+                .unwrap()
+                .range,
+            4..5
+        );
         assert!(regex.find_sticky_in_subject(&subject, 6).next().is_none());
     }
 

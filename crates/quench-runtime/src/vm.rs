@@ -1,4 +1,15 @@
+mod native_operands;
+#[cfg(feature = "native-execution")]
+pub use native_operands::NativeJsOperands;
+#[cfg(feature = "aot")]
+pub(crate) mod native_object;
+#[cfg(feature = "aot")]
+pub(crate) mod native_graph;
+#[cfg(feature = "native-execution")]
+pub(crate) mod native_program;
 mod compiled;
+#[cfg(feature = "profile-native-ops")]
+mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
 mod shape_transitions;
@@ -83,9 +94,6 @@ struct RuntimeAtoms {
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
-    /// `String.prototype.charCodeAt`, whose intactness a host's string scan checks
-    /// (`Vm::embedding_string_char_code_at_intact`).
-    char_code_at: Atom,
 }
 pub(crate) mod activation;
 mod agent;
@@ -105,6 +113,8 @@ mod boolean;
 mod builtins;
 mod call_arguments;
 mod call_printer;
+#[cfg(feature = "aot")]
+pub(crate) use call_printer::freeze_call_sites;
 mod coercion;
 mod collections;
 mod construction;
@@ -1827,6 +1837,8 @@ pub(crate) struct Vm<H> {
     /// strings are immutable, so every closure of a plan can hold the same name value.
     /// Only program atoms and the anonymous name are kept, so the loaded program bounds it.
     atom_strings: FxHashMap<Atom, Value>,
+    // Boxed: frames move between this stack, `frame_pool` and suspended generators by pointer.
+    #[allow(clippy::vec_box)]
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     /// Emptied root lists of finished native calls, reused by the next `NativeContext`.
@@ -1835,14 +1847,21 @@ pub(crate) struct Vm<H> {
     gc_root_count: usize,
     /// Owners with out-of-cell edges at the previous collection, which sizes the next index.
     gc_owned_root_count: usize,
+    // Boxed: pooled frames are reused as the `Box<Frame>` the stack and generators hold.
+    #[allow(clippy::vec_box)]
     frame_pool: Vec<Box<Frame>>,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.
     pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
+    /// One idle JS entry context; active and reentrant entries own their contexts.
+    js_native_context: Option<Box<compiled::CallContext>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
+    native_execution_rejections: u64,
+    #[cfg(feature = "native-execution")]
+    native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
     /// Invalidates monomorphic `call_indirect` certificates after a table
     /// mutation or collection that can change target identity.
@@ -2059,6 +2078,8 @@ pub(crate) struct Vm<H> {
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
+    /// Where each `IntactBuiltin` was its realm's own method (`embedding_builtins_intact`).
+    intact_builtins: Option<IntactBuiltinsProof>,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
@@ -2287,14 +2308,12 @@ impl<H: Host> Vm<H> {
         self.realm
             .global_lexical_declarations
             .extend(root.global_lexical_atoms().iter().copied());
-        if self.eval_script_context {
-            self.realm.immutable_global_lexical_bindings.extend(
-                root.global_immutable_atoms()
-                    .iter()
-                    .copied()
-                    .filter(|atom| root.global_lexical_atoms().contains(atom)),
-            );
-        }
+        self.realm.immutable_global_lexical_bindings.extend(
+            root.global_immutable_atoms()
+                .iter()
+                .copied()
+                .filter(|atom| root.global_lexical_atoms().contains(atom)),
+        );
         if root
             .global_var_atoms()
             .iter()
@@ -2381,25 +2400,11 @@ impl<H: Host> Vm<H> {
         slot: usize,
         value: Value,
     ) {
-        if !self.eval_script_context {
-            return;
-        }
         let Some(current) = self.frames.get(frame) else {
             return;
         };
-        if current.function != ROOT_FUNCTION_ID {
-            return;
-        }
-        let Some(atom) = program.function(ROOT_FUNCTION_ID as usize)
-            .local_atoms
-            .get(slot)
-            .copied()
-        else {
-            return;
-        };
-        if program.function(ROOT_FUNCTION_ID as usize)
-            .global_lexical_atoms()
-            .contains(&atom)
+        if let Some(atom) = self.root_global_lexical_atom(program, current.function, slot)
+            && self.realm.global_lexical_bindings.contains_key(&atom)
         {
             self.realm.bind_global_lexical(atom, value);
         }
@@ -2412,7 +2417,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         frame: &Frame,
     ) {
-        if self.eval_script_context && frame.function == ROOT_FUNCTION_ID {
+        if program.kind == crate::bytecode::ProgramKind::Script && frame.function == ROOT_FUNCTION_ID {
             self.persist_root_global_lexical_bindings(program, frame);
         }
     }
@@ -2420,33 +2425,12 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         let metadata = &program.function(ROOT_FUNCTION_ID as usize);
-        let bindings = metadata
-            .global_lexical_atoms()
-            .iter()
-            .map(|atom| {
-                let value = metadata
-                    .local_atoms
-                    .iter()
-                    .position(|candidate| candidate == atom)
-                    .and_then(|slot| {
-                        if frame.captured {
-                            self.heap.environment_slot(frame.env, slot)
-                        } else {
-                            frame.locals.get(slot).copied()
-                        }
-                    })
-                    .unwrap_or(Value::DELETED);
-                (
-                    *atom,
-                    if value.is_deleted() {
-                        Value::UNDEFINED
-                    } else {
-                        value
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        for (atom, value) in bindings {
+        for atom in metadata.global_lexical_atoms().iter().copied() {
+            let value = metadata.local_atoms.iter().position(|candidate| *candidate == atom)
+                .and_then(|slot| {
+                    if frame.captured { self.heap.environment_slot(frame.env, slot) }
+                    else { frame.locals.get(slot).copied() }
+                }).unwrap_or(Value::DELETED);
             self.realm.bind_global_lexical(atom, value);
         }
     }
@@ -2526,7 +2510,6 @@ impl<H: Host> Vm<H> {
         let result = self.call_value(program, root, this, &[]);
         self.finish_main_module(program, &result)?;
         if drain_jobs {
-            self.advance_dynamic_import_jobs(program, true)?;
             let jobs = self.drain_jobs(program);
             self.report_execution(program);
             jobs?;
@@ -2796,6 +2779,8 @@ impl<H: Host> Vm<H> {
             + cache_side_table_bytes
             + atom_side_table_bytes
             + frame_bytes;
+        let v128_record_reserved_bytes = heap.v128_record_reserved_bytes;
+        let v128_record_used_bytes = heap.v128_record_used_bytes;
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
             + heap.object_record_reserved_bytes
             + heap.array_record_reserved_bytes
@@ -2804,6 +2789,7 @@ impl<H: Host> Vm<H> {
             + heap.await_record_reserved_bytes
             + heap.iterator_record_reserved_bytes
             + heap.string_record_reserved_bytes
+            + v128_record_reserved_bytes
             + heap.legacy_cell_record_reserved_bytes
             + heap.free_slot_metadata_bytes
             + property_arena_bytes
@@ -2813,7 +2799,7 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"string_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"function_record_reserved_bytes\":{},\"promise_record_reserved_bytes\":{},\"await_record_reserved_bytes\":{},\"iterator_record_reserved_bytes\":{},\"string_record_reserved_bytes\":{},\"v128_record_reserved_bytes\":{v128_record_reserved_bytes},\"v128_record_used_bytes\":{v128_record_used_bytes},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_count\":{},\"dictionary_shape_count\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -2994,7 +2980,6 @@ impl<H: Host> Vm<H> {
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
-            char_code_at: self.intern_atom("charCodeAt"),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.refresh_active_field_entries();
@@ -3113,7 +3098,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let program = self.intern_program_atoms(program);
-        let id = self.programs.insert_module(program)?;
+        self.store_module_program_shared(Rc::new(program))
+    }
+
+    pub(super) fn store_module_program_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        let id = self.programs.insert_module_shared(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
@@ -3480,4 +3469,15 @@ impl<H: Host> Vm<H> {
 enum StringConstantKey<'a> {
     Text(&'a str),
     Units(&'a [u16]),
+}
+
+#[cfg(feature = "native-execution")]
+pub use compiled::{NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for};
+
+/// A proof of `Vm::embedding_builtins_intact`: per `IntactBuiltin`, the prototype holding it,
+/// its slot there and the realm's own method in it, under `epoch`.
+#[derive(Clone, Copy)]
+pub(crate) struct IntactBuiltinsProof {
+    epoch: u64,
+    methods: [Option<(Value, u32, Value)>; crate::IntactBuiltin::ALL.len()],
 }

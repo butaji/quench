@@ -11,24 +11,49 @@ mod harness_cache;
 pub mod ratchet;
 pub mod reporting;
 mod runner_support;
+pub use runner_support::{cached_harness as harness_sources, negative as classify_test_outcome, outcome as execution_outcome, script_source};
 pub mod runtime_host;
 mod stages;
 pub mod waivers;
 pub use harness_cache::HarnessCache;
-pub use runtime_host::Test262RuntimeHost;
+pub use runtime_host::{Test262RuntimeHost, LinkedCasePrograms};
+#[cfg(feature = "native-sdk")]
+quench_runtime::export_native_js_operations!(Test262RuntimeHost, native_sdk_semantics);
+#[cfg(feature = "aot")]
+pub use runtime_host::NativeCasePrograms;
+
+/// Whether the linked host omits source compilation and dynamic execution.
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = quench_runtime::NativeImageSupport::Static.is_available();
+/// A hybrid native image requires the shared interpreter and JIT.
+pub const NATIVE_SUPPORT_HAS_JIT: bool = quench_runtime::NativeImageSupport::DynamicSource.is_available();
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 use quench_runtime::ExecutionMode;
 
 /// The switch that runs cases in compiled (JIT) execution, spelled as the Wasm runner's.
 pub const JIT_FLAG: &str = "--jit";
+pub const AOT_FLAG: &str = "--aot";
+pub const DYNAMIC_SOURCE_FLAG: &str = "--dynamic-source";
+pub const NATIVE_COMPILE_REPORT_FILENAME:&str = "compile-report.json";
+pub const NATIVE_COMPILE_REPORT_SCHEMA:u32 = 1;
+pub const EXPECTED_COMPILER_NEGATIVE:&str = "expected-compiler-negative";
 
-/// The execution `args` select, with the switch removed: compiled when they carry
-/// `JIT_FLAG`, else the interpreter.
+/// Dynamic source support is orthogonal to ahead-of-time object publication.
+pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {
+    let requested = args.iter().any(|arg| arg == DYNAMIC_SOURCE_FLAG);
+    args.retain(|arg| arg != DYNAMIC_SOURCE_FLAG);
+    requested
+}
+
+/// Select native-only, JIT, or interpreter execution and remove the mode switch.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
+    let native = args.iter().any(|arg| arg == AOT_FLAG);
+    args.retain(|arg| arg != AOT_FLAG);
     let before = args.len();
     args.retain(|arg| arg != JIT_FLAG);
-    if args.len() < before {
+    if native {
+        ExecutionMode::NativeOnly
+    } else if args.len() < before {
         ExecutionMode::Compiled
     } else {
         ExecutionMode::Interpreted
@@ -40,6 +65,15 @@ pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
     match mode {
         ExecutionMode::Interpreted => "no-jit",
         ExecutionMode::Compiled => "jit",
+        ExecutionMode::NativeOnly => "aot",
+    }
+}
+
+pub fn execution_mode_flag(mode: ExecutionMode) -> Option<&'static str> {
+    match mode {
+        ExecutionMode::Interpreted => None,
+        ExecutionMode::Compiled => Some(JIT_FLAG),
+        ExecutionMode::NativeOnly => Some(AOT_FLAG),
     }
 }
 
@@ -47,6 +81,8 @@ pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
 pub trait Test262Host: Send {
     /// Configure per-test host policy before dispatch.
     fn configure(&mut self, _metadata: &TestMetadata) {}
+
+    fn native_compilation(&self) -> Option<&NativeCompilation> { None }
 
     /// Execute a complete script source.
     fn run_script(&mut self, source: &str) -> Result<(), String>;
@@ -91,6 +127,38 @@ pub trait Test262Host: Send {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct NativeCompilation {
+    pub dynamic_source: bool,
+    pub units: Vec<NativeCompiledUnit>,
+    pub rejections: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct NativeCompiledUnit {
+    pub functions: usize,
+    pub object_bytes: usize,
+    pub object: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TestVariant { Sloppy, Strict, Module, Raw }
+
+impl TestVariant {
+    pub const ALL: [Self; 4] = [Self::Sloppy, Self::Strict, Self::Module, Self::Raw];
+    pub fn from_name(name: &str) -> Option<Self> { Self::ALL.into_iter().find(|variant| variant.name() == name) }
+    pub fn name(self) -> &'static str {
+        match self { Self::Sloppy => "sloppy", Self::Strict => "strict", Self::Module => "module", Self::Raw => "raw" }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VariantOutcome {
+    pub variant: TestVariant,
+    pub outcome: TestOutcome,
+    pub compilation: Option<NativeCompilation>,
+}
+
 /// Runner metadata needed before dispatching one test.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TestMetadata {
@@ -102,6 +170,8 @@ pub struct TestMetadata {
     pub is_raw: bool,
     /// Whether the runner must prepend a strict directive.
     pub only_strict: bool,
+    /// A script explicitly excluded from the strict variant.
+    pub no_strict: bool,
     /// Harness files requested by the test, in declaration order.
     pub includes: Vec<String>,
     /// Expected early/runtime error phase, when the test is negative.
@@ -122,6 +192,13 @@ enum MetadataList {
 }
 
 impl TestMetadata {
+    pub fn variants(&self) -> Vec<TestVariant> {
+        if self.is_module { vec![TestVariant::Module] }
+        else if self.is_raw { vec![TestVariant::Raw] }
+        else if self.only_strict { vec![TestVariant::Strict] }
+        else if self.no_strict { vec![TestVariant::Sloppy] }
+        else { vec![TestVariant::Sloppy, TestVariant::Strict] }
+    }
     /// Parse the small YAML subset used for dispatch decisions.
     pub fn parse(source: &str) -> Result<Self, String> {
         // Test262 includes a pair of legacy fixtures with bare CR line
@@ -172,138 +249,22 @@ impl TestMetadata {
         metadata.is_async = flags.iter().any(|flag| flag == "async");
         metadata.is_raw = flags.iter().any(|flag| flag == "raw");
         metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
+        metadata.no_strict = flags.iter().any(|flag| flag == "noStrict");
         metadata.can_block = flags.iter().any(|flag| flag == "CanBlockIsTrue");
         Ok(metadata)
     }
 }
 
 fn extract_frontmatter(source: &str) -> Result<&str, String> {
-    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
-    // Fixtures normally begin with copyright comments. Hashbang tests add a
-    // deliberately malformed preamble before those comments; skip only that
-    // narrow preamble, never arbitrary JavaScript preceding the marker.
-    let mut body = skip_hashbang_preamble(source);
-    body = skip_html_close_preamble(body);
-    loop {
-        if let Some(rest) = body.strip_prefix('\n') {
-            body = rest;
-            continue;
-        }
-        // Test262 files commonly place a copyright block comment before the
-        // metadata marker. Skip only complete comments here; the `/*---`
-        // marker itself must remain the frontmatter opener, and arbitrary
-        // JavaScript preambles must not be treated as metadata.
-        if let Some(rest) = body.strip_prefix("/*") {
-            if body.starts_with("/*---") {
-                break;
-            }
-            let Some(end) = rest.find("*/") else {
-                break;
-            };
-            body = &rest[end + 2..];
-            continue;
-        }
-        let Some(rest) = body.strip_prefix("//") else {
-            break;
-        };
-        let Some(line_end) = rest.find('\n') else {
-            return Ok("");
-        };
-        body = &rest[line_end + 1..];
-    }
-    let Some(body) = body.strip_prefix("/*---") else {
+    // Test262's packaging and lint tools search the source for frontmatter,
+    // including cases whose executable preamble precedes that metadata.
+    let Some((_, body)) = source.split_once("/*---") else {
         return Ok("");
     };
     let Some(end_offset) = body.find("---*/") else {
         return Err("unterminated test262 frontmatter".into());
     };
     Ok(&body[..end_offset])
-}
-
-fn skip_html_close_preamble(mut source: &str) -> &str {
-    loop {
-        let Some(line_end) = source.find('\n') else {
-            return source;
-        };
-        let line = &source[..line_end];
-        let bytes = line.as_bytes();
-        let mut cursor = 0;
-        loop {
-            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-                cursor += 1;
-            }
-            if bytes
-                .get(cursor..)
-                .is_some_and(|tail| tail.starts_with(b"/*"))
-            {
-                let Some(end) = line[cursor + 2..].find("*/") else {
-                    return source;
-                };
-                cursor += end + 4;
-                continue;
-            }
-            break;
-        }
-        if !bytes
-            .get(cursor..)
-            .is_some_and(|tail| tail.starts_with(b"-->"))
-        {
-            return source;
-        }
-        source = &source[line_end + 1..];
-    }
-}
-
-fn skip_hashbang_preamble(source: &str) -> &str {
-    let mut body = source;
-
-    // A preceding directive, empty statement, line comment, or block comment
-    // is accepted only when it is immediately followed by a hashbang line.
-    if body.starts_with("\"use strict\"") {
-        if let Some(line_end) = body.find('\n') {
-            let after_directive = &body[line_end + 1..];
-            if after_directive.starts_with("#!") {
-                body = after_directive;
-            }
-        }
-    } else if body.starts_with(";#!") {
-        body = skip_line(body);
-    } else if body.starts_with("//\n#!") {
-        body = &body[3..];
-    } else if body.starts_with("/*\n*/#!") {
-        body = &body["/*\n*/".len()..];
-    }
-
-    while is_hashbang_candidate(body) {
-        if body.starts_with("#!/*") {
-            if let Some(end) = body.find("*/") {
-                body = &body[end + 2..];
-            } else {
-                return "";
-            }
-        } else {
-            body = skip_line(body);
-        }
-    }
-    body
-}
-
-fn is_hashbang_candidate(source: &str) -> bool {
-    let Some(line_end) = source.find('\n') else {
-        return source.starts_with("#!") || source.starts_with("#\\") || source.starts_with('\\');
-    };
-    let line = source[..line_end].trim_start();
-    line.starts_with("#!")
-        || line.starts_with("#\\")
-        || line.starts_with("\\u")
-        || line.starts_with("\\x")
-        || line.starts_with("\\0")
-}
-
-fn skip_line(source: &str) -> &str {
-    source
-        .find('\n')
-        .map_or("", |line_end| &source[line_end + 1..])
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
@@ -412,12 +373,51 @@ fn collect_js_files(directory: &Path, files: &mut Vec<std::path::PathBuf>) -> Re
     Ok(())
 }
 
+/// Project variant outcomes to the file outcome. Identical failures retain
+/// their exact reason for pinned Node-waiver matching; records retain labels.
+pub fn aggregate_variants(outcomes: &[VariantOutcome]) -> TestOutcome {
+    if outcomes.is_empty() { return TestOutcome::Fail { reason: "test variant inventory is empty".into() }; }
+    let failures: Vec<_> = outcomes.iter().filter_map(|record| match &record.outcome {
+        TestOutcome::Pass => None,
+        TestOutcome::Fail { reason } => Some((record.variant, reason)),
+    }).collect();
+    let Some((_, first)) = failures.first() else { return TestOutcome::Pass; };
+    let reason = if failures.iter().all(|(_, reason)| reason == first) {
+        (*first).clone()
+    } else { failures.iter().map(|(variant, reason)| format!("{}: {reason}", variant.name())).collect::<Vec<_>>().join("\n") };
+    TestOutcome::Fail { reason }
+}
+
 /// Runner parameterized over the engine host implementation.
 pub struct Test262Runner<H: Test262Host> {
     host: H,
 }
 
 impl<H: Test262Host> Test262Runner<H> {
+    /// Account for every variant; a failure never suppresses the remaining variant.
+    pub fn run_file_variants_with_cache(&mut self, path: &Path, cache: &mut HarnessCache) -> Result<Vec<VariantOutcome>, String> {
+        self.run_file_selected_variants(path, cache, None)
+    }
+
+    /// Select only a variant declared by the original test metadata.
+    pub fn run_file_variant_with_cache(&mut self, path: &Path, cache: &mut HarnessCache, variant: TestVariant) -> Result<VariantOutcome, String> {
+        self.run_file_selected_variants(path, cache, Some(variant))?.pop().ok_or_else(|| "selected variant produced no outcome".into())
+    }
+
+    fn run_file_selected_variants(&mut self, path: &Path, cache: &mut HarnessCache, selected: Option<TestVariant>) -> Result<Vec<VariantOutcome>, String> {
+        let source = std::fs::read_to_string(path).map_err(|error| format!("test262 read failed: {error}"))?;
+        let mut metadata = TestMetadata::parse(&source)?;
+        let variants = metadata.variants();
+        if selected.is_some_and(|variant|!variants.contains(&variant)) { return Err("variant is not declared by test metadata".into()); }
+        let harness = runner_support::cached_harness(&metadata, cache)?;
+        let mut outcomes = Vec::new();
+        for variant in variants.into_iter().filter(|variant| selected.is_none_or(|selected| selected == *variant)) {
+            metadata.only_strict = variant == TestVariant::Strict;
+            let outcome = runner_support::negative(self.dispatch_test_at(&harness, &source, &metadata, Some(path)), &metadata);
+            outcomes.push(VariantOutcome { variant, outcome, compilation: self.host.native_compilation().cloned() });
+        }
+        Ok(outcomes)
+    }
     /// Create a runner around an engine host.
     pub fn new(host: H) -> Self {
         Self { host }
@@ -704,6 +704,27 @@ mod tests {
     use super::TestMetadata;
 
     #[test]
+    fn variant_aggregation_preserves_waiver_reasons_and_rejects_missing_records() {
+        use super::{aggregate_variants, TestOutcome, TestVariant, VariantOutcome};
+        let failed = |variant, reason: &str| VariantOutcome { variant, outcome: TestOutcome::Fail { reason: reason.into() }, compilation: None };
+        assert_eq!(aggregate_variants(&[failed(TestVariant::Sloppy, "known failure"), failed(TestVariant::Strict, "known failure")]), TestOutcome::Fail { reason: "known failure".into() });
+        assert!(matches!(aggregate_variants(&[failed(TestVariant::Sloppy, "known"), failed(TestVariant::Strict, "different")]), TestOutcome::Fail { reason } if reason.contains("sloppy: known") && reason.contains("strict: different")));
+        assert!(matches!(aggregate_variants(&[]), TestOutcome::Fail { .. }));
+    }
+
+    #[test]
+    fn metadata_selects_required_execution_variants() {
+        use super::TestVariant::*;
+        for (flags, expected) in [
+            ("", vec![Sloppy, Strict]), ("onlyStrict", vec![Strict]),
+            ("noStrict", vec![Sloppy]), ("module", vec![Module]), ("raw", vec![Raw]),
+        ] {
+            let source = format!("/*---\nflags: [{flags}]\n---*/");
+            assert_eq!(TestMetadata::parse(&source).unwrap().variants(), expected);
+        }
+    }
+
+    #[test]
     fn metadata_skips_copyright_block_before_frontmatter() {
         let source = "/* copyright */\n/*---\nincludes: [sm/non262-strict-shell.js]\nflags: [onlyStrict]\n---*/\n";
         let metadata = TestMetadata::parse(source).expect("metadata parses");
@@ -712,10 +733,9 @@ mod tests {
     }
 
     #[test]
-    fn metadata_does_not_skip_javascript_before_frontmatter() {
-        let source = "var preamble = 1;\n/*---\nflags: [onlyStrict]\n---*/\n";
+    fn metadata_after_executable_preamble_controls_variants() {
+        let source = "#! comment\u{2029}{\n}\n/*---\nflags: [raw]\n---*/\n";
         let metadata = TestMetadata::parse(source).expect("metadata parses");
-        assert!(metadata.includes.is_empty());
-        assert!(!metadata.only_strict);
+        assert_eq!(metadata.variants(), vec![super::TestVariant::Raw]);
     }
 }

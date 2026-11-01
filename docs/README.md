@@ -399,6 +399,18 @@ gate together with Test262 and Wasm.
 See
 [task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
 
+quench-node runs Node's own JavaScript library as guest code, embedded at build time
+from the pinned Node source set in `crates/quench-node/node` (`node_source_set.rs`): the
+`lib/` tree and its bundled dependencies, the headers the build derives its version,
+option and protocol tables from, libuv's error header (probed for the target's values)
+and the nghttp2 sources. Its `SOURCE` file names the Node version and commit; `LICENSE`
+is Node's. Building quench-node never reads `tests/node`, which stays a test fixture
+checkout. When the `tests/node` pin moves, refresh the set from it and commit both:
+
+```sh
+cargo run -p quench-node-test --bin sync-node-sources -- tests/node
+```
+
 For local Node oracle checks, put a Node executable matching the pinned
 checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
 checkout targets Node 26 (26.12.0); other majors can differ on API contracts such as
@@ -424,6 +436,13 @@ export X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=$DEPS/openssl/lib \
   X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR=$DEPS/openssl/include \
   X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS=ssl:crypto
 ```
+
+For an extracted Node release source tree without `.git`, the zlib and Brotli tools
+replace their `tests/node` submodule revision check with release-source mode, which
+names the version `src/node_version.h` must hold (`--release-source
+--expected-node-version v26.12.1`). Use a separate prefix per codec so each archive keeps
+its own `provenance.json` (Node version, version-header hash, codec source and
+build-definition hashes, compiler, platform and archive hash).
 
 `tcp_reuse_port_shares_os_listeners_across_processes_like_node` also needs an IPv6
 interface (it listens on `::`).

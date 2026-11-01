@@ -37,7 +37,7 @@ impl<T> ThinBoxSlice<T> {
     const ELEMENTS_OFFSET: usize = size_of::<usize>().next_multiple_of(align_of::<T>());
 
     fn elements(&self) -> *mut T {
-        if self.len() == 0 {
+        if self.is_empty() {
             return NonNull::dangling().as_ptr();
         }
         debug_assert_eq!(Self::layout(self.len()).1, Self::ELEMENTS_OFFSET);
@@ -48,6 +48,13 @@ impl<T> ThinBoxSlice<T> {
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.header() & !MARK_BIT
+    }
+
+    /// Whether the slice has no elements, read from the header: `elements` relies on it, so
+    /// it must not go through `Deref`, which calls `elements`.
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     #[inline(always)]
@@ -65,7 +72,7 @@ impl<T> ThinBoxSlice<T> {
 
     /// Sets the mark of a non-empty slice, whose header it owns.
     pub(crate) fn mark(&mut self) {
-        assert!(self.len() != 0, "an empty slice shares the static header");
+        assert!(!self.is_empty(), "an empty slice shares the static header");
         // SAFETY: a non-empty slice owns its allocation, header included.
         unsafe { *self.header.as_ptr() |= MARK_BIT };
     }

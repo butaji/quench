@@ -4,7 +4,7 @@ use super::NodeHost;
 use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, SystemHost};
 
 pub(crate) mod commonjs;
-mod commonjs_exports;
+pub(crate) mod commonjs_exports;
 mod esm_errors;
 pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
@@ -15,27 +15,39 @@ pub(crate) use commonjs::with_import_resolver;
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
         method "workerConstruct" (1) => crate::modules::worker_threads_shared_vm::construct,
+        method "workerSetEnvironmentData" (2) => crate::modules::worker_threads_shared_vm::set_environment_data,
+        method "workerGetEnvironmentData" (1) => crate::modules::worker_threads_shared_vm::get_environment_data,
         method "workerRawUmask" (0) => crate::modules::worker_threads_shared_vm::raw_umask,
         method "workerSerializeFailure" (0) => crate::modules::worker_threads_shared_vm::serialize_failure,
         method "workerEvaluate" (0) => crate::modules::worker_threads_shared_vm::evaluate,
         method "workerThreadId" (0) => crate::modules::worker_threads_shared_vm::thread_id,
+        method "workerThreadName" (0) => crate::modules::worker_threads_shared_vm::thread_name,
         method "workerPost" (0) => crate::modules::worker_threads_shared_vm::post,
+        method "workerMovePortToContext" (2) => crate::modules::worker_threads_shared_vm::move_port_to_context,
         method "workerRef" (0) => crate::modules::worker_threads_shared_vm::ref_worker,
         method "workerUnref" (0) => crate::modules::worker_threads_shared_vm::unref_worker,
+        method "workerHandleHasRef" (0) => crate::modules::worker_threads_shared_vm::handle_has_ref,
+        method "workerPortHandleHasRef" (0) => crate::modules::worker_threads_shared_vm::message_port_handle_has_ref,
         method "workerTerminate" (1) => crate::modules::worker_threads_shared_vm::terminate,
+        method "workerCpuUsage" (1) => crate::modules::worker_threads_shared_vm::cpu_usage,
         method "workerTerminateExecutor" (0) => crate::modules::worker_threads_shared_vm::terminate_executor,
         method "workerPortPost" (0) => crate::modules::worker_threads_shared_vm::port_post,
+        method "workerInternalPost" (1) => crate::modules::worker_threads_shared_vm::internal_post,
+        method "workerBroadcastPost" (2) => crate::modules::worker_threads_shared_vm::broadcast_post,
+        method "workerBroadcastRef" (1) => crate::modules::worker_threads_shared_vm::broadcast_ref,
         method "workerPortOn" (2) => crate::modules::worker_threads_shared_vm::port_on,
         method "workerPortRef" (0) => crate::modules::worker_threads_shared_vm::port_ref,
         method "workerPortUnref" (0) => crate::modules::worker_threads_shared_vm::port_unref,
         method "workerPortClose" (0) => crate::modules::worker_threads_shared_vm::port_close,
         method "workerPortHasRef" (0) => crate::modules::worker_threads_shared_vm::port_has_ref,
         method "workerPoll" (0) => crate::modules::worker_threads_shared_vm::poll_native,
+        method "v8QueryObjects" (1) => crate::modules::v8_shared_vm::query_objects,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
         method "primordialsCopy" (7) => crate::modules::primordials_shared_vm::copy,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
+        method "nodeTestRun" (0) => crate::modules::test_shared_vm::run,
         method "contextifyScript" (0) => crate::modules::contextify_shared_vm::script,
         method "contextifyRunInContext" (0) => crate::modules::contextify_shared_vm::run_in_context,
         method "contextifyCompileFunction" (0) => crate::modules::contextify_shared_vm::compile_function,
@@ -64,21 +76,22 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsHrtimeBigInt" (0) => crate::modules::process_metrics_shared_vm::hrtime_bigint,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsCpu" (0) => crate::modules::process_metrics_shared_vm::process_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsThreadCpu" (0) => crate::modules::process_metrics_shared_vm::thread_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
         method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
         #[cfg(unix)]
         method "processExecve" (3) => crate::modules::process_execve_shared_vm::execve,
+        method "processMetricsPatchProcessObject" (1) => crate::modules::process_metrics_shared_vm::patch_process_object,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processDefaultFatalException" (2) => crate::modules::process_fatal_exception_route::default_handler,
@@ -87,6 +100,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processEmitExitEvent" (1) => crate::modules::process_shared_vm::emit_exit_event,
         method "reallyExit" (1) => crate::modules::process_shared_vm::really_exit,
         method "processStreamWrite" (1) => crate::modules::process_shared_vm::stream_write,
+        method "processEnvDefineProperty" (3) => crate::modules::process_shared_vm::env_define_property,
         method "processOpenStdin" (0) => crate::modules::process_stdin_shared_vm::open,
         method "processStdin" (0) => crate::modules::process_stdin_shared_vm::get,
         method "processStdinRead" (1) => crate::modules::process_stdin_shared_vm::read,
@@ -171,6 +185,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferBindingSetDetachKey" (0) => crate::modules::buffer_binding_shared_vm::set_detach_key,
         method "webStreamsInitialize" (0) => commonjs::initialize_web_streams,
         method "markAsUncloneable" (1) => crate::modules::clone_shared_vm::mark_as_uncloneable,
+        method "messagingStructuredClone" (2) => crate::modules::clone_shared_vm::structured_clone,
+        method "messagingSetDeserializer" (1) => crate::modules::messaging_binding_shared_vm::set_deserializer,
         method "markAsUntransferable" (1) => crate::modules::clone_shared_vm::mark_as_untransferable,
         method "isMarkedAsUntransferable" (1) => crate::modules::clone_shared_vm::is_marked_as_untransferable,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
@@ -181,12 +197,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processReport" (0) => crate::modules::report_configuration_shared_vm::report,
         method "reportConfigGet" (0) => crate::modules::report_configuration_shared_vm::get,
         method "reportConfigSet" (0) => crate::modules::report_configuration_shared_vm::set,
+        method "reportBindingGetReport" (0) => crate::modules::report_configuration_shared_vm::binding_get_report,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
         method "processDeleteEnv" (1) => crate::modules::process_shared_vm::delete_env,
+        method "processGetSharedEnv" (1) => crate::modules::process_shared_vm::get_shared_env,
         method "processBinding" (1) => crate::modules::process_binding_shared_vm::binding,
         method "processSetUncaughtExceptionCaptureCallback" (1) => crate::modules::process_shared_vm::set_uncaught_exception_capture_callback,
         method "processHasUncaughtExceptionCaptureCallback" (0) => crate::modules::process_shared_vm::has_uncaught_exception_capture_callback,
+        method "processAddUncaughtExceptionCaptureCallback" (1) => crate::modules::process_shared_vm::add_uncaught_exception_capture_callback,
         method "processGetActiveHandles" (0) => crate::modules::process_shared_vm::get_active_handles,
         method "processGetActiveNetworkResources" (0) => crate::modules::process_shared_vm::get_active_network_resources,
         method "nextTick" (1) => crate::modules::process_shared_vm::next_tick,
@@ -212,6 +231,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
         method "nodeErrorConstructor" (0) => crate::modules::node_errors_shared_vm::constructor,
         method "errorSourcePositions" (0) => crate::modules::node_errors_shared_vm::source_positions,
+        method "errorSetSourceMapsEnabled" (1) => crate::modules::node_errors_shared_vm::set_source_maps_enabled,
+        method "errorTriggerUncaughtException" (2) => crate::modules::node_errors_shared_vm::trigger_uncaught_exception,
         method "errorStackFormat" (3) => crate::modules::node_errors_shared_vm::format_stack,
         method "errorPrepareStackTraceInitialize" (0) => crate::modules::node_errors_shared_vm::initialize_prepare_stack_trace,
         method "consoleGlobalInitialize" (0) => commonjs::initialize_console_global,
@@ -233,6 +254,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
+        method "asyncQueueDestroyAsyncId" (1) => crate::modules::async_hooks_shared_vm::queue_destroy_async_id,
+        method "asyncSetPromiseHooks" (1) => crate::modules::promise_hooks_shared_vm::set_registry,
         method "asyncDefaultTriggerScope" (2) => crate::modules::async_hooks_shared_vm::default_trigger_scope,
         method "asyncGetDefaultTrigger" (0) => crate::modules::async_hooks_shared_vm::get_default_trigger,
         method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
@@ -262,7 +285,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "ipcReferenceCounted" (0) => crate::modules::child_process_ipc_shared_vm::reference_counted,
         method "eventsOnInitialize" (0) => commonjs::events_on_initialize,
         method "ipcComplete" (2) => crate::modules::child_process_ipc_shared_vm::complete,
-        method "ipcDecode" (2) => crate::modules::child_process_ipc_shared_vm::decode,
+        method "ipcCloseHandle" (1) => crate::modules::child_process_ipc_shared_vm::close_transferred_handle,
+        method "ipcDecode" (4) => crate::modules::child_process_ipc_shared_vm::decode,
         method "ipcEmit" (3) => crate::modules::child_process_ipc_shared_vm::emit,
         method "childProcessSpawn" (3) => crate::modules::child_process_shared_vm::spawn_child,
         method "childProcessConstruct" (3) => crate::modules::child_process_shared_vm::construct_child,
@@ -276,11 +300,14 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessFlushStdio" (1) => crate::modules::child_process_shared_vm::queue_stdio_flush,
         method "childProcessFlushStdioRun" (1) => crate::modules::child_process_shared_vm::flush_stdio,
         method "childProcessRead" (2) => crate::modules::child_process_shared_vm::request_read,
+        method "childProcessReadExtra" (2) => crate::modules::child_process_shared_vm::request_extra_read,
         method "childProcessRegister" (5) => crate::modules::child_process_shared_vm::register_child,
         method "childProcessStreamClosed" (0) => crate::modules::child_process_shared_vm::stream_closed,
         method "childProcessWrite" (3) => crate::modules::child_process_shared_vm::write_child,
+        method "childProcessWriteExtra" (4) => crate::modules::child_process_shared_vm::write_extra_child,
         method "childProcessInputComplete" (2) => crate::modules::child_process_input_shared_vm::complete,
         method "childProcessEnd" (2) => crate::modules::child_process_shared_vm::end_child,
+        method "childProcessEndExtra" (3) => crate::modules::child_process_shared_vm::end_extra_child,
         method "childProcessDestroyInput" (3) => crate::modules::child_process_shared_vm::destroy_input,
         method "childProcessPrepareExit" (3) => crate::modules::child_process_shared_vm::prepare_exit,
         method "vmCreateRealm" (0) => crate::modules::vm_shared_vm::create_realm,
@@ -298,29 +325,29 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathFormat" (1) => crate::modules::path_shared_vm::format_operation,
         method "pathMatchesGlob" (2) => crate::modules::path_shared_vm::matches_glob_operation,
         method "domainTrampolineCall" (0) => crate::modules::domain_trampoline::call,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osAvailableParallelism" (0) => crate::modules::os_binding_shared_vm::available_parallelism,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingCpus" (0) => crate::modules::os_binding_shared_vm::cpus,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingHome" (0) => crate::modules::os_binding_shared_vm::home,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingHostname" (0) => crate::modules::os_binding_shared_vm::hostname,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingInterfaces" (0) => crate::modules::os_binding_shared_vm::interfaces,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingLoadavg" (0) => crate::modules::os_binding_shared_vm::loadavg,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingGetPriority" (0) => crate::modules::os_binding_shared_vm::get_priority,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingInformation" (0) => crate::modules::os_binding_shared_vm::information,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingUserInfo" (0) => crate::modules::os_binding_shared_vm::user_info,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingSetPriority" (0) => crate::modules::os_binding_shared_vm::set_priority,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingTempdir" (0) => crate::modules::os_binding_shared_vm::tempdir,
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         method "osBindingUptime" (0) => crate::modules::os_binding_shared_vm::uptime,
         method "osString" (0) => crate::modules::os_shared_vm::string_operation,
         method "osFreemem" (0) => crate::modules::os_shared_vm::freemem_operation,
@@ -334,6 +361,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "moduleParentSet" (1) => crate::modules::module_shared_vm::parent_set,
         method "moduleRequire" (1) => crate::modules::module_shared_vm::require,
         method "moduleCompile" (3) => crate::modules::module_shared_vm::compile,
+        method "moduleRunMain" (1) => commonjs::module_run_main,
         method "netLookupResult" (3) => crate::modules::net_lookup_shared_vm::result,
         method "netLookupError" (2) => crate::modules::net_lookup_shared_vm::error,
         method "netGetAutoSelectFamily" (0) => crate::modules::net_lookup_shared_vm::get_default,
@@ -360,6 +388,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netHandleClose" (0) => crate::modules::net_reference_shared_vm::close,
         method "netHandleReadStart" (0) => crate::modules::net_reference_shared_vm::read_start,
         method "netHandleReadStop" (0) => crate::modules::net_reference_shared_vm::read_stop,
+        method "netHandleHasPendingRead" (0) => crate::modules::net_reference_shared_vm::has_pending_read,
         method "netSocketPeerName" (1) => crate::modules::net_socket_address::peer,
         method "netSocketLocalName" (1) => crate::modules::net_socket_address::local,
         method "netSocketEndpointView" (1) => crate::modules::net_socket_address::view,
@@ -415,8 +444,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nativeAsyncWrapConstruct" (0) => crate::modules::native_async_wrap::abstract_constructor,
         method "nativeAsyncWrapId" (0) => crate::modules::native_async_wrap::get_id,
         method "nativeAsyncWrapProvider" (0) => crate::modules::native_async_wrap::get_provider,
+        method "nativeAsyncWrapReset" (1) => crate::modules::native_async_wrap::async_reset,
         method "nativePipeConstruct" (1) => crate::modules::pipe_binding::construct,
         method "nativePipeOpen" (1) => crate::modules::pipe_binding::open,
+        method "nativePipeBind" (1) => crate::modules::pipe_binding::bind,
         method "nativePipeReadStart" (0) => crate::modules::pipe_binding::read_start,
         method "nativePipeReadStop" (0) => crate::modules::pipe_binding::read_stop,
         method "nativePipeWriteUtf8" (3) => crate::modules::pipe_binding::write_utf8,
@@ -446,6 +477,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerConnectionsResult" (0) => crate::modules::net_server_admission::connections_result,
         method "netHandleSetNoDelay" (0) => crate::modules::net_reference_shared_vm::set_no_delay,
         method "netHandleSetKeepAlive" (0) => crate::modules::net_reference_shared_vm::set_keep_alive,
+        method "netHandleSetTypeOfService" (0) => crate::modules::net_reference_shared_vm::set_type_of_service,
+        method "netHandleGetTypeOfService" (0) => crate::modules::net_reference_shared_vm::get_type_of_service,
         method "netSocketInitializeOptions" (2) => crate::modules::net_socket_options::initialize,
         method "netSocketSetNoDelay" (2) => crate::modules::net_socket_options::no_delay,
         method "netSocketSetKeepAlive" (5) => crate::modules::net_socket_options::keep_alive,
@@ -473,6 +506,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterOnceInvoke" (0) => crate::modules::event_emitter_shared_vm::once_invoke,
         method "eventsDefaultMaxGet" (0) => crate::modules::event_limits_shared_vm::default_get,
         method "eventGlobalsInitialize" (0) => crate::modules::events_shared_vm::initialize_event_globals,
+        method "eventTargetGet" (0) => crate::modules::event_target_shared_vm::get_target,
+        method "eventStateInitialize" (1) => crate::modules::event_target_shared_vm::initialize,
+        method "eventCurrentTargetGet" (0) => crate::modules::event_target_shared_vm::get_current_target,
+        method "eventTargetDispatch" (1) => crate::modules::event_target_shared_vm::dispatch,
         method "eventAbortStateInitialize" (0) => crate::modules::events_shared_vm::initialize_abort_state,
         method "eventsDefaultMaxSet" (1) => crate::modules::event_limits_shared_vm::default_set,
         method "emitterMaxGet" (1) => crate::modules::event_limits_shared_vm::emitter_get,
@@ -559,12 +596,24 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpAgentDestroy" (1) => crate::modules::http_shared_vm::agent_destroy,
         method "getName" (0) => crate::modules::http_shared_vm::agent_get_name,
         method "_resolveFilename" (4) => commonjs::resolve_from_parent,
-        method "httpRequestCreate" (2) => crate::modules::http_shared_vm::request_create,
+        method "httpRequestCreate" (4) => crate::modules::http_shared_vm::request_create,
         method "httpRequestNormalizeUrl" (1) => crate::modules::http_shared_vm::request_normalize_url,
         method "httpRequestWrite" (3) => crate::modules::http_shared_vm::request_write,
+        method "httpRequestSetHeader" (2) => crate::modules::http_shared_vm::request_set_header,
         method "httpRequestRemoveHeader" (2) => crate::modules::http_shared_vm::request_remove_header,
         method "httpRequestEnd" (2) => crate::modules::http_shared_vm::request_end,
         method "httpRequestDestroy" (1) => crate::modules::http_shared_vm::request_destroy,
+        method "http2NewSession" (1) => crate::modules::http2_shared_vm::new_session,
+        method "http2SetLocalWindowSize" (2) => crate::modules::http2_shared_vm::set_local_window_size,
+        method "http2SubmitRstStream" (3) => crate::modules::http2_shared_vm::submit_rst_stream,
+        method "http2Feed" (2) => crate::modules::http2_shared_vm::feed,
+        method "http2DrainOutbound" (1) => crate::modules::http2_shared_vm::drain_outbound,
+        method "http2SubmitHeaders" (4) => crate::modules::http2_shared_vm::submit_headers,
+        method "http2SubmitSettings" (2) => crate::modules::http2_shared_vm::submit_settings,
+        method "http2SubmitData" (4) => crate::modules::http2_shared_vm::submit_data,
+        method "http2SubmitRequest" (3) => crate::modules::http2_shared_vm::submit_request,
+        method "http2SubmitPushPromise" (3) => crate::modules::http2_shared_vm::submit_push_promise,
+        method "http2CloseSession" (1) => crate::modules::http2_shared_vm::close_session,
         method "httpClientResponseDestroy" (1) => crate::modules::http_shared_vm::client_response_destroy,
         method "httpResponseSetHeader" (4) => crate::modules::http_shared_vm::response_set_header,
         method "httpResponseGetHeader" (2) => crate::modules::http_shared_vm::response_get_header,
@@ -593,7 +642,23 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoPbkdf2JobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_pbkdf2,
         #[cfg(quench_openssl_provider)]
+        method "cryptoArgon2JobNew" (10) => crate::modules::crypto_secret_job_shared_vm::create_argon2,
+        #[cfg(quench_openssl_provider)]
         method "cryptoHashJobNew" (3) => crate::modules::crypto_secret_job_shared_vm::create_hash,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoAesJobNew" (8) => crate::modules::crypto_secret_job_shared_vm::create_aes,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoChaChaJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_chacha,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoRsaCipherJobNew" (7) => crate::modules::crypto_secret_job_shared_vm::create_rsa_cipher,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDhBitsJobNew" (11) => crate::modules::crypto_secret_job_shared_vm::create_dh_bits,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKmacJobNew" (8) => crate::modules::crypto_secret_job_shared_vm::create_kmac,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKemEncapsulateJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_kem_encapsulate,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoKemDecapsulateJobNew" (7) => crate::modules::crypto_secret_job_shared_vm::create_kem_decapsulate,
         #[cfg(quench_openssl_provider)]
         method "cryptoNativeHashNew" (0) => crate::modules::crypto_hash_shared_vm::create_hash,
         #[cfg(quench_openssl_provider)]
@@ -624,6 +689,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         #[cfg(quench_openssl_provider)]
         method "cryptoSignJobNew" (14) => crate::modules::crypto_secret_job_shared_vm::create_sign,
         #[cfg(quench_openssl_provider)]
+        method "cryptoHmacJobNew" (6) => crate::modules::crypto_secret_job_shared_vm::create_hmac,
+        #[cfg(quench_openssl_provider)]
         method "cryptoRsaKeyPairJobNew" (0) => crate::modules::crypto_secret_job_shared_vm::create_rsa_pair,
         #[cfg(quench_openssl_provider)]
         method "cryptoEcKeyPairJobNew" (0) => crate::modules::crypto_secret_job_shared_vm::create_ec_pair,
@@ -640,6 +707,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoSecretJobComplete" (0) => crate::modules::crypto_secret_job_shared_vm::complete,
         #[cfg(quench_openssl_provider)]
         method "cryptoProviderFacts" (1) => crate::modules::crypto_provider_shared_vm::operation,
+        #[cfg(quench_openssl_provider)]
+        method "cryptoDiffieHellman" (2) => crate::modules::crypto_asymmetric_shared_vm::diffie_hellman,
         #[cfg(quench_openssl_provider)]
         method "cryptoWebNamespace" (0) => crate::modules::crypto_provider_shared_vm::webcrypto,
         #[cfg(quench_openssl_provider)]
@@ -703,7 +772,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsPromiseWatchEvent" (3) => crate::modules::fs_watch_shared_vm::promise::event,
         method "fsPromiseWatchCancel" (0) => crate::modules::fs_watch_shared_vm::promise::cancel,
         method "toPathIfFileURL" (1) => crate::modules::url_shared_vm::to_path_if_file_url,
+        method "cliOptionsInfo" (0) => crate::modules::cli_options_shared_vm::info,
+        method "cliOptionsFlags" (0) => crate::modules::cli_options_shared_vm::flags,
         method "cliOptionsValues" (0) => crate::modules::cli_options_shared_vm::values,
+        method "cliEmbedderOptions" (0) => crate::modules::cli_options_shared_vm::embedder_options,
         method "cliParseNodeOptions" (0) => crate::modules::cli_options_shared_vm::parse_environment,
         method "fsFileHandleCloseOwned" (0) => crate::modules::fs_shared_vm::file_handle_write::close,
         method "fsFileHandleCloseWait" (0) => crate::modules::fs_shared_vm::file_handle_write::close_wait,
@@ -716,6 +788,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsFileHandleClosed" (0) => crate::modules::fs_shared_vm::file_handle_write::closed,
         method "fsPromiseWriteVoid" (0) => crate::modules::fs_shared_vm::file_handle_write::void,
         method "fsFileHandleReadParameters" (0) => crate::modules::fs_shared_vm::file_handle_read::parameters,
+        method "fsBindingWriteFileUtf8" (4) => crate::modules::fs_shared_vm::write_public::write_utf8_binding,
         method "fsBindingInternalModuleStat" (0) => crate::modules::fs_directory_shared_vm::internal_module_stat,
         method "fsBindingReaddir" (0) => crate::modules::fs_directory_shared_vm::readdir,
         method "fsBindingReaddirRecursive" (0) => crate::modules::fs_directory_shared_vm::readdir_recursive,
@@ -766,6 +839,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsChmodSync" (2) => crate::modules::fs_shared_vm::stat::chmod_sync,
         method "fsFchmodSync" (2) => crate::modules::fs_shared_vm::stat::fchmod_sync,
         method "fsUtimesSync" (3) => crate::modules::fs_shared_vm::stat::utimes_sync,
+        method "fsLutimesSync" (3) => crate::modules::fs_shared_vm::stat::lutimes_sync,
+        method "fsFutimesSync" (3) => crate::modules::fs_shared_vm::stat::futimes_sync,
         method "fsLstatSync" (1) => crate::modules::fs_shared_vm::stat::lstat_sync,
         method "fsReaddirPolicy" (2) => crate::modules::fs_shared_vm::readdir_policy,
         method "fsReadlinkSync" (1) => crate::modules::fs_shared_vm::stat::read_link_sync,
@@ -788,16 +863,24 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsSocketSecure" (0) => crate::modules::tls_shared_vm::socket::secure,
         method "tlsSocketUpgrade" (3) => crate::modules::tls_shared_vm::socket::upgrade,
         method "tlsSocketAuthorize" (1) => crate::modules::tls_shared_vm::socket::authorize,
-        method "tlsSocketInfo" (2) => crate::modules::tls_shared_vm::socket::info,
+        method "tlsSocketInfo" (3) => crate::modules::tls_shared_vm::socket::info,
         method "tlsHandleVerifyError" (0) => crate::modules::tls_shared_vm::handle::verify_error,
         method "tlsMatchName" (1) => crate::modules::tls_shared_vm::identity::match_name,
         method "tlsLowercaseName" (1) => crate::modules::tls_shared_vm::identity::lowercase_name,
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
         method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
         method "httpIncomingBody" (1) => crate::modules::http_shared_vm::incoming::body,
+        method "httpServerSocketCreate" (1) => crate::modules::http_shared_vm::incoming::accepted_socket,
+        method "httpServerRequestAbort" (2) => crate::modules::http_shared_vm::incoming::abort_request,
+        method "httpServerSocketDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy_socket,
+        method "httpServerSocketDestroyById" (0) => crate::modules::http_shared_vm::incoming::destroy_socket_by_id,
+        method "httpServerSocketEnd" (0) => crate::modules::http_shared_vm::incoming::end_socket_by_id,
+        method "httpServerSocketResume" (0) => crate::modules::http_shared_vm::incoming::resume_socket,
+        method "httpServerSocketWriteById" (1) => crate::modules::http_shared_vm::incoming::write_socket_by_id,
         method "objectTemplateCapture" (3) => crate::modules::http_shared_vm::incoming::capture_template,
         method "objectTemplateCopy" (1) => crate::modules::http_shared_vm::incoming::copy_template,
         method "byteStringEnd" (1) => crate::modules::webidl_shared_vm::byte_string_end,
+        method "headerFields" (2) => crate::modules::webidl_shared_vm::header_fields,
         method "httpIncomingRead" (1) => crate::modules::http_shared_vm::incoming::read,
         method "httpIncomingDestroy" (2) => crate::modules::http_shared_vm::incoming::destroy,
         method "encodingUtf8" (0) => crate::modules::encoding_binding_shared_vm::encode,
@@ -811,6 +894,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoSetEngineBinding" (0) => crate::modules::crypto_engine_shared_vm::set_engine_binding,
         method "tlsBundledRoots" (0) => crate::modules::tls_shared_vm::bundled::bundled,
         method "tlsGetCiphers" (0) => crate::modules::tls_shared_vm::discovery::ciphers,
+        method "tlsGetCACertificates" (1) => crate::modules::tls_shared_vm::discovery::ca_certificates,
         method "tlsContextCreate" (1) => crate::modules::tls_shared_vm::facade::create,
         method "tlsContextConfigure" (0) => crate::modules::tls_shared_vm::configuration::method,
         method "tlsContextRegister" (0) => crate::modules::tls_shared_vm::contexts::register,
@@ -821,7 +905,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoHandleSymbol" (0) => crate::modules::crypto_shared_vm::handle_symbol,
         method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
         method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
+        method "cryptoX509Metadata" (1) => crate::modules::crypto_shared_vm::x509_metadata,
+        method "cryptoX509CheckHost" (3) => crate::modules::crypto_shared_vm::x509_check_host,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
+        method "cryptoMacDigest" (4) => crate::modules::crypto_shared_vm::mac_digest,
         method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
         method "cryptoVerify" (7) => crate::modules::crypto_shared_vm::verify,
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
@@ -840,6 +927,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncLocalStorageEnterWith" (1) => crate::modules::async_hooks_shared_vm::enter_with,
         method "asyncLocalStorageGetStore" (0) => crate::modules::async_hooks_shared_vm::get_store,
         method "asyncLocalStorageDisable" (0) => crate::modules::async_hooks_shared_vm::disable_storage,
+        method "asyncLocalStorageRun" (2) => crate::modules::async_hooks_shared_vm::run_storage,
         method "diagnosticsSubscribe" (2) => crate::modules::diagnostics_channel_shared_vm::subscribe,
         method "diagnosticsUnsubscribe" (2) => crate::modules::diagnostics_channel_shared_vm::unsubscribe,
         method "diagnosticsHasSubscribers" (1) => crate::modules::diagnostics_channel_shared_vm::has_subscribers,
@@ -852,6 +940,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "perfHooksEntries" (0) => crate::modules::perf_timeline_query::entries,
         method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
         method "performanceNativeNow" (0) => crate::modules::performance_binding_shared_vm::now,
+        method "performanceUvMetricsInfo" (0) => crate::modules::performance_binding_shared_vm::uv_metrics_info,
+        method "performanceLoopIdleTime" (0) => crate::modules::performance_binding_shared_vm::loop_idle_time,
         method "performanceSetupObservers" (0) => crate::modules::performance_binding_shared_vm::setup,
         method "performanceGcTracking" (0) => crate::modules::performance_binding_shared_vm::gc_tracking,
         method "performanceNotify" (0) => crate::modules::performance_binding_shared_vm::notify,
@@ -1003,6 +1093,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "traceInitialize" (2) => crate::modules::trace_shared_vm::initialize,
         method "traceInspect" (3) => crate::modules::trace_shared_vm::inspect,
         method "traceInternal" (1) => crate::modules::trace_shared_vm::internal_binding,
+        method "cjsLexerParse" (1) => crate::modules::trace_shared_vm::cjs_lexer_parse,
         method "traceRecord" (5) => crate::modules::trace_shared_vm::record,
         method "traceCategoryBuffer" (1) => crate::modules::trace_shared_vm::category_buffer,
         method "traceCategoryEnabled" (1) => crate::modules::trace_shared_vm::category_enabled,
@@ -1013,6 +1104,28 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "traceEnabled" (0) => crate::modules::trace_shared_vm::enabled,
         method "traceGetEnabledCategories" (0) => crate::modules::trace_shared_vm::get_enabled_categories,
     ]
+}
+
+/// The file a directory's `package.json` `main` names, which Node suggests importing
+/// instead of the directory (`ERR_UNSUPPORTED_DIR_IMPORT`).
+fn esm_directory_import_suggestion(directory: &std::path::Path) -> Option<String> {
+    let manifest = std::fs::read_to_string(directory.join("package.json")).ok()?;
+    let package = serde_json::from_str::<serde_json::Value>(&manifest).ok()?;
+    let main = package.get("main")?.as_str()?;
+    let target = directory.join(main);
+    let candidates = if target.extension().is_some() {
+        vec![target]
+    } else {
+        ["js", "mjs", "cjs", "json"]
+            .into_iter()
+            .map(|extension| target.with_extension(extension))
+            .collect()
+    };
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| url::Url::from_file_path(candidate).ok())
+        .map(|url| url.to_string())
 }
 
 /// The host function registered as `name`. Hosts resolve operations per request (an
@@ -1074,6 +1187,7 @@ const BESIDE_ACTIVATIONS: &[&str] = &[
     "markAsUncloneable",
     "objectTemplateCopy",
     "byteStringEnd",
+    "headerFields",
 ];
 
 impl quench_runtime::Host for NodeHost {
@@ -1135,6 +1249,14 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 
+    #[cfg(feature = "native-execution")]
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> {
+        match self.native_program_resolver.as_mut() {
+            Some(resolve) => resolve(name, parts),
+            None => Ok(None),
+        }
+    }
+
     fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
         crate::host::resident_pages::release_at_module_load();
         self.compile_cache.entry(name, parts)?.load()
@@ -1167,6 +1289,10 @@ impl quench_runtime::Host for NodeHost {
 
     fn proper_tail_calls(&self) -> bool {
         false
+    }
+
+    fn allows_natives_syntax(&self) -> bool {
+        self.shared_state.borrow().exec_argv.iter().any(|flag| matches!(flag.as_str(), "--allow-natives-syntax" | "--allow_natives_syntax"))
     }
 
     fn nonextensible_applies_to_private(&self) -> bool {
@@ -1205,6 +1331,10 @@ impl quench_runtime::Host for NodeHost {
         quench_runtime::Host::clock_millis(&mut SystemHost)
     }
 
+    fn validate_wasm(&mut self, bytes: &[u8], _mode: quench_runtime::ExecutionMode) -> bool {
+        quench_wasm::validate_binary(bytes)
+    }
+
     fn compile_wasm(
         &mut self,
         bytes: &[u8],
@@ -1224,139 +1354,14 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn resolve_dynamic_import(
-        &mut self,
-        referrer: &str,
-        specifier: &str,
+        &mut self, referrer: &str, specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
-        // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
-        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
-            std::sync::OnceLock::new();
-        let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
-            serde_json::from_str(include_str!("builtin_esm_exports.json"))
-                .expect("generated Node builtin export names are valid JSON")
-        });
-        let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
-        let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
-        if !builtin && specifier.starts_with("node:") {
-            return Err(esm_errors::unknown_builtin(specifier));
-        }
-        if let Some(error) = esm_errors::unsupported_scheme(specifier) {
-            return Err(error);
-        }
-        if builtin {
-            let exports = builtin_exports
-                .get(builtin_name)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let require_specifier = specifier;
-            let mut source = format!(
-                "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
-                serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
-            );
-            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
-            // in the order the module lists its own keys (`builtin_export_values`). A member
-            // still a pending lazy data property is bound to its pending value instead, and
-            // the listener gives the binding the member's value when its group materializes.
-            let assignments: String = exports
-                .iter()
-                .enumerate()
-                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
-                .collect();
-            source.push_str(&format!(
-                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
-                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
-                    .map_err(|error| error.to_string())?,
-                serde_json::to_string(exports).map_err(|error| error.to_string())?
-            ));
-            for (index, name) in exports.iter().enumerate() {
-                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
-            }
-            return Ok(Some(quench_runtime::ModuleSource::text(
-                format!("node:quench-builtin/{builtin_name}"),
-                source,
-            )));
-        }
-
-        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
-        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
-        // several of its phases.
-        let location = match self
-            .resolved_imports
-            .get(referrer)
-            .and_then(|imports| imports.get(specifier))
-        {
-            Some(location) => std::rc::Rc::clone(location),
-            None => {
-                let Some(location) = self.import_location(referrer, specifier)? else {
-                    return Ok(None);
-                };
-                let location = std::rc::Rc::new(location);
-                self.resolved_imports
-                    .entry(referrer.into())
-                    .or_default()
-                    .insert(specifier.into(), std::rc::Rc::clone(&location));
-                location
-            }
-        };
-        let (path, name) = (location.path.clone(), location.name.clone());
-        let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
-                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
-                Err(error) => error,
-            },
-            _ => format!("module {}: {error}", path.display()).into(),
-        })?;
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("");
-        if extension == "wasm" {
-            // Node's `wasm` format: the module record is a facade over the instance.
-            let source = esm_wasm::facade(&name, &path, &bytes)?;
-            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
-        }
-        let source = if extension == "json" {
-            commonjs::source_text(&bytes).into_owned()
-        } else {
-            let kind = commonjs::source_kind_of_real_bytes(&path, &bytes)?;
-            if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes)
-                    .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
-            } else {
-                let filename = serde_json::to_string(&path.to_string_lossy())
-                    .map_err(|error| error.to_string())?;
-                let mut source = format!(
-                    "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
-                );
-                source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in
-                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
-                        .into_iter()
-                        .enumerate()
-                {
-                    let local = format!("__quenchExport{index}");
-                    source.push_str("const ");
-                    source.push_str(&local);
-                    source.push_str(" = __quenchModule[");
-                    source.push_str(
-                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
-                    );
-                    source.push_str("];\n");
-                    source.push_str("export { ");
-                    source.push_str(&local);
-                    source.push_str(" as ");
-                    source.push_str(
-                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
-                    );
-                    source.push_str(" };\n");
-                }
-                source
-            }
-        };
-        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
-        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
-        // text it compiles, never the file it wraps.
-        Ok(Some(quench_runtime::ModuleSource::text(name, source)))
+        #[cfg(feature = "native-execution")]
+        if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
+        let module = self.resolve_filesystem_import(referrer, specifier)?;
+        #[cfg(feature = "aot")]
+        if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
+        Ok(module)
     }
 
     fn validate_module_type(
@@ -1386,6 +1391,23 @@ impl quench_runtime::Host for NodeHost {
         url::Url::from_file_path(absolute)
             .map(|url| url.to_string())
             .unwrap_or_else(|_| source_name.to_owned())
+    }
+
+    fn import_meta_filename(&mut self, source_name: &str) -> Option<String> {
+        let path = if source_name.starts_with("file:") {
+            url::Url::parse(source_name).ok()?.to_file_path().ok()?
+        } else if source_name.starts_with("node:") || source_name.starts_with('<') {
+            return None;
+        } else {
+            std::path::PathBuf::from(source_name)
+        };
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+        let canonical = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+        Some(canonical.to_string_lossy().into_owned())
     }
 
     fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
@@ -1601,21 +1623,25 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 
 /// `globalThis.gc` under `--expose-gc`.
 fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let expose_gc = context
-        .host_mut()
-        .shared_state()
-        .borrow()
+    let shared = context.host_mut().shared_state();
+    let shared = shared.borrow();
+    let expose_gc = shared
         .exec_argv
         .iter()
-        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
+        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc")
+        || shared.workers.inherited_expose_gc;
+    drop(shared);
     if expose_gc {
         let collect = context.host_function(operation("gc"))?;
+        let schedule = context.host_function(operation("setImmediate"))?;
         let factory = context.evaluate_script_rooted(
-            "collect => function gc(...args) { return collect(...args); }",
+            // Async collection starts in the next host job, after the current
+            // job's WeakRef kept-alive roots have been cleared.
+            "(collect, schedule) => function gc(...args) {\n  if (args[0]?.execution !== 'async') return collect();\n  return new Promise((resolve, reject) => schedule(() => {\n    try { resolve(collect()); } catch (error) { reject(error); }\n  }));\n}",
             "node:bootstrap/gc.js",
         )?;
         let undefined = context.undefined();
-        let gc = context.call_rooted(factory, undefined, &[collect])?;
+        let gc = context.call_rooted(factory, undefined, &[collect, schedule])?;
         let key = context.string_rooted("gc");
         let global = context.global_root()?;
         context.define_data_property_rooted(global, key, gc, true, true, false)?;
@@ -1623,14 +1649,149 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn operation_names_are_unique() {
-        let mut names = std::collections::HashSet::new();
-        for binding in super::bindings() {
-            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+/// One export-name authority for Node's ESM facade generation and AOT SDK staging.
+pub(crate) fn builtin_export_names(name: &str) -> &'static [String] {
+    static EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    EXPORTS.get_or_init(|| serde_json::from_str(include_str!("builtin_esm_exports.json"))
+        .expect("generated Node builtin export names are valid JSON"))
+        .get(name).map(Vec::as_slice).unwrap_or(&[])
+}
+
+impl NodeHost {
+    /// Node's source/interop policy for a resolved import; frozen images use its
+    /// compiler-captured result through the same host contract.
+    fn resolve_filesystem_import(
+        &mut self, referrer: &str, specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+            return Err("native guest code required: module source resolution is unavailable".into());
         }
+        let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
+        let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
+        if !builtin && specifier.starts_with("node:") {
+            return Err(esm_errors::unknown_builtin(specifier));
+        }
+        if let Some(error) = esm_errors::unsupported_scheme(specifier) {
+            return Err(error);
+        }
+        if builtin {
+            let exports = builtin_export_names(builtin_name);
+            let require_specifier = format!("node:{builtin_name}");
+            let mut source = format!(
+                "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
+                serde_json::to_string(&require_specifier).map_err(|error| error.to_string())?
+            );
+            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
+            source.push_str(&format!(
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
+                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
+                    .map_err(|error| error.to_string())?,
+                serde_json::to_string(exports).map_err(|error| error.to_string())?
+            ));
+            for (index, name) in exports.iter().enumerate() {
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
+            }
+            return Ok(Some(quench_runtime::ModuleSource::text(
+                format!("node:quench-builtin/{builtin_name}"),
+                source,
+            )));
+        }
+
+        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
+        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
+        // several of its phases.
+        let location = match self
+            .resolved_imports
+            .get(referrer)
+            .and_then(|imports| imports.get(specifier))
+        {
+            Some(location) => std::rc::Rc::clone(location),
+            None => {
+                let Some(location) = self.import_location(referrer, specifier)? else {
+                    return Ok(None);
+                };
+                let location = std::rc::Rc::new(location);
+                self.resolved_imports
+                    .entry(referrer.into())
+                    .or_default()
+                    .insert(specifier.into(), std::rc::Rc::clone(&location));
+                location
+            }
+        };
+        let (path, name) = (location.path.clone(), location.name.clone());
+        let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
+                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
+                Err(error) => error,
+            },
+            _ => format!("module {}: {error}", path.display()).into(),
+        })?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if extension == "wasm" {
+            #[cfg(feature = "aot")]
+            self.record_module_bytes(&path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
+        let kind = if extension == "json" { quench_runtime::SourceKind::Script }
+            else { commonjs::source_kind_of_real_bytes(&path, &bytes)? };
+        #[cfg(feature = "aot")]
+        self.record_module_bytes(&path, kind, &bytes).map_err(|error| error.to_string())?;
+        let source = if extension == "json" {
+            commonjs::source_text(&bytes).into_owned()
+        } else if kind == quench_runtime::SourceKind::Module {
+            String::from_utf8(bytes)
+                .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
+        } else {
+            #[cfg(feature = "aot")]
+            self.record_module_resolution(&path, &path.to_string_lossy(), &path)?;
+            let filename = serde_json::to_string(&path.to_string_lossy())
+                .map_err(|error| error.to_string())?;
+            let mut source = format!(
+                "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+            );
+            source.push_str("export { __quenchModule as 'module.exports' };\n");
+            for (index, export) in
+                commonjs_exports::names(&path, &commonjs::source_text(&bytes))
+                    .into_iter()
+                    .enumerate()
+            {
+                let local = format!("__quenchExport{index}");
+                source.push_str("const ");
+                source.push_str(&local);
+                source.push_str(" = __quenchModule[");
+                source.push_str(
+                    &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                );
+                source.push_str("];\n");
+                source.push_str("export { ");
+                source.push_str(&local);
+                source.push_str(" as ");
+                source.push_str(
+                    &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                );
+                source.push_str(" };\n");
+            }
+            source
+        };
+        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
+        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
+        // text it compiles, never the file it wraps.
+        Ok(Some(quench_runtime::ModuleSource::text(name, source).with_typescript(
+            kind == quench_runtime::SourceKind::Module && matches!(extension, "ts" | "mts"),
+        )))
     }
 }
 
@@ -1642,7 +1803,7 @@ pub(crate) struct ImportLocation {
 
 /// An import referrer's file URL, when it is one, and its path: Node resolves filesystem
 /// specifiers as URLs before accessing a file.
-fn referrer_location(
+pub(crate) fn referrer_location(
     referrer: &str,
 ) -> Result<(Option<url::Url>, std::path::PathBuf), quench_runtime::ModuleLoadError> {
     let Some(url) = referrer
@@ -1672,6 +1833,14 @@ impl NodeHost {
         // Node resolves filesystem specifiers as URLs before accessing a file.
         // The URL suffix belongs to module identity, never to the disk path.
         let (referrer_url, referrer_path) = referrer_location(referrer)?;
+        // Eval and stdin scripts have synthetic names (`[eval1]`, `<stdin>`); Node resolves
+        // their imports from the guest `process.cwd()`.
+        let referrer_path = if referrer_url.is_none() && (referrer.starts_with('<') || referrer.starts_with('[')) {
+            let cwd = self.shared_state.borrow().cwd.clone();
+            cwd.query_path().map_err(|error| error.to_string())?.join(referrer)
+        } else {
+            referrer_path
+        };
         let internal = specifier.starts_with("internal/");
         let base = if internal {
             self.node_library_root.join("lib")
@@ -1749,6 +1918,20 @@ impl NodeHost {
             }
         };
         let path = self.real_path(path);
+        if path.is_dir() {
+            let mut message = format!(
+                "Directory import '{}' is not supported resolving ES modules imported from {referrer}",
+                path.display()
+            );
+            if let Some(suggestion) = esm_directory_import_suggestion(&path) {
+                message.push_str(&format!("\nDid you mean to import \"{suggestion}\"?"));
+            }
+            return Err(quench_runtime::ModuleLoadError::new(
+                quench_runtime::ModuleLoadErrorKind::Error,
+                "ERR_UNSUPPORTED_DIR_IMPORT",
+                message,
+            ));
+        }
         if !internal {
             if let Some(error) = esm_errors::unloadable(&path) {
                 return Err(error);
@@ -1767,5 +1950,16 @@ impl NodeHost {
             path.to_string_lossy().into_owned()
         };
         Ok(Some(ImportLocation { path, name }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operation_names_are_unique() {
+        let mut names = std::collections::HashSet::new();
+        for binding in super::bindings() {
+            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+        }
     }
 }

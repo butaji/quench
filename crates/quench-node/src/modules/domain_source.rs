@@ -30,15 +30,13 @@ pub(crate) fn trampoline(source: &str) -> Result<String, &'static str> {
                         .id
                         .get_identifier_name()
                         .is_some_and(|name| name == "domain_cb")
-                    {
-                        if declaration.declarations.len() != 1
+                        && (declaration.declarations.len() != 1
                             || cell
                                 .replace(declaration.span().source_text(source))
-                                .is_some()
+                                .is_some())
                         {
                             return Err("Ambiguous configured domain callback cell");
                         }
-                    }
                 }
             }
             _ => {}

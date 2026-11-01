@@ -25,7 +25,11 @@ impl<H: Host> Vm<H> {
             _ if value.as_number().is_some() => Native::Number,
             _ => return None,
         };
-        self.realm.intrinsics.builtin_prototypes.get(&(self.realm.globals, native)).copied()
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(self.realm.globals, native))
+            .copied()
     }
 
     pub(super) fn require_object_coercible(
@@ -44,9 +48,7 @@ impl<H: Host> Vm<H> {
     /// one-unit string at `index`, or `None` past its end, where lookup continues on the
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
-        let Some(text) = self.heap.string(string) else {
-            return None;
-        };
+        let text = self.heap.string(string)?;
         let unit = text.units().get(index)?;
         Some(self.heap.alloc_string(JsString::from_units(&[unit])))
     }
@@ -134,9 +136,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if object.is_null() || object.is_undefined() {
             // A rejected base never invokes a property-key object's conversion hooks.
-            let property = if self.is_object_like(key) { None }
-                else if let Some(Cell::Symbol(description)) = self.heap.get(key) { Some(format!("Symbol({})", description.as_deref().unwrap_or(""))) }
-                else { Some(self.to_string(p, key)?) };
+            let property = if self.is_object_like(key) {
+                None
+            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
+                Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
+            } else {
+                Some(self.to_string(p, key)?)
+            };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
         let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
@@ -291,12 +297,11 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        self.heap
-            .record_array(base)?
-            .elements()
-            .get(index)
-            .copied()
-            .filter(|value| !value.is_deleted())
+        let value = *self.heap.record_array(base)?.elements().get(index)?;
+        if value.is_deleted() {
+            return None;
+        }
+        Some(value)
     }
 
     /// `base[key]` for a non-negative integer key that neither an ordinary object or array
@@ -352,9 +357,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let Some(object) = self.heap.array(base) else {
-            return None;
-        };
+        let object = self.heap.array(base)?;
         object
             .elements()
             .get(index)
@@ -402,7 +405,12 @@ impl<H: Host> Vm<H> {
 
     /// `object[key] = value` that appends to a dense array at its length
     /// (`append_dense_element`); `false` leaves the store, unobserved, to the general path.
-    pub(super) fn try_append_dense_element(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub(super) fn try_append_dense_element(
+        &mut self,
+        object: Value,
+        key: Value,
+        value: Value,
+    ) -> bool {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.append_dense_element(object, index, value))
@@ -595,9 +603,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }
-        let Some(key) = self.heap.string(key) else {
-            return None;
-        };
+        let key = self.heap.string(key)?;
         super::object_static::array_index(key.host_string())
     }
 
@@ -611,7 +617,12 @@ impl<H: Host> Vm<H> {
     /// Storage after either assignment checks or ValidateAndApplyPropertyDescriptor.
     /// A compatible definition can replace an accessor hole on a non-extensible
     /// array, or preserve the same value on a frozen array.
-    pub(super) fn store_validated_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+    pub(super) fn store_validated_array_element(
+        &mut self,
+        object: Value,
+        index: usize,
+        value: Value,
+    ) -> bool {
         let Some(array_object) = self.heap.array(object) else {
             return false;
         };
@@ -669,12 +680,11 @@ impl<H: Host> Vm<H> {
         array: Value,
         values: impl IntoIterator<Item = Value>,
     ) -> Result<(), JsError> {
-        let mut index = self
+        let start = self
             .own_array_length(array)
             .ok_or_else(|| JsError("array literal is not an array".into()))?;
-        for value in values {
+        for (index, value) in (start..).zip(values) {
             self.define_array_literal_element(p, array, index, value)?;
-            index += 1;
         }
         Ok(())
     }

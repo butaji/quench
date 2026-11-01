@@ -2038,3 +2038,342 @@ fn compiled_entry_is_kept_and_decodes_to_the_same_program() {
     runtime.compile_entry(crate::ExecutionRequest { source, name: "entry.js", kind: crate::SourceKind::Module }).unwrap();
     assert_eq!(kept.borrow().len(), 2);
 }
+
+#[cfg(feature = "aot")]
+#[test]
+fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
+    let mut compiler = crate::NativeJsCompiler::new(false);
+    let harness = compiler.compile_script(
+        "const seed = 7; function readSeed() { return seed; }", "harness.js", Default::default(),
+    ).unwrap();
+    let entry = compiler.compile_module(
+        "globalThis.answer = seed + readSeed() + 28; Promise.resolve().then(() => { answer += 1; });",
+        "entry.mjs",
+    ).unwrap();
+    let entry = compiler.finish(entry).unwrap();
+    let residual = entry.clone();
+    let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(entry).unwrap();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native_after_scripts(&[harness], &native).unwrap();
+    drop(native);
+    runtime.collect(&residual).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("answer");
+    let answer = runtime.get_property_rooted(global, key).unwrap();
+    assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(43.0));
+    let key = runtime.string_rooted("readSeed");
+    let read = runtime.get_property_rooted(global, key).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let result = runtime.call_rooted(read, receiver, &[]).unwrap();
+    assert_eq!(runtime.rooted_value(result).unwrap().as_number(), Some(7.0));
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_execution_audit_retains_guest_caught_source_rejections() {
+    let program = Engine::specialize_unspecialized(
+        "try { eval('1'); } catch (error) { if (!(error instanceof TypeError)) throw error; }", "caught-eval.js",
+    ).unwrap();
+    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    assert_eq!(runtime.native_execution_rejections(), 1);
+}
+
+#[test]
+fn strict_unresolvable_reference_defers_putvalue_error_until_after_rhs() {
+    let source = r#""use strict";
+const effects = [];
+try { absentReference = (() => { effects.push("rhs"); throw new RangeError("rhs"); })(); throw Error("missing RHS error"); }
+catch (error) { if (!(error instanceof RangeError)) throw error; }
+try { absentReference = (effects.push("create"), Object.defineProperty(globalThis, "absentReference", { value: 3, configurable: true, writable: true }), 9); throw Error("missing captured reference error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+if (globalThis.absentReference !== 3) throw Error("RHS property creation was not preserved");
+delete globalThis.absentReference;
+try { absentReference = (effects.push("plain"), 1); throw Error("missing reference error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+try { absentReference += (effects.push("compound"), 1); throw Error("missing compound error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+try { absentReference ||= (effects.push("logical"), 1); throw Error("missing logical error"); }
+catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
+"#;
+    let program = Engine::specialize_unspecialized(source, "strict-reference-order.js").unwrap();
+    let modes = [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled].into_iter();
+    #[cfg(feature = "aot")]
+    let modes = modes.chain([crate::ExecutionMode::NativeOnly]);
+    for mode in modes {
+        let mut runtime = Runtime::new(TestHost::default());
+        runtime.set_execution_mode(mode);
+        #[cfg(feature = "aot")]
+        if mode == crate::ExecutionMode::NativeOnly {
+            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            runtime.execute_native(&native).unwrap();
+        } else { runtime.execute(&program).unwrap(); }
+        #[cfg(not(feature = "aot"))]
+        runtime.execute(&program).unwrap();
+    }
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owners() {
+    let program = Engine::specialize_unspecialized(r#"
+        globalThis.answer = 0;
+        function grow(n) {
+            let sum = 0;
+            for (let i = 0; i < n; i++) {
+                try { if (i === 3) throw i; sum += i; }
+                catch (error) { sum += error * 2; }
+                finally { sum += 1; }
+            }
+            return () => sum;
+        }
+        globalThis.saved = grow(8);
+        answer = saved();
+        Promise.resolve().then(() => { answer += 1; });
+    "#, "native-regions.js").unwrap();
+    let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap() };
+    let module = crate::lower_native_js_module_with_options(&program, "native_regions", options).unwrap();
+    assert!(module.functions.iter().filter(|function| matches!(function, crate::NativeFunction::Definition { .. })).count() > program.function_count());
+    crate::emit_native_module("native_regions", module.functions, module.data).unwrap();
+    let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
+    let mut runtime = Runtime::new(TestHost::default());
+    runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+    runtime.execute_native(&native).unwrap();
+    drop(native);
+    runtime.collect(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("answer");
+    let answer = runtime.get_property_rooted(global, key).unwrap();
+    assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(40.0));
+    let key = runtime.string_rooted("saved");
+    let saved = runtime.get_property_rooted(global, key).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let value = runtime.call_rooted(saved, receiver, &[]).unwrap();
+    assert_eq!(runtime.rooted_value(value).unwrap().as_number(), Some(39.0));
+    assert_eq!(runtime.native_execution_rejections(), 0);
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity() {
+    const ENTRY: &str = r#"
+        import { count, bump } from './barrel.mjs';
+        import * as first from './dep.mjs';
+        export function seed() { return 41; }
+        if (count !== 41) throw Error('initial live binding');
+        bump();
+        if (count !== 42) throw Error('updated live binding');
+        globalThis.savedModuleClosure = () => count;
+        import('./dep.mjs').then(second => {
+            if (first !== second || second.count !== 42) throw Error('namespace identity');
+            globalThis.moduleJobFinished = true;
+        });
+    "#;
+    const BARREL: &str = "export { count, bump } from './dep.mjs';";
+    for awaited in [false, true] {
+        let dependency = format!(
+            "import {{ seed }} from './entry.mjs'; export let count = {}seed(); export function bump() {{ count++; }}",
+            if awaited { "await " } else { "" },
+        );
+        let sources = [("./entry.mjs", ENTRY), ("./barrel.mjs", BARREL), ("./dep.mjs", dependency.as_str())];
+        let mut compiler = crate::NativeJsCompiler::new(false);
+        let mut programs = sources.iter().map(|(name, source)| {
+            let key = crate::NativeSourceKey::new(name, &["unspecialized", crate::STATIC_MODULE_GOAL, source]).unwrap();
+            compiler.compile_source(&key).unwrap()
+        }).collect::<Vec<_>>();
+        let entry = compiler.finish(programs.remove(0)).unwrap();
+        let entries = Rc::new(RefCell::new(programs.into_iter().zip(&sources[1..]).map(|(program, (name, source))| {
+            (name.to_string(), source.to_string(), crate::NativeJsProgram::compile_eager(program).unwrap())
+        }).collect::<Vec<_>>()));
+        let lookup = entries.clone();
+        let module_sources: Vec<_> = sources.iter().map(|(name, source)| crate::ModuleSource::text(*name, *source)).collect();
+        let host = TestHost::default()
+            .with_modules(move |name| Ok(module_sources.iter().find(|module| module.name == name).cloned()))
+            .with_native_programs(move |name, parts| Ok(lookup.borrow().iter().find(|(candidate, source, _)| {
+                candidate == name && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, source.as_str()]
+            }).map(|(_, _, native)| native.clone())));
+        let native = crate::NativeJsProgram::compile_eager(entry.clone()).unwrap();
+        let mut runtime = Runtime::new(host);
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        runtime.execute_native(&native).unwrap();
+        drop(native);
+        entries.borrow_mut().clear();
+        runtime.collect(&entry).unwrap();
+        let global = runtime.global_root().unwrap();
+        let key = runtime.string_rooted("moduleJobFinished");
+        let finished = runtime.get_property_rooted(global, key).unwrap();
+        assert_eq!(runtime.rooted_value(finished), Some(Value::TRUE));
+        let key = runtime.string_rooted("savedModuleClosure");
+        let closure = runtime.get_property_rooted(global, key).unwrap();
+        let receiver = runtime.root(Value::UNDEFINED);
+        let value = runtime.call_rooted(closure, receiver, &[]).unwrap();
+        assert_eq!(runtime.rooted_value(value).unwrap().as_number(), Some(42.0));
+        assert_eq!(runtime.native_execution_rejections(), 0);
+    }
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effects() {
+    const SOURCE: &str = "globalThis.dependencyRan = true;";
+    for mismatch in ["goal", "namespace", "source"] {
+        let mut compiler = crate::NativeJsCompiler::new(false);
+        let entry = compiler.compile_module("import './dep.mjs'; globalThis.entryRan = true;", "./entry.mjs").unwrap();
+        let dependency = if mismatch == "goal" {
+            compiler.compile_script(SOURCE, "./dep.mjs", Default::default()).unwrap()
+        } else if mismatch == "namespace" {
+            crate::NativeJsCompiler::new(false).compile_module(SOURCE, "./dep.mjs").unwrap()
+        } else {
+            compiler.compile_module(SOURCE, "./dep.mjs").unwrap()
+        };
+        let entry = compiler.finish(entry).unwrap();
+        let dependency = crate::NativeJsProgram::compile_eager(dependency).unwrap();
+        let host = TestHost::default()
+            .with_modules(move |name| Ok((name == "./dep.mjs").then(|| crate::ModuleSource::text(name,
+                if mismatch == "source" { "globalThis.dependencyRan = false;" } else { SOURCE },
+            ))))
+            .with_native_programs(move |name, parts| {
+                Ok((name == "./dep.mjs" && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, SOURCE])
+                    .then(|| dependency.clone()))
+            });
+        let native = crate::NativeJsProgram::compile_eager(entry).unwrap();
+        let mut runtime = Runtime::new(host);
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        let error = runtime.execute_native(&native).unwrap_err().to_string();
+        let expected = match mismatch {
+            "goal" => "wrong parse goal",
+            "namespace" => "atom IDs do not match",
+            _ => "source compilation is unavailable",
+        };
+        assert!(error.contains(expected), "{mismatch}: {error}");
+        let global = runtime.global_root().unwrap();
+        for name in ["entryRan", "dependencyRan"] {
+            let key = runtime.string_rooted(name);
+            let value = runtime.get_property_rooted(global, key).unwrap();
+            assert_eq!(runtime.rooted_value(value), Some(Value::UNDEFINED), "{mismatch}: {name}");
+        }
+        assert_eq!(runtime.native_execution_rejections(), 1);
+    }
+}
+
+#[cfg(feature = "aot")]
+#[test]
+fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effects() {
+    let mut compiler = crate::NativeJsCompiler::new(false);
+    let harness = compiler.compile_script("globalThis.harnessRan = true;", "harness.js", Default::default()).unwrap();
+    let entry = compiler.compile_module("globalThis.entryRan = true;", "entry.mjs").unwrap();
+    let dependency = compiler.compile_module("globalThis.depRan = true; export {};", "dep.mjs").unwrap();
+    let entry = crate::NativeJsProgram::compile_eager(compiler.finish(entry).unwrap()).unwrap();
+    let dependency = crate::NativeJsProgram::compile_eager(dependency).unwrap();
+    let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
+    for (modules, message) in [
+        (vec![entry.clone()], "duplicates the entry module"),
+        (vec![dependency.clone(), dependency.clone()], "duplicate native module identity"),
+        (vec![harness.clone()], "wrong parse goal"),
+    ] {
+        let mut runtime = Runtime::new(TestHost::default());
+        runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        let error = runtime.execute_native_module_graph(&[harness.clone()], &modules, &entry).unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+        let global = runtime.global_root().unwrap();
+        for name in ["harnessRan", "entryRan", "depRan"] {
+            let key = runtime.string_rooted(name);
+            let value = runtime.get_property_rooted(global, key).unwrap();
+            assert_eq!(runtime.rooted_value(value), Some(Value::UNDEFINED));
+        }
+    }
+}
+
+const INITIALIZE_CHAINED_PROPERTY: HostFunctionId = HostFunctionId(0);
+const LAZY_CHAIN_LAYERS: u32 = 3;
+fn initialize_chained_property(
+    context: &mut NativeContext<'_, TestHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let state = context.host_function_data()?;
+    let holder = context.get_named_property_rooted(state, "0")?;
+    let remaining = context.get_named_property_rooted(state, "1")?;
+    let remaining = context
+        .rooted_value(remaining)
+        .and_then(Value::as_number)
+        .unwrap();
+    let next = context.number(remaining - 1.0);
+    let key = context.string_rooted("1");
+    context.set_property_rooted(state, key, next, state)?;
+    if remaining > 1.0 {
+        let initializer = context.host_function_with_data(INITIALIZE_CHAINED_PROPERTY, state)?;
+        context.define_lazy_data_properties_rooted(holder, &["value"], true, initializer)?;
+    } else {
+        let key = context.string_rooted("value");
+        let value = context.number(42.0);
+        context.define_data_property_rooted(holder, key, value, true, true, true)?;
+    }
+    Ok(context.undefined())
+}
+#[test]
+fn reflection_finishes_replacement_lazy_groups_before_exposing_data_descriptors() {
+    for (operation, writable, enumerable, configurable) in [
+        (
+            "Object.getOwnPropertyDescriptor(chain,'value')",
+            true,
+            true,
+            true,
+        ),
+        (
+            "Reflect.getOwnPropertyDescriptor(chain,'value')",
+            true,
+            true,
+            true,
+        ),
+        (
+            "Object.getOwnPropertyDescriptors(chain).value",
+            true,
+            true,
+            true,
+        ),
+        (
+            "(Object.freeze(chain),Object.getOwnPropertyDescriptor(chain,'value'))",
+            false,
+            true,
+            false,
+        ),
+        (
+            "(Object.defineProperty(chain,'value',{enumerable:false}),Object.getOwnPropertyDescriptor(chain,'value'))",
+            true,
+            false,
+            true,
+        ),
+    ] {
+        let source = format!(
+            "const descriptor={operation}; if(descriptor.value!==42||descriptor.writable!=={writable}||descriptor.enumerable!=={enumerable}||descriptor.configurable!=={configurable}||'get' in descriptor||chainState[1]!==0)throw Error('incomplete lazy chain'); if(chain.value!==42||chainState[1]!==0)throw Error('reinitialized chain');"
+        );
+        for program in [
+            Engine::compile(crate::ExecutionRequest {
+                source: &source,
+                name: "lazy-chain.js",
+                kind: crate::SourceKind::Script,
+            })
+            .unwrap(),
+            Engine::specialize(&source, "lazy-chain.js").unwrap(),
+        ] {
+            let host=TestHost::default().with_natives(crate::host_functions![method "initializeChain" (0) => initialize_chained_property,])
+                .with_install(|context: &mut NativeContext<'_, TestHost>| {
+                    let holder=context.object_rooted()?; let count=context.number(f64::from(LAZY_CHAIN_LAYERS)); let state=context.array_rooted(&[holder,count])?;
+                    let initializer=context.host_function_with_data(INITIALIZE_CHAINED_PROPERTY,state)?;
+                    context.define_lazy_data_properties_rooted(holder,&["value"],true,initializer)?;
+                    let global=context.global_root()?;
+                    for (name,value) in [("chain",holder),("chainState",state)] { let key=context.string_rooted(name); context.set_property_rooted(global,key,value,global)?; }
+                    context.seal_startup_intrinsics(); Ok(())
+                });
+            Runtime::new(host)
+                .execute(&program)
+                .unwrap_or_else(|error| panic!("{operation}: {error:?}"));
+        }
+    }
+}

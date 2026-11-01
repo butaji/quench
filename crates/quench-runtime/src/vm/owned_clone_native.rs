@@ -33,11 +33,9 @@ impl<H: Host> Vm<H> {
             shared: true,
             ..
         }) = self.heap.get(v)
-        {
-            if let Some(backing) = bytes.shared_backing() {
+            && let Some(backing) = bytes.shared_backing() {
                 return Ok(Some(Metadata::SharedBuffer(backing)));
             }
-        }
         Ok(match self.heap.get(v) {
             Some(Cell::RegExp { meta, .. }) => {
                 let units = meta.source.units();
@@ -117,6 +115,7 @@ impl<H: Host> Vm<H> {
         };
         let target = match node {
             Node::SharedBuffer(backing) => {
+                let backing = backing.clone_for_agent();
                 let proto = self.intrinsic_builtin_prototype(Native::SharedArrayBuffer);
                 self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(proto)),

@@ -170,9 +170,7 @@ impl DynamicBodyLexicalState {
         } else if byte == b'\\' {
             self.escaped = true;
         } else if let Some(quote) = self.quote {
-            if byte == quote {
-                self.quote = None;
-            } else if matches!(byte, b'\n' | b'\r') {
+            if byte == quote || matches!(byte, b'\n' | b'\r') {
                 self.quote = None;
             }
         } else if self.template {
@@ -1888,21 +1886,6 @@ impl StrictRestrictedAssignmentEarlyError {
     }
 }
 
-#[cfg(test)]
-mod regexp_modifier_tests {
-    use super::validate_modifier_groups;
-
-    #[test]
-    fn classes_hold_atoms_not_modifier_groups() {
-        for pattern in [r"^[(?-i)y]$", r"[a(?-i)]", r"[\](?-i)]", r"(?i:a)[(?-m)]"] {
-            assert!(validate_modifier_groups(pattern, false).is_ok(), "{pattern}");
-        }
-        assert!(validate_modifier_groups(r"[[a]](?-i)", true).is_err());
-        assert!(validate_modifier_groups(r"[a](?-i)", false).is_err());
-        assert!(validate_modifier_groups(r"(?ii:a)", false).is_err());
-    }
-}
-
 /// The name `x` of a function body's `var x = arguments;` alias whose every use reads
 /// `x.length` or `x[key]`, so each read may read the `arguments` binding itself: the
 /// declaration is a top-level statement before every use, it is `x`'s only binding, and
@@ -2029,5 +2012,20 @@ impl<'a> Visit<'a> for AliasUses<'_> {
 
     fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
         self.safe = false;
+    }
+}
+
+#[cfg(test)]
+mod regexp_modifier_tests {
+    use super::validate_modifier_groups;
+
+    #[test]
+    fn classes_hold_atoms_not_modifier_groups() {
+        for pattern in [r"^[(?-i)y]$", r"[a(?-i)]", r"[\](?-i)]", r"(?i:a)[(?-m)]"] {
+            assert!(validate_modifier_groups(pattern, false).is_ok(), "{pattern}");
+        }
+        assert!(validate_modifier_groups(r"[[a]](?-i)", true).is_err());
+        assert!(validate_modifier_groups(r"[a](?-i)", false).is_err());
+        assert!(validate_modifier_groups(r"(?ii:a)", false).is_err());
     }
 }

@@ -2,6 +2,7 @@
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 enum Controller {
     Unified(PathBuf),
     Legacy(PathBuf),
@@ -81,6 +82,7 @@ impl Controller {
         }
         (high != 0 && maximum != 0).then_some(high.min(maximum))
     }
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn current(&self) -> u64 {
         match self {
             Self::Unified(path) => number(path.join("memory.current")),
@@ -104,8 +106,8 @@ fn resource_limit() -> Option<u64> {
             // SAFETY: getrlimit initializes this correctly sized output on success.
             if unsafe { libc::getrlimit(resource, limit.as_mut_ptr()) } == 0 {
                 let limit = unsafe { limit.assume_init() }.rlim_cur;
-                if limit != libc::RLIM_INFINITY && (smallest == 0 || (limit as u64) < smallest) {
-                    smallest = limit as u64;
+                if limit != libc::RLIM_INFINITY && (smallest == 0 || limit < smallest) {
+                    smallest = limit;
                 }
             }
         }

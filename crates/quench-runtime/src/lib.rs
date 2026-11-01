@@ -17,6 +17,7 @@ mod module_identity;
 mod number_to_string;
 mod profile;
 mod snapshot;
+mod specialize;
 pub(crate) use quench_stack as stack;
 mod unicode;
 mod value;
@@ -32,7 +33,8 @@ pub use wasm::{
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
 };
 
-pub use bytecode::{KeptBytes, ResidualProgram};
+pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};
+pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
@@ -58,7 +60,7 @@ const _: fn() = || {
 
 mod api;
 pub use api::{
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot,
+    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostFunction, HostFunctionId, HostWeakRoot, IntactBuiltin,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     DeserializerDelegate, SerializerDelegate,
@@ -75,3 +77,42 @@ mod subset_tests;
 pub mod owned_clone;
 
 pub mod shared_backing;
+
+#[cfg(feature = "native-execution")]
+pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
+#[cfg(feature = "native-execution")]
+pub use vm::{
+    NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,
+    native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeProgramResolver},
+};
+#[cfg(feature = "aot")]
+pub use vm::{
+    native_graph::{NativeJsModule, NativeJsCodegenOptions, lower_native_js_module, lower_native_js_module_with_options},
+    native_object::{
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction, NativeFunctionAddress,
+        emit_native_module, emit_native_object,
+    },
+};
+
+#[cfg(feature = "aot")]
+pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
+
+/// Ordinary builds and producers support dynamic compilation and execution.
+/// Execution-only native support requires linked code and archived records.
+pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
+    not(feature = "native-execution"), feature = "jit", feature = "aot"
+));
+
+/// Whether this build requires linked native code and archived program facts.
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
+
+#[cfg(feature = "native-execution")]
+pub use host::NativeSourceError;
+
+mod native_image;
+#[cfg(feature = "native-execution")]
+pub use native_image::NativeImageSupport;
+
+#[cfg(feature = "aot")]
+pub mod native_link;

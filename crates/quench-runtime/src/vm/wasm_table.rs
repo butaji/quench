@@ -640,8 +640,7 @@ mod reference_boundary_tests {
                 ]
                 .into_iter()
                 .map(Ok),
-            }
-            .into()],
+            }],
             &crate::WasmTypes::default(),
             &[],
             &[],

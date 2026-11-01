@@ -88,7 +88,8 @@ const BINDING_JS: &str = quench_js_check::checked_js!(
     triggerHeapSnapshot: unavailable('heap snapshots'),
     createHeapSnapshotStream: unavailable('heap snapshots'),
   };
-  const internalOnly = { queryObjects: unavailable('object queries') };
+  // src/internal_only_v8.cc: the live objects whose prototype is the given one.
+  const internalOnly = { queryObjects: native.queryObjects };
   return { binding, heapUtils, internalOnly };
 }"#
 );
@@ -166,6 +167,7 @@ fn bindings(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             ("cachedDataVersionTag", "v8CachedDataVersionTag"),
             ("isStringOneByteRepresentation", "v8IsStringOneByteRepresentation"),
             ("hashSeed", "v8HashSeed"),
+            ("queryObjects", "v8QueryObjects"),
         ] {
             let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
             let key = c.string_rooted(name);
@@ -278,6 +280,18 @@ pub(crate) fn hash_seed(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<
         u64::from_ne_bytes(bytes)
     });
     Ok(c.string_rooted(&seed.to_string()))
+}
+
+/// `internalBinding('internal_only_v8').queryObjects(prototype)`: the heap's objects whose
+/// prototype is `prototype`.
+pub(crate) fn query_objects(
+    context: &mut NativeContext<'_, NodeHost>,
+    _receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let prototype = args.first().copied().unwrap_or_else(|| context.undefined());
+    let objects = context.objects_with_prototype_rooted(prototype)?;
+    context.array_rooted(&objects)
 }
 
 #[cfg(test)]

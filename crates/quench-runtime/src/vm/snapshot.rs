@@ -121,7 +121,7 @@ crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
     constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
     get, set,
-    bound_target, bound_this, bound_args, char_code_at,
+    bound_target, bound_this, bound_args,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
     arguments_objects, iterator_prototypes, builtin_prototypes, function_constructors,
@@ -234,6 +234,10 @@ impl<H: Host> Vm<H> {
         &self,
         write_host: impl FnOnce(&H, &mut crate::SnapshotWriter<'_>) -> Result<(), String>,
     ) -> SnapshotResult<Vec<u8>> {
+        #[cfg(feature = "native-execution")]
+        if self.native_program_resolver.is_some() {
+            return Err(SnapshotError::unsupported("a runtime native source resolver"));
+        }
         let Self {
             native_microtask_running,
             host,
@@ -294,8 +298,12 @@ impl<H: Host> Vm<H> {
             gc_owned_root_count: _,
             frame_pool: _,
             pending_call_stacks: _,
+            js_native_context: _,
             lane_stack: _,
             execution_mode: _,
+            native_execution_rejections: _,
+            #[cfg(feature = "native-execution")]
+            native_program_resolver: _,
             execution_interrupt: _,
             wasm_reference_epoch: _,
             active_call_roots,
@@ -387,6 +395,8 @@ impl<H: Host> Vm<H> {
             to_fixed_atom,
             to_precision_atom,
             runtime_atoms,
+            // A proof of the running heap's methods; a restored heap proves its own.
+            intact_builtins: _,
             constructed_shapes: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.

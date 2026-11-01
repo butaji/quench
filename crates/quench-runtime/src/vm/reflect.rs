@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
             }
             Native::ReflectConstruct => {
                 let new_target = args.get(2).copied().unwrap_or(target);
-                if !self.is_constructable(p, target) || !self.is_constructable(p, new_target) {
+                if !self.is_constructable(target) || !self.is_constructable(new_target) {
                     return Err(self.type_error(p, "target is not a constructor".into()));
                 }
                 let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);

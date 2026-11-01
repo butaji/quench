@@ -31,7 +31,16 @@ impl InlineSource {
     }
 }
 
+#[cfg(feature = "native-execution")]
+pub type NativeProgramResolver = dyn FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<NodeHost>>, quench_runtime::NativeSourceError>;
+
 pub struct NodeHost {
+    #[cfg(feature = "native-execution")]
+    pub(crate) module_assets: crate::aot::ModuleAssetState,
+    #[cfg(feature = "native-execution")]
+    pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
+    #[cfg(feature = "aot")]
+    pub(crate) native_source_staging: Option<crate::aot::HostSourceDemands>,
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
@@ -46,8 +55,8 @@ pub struct NodeHost {
     /// Node's default argument slice uses the normalized, nonempty eval source.
     pub(crate) eval_source_nonempty: bool,
     pub(crate) initial_node_debug: Option<String>,
-    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
-    pub(crate) net_pending_ends: Vec<u64>,
+    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
+    pub(crate) net_pending_ends: Vec<(u64, bool)>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
     /// The kind of startup snapshot this host builds, ending `initialize` at its point.
     pub(crate) building_snapshot: Option<crate::host::startup_snapshot::SnapshotKind>,
@@ -59,6 +68,13 @@ pub struct NodeHost {
 }
 
 impl NodeHost {
+    /// Resolve linked code by the loader's exact name, source and shaping inputs.
+    #[cfg(feature = "native-execution")]
+    pub fn with_native_programs(mut self, resolver: impl FnMut(&str, &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> + 'static) -> Self {
+        self.native_program_resolver = Some(Box::new(resolver));
+        self
+    }
+
     /// `path`'s real path through the loaders' known-real paths (`real_path`); a path that
     /// cannot be resolved is returned as it is.
     pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
@@ -102,6 +118,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
     pub(crate) active_esm_requires: std::collections::HashMap<String, quench_runtime::RootId>,
+    pub(crate) module_require_trace_active: bool,
     pub(crate) builtin_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Buffer's allocation pool while the host holds it for `buffer.js` to adopt.
     pub(crate) buffer_pool: crate::modules::buffer_shared_vm::PoolOwner,
@@ -109,7 +126,8 @@ pub(crate) struct SharedNodeState {
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) realm_module_programs: std::collections::HashMap<
-        std::path::PathBuf, crate::host::shared_vm::commonjs::PreparedRealmModule,
+        std::path::PathBuf,
+        crate::host::shared_vm::commonjs::PreparedRealmModule,
     >,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     /// Library methods as their modules defined them (`commonjs::LibraryOriginal`).
@@ -138,6 +156,9 @@ pub(crate) struct SharedNodeState {
     pub(crate) serdes: crate::modules::serdes_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
+    /// Optional stdout-only sink. Worker stdio pipes use this to keep stdout
+    /// separate from diagnostic and stderr output.
+    pub(crate) stdout_output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
     pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
@@ -155,6 +176,10 @@ pub(crate) struct SharedNodeState {
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
+    /// Per-worker process.env snapshot, when Worker({ env }) supplied one.
+    pub(crate) process_env_override: Option<std::collections::HashMap<String, String>>,
+    /// Whether this isolate participates in worker_threads.SHARE_ENV.
+    pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
     initial_pending_deprecation: bool,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
@@ -217,6 +242,13 @@ pub(crate) struct SharedChildProcess {
     pub(crate) stderr_pipe: crate::modules::child_process_output_shared_vm::Output,
     pub(crate) stdin_stream: Option<quench_runtime::RootId>,
     pub(crate) stdin: crate::modules::child_process_input_shared_vm::Input,
+    #[cfg(unix)]
+    pub(crate) extra_inputs: Vec<(usize, crate::modules::child_process_input_shared_vm::Input)>,
+    #[cfg(unix)]
+    pub(crate) extra_outputs: Vec<(
+        usize,
+        crate::modules::child_process_output_shared_vm::Output,
+    )>,
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) ipc_pipe: Option<u64>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
@@ -231,17 +263,38 @@ pub(crate) struct SharedChildProcess {
 pub(crate) enum ChildProcessEvent {
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
+    ExtraStdout(usize, Vec<u8>),
     StdoutEnd,
     StderrEnd,
+    ExtraStdoutEnd(usize),
     Exit(Option<i32>, Option<String>),
 }
 
 impl SharedNodeState {
+    /// Child output pipes with pending guest demand. The event loop polls them
+    /// with the transport descriptors, so a child's write wakes the loop at once
+    /// instead of being found on the fallback poll interval.
+    #[cfg(unix)]
+    pub(crate) fn child_output_descriptors(&self) -> Vec<std::os::fd::RawFd> {
+        let mut descriptors = Vec::new();
+        for process in self.child_processes.values() {
+            for pipe in [&process.stdout_pipe, &process.stderr_pipe] {
+                if pipe.wants_read() {
+                    if let Some(fd) = pipe.descriptor() {
+                        descriptors.push(fd);
+                    }
+                }
+            }
+        }
+        descriptors
+    }
+
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
         self.performance_native = Default::default();
         self.vm_scripts = Default::default();
         self.builtin_cache.clear();
+        self.diagnostics = Default::default();
         self.buffer_pool = Default::default();
         self.messaging.reset();
         #[cfg(not(quench_node_cares))]
@@ -250,6 +303,7 @@ impl SharedNodeState {
         self.commonjs_cache = None;
         self.module_parent_api = None;
         self.active_esm_requires.clear();
+        self.module_require_trace_active = false;
         self.workers.reset_vm_roots();
         self.primordials_module = None;
         self.crypto_handle_symbol = None;
@@ -278,7 +332,9 @@ impl SharedNodeState {
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         #[cfg(quench_icu)]
-        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
+        {
+            self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
+        }
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -317,6 +373,7 @@ impl SharedNodeState {
             commonjs_cache: None,
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
+            module_require_trace_active: false,
             primordials_module: None,
             realm_module_programs: std::collections::HashMap::new(),
             crypto_handle_symbol: None,
@@ -343,6 +400,7 @@ impl SharedNodeState {
             serdes: crate::modules::serdes_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
+            stdout_output: None,
             net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
@@ -357,8 +415,11 @@ impl SharedNodeState {
             exec_argv: Vec::new(),
             cli_options: Default::default(),
             report_config: Default::default(),
+            process_env_override: None,
+            process_env_shared: false,
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
-            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1"),
+            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
+                == Ok("1"),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -421,8 +482,14 @@ impl NodeHost {
         let process_control = crate::modules::process_state::ProcessControl::new();
         let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
+            #[cfg(feature = "native-execution")]
+            module_assets: Default::default(),
             node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
+            #[cfg(feature = "native-execution")]
+            native_program_resolver: None,
+            #[cfg(feature = "aot")]
+            native_source_staging: None,
             bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
@@ -451,7 +518,10 @@ impl NodeHost {
 
     /// The last VFS CLI switch owns feature availability for this logical process.
     pub(crate) fn vfs_enabled(&self) -> bool {
-        self.shared_state.borrow().cli_options.enabled("--experimental-vfs")
+        self.shared_state
+            .borrow()
+            .cli_options
+            .enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.
@@ -470,6 +540,11 @@ impl NodeHost {
 
     /// Retain the Node invocation flags supplied by the fixture adapter.
     pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Result<Self, String> {
+        let (cwd, node_options) = {
+            let shared = self.shared_state.borrow();
+            (shared.cwd.path(), shared.initial_node_options.clone())
+        };
+        crate::modules::util_env::load_startup_env_files(node_options.as_deref(), &exec_argv, &cwd);
         let mode =
             crate::modules::process_state::UnhandledRejectionMode::from_exec_argv(&exec_argv)?;
         let net_timeout =
@@ -478,8 +553,18 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
-        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv,shared.initial_pending_deprecation)?;
-        shared.report_config=crate::modules::report_configuration_shared_vm::State::from_options(&shared.cli_options);
+        let node_options = std::env::var("NODE_OPTIONS")
+            .ok()
+            .or_else(|| shared.initial_node_options.clone());
+        shared.cli_options = crate::modules::cli_options::CliOptions::parse(
+            node_options.as_deref(),
+            &exec_argv,
+            shared.initial_pending_deprecation,
+        )?;
+        shared.initial_node_options = std::env::var("NODE_OPTIONS").ok();
+        shared.report_config = crate::modules::report_configuration_shared_vm::State::from_options(
+            &shared.cli_options,
+        );
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;
@@ -495,6 +580,16 @@ impl NodeHost {
 
     pub fn with_output_sink(self, sink: NodeOutputSink) -> Self {
         self.shared_state.borrow_mut().output = Some(sink);
+        self
+    }
+
+    pub fn with_stdout_sink(self, sink: NodeOutputSink) -> Self {
+        self.shared_state.borrow_mut().stdout_output = Some(sink);
+        self
+    }
+
+    pub fn with_initial_node_options(self, options: Option<String>) -> Self {
+        self.shared_state.borrow_mut().initial_node_options = options;
         self
     }
 

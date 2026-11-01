@@ -763,7 +763,7 @@ impl<H: Host> Vm<H> {
                         calendar_fields.as_ref().map_or_else(
                             || {
                                 super::temporal_date::iso_days_in_month(fields[0], fields[1])
-                                    .unwrap_or_default() as i32
+                                    .unwrap_or_default()
                             },
                             |fields| fields.days_in_month as i32,
                         )
@@ -1336,11 +1336,9 @@ impl<H: Host> Vm<H> {
         }
         if let Some((_, FieldValue::String(offset))) =
             supplied.iter().find(|(name, _)| *name == "offset")
-        {
-            if parse_offset_nanoseconds(offset).is_none() {
+            && parse_offset_nanoseconds(offset).is_none() {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
-        }
 
         let fields = zoned_date_time_fields(epoch_nanoseconds, &time_zone)
             .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
@@ -2320,7 +2318,6 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         }
         self.plain_date_optional_integer(p, value)
-            .map(|value| value)
     }
 
     pub(super) fn make_temporal_zoned_date_time(
@@ -2543,9 +2540,7 @@ pub(super) fn relative_offset_epoch(
     time_zone: &str,
     offset: &str,
 ) -> Option<i128> {
-    let Some(offset) = parse_offset_nanoseconds(offset) else {
-        return None;
-    };
+    let offset = parse_offset_nanoseconds(offset)?;
     let time = time.map(|field| field as u32);
     let local_epoch = local_epoch_from_iso_fields(date, time);
     resolve_zoned_local_epoch(
@@ -3320,8 +3315,8 @@ fn zoned_date_time_day_bounds(epoch_nanoseconds: i128, time_zone: &str) -> Optio
     let start = timezone_start_of_day_epoch(
         super::temporal_date::IsoDate {
             year: date.year(),
-            month: date.month() as u32,
-            day: date.day() as u32,
+            month: date.month(),
+            day: date.day(),
         },
         time_zone,
     )?;
@@ -3330,8 +3325,8 @@ fn zoned_date_time_day_bounds(epoch_nanoseconds: i128, time_zone: &str) -> Optio
         next_date = next_date.succ_opt()?;
         let iso_date = super::temporal_date::IsoDate {
             year: next_date.year(),
-            month: next_date.month() as u32,
-            day: next_date.day() as u32,
+            month: next_date.month(),
+            day: next_date.day(),
         };
         if let Some(next) = timezone_start_of_day_epoch(iso_date, time_zone) {
             return Some((start, next));

@@ -377,17 +377,17 @@ impl JsonUnit for u8 {
     /// rest one by one.
     #[inline(always)]
     fn string_run_length(units: &[u8]) -> Option<usize> {
-        let mut words = units.chunks_exact(WORD_BYTES);
+        let (words, remainder) = units.as_chunks::<WORD_BYTES>();
         let mut offset = 0;
-        for word in &mut words {
-            let word = u64::from_le_bytes(word.try_into().expect("a whole word"));
+        for word in words {
+            let word = u64::from_le_bytes(*word);
             let ends = json_escape_bytes(word);
             if ends != 0 {
                 return Some(offset + (ends.trailing_zeros() / u8::BITS) as usize);
             }
             offset += WORD_BYTES;
         }
-        words.remainder().iter().position(|unit| unit.ends_string_run()).map(|position| offset + position)
+        remainder.iter().position(|unit| unit.ends_string_run()).map(|position| offset + position)
     }
     fn run(units: &[u8]) -> JsonStringUnits<'_> {
         JsonStringUnits::Run(Units::Ascii(units))
@@ -821,7 +821,7 @@ impl<'a, T: JsonUnit> JsonParser<'a, T> {
     /// A nested value's parse recurses only through `array` and `object`, which therefore
     /// hold the stack guard.
     fn nesting_guard() -> Result<crate::stack::StackGuard, JsonParseError> {
-        crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)
+        crate::stack::StackGuard::enter().map_err(|crate::stack::StackExhausted| JsonParseError::StackExhausted)
     }
 
     fn array<B: JsonBuilder>(&mut self, builder: &mut B) -> Result<B::Value, JsonParseError> {
@@ -1485,9 +1485,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
-        self.boxed_primitive_data(value).and_then(|(brand, payload)| {
-            matches!(brand, crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject).then_some(payload)
-        })
+        self.boxed_primitive_data(value)
+            .and_then(|(brand, payload)| {
+                matches!(
+                    brand,
+                    crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject
+                )
+                .then_some(payload)
+            })
     }
 
     fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {

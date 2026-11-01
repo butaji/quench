@@ -6,6 +6,7 @@
 
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
+    "broadcast-channel" => broadcast_channel,
     "fetch" => fetch,
     "externalizable-strings" => externalizable_strings,
     "report" => report,
@@ -29,6 +30,7 @@ abilities!(crate::polyfills::Phase::Bootstrap;
 pub fn entry_globals_source() -> String {
     [
         globals_extra::web_api_source(),
+        broadcast_channel::JS,
         web_streams::JS,
         performance::JS,
         r#"

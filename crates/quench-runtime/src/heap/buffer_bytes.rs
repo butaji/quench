@@ -3,8 +3,8 @@
 //! An ordinary buffer owns its bytes, shared copy-on-write with clones of the cell. The
 //! buffer a `WebAssembly.Memory` exposes instead views the memory's linear bytes, so
 //! JavaScript and Wasm see each other's writes. Such a view has a fixed length: growing the
-//! memory detaches the view (replacing it with an empty owned store) before the linear bytes
-//! can move, so a live view's pointer always names the memory's current bytes.
+//! unshared memory detaches its view before the linear bytes can move. Shared views lock
+//! the common backing store on every access and retain their length after memory growth.
 
 use crate::shared_backing::{SharedBacking, State};
 use crate::wasm::memory::MemoryStorage;
@@ -96,13 +96,14 @@ impl BufferBytes {
         }
     }
 
-    /// A view of an unshared memory's current bytes; `None` for a shared memory.
+    /// A fixed-length view of the memory, sharing its storage and synchronization.
     pub(crate) fn wasm_view(memory: &Rc<MemoryStorage>) -> Option<Self> {
-        let MemoryStorage::Unshared(state) = &**memory else {
-            return None;
+        let state = match &**memory {
+            MemoryStorage::Unshared(state) => state,
+            MemoryStorage::Shared(memory) => return Some(Self::from_shared(memory.0.fixed_view())),
         };
         let mut state = state.borrow_mut();
-        let bytes: &mut [u8] = &mut state.bytes;
+        let bytes: &mut [u8] = &mut state;
         Some(Self(Rc::new(BufferStore::Wasm(WasmView {
             _memory: memory.clone(),
             base: bytes.as_mut_ptr(),
@@ -110,17 +111,19 @@ impl BufferBytes {
         }))))
     }
 
-    /// Whether these bytes view a Wasm memory, which JavaScript cannot detach or resize.
+    /// Whether these bytes directly view an unshared Wasm memory, which JavaScript
+    /// cannot detach or resize. Shared buffers have their own detachment prohibition.
     pub(crate) fn is_wasm_view(&self) -> bool {
         matches!(*self.0, BufferStore::Wasm(_))
     }
 
-    /// Whether these bytes are a view of this exact unshared Wasm memory.
+    /// Whether these bytes share this exact Wasm memory's data block.
     pub(crate) fn is_wasm_view_of(&self, memory: &Rc<MemoryStorage>) -> bool {
-        matches!(
-            &*self.0,
-            BufferStore::Wasm(view) if Rc::ptr_eq(&view._memory, memory)
-        )
+        match (&*self.0, &**memory) {
+            (BufferStore::Wasm(view), _) => Rc::ptr_eq(&view._memory, memory),
+            (BufferStore::AtomicShared(view), MemoryStorage::Shared(memory)) => view.shares_data_block(&memory.0),
+            _ => false,
+        }
     }
 
     /// Whether the store holds a reference counted outside its own allocation (shared
@@ -189,7 +192,7 @@ impl BufferBytes {
             BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
                 BufferWrite::Borrowed(bytes)
             }
-            BufferStore::AtomicShared(backing) => BufferWrite::Shared(backing.lock()),
+            BufferStore::AtomicShared(backing) => BufferWrite::Shared { state: backing.lock(), length: backing.len_for_view() },
             BufferStore::Shared(_) => unreachable!("unshared above"),
             BufferStore::Wasm(view) => BufferWrite::Borrowed(unsafe {
                 std::slice::from_raw_parts_mut(view.base, view.len)
@@ -223,7 +226,7 @@ impl BufferBytes {
                 BufferRead::Borrowed(bytes)
             }
             BufferStore::Shared(bytes) => BufferRead::Borrowed(bytes),
-            BufferStore::AtomicShared(b) => BufferRead::Shared(b.lock()),
+            BufferStore::AtomicShared(b) => BufferRead::Shared { state: b.lock(), length: b.len_for_view() },
             BufferStore::Wasm(v) => {
                 BufferRead::Borrowed(unsafe { std::slice::from_raw_parts(v.base, v.len) })
             }
@@ -273,27 +276,27 @@ impl BufferBytes {
 
 pub(crate) enum BufferRead<'a> {
     Borrowed(&'a [u8]),
-    Shared(MutexGuard<'a, State>),
+    Shared { state: MutexGuard<'a, State>, length: Option<usize> },
 }
 impl std::ops::Deref for BufferRead<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
             Self::Borrowed(b) => b,
-            Self::Shared(s) => &s.bytes,
+            Self::Shared { state, length } => &state.bytes[..length.unwrap_or(state.bytes.len())],
         }
     }
 }
 pub(crate) enum BufferWrite<'a> {
     Borrowed(&'a mut [u8]),
-    Shared(MutexGuard<'a, State>),
+    Shared { state: MutexGuard<'a, State>, length: Option<usize> },
 }
 impl std::ops::Deref for BufferWrite<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
             Self::Borrowed(b) => b,
-            Self::Shared(s) => &s.bytes,
+            Self::Shared { state, length } => &state.bytes[..length.unwrap_or(state.bytes.len())],
         }
     }
 }
@@ -301,7 +304,10 @@ impl std::ops::DerefMut for BufferWrite<'_> {
     fn deref_mut(&mut self) -> &mut [u8] {
         match self {
             Self::Borrowed(b) => b,
-            Self::Shared(s) => &mut s.bytes,
+            Self::Shared { state, length } => {
+                let length = length.unwrap_or(state.bytes.len());
+                &mut state.bytes[..length]
+            },
         }
     }
 }

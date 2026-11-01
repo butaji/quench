@@ -747,7 +747,7 @@ impl<H: Host> Vm<H> {
                 .promise
                 .dynamic_import_jobs
                 .iter()
-                .map(|job| job.promise),
+                .flat_map(super::promise::DynamicImportJob::roots),
         );
         for job in &self.realm.jobs {
             job.push_roots(&mut roots);
@@ -1016,7 +1016,7 @@ impl<H: Host> Vm<H> {
         self.shape_attribute_memo.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
-        self.programs.clear_field_hints();
+        self.programs.invalidate_shape_bindings();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
@@ -1057,6 +1057,8 @@ impl<H: Host> Vm<H> {
             // Async futex completion is an agent task: settle only after the
             // existing microtask queue drains, then run its Promise reactions.
             self.poll_shared_async_waiters(program)?;
+            self.advance_static_module_jobs(program)?;
+            self.advance_dynamic_import_jobs(program, true)?;
             if self.realm.jobs.is_empty(){break}
         }
         Ok(Value::UNDEFINED)
@@ -1100,12 +1102,11 @@ impl<H: Host> Vm<H> {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
                 self.run_pending_job(program, job, home)?;
-                // Module advancement does nothing in a realm with no module work due
-                // (`module_jobs_pending`), the common case after a job.
-                if self.module_jobs_pending() {
+                // Static continuations may become ready after a reaction. Import
+                // loading waits for the agent checkpoint after this queue drains.
+                if self.static_module_jobs_pending() {
                     self.switch_realm_global(home);
                     self.advance_static_module_jobs(program)?;
-                    self.advance_dynamic_import_jobs(program, true)?;
                 }
             }
             Ok(())
@@ -1151,8 +1152,6 @@ impl<H: Host> Vm<H> {
 
 
     pub(crate) fn drain_host_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        self.advance_static_module_jobs(program)?;
-        self.advance_dynamic_import_jobs(program, true)?;
         self.drain_jobs(program)
     }
 
@@ -1161,10 +1160,15 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         promise: Value,
     ) -> Result<(), JsError> {
-        self.run_job_queue(program, |vm| {
-            vm.promise_record(promise)
-                .is_some_and(|record| record.state == PromiseState::Pending)
-        })
+        loop {
+            self.run_job_queue(program, |vm| vm.promise_record(promise)
+                .is_some_and(|record| record.state == PromiseState::Pending))?;
+            if self.promise_record(promise).is_none_or(|record| record.state != PromiseState::Pending)
+                || !self.realm.jobs.is_empty() { return Ok(()); }
+            self.advance_static_module_jobs(program)?;
+            self.advance_dynamic_import_jobs(program, true)?;
+            if self.realm.jobs.is_empty() { return Ok(()); }
+        }
     }
 }
 

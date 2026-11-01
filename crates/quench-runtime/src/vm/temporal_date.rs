@@ -821,7 +821,7 @@ impl<H: Host> Vm<H> {
                 (constrain
                     && matches!(calendar, "chinese" | "dangi")
                     && canonical_code.ends_with('L')
-                    && parsed <= ISO_MONTHS_PER_YEAR as i32)
+                    && parsed <= ISO_MONTHS_PER_YEAR)
                     .then(|| {
                         canonical_code
                             .strip_prefix('M')?
@@ -832,7 +832,7 @@ impl<H: Host> Vm<H> {
                     .flatten()
             })
             .or_else(|| {
-                (!canonical_code.ends_with('L') && parsed <= ISO_MONTHS_PER_YEAR as i32)
+                (!canonical_code.ends_with('L') && parsed <= ISO_MONTHS_PER_YEAR)
                     .then_some(parsed as u32)
             })
             .map(|month| month as i32)

@@ -7,7 +7,7 @@ use std::{
     process::{Child, ChildStderr, Command, ExitCode, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Mutex,
+        Mutex, RwLock,
     },
     thread,
     time::Duration,
@@ -20,14 +20,17 @@ use quench_test262::ratchet::{
 use quench_test262::waivers::{Adjudication, Waivers};
 use quench_runtime::ExecutionMode;
 use quench_test262::{
-    discover_js_files, execution_mode_name, resolve_stages, take_execution_mode, HarnessCache,
-    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG,
+    discover_js_files, execution_mode_name, execution_mode_flag, resolve_stages, take_execution_mode, take_dynamic_source, HarnessCache,
+    ResolvedStage, StageReport, Test262Runner, Test262RuntimeHost, TestOutcome, JIT_FLAG, AOT_FLAG,
 };
 use wait_timeout::ChildExt;
 
 const DEFAULT_REPORT: &str = "target/test262-report.json";
 /// A compiled run's report, kept beside the interpreter's so neither overwrites the other.
 const DEFAULT_JIT_REPORT: &str = "target/test262-report-jit.json";
+const DEFAULT_AOT_REPORT: &str = "target/test262-report-aot.json";
+const DEFAULT_AOT_DYNAMIC_REPORT: &str = "target/test262-report-aot-dynamic.json";
+const AOT_SERIAL_SOURCE_BYTES_ENV: &str = "TEST262_AOT_SERIAL_SOURCE_BYTES";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
     "length.js",
@@ -64,11 +67,16 @@ fn main() -> ExitCode {
 
 fn run() -> ExitCode {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == AOT_FLAG) && args.iter().any(|arg| arg == JIT_FLAG) {
+        return fail("choose one execution mode".into());
+    }
+    let dynamic_source = take_dynamic_source(&mut args);
     let mode = take_execution_mode(&mut args);
+    if dynamic_source && mode != ExecutionMode::NativeOnly { return fail("--dynamic-source requires --aot".into()); }
     let freeze_expected = match args.as_slice() {
         [] => false,
         [option] if option == "--freeze-expected-pass-set" => true,
-        _ => return fail(format!("usage: run-all [{JIT_FLAG}] [--freeze-expected-pass-set]")),
+        _ => return fail(format!("usage: run-all [{JIT_FLAG}|{AOT_FLAG} [--dynamic-source]] [--freeze-expected-pass-set]")),
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
@@ -77,6 +85,9 @@ fn run() -> ExitCode {
         Ok(files) => files,
         Err(error) => return fail(error),
     };
+    if freeze_expected && mode == ExecutionMode::NativeOnly {
+        return fail("AOT qualification cannot freeze the interpreter baseline".into());
+    }
     if freeze_expected {
         return match freeze_expected_pass_set(&root, &all_files) {
             Ok(()) => ExitCode::SUCCESS,
@@ -84,6 +95,16 @@ fn run() -> ExitCode {
         };
     }
     let discovered = all_files.len();
+    if discovered == 0 { return fail("Test262 inventory is empty".into()); }
+    if mode == ExecutionMode::NativeOnly {
+        let Some(directory) = env::var_os("TEST262_CASE_REPORT_DIR").map(PathBuf::from) else {
+            return fail("AOT qualification requires TEST262_CASE_REPORT_DIR for variant accounting".into());
+        };
+        if directory.exists() && fs::read_dir(&directory).map_or(true, |mut entries| entries.next().is_some()) {
+            return fail("AOT case report directory must be empty to prevent stale outcomes".into());
+        }
+        if let Err(error) = fs::create_dir_all(&directory) { return fail(format!("case report directory: {error}")); }
+    }
     let files = match select_batch(all_files) {
         Ok(files) => files,
         Err(error) => return fail(error),
@@ -104,19 +125,21 @@ fn run() -> ExitCode {
         Ok(waivers) => waivers,
         Err(error) => return fail(error),
     };
-    let outcomes = match run_parallel_cases(&executable, &root, &files, timeout, mode) {
+    let outcomes = match run_parallel_cases(&executable, &root, &files, timeout, mode, dynamic_source) {
         Ok(outcomes) => outcomes,
         Err(error) => return fail(error),
     };
     let test_root = root.join("test");
     let report = collect_report(&files, &outcomes, &waivers, &test_root);
     let full_inventory = env::var_os("TEST262_BATCH_SIZE").is_none();
-    let ratchet = match update_ratchet(&root, &files, &outcomes, &report, timeout, full_inventory) {
+    let ratchet = match if mode == ExecutionMode::NativeOnly {
+        Ok(RatchetResult { verdict: "native-baseline-not-frozen", regressions: Vec::new() })
+    } else { update_ratchet(&root, &files, &outcomes, &report, timeout, full_inventory) } {
         Ok(ratchet) => ratchet,
         Err(error) => return fail(error),
     };
     if let Err(error) = write_report(
-        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout, mode,
+        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout, mode, dynamic_source,
     ) {
         return fail(error);
     }
@@ -140,7 +163,8 @@ fn run() -> ExitCode {
     if !ratchet.regressions.is_empty() {
         eprintln!("ratchet regressions={}", ratchet.regressions.len());
     }
-    if report.failures.is_empty() && report.total == files.len() && ratchet.regressions.is_empty() {
+    if report.failures.is_empty() && (mode != ExecutionMode::NativeOnly || report.failed == 0)
+        && report.total == files.len() && ratchet.regressions.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -153,11 +177,16 @@ fn run_parallel_cases(
     files: &[PathBuf],
     timeout: Duration,
     mode: ExecutionMode,
+    dynamic_source: bool,
 ) -> Result<Vec<Result<(), String>>, String> {
     let cursor = AtomicUsize::new(0);
     let completed = AtomicUsize::new(0);
     let outcomes = Mutex::new((0..files.len()).map(|_| None).collect::<Vec<_>>());
     let jobs = worker_jobs().min(files.len().max(1));
+    let serial_source_bytes = if mode == ExecutionMode::NativeOnly { aot_serial_source_bytes()? } else { None };
+    // Large native compilations need the host's memory alone. Admission precedes
+    // process creation, so time spent waiting never consumes a case's deadline.
+    let compilation_admission = RwLock::new(());
     let mut panicked = false;
     thread::scope(|scope| {
         let handles = (0..jobs)
@@ -165,15 +194,23 @@ fn run_parallel_cases(
                 let cursor = &cursor;
                 let completed = &completed;
                 let outcomes = &outcomes;
+                let compilation_admission = &compilation_admission;
                 scope.spawn(move || loop {
                     let index = cursor.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = files.get(index) else {
                         break;
                     };
-                    let result = run_case_process(executable, root, path, timeout, mode);
+                    let exclusive = serial_source_bytes.is_some_and(|threshold| fs::metadata(path).map_or(true, |metadata| metadata.len() >= threshold));
+                    let result = if exclusive {
+                        let _admission = compilation_admission.write().expect("compilation admission poisoned");
+                        run_case_process(executable, root, path, timeout, mode, dynamic_source)
+                    } else {
+                        let _admission = compilation_admission.read().expect("compilation admission poisoned");
+                        run_case_process(executable, root, path, timeout, mode, dynamic_source)
+                    };
                     outcomes.lock().expect("case results poisoned")[index] = Some(result);
                     let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 100 == 0 || count == files.len() {
+                    if count.is_multiple_of(100) || count == files.len() {
                         eprintln!("run-all progress={count}/{} jobs={jobs}", files.len());
                     }
                 })
@@ -224,6 +261,15 @@ fn collect_report(
     report
 }
 
+fn aot_serial_source_bytes() -> Result<Option<u64>, String> {
+    match env::var(AOT_SERIAL_SOURCE_BYTES_ENV) {
+        Err(env::VarError::NotPresent) => Ok(None),
+        Ok(value) => value.parse::<u64>().ok().filter(|value| *value > 0).map(Some)
+            .ok_or_else(|| format!("{AOT_SERIAL_SOURCE_BYTES_ENV} must be a positive byte count")),
+        Err(error) => Err(format!("{AOT_SERIAL_SOURCE_BYTES_ENV}: {error}")),
+    }
+}
+
 fn worker_jobs() -> usize {
     env::var("TEST262_JOBS")
         .ok()
@@ -248,19 +294,31 @@ fn required_timeout_ms() -> Result<u64, String> {
 
 fn run_case_entry() -> ExitCode {
     let mut args = env::args_os().skip(2).collect::<Vec<_>>();
+    let dynamic_source = take_dynamic_source(&mut args);
     let mode = take_execution_mode(&mut args);
+    if dynamic_source && mode != ExecutionMode::NativeOnly { return fail("--dynamic-source requires --aot".into()); }
     let Some(path) = args.into_iter().next().map(PathBuf::from) else {
         return fail("--case requires a test path".into());
     };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let mut runner = Test262Runner::new(Test262RuntimeHost::new(mode));
+    let host = match Test262RuntimeHost::new(mode).with_native_dynamic_source(dynamic_source) {
+        Ok(host) => host,
+        Err(error) => return fail(error),
+    };
+    let mut runner = Test262Runner::new(host);
     let mut harness = HarnessCache::new(root.join("harness"));
     // The bare failure is the case outcome, as run-stages' worker reports it.
-    match runner.run_file_with_cache(path, &mut harness) {
-        Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
-        Ok(TestOutcome::Fail { reason: failure }) | Err(failure) => {
+    match runner.run_file_variants_with_cache(&path, &mut harness) {
+        Ok(outcomes) => {
+            if let Err(error) = quench_test262::reporting::write_variant_report(&root, &path, &outcomes) { return fail(error); }
+            match quench_test262::aggregate_variants(&outcomes) {
+                TestOutcome::Pass => ExitCode::SUCCESS,
+                TestOutcome::Fail { reason } => { eprintln!("{reason}"); ExitCode::from(1) }
+            }
+        }
+        Err(failure) => {
             eprintln!("{failure}");
             ExitCode::from(1)
         }
@@ -273,10 +331,12 @@ fn run_case_process(
     path: &Path,
     timeout: Duration,
     mode: ExecutionMode,
+    dynamic_source: bool,
 ) -> Result<(), String> {
     let mut child = Command::new(executable)
         .arg("--case")
-        .args((mode == ExecutionMode::Compiled).then_some(JIT_FLAG))
+        .args(execution_mode_flag(mode))
+        .args(dynamic_source.then_some(quench_test262::DYNAMIC_SOURCE_FLAG))
         .arg(path)
         .env("TEST262_DIR", root)
         .stdout(Stdio::null())
@@ -366,10 +426,13 @@ fn write_report(
     ratchet: &RatchetResult,
     timeout: Duration,
     mode: ExecutionMode,
+    dynamic_source: bool,
 ) -> Result<(), String> {
     let default_report = match mode {
         ExecutionMode::Interpreted => DEFAULT_REPORT,
         ExecutionMode::Compiled => DEFAULT_JIT_REPORT,
+        ExecutionMode::NativeOnly if dynamic_source => DEFAULT_AOT_DYNAMIC_REPORT,
+        ExecutionMode::NativeOnly => DEFAULT_AOT_REPORT,
     };
     let path = env::var_os("TEST262_REPORT")
         .map(PathBuf::from)
@@ -399,9 +462,34 @@ fn write_report(
             }
             let relative = report_path(path, &test_root);
             let waiver = waivers.adjudicate(&relative, outcome).waiver();
-            case_outcome(relative, stage, outcome, waiver)
+            let mut record = case_outcome(relative, stage, outcome, waiver);
+            record["variants"] = quench_test262::reporting::variant_report_path(root, path)
+                .and_then(|path| fs::read(path).ok()).and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_else(|| {
+                    let metadata = fs::read_to_string(path).ok().and_then(|source| quench_test262::TestMetadata::parse(&source).ok());
+                    serde_json::json!(metadata.map(|metadata| metadata.variants().into_iter().map(|variant| serde_json::json!({
+                        "variant":variant.name(),"outcome":"not_completed","reason":outcome.as_ref().err(),
+                    })).collect::<Vec<_>>()).unwrap_or_default())
+                });
+            record
         })
         .collect::<Vec<_>>();
+    let mut variant_counts = BTreeMap::<String, usize>::new();
+    let mut native_units = 0_u64;
+    let mut native_functions = 0_u64;
+    let mut native_object_bytes = 0_u64;
+    let mut native_rejections = 0_u64;
+    for record in &outcomes {
+        for variant in record["variants"].as_array().into_iter().flatten() {
+            *variant_counts.entry(variant["outcome"].as_str().unwrap_or("not_completed").into()).or_default() += 1;
+            native_rejections += variant["native_rejections"].as_u64().unwrap_or(0);
+            for unit in variant["native_units"].as_array().into_iter().flatten() {
+                native_units += 1;
+                native_functions += unit["functions"].as_u64().unwrap_or(0);
+                native_object_bytes += unit["object_bytes"].as_u64().unwrap_or(0);
+            }
+        }
+    }
     let mut families = BTreeMap::<String, usize>::new();
     let mut metadata_families = BTreeMap::<String, usize>::new();
     for (_, reason) in &report.failures {
@@ -433,14 +521,24 @@ fn write_report(
         "schema": 1,
         "engine": RATCHET_ENGINE,
         "provenance": {
+            "test262_revision": Command::new("git").arg("-C").arg(root).args(["rev-parse", "HEAD"]).output().ok()
+                .filter(|output| output.status.success()).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned()),
             "source_revision": source_revision,
             "source_dirty": source_dirty,
             "binary": binary,
             "host": format!("{}-{}", env::consts::OS, env::consts::ARCH),
             "timeout_ms": timeout.as_millis(),
             "jobs": worker_jobs(),
+            "aot_serial_source_bytes": if mode == ExecutionMode::NativeOnly { aot_serial_source_bytes()? } else { None },
             "execution_mode": execution_mode_name(mode),
         },
+        "variant_counts": variant_counts,
+        "native_qualification": (mode == ExecutionMode::NativeOnly).then(|| serde_json::json!({
+            "units": native_units, "functions": native_functions, "object_bytes": native_object_bytes,
+            "capability_rejections": native_rejections, "compiler_present_in_host": true,
+            "separately_linked_executables": false,
+            "dynamic_source": dynamic_source,
+        })),
         "discovered": discovered,
         "total": report.total,
         "passed": report.passed,
@@ -565,7 +663,7 @@ fn update_ratchet_at(
     let current_passes = files
         .iter()
         .zip(outcomes)
-        .filter_map(|(path, outcome)| outcome.is_ok().then(|| report_path(path, &test_root)))
+        .filter(|&(_path, outcome)| outcome.is_ok()).map(|(path, _outcome)| report_path(path, &test_root))
         .collect::<HashSet<_>>();
     let mut regressions = Vec::new();
     if path.exists() {
@@ -727,6 +825,7 @@ mod tests {
             &fixture,
             Duration::from_secs(5),
             ExecutionMode::Interpreted,
+            false,
         )
         .unwrap_err();
 

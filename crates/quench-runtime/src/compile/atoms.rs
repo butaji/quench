@@ -15,6 +15,12 @@ pub(crate) trait AtomPrefix {
     fn table(&self) -> AtomTable;
     /// Whether the host runs specialized programs, which a program extending it follows.
     fn specialized(&self) -> bool;
+    /// Optional producer-owned obligations; ordinary execution prefixes retain none.
+    #[cfg(feature = "aot")]
+    fn native_source_requests(&self) -> Option<&std::cell::RefCell<std::collections::BTreeSet<super::NativeSourceKey>>> { None }
+    #[cfg(feature = "aot")]
+    fn native_global_script_calls(&self) -> &[(String, String)] { &[] }
+
 }
 
 /// A standalone program numbers its atoms from zero.
@@ -61,6 +67,18 @@ impl<'a> CompilerAtoms<'a> {
             added: Vec::new(),
             index: FxHashMap::default(),
         }
+    }
+
+    /// The names this compilation interned, and the table's capacity
+    /// (`profile-memory`'s compiler report).
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn index_len(&self) -> usize {
+        self.index.len()
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn index_capacity(&self) -> usize {
+        self.index.capacity()
     }
 
     pub(super) fn len(&self) -> usize {

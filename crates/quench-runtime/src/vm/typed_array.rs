@@ -113,8 +113,6 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn install_typed_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.runtime_atoms.value;
-        self.runtime_atoms.done;
         let uint8_array = self.native_value(Native::Uint8Array);
         let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();

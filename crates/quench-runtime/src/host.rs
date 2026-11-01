@@ -1,6 +1,31 @@
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// A frozen source failure is distinct from an incompatible native image.
+#[cfg(feature = "native-execution")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NativeSourceError {
+    InvalidImage(String),
+    Syntax(String),
+}
+
+#[cfg(feature = "native-execution")]
+impl From<String> for NativeSourceError {
+    fn from(message: String) -> Self { Self::InvalidImage(message) }
+}
+
+#[cfg(feature = "native-execution")]
+impl From<&str> for NativeSourceError {
+    fn from(message: &str) -> Self { Self::InvalidImage(message.to_owned()) }
+}
+
+#[cfg(feature = "native-execution")]
+impl std::fmt::Display for NativeSourceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self { Self::InvalidImage(message) | Self::Syntax(message) => formatter.write_str(message) }
+    }
+}
+
 /// Opaque operation index owned by the embedding's host-function table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WasmHostFunctionId(pub u32);
@@ -41,6 +66,8 @@ pub struct HostGlobal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleSource {
     pub name: String,
+    /// Host-selected syntax; annotations never establish runtime value facts.
+    pub typescript: bool,
     /// The text the VM compiles, shared: a resolved module is kept and handed out once per
     /// import that names it, and copying its text each time had cost a large bundle's
     /// whole text per import (vite npm scenario: 250 copies of a 1.36 MB module).
@@ -54,7 +81,7 @@ pub struct ModuleSource {
 impl ModuleSource {
     /// A module whose bytes are its source text.
     pub fn text(name: impl Into<String>, source: impl Into<std::sync::Arc<str>>) -> Self {
-        Self { name: name.into(), source: source.into(), original_bytes: None }
+        Self { name: name.into(), source: source.into(), original_bytes: None, typescript: false }
     }
 
     /// A module read as bytes: its source is their UTF-8 decoding, with replacement
@@ -65,9 +92,18 @@ impl ModuleSource {
             Err(error) => {
                 let bytes = error.into_bytes();
                 let source = String::from_utf8_lossy(&bytes).into();
-                Self { name: name.into(), source, original_bytes: Some(bytes.into()) }
+                Self { name: name.into(), source, original_bytes: Some(bytes.into()), typescript: false }
             }
         }
+    }
+
+    pub fn with_typescript(mut self, typescript: bool) -> Self {
+        self.typescript = typescript;
+        self
+    }
+
+    pub fn compilation_goal(&self) -> &'static str {
+        if self.typescript { crate::STATIC_TYPESCRIPT_MODULE_GOAL } else { crate::STATIC_MODULE_GOAL }
     }
 
     /// The module's bytes, as an import with `type: "bytes"` reads them.
@@ -122,6 +158,18 @@ pub trait Host {
         None
     }
 
+    /// Native code for the same exact source-shaping key as the compile cache.
+    /// Returning an image commits to its atom IDs and host ABI; an incompatible
+    /// image fails admission rather than recompiling behind the host's back.
+    #[cfg(feature = "native-execution")]
+    fn kept_native_program(
+        &mut self, _name: &str, _parts: &[&str],
+    ) -> Result<Option<crate::NativeJsProgram<Self>>, NativeSourceError>
+    where Self: Sized,
+    {
+        Ok(None)
+    }
+
     /// A program kept by `kept_compiled_program` has decoded, in place of its compilation,
     /// and is about to run. It parsed nothing, so it took none of a compilation's phase
     /// boundaries (`set_compile_phase_boundary`): a host may return the pages loading it
@@ -165,6 +213,12 @@ pub trait Host {
     /// matching engines that retain those observable frames can disable them.
     fn proper_tail_calls(&self) -> bool {
         true
+    }
+
+    /// V8's `--allow-natives-syntax`: eval code may carry its optimization directives
+    /// (`%PrepareFunctionForOptimization(f)`), which then evaluate only their argument.
+    fn allows_natives_syntax(&self) -> bool {
+        false
     }
 
     /// The stage 3 proposal "non-extensible applies to private": adding a private field,
@@ -226,7 +280,10 @@ pub trait Host {
 
     /// Allocate host metadata before Promise creation becomes observable. This
     /// phase cannot call guest code; reentrant init hooks see the stored identity.
-    fn create_promise_context(&mut self, _parent: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
+    fn create_promise_context(
+        &mut self,
+        _parent: Option<HostExecutionContext>,
+    ) -> Option<HostExecutionContext> {
         None
     }
 
@@ -236,7 +293,8 @@ pub trait Host {
         _promise: crate::RootId,
         _resource: HostExecutionContext,
     ) -> Result<(), crate::RootedError>
-    where Self: Sized,
+    where
+        Self: Sized,
     {
         Ok(())
     }
@@ -246,17 +304,30 @@ pub trait Host {
         _context: &mut crate::NativeContext<'_, Self>,
         _resource: HostExecutionContext,
         _before: bool,
-    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
+    ) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
 
     fn promise_settled(
         _context: &mut crate::NativeContext<'_, Self>,
         _resource: HostExecutionContext,
-    ) -> Result<(), crate::RootedError> where Self: Sized { Ok(()) }
+    ) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
 
     /// Capture the host context when the VM creates a Promise or thenable job.
     /// The returned token remains owned by that job until it runs or the VM
     /// collects it.
-    fn capture_job_context(&mut self, _resource: Option<HostExecutionContext>) -> Option<HostExecutionContext> {
+    fn capture_job_context(
+        &mut self,
+        _resource: Option<HostExecutionContext>,
+    ) -> Option<HostExecutionContext> {
         None
     }
 
@@ -288,6 +359,12 @@ pub trait Host {
         _args: &[WasmHostValue],
     ) -> Result<Vec<WasmHostValue>, String> {
         Err("host does not provide Wasm functions".into())
+    }
+
+    /// Validate a binary without producing executable code. The default preserves
+    /// existing compile-backed hosts; frontends can provide validation independently.
+    fn validate_wasm(&mut self, bytes: &[u8], mode: crate::ExecutionMode) -> bool {
+        self.compile_wasm(bytes, mode).is_ok()
     }
 
     /// Decode and validate a WebAssembly binary for the `WebAssembly` namespace, lowering
@@ -329,6 +406,12 @@ pub trait Host {
     /// source identity used by module resolution.
     fn import_meta_url(&mut self, source_name: &str) -> String {
         source_name.to_owned()
+    }
+
+    /// Absolute filesystem name for a file-backed module. Non-file modules
+    /// leave this unset, matching the optional Node `import.meta.filename`.
+    fn import_meta_filename(&mut self, _source_name: &str) -> Option<String> {
+        None
     }
 
     /// Display identity for source locations in captured stacks. This must not

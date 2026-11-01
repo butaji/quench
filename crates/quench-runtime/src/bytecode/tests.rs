@@ -355,6 +355,25 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
 }
 
 #[test]
+fn decoder_rejects_runtime_abi_without_derived_fact_layout() {
+    let program = crate::Engine::specialize("function check() { return 42; } check();", "fact-layout.js").unwrap();
+    let path = std::env::temp_dir().join(format!("quench-legacy-fact-abi-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    let fingerprint = ResidualProgram::RUNTIME_ABI_FINGERPRINT;
+    let abi = fingerprint.to_le_bytes();
+    let offset = bytes.windows(abi.len()).position(|window| window == abi).unwrap();
+    // The previous signature omitted both one-byte derived-layout widths.
+    const LEGACY_LAYOUT_MASK: u64 = u16::MAX as u64;
+    let legacy = (fingerprint & !LEGACY_LAYOUT_MASK).to_le_bytes();
+    bytes[offset..offset + legacy.len()].copy_from_slice(&legacy);
+    std::fs::write(&path, bytes).unwrap();
+    let result = ResidualProgram::read_binary(&path);
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(result.unwrap_err(), "residual runtime ABI mismatch");
+}
+
+#[test]
 fn decoder_rejects_unknown_property_definition_modes() {
     for wide in [false, true] {
         let mut program = crate::Engine::specialize(
@@ -576,10 +595,12 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     assert_eq!(super::source_line_starts(text).collect::<Vec<_>>(), [0, 3, 5, 7, 11, 15]);
     let source = super::ProgramSource {
         text: super::SourceText::Shared(text.into()),
+        typescript: false,
         base: 0,
         line_offset: 0,
         column_offset: 0,
         line_starts: Default::default(),
+        call_sites: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
@@ -588,10 +609,12 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     assert_eq!(source.source_line(0), None);
     let wrapped = super::ProgramSource {
         text: super::SourceText::Shared("wrapper\r\n😀first\rsecond\u{2028}third".into()),
+        typescript: false,
         base: 0,
         line_offset: 1,
         column_offset: 2,
         line_starts: Default::default(),
+        call_sites: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
@@ -602,10 +625,12 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
     let (line_offset, column_offset) = crate::wrapper_origin(prefix).unwrap();
     let retained = super::ProgramSource {
         text: super::SourceText::Static(body),
+        typescript: false,
         base: prefix.len() as u32,
         line_offset,
         column_offset,
         line_starts: Default::default(),
+        call_sites: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));
     assert_eq!(retained.source_line(2), Some("second"));

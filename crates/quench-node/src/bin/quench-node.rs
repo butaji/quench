@@ -133,11 +133,34 @@ fn main() -> std::process::ExitCode {
             libc::mallopt(libc::M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES);
         }
     }
-    match quench_node::shared_run::run_shared_cli(std::env::args().skip(1)) {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    let result = if arguments.first().is_some_and(|argument| argument == "compile") {
+        #[cfg(feature = "aot")]
+        { quench_node::aot::cli::run(arguments.into_iter().skip(1).collect()) }
+        #[cfg(not(feature = "aot"))]
+        { Err("compile requires an aot-enabled quench-node compiler build".into()) }
+    } else {
+        quench_node::shared_run::run_shared_cli(arguments)
+    };
+    let status = match result {
         Ok(status) => status,
         Err(error) => {
             eprintln!("{error}");
             std::process::ExitCode::FAILURE
         }
+    };
+    // A parallel fixture may replace itself with process.execve(process.execPath).
+    // Preserve the harness's private result channel across that replacement.
+    if let Some(result_path) = std::env::var_os("QUENCH_NODE_TEST_CASE_RESULT") {
+        let result = if status == std::process::ExitCode::SUCCESS {
+            r#"{"outcome":"pass"}"#
+        } else {
+            r#"{"outcome":"fail","reason":"replacement process exited unsuccessfully"}"#
+        };
+        if let Err(error) = std::fs::write(result_path, result) {
+            eprintln!("write replaced Node worker result: {error}");
+            return std::process::ExitCode::from(2);
+        }
     }
+    status
 }

@@ -65,7 +65,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 JSXClosingFragment::new(e.span, self)
             }
         };
-        JSXFragment::boxed(self.end_span(start), opening_fragment, children, closing_fragment, self)
+        JSXFragment::boxed(
+            self.end_span(start),
+            opening_fragment,
+            children,
+            closing_fragment,
+            self,
+        )
     }
 
     /// `JSXElement` :
@@ -106,7 +112,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             };
             (children, Some(closing_element))
         };
-        JSXElement::boxed(self.end_span(start), opening_element, children, closing_element, self)
+        JSXElement::boxed(
+            self.end_span(start),
+            opening_element,
+            children,
+            closing_element,
+            self,
+        )
     }
 
     /// `JSXOpeningElement` :
@@ -121,7 +133,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) {
         let name = self.parse_jsx_element_name();
         // <Component<TsType> for tsx
-        let type_arguments = if self.is_ts { self.try_parse_type_arguments() } else { None };
+        let type_arguments = if self.is_ts {
+            self.try_parse_type_arguments()
+        } else {
+            None
+        };
         let attributes = self.parse_jsx_attributes();
         let self_closing = self.eat(Kind::Slash);
         if !self_closing || in_jsx_child {
@@ -341,7 +357,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             } else {
                 self.expect(Kind::RAngle);
             }
-            JSXClosing::Fragment(JSXClosingFragment::new(self.end_span(open_angle_start), self))
+            JSXClosing::Fragment(JSXClosingFragment::new(
+                self.end_span(open_angle_start),
+                self,
+            ))
         } else {
             // Closing element: </name>
             let name = self.parse_jsx_element_name();

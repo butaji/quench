@@ -74,7 +74,9 @@ impl ProgramFootprint {
         let records = || slots.iter().filter_map(FunctionSlot::record);
         let sum = |field: fn(&Function) -> usize| records().map(field).sum::<usize>();
         Self {
-            source: program.source.as_ref().map_or(0, |source| source.text.len()),
+            source: program.source.as_ref().map_or(0, |source| source.text.len()
+                + source.call_sites.get().map_or(0, |sites| size_of_val(sites.as_ref())
+                    + sites.iter().map(|site| site.callee.capacity()).sum::<usize>())),
             function_records: slots.capacity() * size_of::<FunctionSlot>()
                 + records().count() * size_of::<Function>(),
             code: sum(|function| bytes::<Instr>(&function.code)),

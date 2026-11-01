@@ -644,12 +644,19 @@ macro_rules! opcodes {
     ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
+        #[quench_macros::native_operation_exports(10, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         #[allow(dead_code)]
         impl Op {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
+            #[cfg(feature = "native-execution")]
+            pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
+                match self {
+                    $(Self::$name => crate::native_js_operation_entry::<H, { Self::$name as usize }>),+
+                }
+            }
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
             const RESULT_LAYOUTS: [ResultLayout; Self::COUNT] = [$(
                 opcodes!(@result $result)),+
@@ -1575,6 +1582,8 @@ impl FactTables for ResidualProgram {
 /// field left out of the list does not compile.
 macro_rules! call_plan_bits {
     ($($field:ident),* $(,)?) => {
+        const CALL_PLAN_FLAG_COUNT: u32 = [$(stringify!($field)),*].len() as u32;
+
         impl CallPlan {
             fn to_bits(self) -> u32 {
                 let mut bits = 0;
@@ -3098,6 +3107,10 @@ pub(crate) struct EvalBinding {
 }
 
 impl EvalBinding {
+    /// Canonical atom order for construction, scope projection and decoding.
+    pub(crate) fn sort_by_atom(bindings: &mut [Self]) {
+        bindings.sort_unstable_by_key(|binding| binding.atom);
+    }
     pub(crate) fn conflicts_with_var(self) -> bool {
         matches!(self.location, EvalBindingLocation::Local(_))
             && self.declaration == EvalBindingDeclaration::Lexical
@@ -3138,7 +3151,12 @@ pub(crate) enum LexicalBindingKind {
 }
 
 impl LexicalBindingKind {
-    pub(crate) const ALL: [Self; 4] = [Self::Mutable, Self::Immutable, Self::FunctionName, Self::PrivateName];
+    pub(crate) const ALL: [Self; 4] = [
+        Self::Mutable,
+        Self::Immutable,
+        Self::FunctionName,
+        Self::PrivateName,
+    ];
 
     pub(crate) fn capture_prefix(self) -> &'static str {
         match self {
@@ -3286,7 +3304,11 @@ impl FieldBase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldPart { First, Second, Sink }
+pub(crate) enum FieldPart {
+    First,
+    Second,
+    Sink,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FieldSite {
@@ -3298,7 +3320,11 @@ pub(crate) struct FieldSite {
 }
 impl FieldSite {
     pub(crate) fn source(self, part: FieldPart) -> Option<(u32, u32)> {
-        self.sources[match part { FieldPart::First => 0, FieldPart::Second => 1, FieldPart::Sink => 2 }]
+        self.sources[match part {
+            FieldPart::First => 0,
+            FieldPart::Second => 1,
+            FieldPart::Sink => 2,
+        }]
     }
 }
 
@@ -3637,10 +3663,19 @@ impl std::ops::Deref for SourceText {
     }
 }
 
+/// The callee a failed call at a source byte offset names in its error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CallSiteDescription {
+    pub(crate) offset: u32,
+    pub(crate) construct: bool,
+    pub(crate) callee: String,
+}
+
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
 #[derive(Clone, Debug)]
 pub(crate) struct ProgramSource {
     pub(crate) text: SourceText,
+    pub(crate) typescript: bool,
     /// Bytes of compiled source before `text` that the program keeps no copy of: a host
     /// wrapper's prefix. With any, `text` starts at the wrapper origin, compiled line
     /// `line_offset + 1` and UTF-16 column `column_offset`.
@@ -3651,6 +3686,9 @@ pub(crate) struct ProgramSource {
     /// read a line per throw, which a scan from the top would make linear in the source.
     /// Shared, so a copy of the source (an error's captured call sites) copies no index.
     pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
+    /// Complete static call-printing facts for native images. An unset cell
+    /// leaves the dynamic error-path renderer in charge; an empty table is final.
+    pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
 }
 
 /// A static item at a fixed place in the executable image, from which a snapshot measures the
@@ -3709,21 +3747,69 @@ impl SourceText {
 impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
-        let Self { text, base, line_offset, column_offset, line_starts: _ } = self;
+        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
         text.write_snapshot(writer);
+        writer.bool(*typescript);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
+        writer.bool(call_sites.get().is_some());
+        if let Some(sites) = call_sites.get() {
+            writer.len(sites.len());
+            for site in sites.iter() {
+                writer.u32(site.offset);
+                writer.bool(site.construct);
+                writer.str(&site.callee);
+            }
+        }
     }
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        Ok(Self {
+        let mut source = Self {
             text: SourceText::read_snapshot(reader)?,
+            typescript: reader.bool()?,
             base: reader.u32()?,
             line_offset: reader.u32()?,
             column_offset: reader.u32()?,
             line_starts: std::cell::OnceCell::new(),
-        })
+            call_sites: Default::default(),
+        };
+        if reader.bool()? {
+            let count = reader.len()?;
+            let mut sites = Vec::with_capacity(count);
+            for _ in 0..count {
+                sites.push(CallSiteDescription { offset: reader.u32()?, construct: reader.bool()?, callee: reader.str()?.into() });
+            }
+            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
+            source.validate_call_sites().map_err(crate::snapshot::SnapshotError)?;
+        }
+        Ok(source)
+    }
+
+    pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
+        if let Some(sites) = self.call_sites.get() {
+            let mut previous = None;
+            for site in sites.iter() {
+                let key = (site.offset, site.construct);
+                if previous.is_some_and(|old| old >= key) || !self.text.is_char_boundary(site.offset as usize) || site.callee.is_empty() {
+                    return Err("invalid frozen call-site descriptions".into());
+                }
+                previous = Some(key);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn byte_offset(&self, position: SourcePosition) -> Option<u32> {
+        let line = self.source_line(position.line)?;
+        let column = position.column.checked_sub(1)?;
+        let line_start = line.as_ptr() as usize - self.text.as_ptr() as usize;
+        let mut units = 0;
+        for (byte, character) in line.char_indices() {
+            if units == column { return u32::try_from(line_start + byte).ok(); }
+            units += character.len_utf16() as u32;
+        }
+        (units == column).then(|| u32::try_from(line_start + line.len()).ok()).flatten()
     }
 }
 
@@ -3910,6 +3996,16 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    /// Original compiler text used by diagnostics and Function.prototype.toString.
+    pub fn source_text(&self) -> Option<&str> {
+        self.source.as_ref().map(|source| source.text.as_ref())
+    }
+
+    /// Resolve source-derived native error descriptions before publication.
+    #[cfg(feature = "aot")]
+    pub fn freeze_native_diagnostics(&self) {
+        crate::vm::freeze_call_sites(self);
+    }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
     #[inline(always)]
@@ -3956,6 +4052,9 @@ impl ResidualProgram {
             }
         };
         if let Some(unlowered) = unlowered {
+            if !crate::DYNAMIC_EXECUTION_ENABLED {
+                panic!("native function {index} of {} was not lowered before linking", self.source_name);
+            }
             let function = self.lower_unlowered(unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
@@ -3971,11 +4070,16 @@ impl ResidualProgram {
             Some(decoded) => decoded.unwrap_or_else(|error| {
                 panic!("function {index} of {} does not decode: {error}", self.source_name)
             }),
-            None => crate::compile::replay::recompile(self, index as u32)
+            None => {
+                if !crate::DYNAMIC_EXECUTION_ENABLED {
+                    panic!("native function {index} of {} has no archived record", self.source_name);
+                }
+                crate::compile::replay::recompile(self, index as u32)
                 .unwrap_or_else(|error| {
                     panic!("function {index} of {} does not compile again: {error}", self.source_name)
                 })
-                .function,
+                .function
+            },
         };
         // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
         function.decoded.prime_loop(&function.code, &function.wide);
@@ -4076,7 +4180,10 @@ impl ResidualProgram {
         self.adjust_source_position(position)
     }
 
-    pub(crate) fn adjust_source_position(&self, mut position: SourcePosition) -> Option<SourcePosition> {
+    pub(crate) fn adjust_source_position(
+        &self,
+        mut position: SourcePosition,
+    ) -> Option<SourcePosition> {
         if let Some(source) = &self.source {
             position.line = position
                 .line
@@ -4092,15 +4199,27 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 111;
+    pub const FORMAT_VERSION: u8 = 113;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
+        const DERIVED_FACT_COUNT_SHIFT: u32 = u8::BITS;
+        assert!(DERIVED_FACT_COUNT <= u8::MAX as u32);
+        assert!(CALL_PLAN_FLAG_COUNT <= u8::MAX as u32);
         ABI_SIGNATURE | ((Self::FORMAT_VERSION as u64) << FORMAT_VERSION_SHIFT)
+            | ((DERIVED_FACT_COUNT as u64) << DERIVED_FACT_COUNT_SHIFT)
+            | CALL_PLAN_FLAG_COUNT as u64
     };
 
-    pub(crate) fn is_module(&self) -> bool {
+    /// Whether the entry uses module semantics, including an import-only bootstrap.
+    pub fn is_module(&self) -> bool {
         self.kind == ProgramKind::Module
+    }
+
+    /// Declared module requests in source order, before execution. Hosts can
+    /// resolve and compile a static graph from the compiler's syntax result.
+    pub fn module_requests(&self) -> &[ModuleRequest] {
+        &self.module_requests
     }
 
     pub(crate) fn root_variables_are_local(&self) -> bool {
@@ -4139,6 +4258,11 @@ impl ResidualProgram {
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
         binary::read_program(path)
+    }
+
+    /// Read the same validated metadata from an embedded native image asset.
+    pub fn from_binary_bytes(bytes: KeptBytes) -> Result<Self, String> {
+        binary::read_program_bytes(bytes)
     }
 
     /// The compile-cache form of this program (`binary::encode_compact_program`) and the atom
@@ -4221,6 +4345,10 @@ impl ResidualProgram {
     }
 }
 mod binary;
+#[cfg(feature = "native-execution")]
+mod native_metadata;
+#[cfg(feature = "native-execution")]
+pub use native_metadata::NativeProgramNamespace;
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};

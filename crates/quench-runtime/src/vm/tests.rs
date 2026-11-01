@@ -10,6 +10,92 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
+    let source = r#"
+      function exercise() {
+        'use strict';
+        const effects = [];
+        function expectReferenceError(action) {
+          let caught = false;
+          try { action(); } catch (error) { caught = error instanceof ReferenceError; }
+          if (!caught) throw new Error('lost unresolvable reference');
+        }
+        expectReferenceError(() => { freshAssignment = (effects.push('assign'), globalThis.freshAssignment = 5); });
+        if (globalThis.freshAssignment !== 5) throw new Error('RHS property overwritten');
+        delete globalThis.freshAssignment;
+        expectReferenceError(() => { ({freshShorthand} = {get freshShorthand() {effects.push('get'); globalThis.freshShorthand = 6; return 9;}}); });
+        if (globalThis.freshShorthand !== 6) throw new Error('getter property overwritten');
+        delete globalThis.freshShorthand;
+        expectReferenceError(() => { ({freshDefault = (effects.push('default'), globalThis.freshDefault = 7)} = {}); });
+        if (globalThis.freshDefault !== 7) throw new Error('default property overwritten');
+        delete globalThis.freshDefault;
+        expectReferenceError(() => { freshCompound += (effects.push('unexpected'), globalThis.freshCompound = 8); });
+        if ('freshCompound' in globalThis) throw new Error('compound RHS executed');
+        const cause = {};
+        let caught;
+        try { freshAbrupt = (() => { effects.push('abrupt'); throw cause; })(); } catch (error) { caught = error; }
+        if (caught !== cause) throw new Error('RHS exception replaced');
+        if (effects.join(',') !== 'assign,get,default,abrupt') throw new Error('effect order');
+      }
+      for (let index = 0; index < 40; index++) exercise();
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "captured-unresolvable.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "captured-unresolvable.js").unwrap(),
+    ] {
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut vm = Vm::new(TestHost::default());
+            vm.programs.enable_js_general_dispatch();
+            vm.programs.compile_general_baseline_when_hot();
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            #[cfg(not(quench_profiled))]
+            if mode == crate::ExecutionMode::Compiled {
+                assert!(matches!(
+                    vm.programs.js_tier(super::program_store::ProgramId::MAIN, 1),
+                    Some(super::program_store::JsTierState::Compiled(_))
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn shorthand_assignment_captures_with_binding_without_reading_its_value() {
+    let source = r#"
+      function exercise() {
+        const effects = [];
+        const target = {
+          get selected() { effects.push('unexpected read'); return 1; },
+          set selected(value) { effects.push('set:' + value); }
+        };
+        with (target) { ({selected} = { get selected() { effects.push('rhs'); return 5; } }); }
+        if (effects.join(',') !== 'rhs,set:5') throw new Error(effects.join(','));
+      }
+      for (let index = 0; index < 40; index++) exercise();
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "captured-shorthand.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "captured-shorthand.js").unwrap(),
+    ] {
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut vm = Vm::new(TestHost::default());
+            vm.programs.enable_js_general_dispatch();
+            vm.programs.compile_general_baseline_when_hot();
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            #[cfg(not(quench_profiled))]
+            if mode == crate::ExecutionMode::Compiled {
+                assert!(matches!(
+                    vm.programs.js_tier(super::program_store::ProgramId::MAIN, 1),
+                    Some(super::program_store::JsTierState::Compiled(_))
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     let source = r#"
       const out=[];
@@ -401,7 +487,7 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 fn shape_compaction_clears_own_field_hints() {
     // Read sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
-    // another layout, so the compaction clears every hint (`LaneView::clear_field_hints`).
+    // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
     let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
     let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
@@ -1504,7 +1590,10 @@ fn local_bindings_shadow_captured_function_names_and_constants() {
          var result = named() + ',' + finallyVar();\n\
          var message = (() => { try { n = 1; } catch (error) { return error.message; } })();";
     assert_eq!(global_text(source, "result"), "2,3,4,5");
-    assert_eq!(global_text(source, "message"), "Assignment to constant variable.");
+    assert_eq!(
+        global_text(source, "message"),
+        "Assignment to constant variable."
+    );
 }
 
 #[test]
@@ -4257,7 +4346,8 @@ fn spread_and_aggregate_roots_release_after_guest_failures() {
                     vm.construct_aggregate_error(&program, &args[..3], args[3])
                 } else {
                     let array = vm.new_array(Vec::new());
-                    vm.spread_into_array(&program, array, args[0]).map(|()| array)
+                    vm.spread_into_array(&program, array, args[0])
+                        .map(|()| array)
                 };
                 assert_eq!(
                     result.is_err(),
@@ -4654,12 +4744,11 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
                     let outcome = vm.array_reduce_native(&program, native, source, &args);
                     assert_eq!(outcome.is_err(), fails);
                     assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                    if let Ok(result) = outcome {
-                        if let Some(handle) = vm.heap.weak_handle(result) {
+                    if let Ok(result) = outcome
+                        && let Some(handle) = vm.heap.weak_handle(result) {
                             vm.collect_now(&program);
                             assert!(vm.heap.weak_value(handle).is_none());
                         }
-                    }
                 }
             }
         }
@@ -5081,6 +5170,38 @@ fn internal_promise_then_handlers_survive_species_reentry_and_release_after_jobs
 }
 
 #[test]
+fn dynamic_import_jobs_evaluate_in_the_requesting_realm() {
+    let source = r#"
+        globalThis.marker = 'outer';
+        const realm = new ShadowRealm();
+        realm.evaluate("globalThis.marker = 'inner'");
+        realm.importValue('inner.js', 'read').then(read => print(read()));
+        realm.importValue('throws.js', 'read').catch(error => print(error instanceof TypeError));
+        import('outer.js').then(module => print(module.read()));
+        Promise.resolve().then(() => { $262.gc(); print(globalThis.marker); });
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source, name: "import-realm.js", kind: crate::SourceKind::Script,
+        }).unwrap(),
+        Engine::specialize(source, "import-realm.js").unwrap(),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let host = TestHost::writing_to(output.clone()).with_test262().with_modules(|name| {
+            let source = if name == "throws.js" {
+                "$262.gc(); throw new Error(globalThis.marker);"
+            } else {
+                "$262.gc(); export function read() { return globalThis.marker; }"
+            };
+            Ok(Some(crate::ModuleSource::text(name.to_owned(), source.to_owned())))
+        });
+        let mut vm = Vm::new(host);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["outer", "outer", "inner", "true"]);
+    }
+}
+
+#[test]
 fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() {
     use super::promise::{DynamicImportJob, PromiseState};
     for collect_while_queued in [false, true] {
@@ -5097,6 +5218,8 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
                 cache_key: format!("{name}:javascript"),
                 module: crate::ModuleSource::text(name, source),
                 promise,
+                realm: vm.realm.globals,
+                module_type: None,
             });
         }
         if collect_while_queued {
@@ -6229,9 +6352,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .collect::<Vec<_>>();
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
-                    super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
-                    )
+                    super::property_key::PropertyKey::symbol(vm.heap.alloc(super::Cell::Symbol(
+                        crate::heap::SymbolData::public(Some("entry".into())),
+                    )))
                 } else {
                     super::property_key::PropertyKey::string(atom)
                 };
@@ -6699,7 +6822,10 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
+                        vm.heap
+                            .alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some(
+                                "entry".into(),
+                            ))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -6875,7 +7001,7 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
                     }
                     assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
                     assert_eq!(
-                        vm.is_constructable(&program, proxy),
+                        vm.is_constructable(proxy),
                         constructable,
                         "{kind} {owner} {entry}"
                     );
@@ -10663,7 +10789,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
       }
     "#;
     for program in [
-        Engine::compile(crate::ExecutionRequest { source, name: "wtf16-string-coercion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "wtf16-string-coercion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize(source, "wtf16-string-coercion.js").unwrap(),
     ] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
@@ -10673,7 +10804,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
 #[test]
 fn script_directive_completion_survives_declarations_and_preserves_string_units() {
     for program in [
-        Engine::compile(crate::ExecutionRequest { source: "", name: "directive-completion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source: "",
+            name: "directive-completion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize("", "directive-completion.js").unwrap(),
     ] {
         for (source, expected) in [
@@ -10686,7 +10822,9 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
         ] {
             let mut vm = Vm::new(TestHost::default());
             vm.execute(&program).unwrap();
-            let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
+            let value = vm
+                .eval_global_script_named(&program, source, false, "directive-completion.js")
+                .unwrap();
             match expected {
                 Some(expected) => assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == expected), "{source}"),
                 None => assert!(value.is_undefined(), "{source}"),
@@ -10728,7 +10866,7 @@ fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collecti
 
 #[test]
 fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
@@ -10748,7 +10886,7 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
 
 #[test]
 fn nullish_property_diagnostics_include_original_property_names() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const key={toString(){hooks++;throw Error('key hook');}};
       for(const value of [null,undefined]) {
         for(const property of ['length',1,Symbol('x')]) {
@@ -10780,11 +10918,22 @@ for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigI
         let mut vm=Vm::new(TestHost::writing_to(output.clone()));
         let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),[
-            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-        ]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "RangeError",
+                "Start offset -1.5 is outside the bounds of the buffer",
+                "offset",
+                "5",
+                "true",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+            ]
+        );
     }
 }
 
@@ -10798,11 +10947,24 @@ check('proxy-readonly',()=>store(new Proxy(Object.freeze({x:0}),{}),'x'));check(
 check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get toString(){events.push('unexpected-string');throw marker},get [Symbol.toStringTag](){events.push('unexpected-tag');throw marker}};Object.defineProperty(hostile,'x',{value:0,writable:false});check('hostile',()=>field(hostile));for(const key of ['0','length','5'])check(['string',key],()=>store('abc',key));Object.defineProperty(Boolean.prototype,'x',{configurable:true,get(){events.push('unexpected-boolean-get')}});check('primitive-getter',()=>field(false));delete Boolean.prototype.x;out.push(['reflect',Reflect.set(new Proxy({}, {set(){return false}}),'x',1)]);out.push(events);print(JSON.stringify(out));
 
 "#;
-    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assignment-diagnostics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assignment-diagnostics.js").unwrap()] {
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "assignment-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "assignment-diagnostics.js").unwrap(),
+    ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#
+            ]
+        );
     }
 }
 
@@ -10832,7 +10994,7 @@ fn private_field_initialization_does_not_follow_proxy_prototypes() {
         let output=Rc::new(RefCell::new(Vec::new()));
         let mut vm=Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),["[true,true,42,[]]"]);
+        assert_eq!(output.borrow().as_slice(), ["[true,true,42,[]]"]);
     }
 }
 
@@ -10879,7 +11041,9 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     let program = Engine::specialize("void 0", "owned-code-lifetime.js").unwrap();
     vm.execute(&program).unwrap();
     let before = vm.programs.live_count();
-    let script = vm.compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0)).unwrap();
+    let script = vm
+        .compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0))
+        .unwrap();
     let owner = Rc::downgrade(&script.state);
     vm.collect_now(&program);
     vm.collect_now(&program);
@@ -10895,7 +11059,9 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert_eq!(vm.programs.live_count(), before);
 
-    let script = vm.compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0)).unwrap();
+    let script = vm
+        .compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0))
+        .unwrap();
     let function = vm.evaluate_embedding_compiled_script(&script).unwrap();
     let root = vm.heap.root(function);
     drop(script);
@@ -10903,7 +11069,11 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert!(vm.programs.live_count() > before);
     let function = vm.heap.root_value(root).unwrap();
-    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap(), Value::number(41.0));
+    assert_eq!(
+        vm.call_value(&program, function, Value::UNDEFINED, &[])
+            .unwrap(),
+        Value::number(41.0)
+    );
     vm.heap.release_root(root);
     vm.collect_now(&program);
     vm.collect_now(&program);
@@ -11990,6 +12160,176 @@ fn js_jit_specialized_guard_misses_handoff_to_general_dispatch() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
+    let source = r#"
+      function expandWords(seed, count) {
+        const words = seed.slice();
+        const width = seed.length;
+        for (let i = width; i < count; i++) {
+          let value = words[i - 1];
+          if (i % width === 0) value = (value << 8) ^ (value >>> 24);
+          words[i] = words[i - width] ^ value;
+        }
+        return words[count - 1];
+      }
+      let checksum = 0;
+      for (let call = 0; call < 40; call++)
+        checksum = (checksum + expandWords([call + 1, 3, 7, 15], 65) * (call + 1)) | 0;
+      print(checksum);
+      let coercions = 0;
+      const value = { valueOf() { coercions++; $262.gc(); return 15; } };
+      print(expandWords([1, 3, 7, value], 8));
+      print(coercions);
+      const thrown = {};
+      let throws = 0;
+      let same = false;
+      try {
+        expandWords([1, 3, 7, { valueOf() { throws++; $262.gc(); throw thrown; } }], 8);
+      } catch (error) { same = error === thrown; }
+      print(throws);
+      print(same);
+      globalThis.lifetimeSeed = [1, 3, 7, 15];
+      print(expandWords(lifetimeSeed, 65));
+    "#;
+    let program = Engine::specialize(source, "osr-array-alias-lifetimes.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "expandWords")
+    }).unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    assert_eq!(expected.borrow().as_slice(), ["2080387084", "3850", "3", "1", "true", "16777231"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let native_runs = |vm: &Vm<TestHost>| {
+        vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
+            .osr_diagnostics().native_region_runs
+    };
+    let before = native_runs(&vm);
+    assert!(before > 0, "array/numeric lifetime loop must execute a native body");
+    vm.collect_now(&program);
+    let function_atom = vm.intern_atom("expandWords");
+    let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
+    let seed_atom = vm.intern_atom("lifetimeSeed");
+    let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
+    let result = vm.call_value(&program, function, Value::UNDEFINED, &[seed, Value::number(65.0)]).unwrap();
+    assert_eq!(result, Value::number(expected.borrow().last().unwrap().parse().unwrap()));
+    assert!(native_runs(&vm) > before, "native entry must recover after collection");
+    // Check native recovery before growth exits exhaust the unchanged tier budget,
+    // then exercise that budget and its interpreter continuation without resetting it.
+    for _ in 0..200 {
+        assert_eq!(vm.call_value(&program, function, Value::UNDEFINED,
+            &[seed, Value::number(65.0)]).unwrap(), result);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_remainder_preserves_number_edges_and_coercion() {
+    let source = r#"
+      function remainderLoop(left, right) {
+        let result = 0;
+        for (let i = 0; i < 64; i++) result = left % right;
+        return result;
+      }
+      for (let i = 0; i < 100; i++) remainderLoop(7, 3);
+      const pairs = [[-4, 2], [-0, 3], [4, -2], [1, 0], [1, -0],
+        [Infinity, 2], [-Infinity, 2], [2, Infinity], [-2, -Infinity],
+        [NaN, 2], [2, NaN], [-2147483648, -1], [0.5, 0.2], [5.5, 2]];
+      const results = [];
+      for (const pair of pairs) {
+        const value = remainderLoop(pair[0], pair[1]);
+        results.push(Object.is(value, -0) ? '-0' : String(value));
+      }
+      print(results.join(','));
+      let calls = 0;
+      print(remainderLoop({valueOf() {calls++; return 7;}}, 3));
+      print(calls);
+    "#;
+    let program = Engine::specialize(source, "osr-remainder-number-edges.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "remainderLoop")
+    }).unwrap();
+    for compiled in [false, true] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if compiled {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [
+            "-0,-0,0,NaN,NaN,NaN,NaN,2,-2,NaN,NaN,-0,0.09999999999999998,1.5", "1", "64",
+        ]);
+        if compiled {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
+                .unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "remainder must run natively: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_number_comparison_results_are_booleans() {
+    let source = r#"
+      function compareLoop(left, right) {
+        let answer = false;
+        let count = 0;
+        for (let i = 0; i < 2000; i++) {
+          answer = left === right || left < right;
+          if (answer) count++;
+        }
+        return [answer, count];
+      }
+      print(JSON.stringify(compareLoop(1, 2)));
+      print(JSON.stringify(compareLoop(0, -0)));
+      print(JSON.stringify(compareLoop(NaN, NaN)));
+      print(JSON.stringify(compareLoop(Infinity, 2)));
+      let calls = 0;
+      print(JSON.stringify(compareLoop({valueOf() {calls++; return 1;}}, 2)));
+      print(calls);
+      const thrown = {};
+      let throws = 0;
+      let same = false;
+      try { compareLoop({valueOf() {throws++; throw thrown;}}, 2); }
+      catch (error) {same = error === thrown;}
+      print(throws);
+      print(same);
+    "#;
+    let program = Engine::specialize(source, "osr-number-comparison-results.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "compareLoop")
+    }).unwrap();
+    for compiled in [false, true] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        if compiled {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+        }
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [
+            "[true,2000]", "[true,2000]", "[false,0]", "[false,0]", "[true,2000]", "2000", "1", "true",
+        ]);
+        if compiled {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
+                .unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "comparison results must run natively: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_compiles_a_guarded_numeric_field_loop() {
     let source = r#"
       function sum(item) {
@@ -12186,6 +12526,353 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
+    let source = r#"
+      function update(item, limit, delta) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          const before = item.value;
+          item.value = before + delta;
+          total += item.value;
+        }
+        return total;
+      }
+      function aliases(first, second, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          first.value = first.value + 1;
+          total += second.value;
+        }
+        return total;
+      }
+      function replace(item, value, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          total += item.value;
+          item.value = value;
+        }
+        return total;
+      }
+      const item = { value: 0, left: 1, right: 2 };
+      let total = 0;
+      for (let call = 0; call < 80; call++) total += update(item, 2000, 1);
+      item.value = -0;
+      update(item, 1, -0);
+      if (!Object.is(item.value, -0)) throw 'field cell signed zero';
+      item.value = 2147483647;
+      update(item, 3, 0.5);
+      if (item.value !== 2147483648.5) throw 'field cell precision';
+      let reads = 0, writes = 0, value = 2;
+      Object.defineProperty(item, 'value', {
+        get() { reads++; return value; },
+        set(next) { writes++; value = next; }, configurable: true
+      });
+      update(item, 3, 1);
+      if (reads !== 6 || writes !== 3 || value !== 5) throw 'field cell accessor fallback';
+      const aliased = { value: 0, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) {
+        const before = aliased.value;
+        const answer = aliases(aliased, aliased, 1000);
+        if (answer !== before * 1000 + 500500) throw 'field cell receiver alias';
+      }
+      const replaced = { value: 1, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) replace(replaced, 2, 1000);
+      const reference = {};
+      replace(replaced, reference, 3);
+      if (replaced.value !== reference) throw 'field cell tagged store fallback';
+      print(total + ' ' + reads + ' ' + writes + ' ' + value + ' ' + aliased.value);
+    "#;
+    let program = Engine::specialize(source, "osr-field-cell.js").unwrap();
+    let id = program.functions.iter().position(|body| body.header().name
+        .is_some_and(|atom| &program.atoms[atom as usize] == "update")).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    let mut oracle = Vm::new(TestHost::writing_to(interpreted.clone()));
+    oracle.set_execution_mode(crate::ExecutionMode::Interpreted);
+    oracle.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
+        .unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
+    let source = r#"
+      function maskedScan(values, mask) {
+        let sum = 0;
+        const length = values.length;
+        for (let i = 0; i < length; i++) if (values[i] & mask) sum++;
+        return sum;
+      }
+      function nestedSelect(rows, values, output, count) {
+        let sum = 0;
+        for (let i = count; i; i--) {
+          let value = values[i & 3 ? i : i - 4];
+          let result = i <= 4 || count - i < 4 ? value
+            : rows[0][value & 3] ^ rows[1][(value >>> 2) & 3];
+          output[count - i] = result;
+          sum = (sum + result) | 0;
+        }
+        return sum;
+      }
+      const values = [];
+      for (let i = 0; i < 64; i++) values.push(i);
+      let checksum = 0;
+      for (let call = 0; call < 100; call++) {
+        checksum += maskedScan(values, 3);
+        checksum += nestedSelect([[1,3,5,7], [11,13,17,19]], values, [], 64);
+      }
+      print(checksum);
+      print(maskedScan([-0, NaN, Infinity, -Infinity, 0.5, -1.5, 2147483647,
+        2147483648, 4294967295, 4294967296, 1e30, -1e30], 3));
+      let order = '';
+      const left = { valueOf() { order += 'L'; $262.gc(); return 7; } };
+      const right = { valueOf() { order += 'R'; $262.gc(); return 3; } };
+      print(maskedScan([left, left], right));
+      print(order);
+      const thrown = {};
+      let same = false;
+      try { maskedScan([left], { valueOf() { order += 'X'; throw thrown; } }); }
+      catch (error) { same = error === thrown; }
+      print(same);
+      print(order);
+      print(maskedScan([0n, 1n, 2n], 1n));
+      let mixed = false;
+      try { maskedScan([1n], 1); } catch (error) { mixed = error instanceof TypeError; }
+      print(mixed);
+    "#;
+    let program = Engine::specialize(source, "osr-numeric-mask-branch.js").unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    assert_eq!(expected.borrow().as_slice(), ["114000", "3", "2", "LRLR", "true", "LRLRLX", "1", "true"]);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    for name in ["maskedScan", "nestedSelect"] {
+        let function_id = program.functions.iter().position(|function| {
+            function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+        assert!(diagnostics.native_region_runs > diagnostics.exits + 10, "{name}: {diagnostics:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
+    let source = r#"
+      function nestedGrow(rows, target, count, key) {
+        let sum = 0;
+        for (let i = 1; i < count; i++) {
+          let value = rows[i % 2][key];
+          target[i] = (value + i) | 0;
+          sum = (sum + target[i]) | 0;
+        }
+        return sum;
+      }
+      let checksum = 0;
+      for (let call = 0; call < 12; call++) {
+        const a = [call + 3];
+        const rows = [a, [7]];
+        checksum = (checksum + nestedGrow(rows, a, 3000, 0)) | 0;
+        rows[1] = [19];
+        checksum = (checksum + nestedGrow(rows, a, 3000, 0)) | 0;
+      }
+      print(checksum);
+      let effects = 0;
+      const key = { toString() { effects++; $262.gc(); return '0'; } };
+      print(nestedGrow([[3], [7]], [0], 4, key));
+      print(effects);
+      const thrown = {};
+      let same = false;
+      effects = 0;
+      const proto = Object.create(Array.prototype);
+      Object.defineProperty(proto, '0', { get() { effects++; $262.gc(); throw thrown; } });
+      const hole = [];
+      Object.setPrototypeOf(hole, proto);
+      try { nestedGrow([[3], hole], [0], 4, 0); } catch (error) { same = error === thrown; }
+      print(effects);
+      print(same);
+      effects = 0;
+      const accessor = [];
+      Object.defineProperty(accessor, '0', { get() { effects++; $262.gc(); return 11; } });
+      print(nestedGrow([[3], accessor], [0], 4, 0));
+      print(effects);
+      for (const key of [-1, 0.5, -0, 2147483647])
+        print(nestedGrow([[3], [7]], [0], 4, key));
+      globalThis.nestedSeed = [3];
+      globalThis.nestedRows = [nestedSeed, [7]];
+    "#;
+    let program = Engine::specialize(source, "osr-nested-array-read.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "nestedGrow")
+    }).unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let native_runs = |vm: &Vm<TestHost>| {
+        vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
+            .osr_diagnostics().native_region_runs
+    };
+    let before = native_runs(&vm);
+    assert!(before > 0, "nested reads must execute in the native body");
+    let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function_id).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > diagnostics.exits + 10,
+        "nested probe must complete native bodies, not merely enter and exit: {diagnostics:?}");
+    assert_eq!(output.borrow().as_slice(), ["108737796", "23", "3", "1", "true", "31", "2", "0", "0", "23", "0"]);
+    vm.collect_now(&program);
+    let function_atom = vm.intern_atom("nestedGrow");
+    let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
+    let rows_atom = vm.intern_atom("nestedRows");
+    let rows = vm.own_property(vm.realm.globals, rows_atom).unwrap();
+    let seed_atom = vm.intern_atom("nestedSeed");
+    let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    vm.heap.make_collection_due_after_growth_for_test();
+    let result = vm.call_value(&program, function, Value::UNDEFINED,
+        &[rows, seed, Value::integer(6000), Value::integer(0)]).unwrap();
+    let expected_sum: i32 = (1..6000).map(|i| i + if i % 2 == 1 { 7 } else { 3 }).sum();
+    assert_eq!(result, Value::integer(expected_sum));
+    assert!(native_runs(&vm) > before);
+    assert!(vm.heap.collection_epoch() > epoch, "nested receivers survive rooted debt exit");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
+    let source = r#"
+      function growAliases(a, b, reader, count) {
+        let sum = 0;
+        for (let i = a.length; i < count; i++) {
+          if (i % 2 === 1) a[i] = i + 3;
+          else a[i] = i + 7;
+          b[0] = i * 3;
+          sum = (sum + reader[0] + a[i]) | 0;
+        }
+        return sum;
+      }
+      let checksum = 0;
+      for (let call = 0; call < 32; call++) {
+        const a = [1, 2, 3, 4];
+        checksum = (checksum + growAliases(a, a, a, 3000)) | 0;
+      }
+      print(checksum);
+      globalThis.growthSeed = [1, 2, 3, 4];
+    "#;
+    let program = Engine::specialize(source, "osr-append-alias-gc.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "growAliases")
+    }).unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()));
+    interpreter.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let native_runs = |vm: &Vm<TestHost>| {
+        vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
+            .osr_diagnostics().native_region_runs
+    };
+    let before_runs = native_runs(&vm);
+    assert!(before_runs > 0, "aliasing growth must execute natively");
+    vm.collect_now(&program);
+    let function_atom = vm.intern_atom("growAliases");
+    let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
+    let seed_atom = vm.intern_atom("growthSeed");
+    let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    vm.heap.make_collection_due_after_growth_for_test();
+    let result = vm.call_value(&program, function, Value::UNDEFINED,
+        &[seed, seed, seed, Value::integer(6000)]).unwrap();
+    let expected_sum: i32 = (4..6000).map(|i| i * 3 + i + if i & 1 == 1 { 3 } else { 7 }).sum();
+    assert_eq!(result, Value::integer(expected_sum));
+    assert!(native_runs(&vm) > before_runs, "growth after debt must retain native reachability");
+    assert!(vm.heap.collection_epoch() > epoch, "growth debt must reach a rooted VM safepoint");
+    let elements = vm.heap.record_array(seed).unwrap().elements();
+    assert_eq!(elements.len(), 6000);
+    assert_eq!(elements[0], Value::integer(5999 * 3));
+    assert_eq!(elements[5999], Value::integer(6002));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
+    let source = r#"
+      function writeAt(a, key) {
+        'use strict';
+        let count = 0;
+        for (let i = 0; i < 128; i++) { count++; a[key] = i; }
+        return count;
+      }
+      let total = 0;
+      for (let warm = 0; warm < 32; warm++) total += writeAt([1, 2], 2);
+      let calls = 0;
+      const a = [1, 2];
+      const key = { toString() { calls++; $262.gc(); return '2'; } };
+      print(writeAt(a, key) + ',' + calls + ',' + a[2]);
+      const marker = {};
+      let throws = 0;
+      try { writeAt(a, { toString() { throws++; $262.gc(); throw marker; } }); }
+      catch (error) { print(error === marker); }
+      print(throws);
+      for (const key of [-1, 1.5, -0, 2147483647]) {
+        const target = [3, 4];
+        print(writeAt(target, key) + ',' + target[key]);
+      }
+      for (const target of [Object.freeze([1, 2]), Object.preventExtensions([1, 2])]) {
+        try { writeAt(target, 2); print('missed throw'); }
+        catch (error) { print(error instanceof TypeError); }
+      }
+      let setters = 0;
+      const inherited = [1, 2];
+      Object.setPrototypeOf(inherited, { set 2(value) { setters++; if (value === 7) throw marker; } });
+      try { writeAt(inherited, 2); }
+      catch (error) { print((error === marker) + ',' + setters); }
+      const original = [1, 2];
+      const copy = original.slice();
+      writeAt(copy, 2);
+      print(original.length + ',' + copy.length + ',' + copy[2]);
+    "#;
+    let program = Engine::specialize(source, "osr-append-key-effects.js").unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(expected.clone()).with_test262());
+    interpreter.execute(&program).unwrap();
+    assert_eq!(expected.borrow().as_slice(), ["128,128,127", "true", "1", "128,127", "128,127", "128,127", "128,127", "true", "true", "true,8", "2,3,127"]);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_appends_and_fills_holes_in_place() {
     // The loops append at the length while the backing has room and fill holes below it.
     // Once a prototype holds an index, the entry declines, and the setter it defines runs.
@@ -12365,9 +13052,16 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
             .expect("hot fill lane view")
             .osr_diagnostics();
         assert!(osr.native_region_runs > 2000, "fill left native code under {policy:?}: {osr:?}");
-        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+        // Growth past a full backing stays native; the region still exits when the append's
+        // allocation debt makes a collection due, which the young budget paces
+        // (`THROUGHPUT_MINIMUM_YOUNG`): a handful of exits against thousands of runs.
+        assert!(osr.exits * OSR_DEBT_EXIT_SHARE <= osr.native_region_runs, "{policy:?}: {osr:?}");
     }
 }
+
+/// The share of region runs (one exit per this many) that `shared_osr_appends_past_a_full_backing_keep_the_region_native`
+/// allows to exit on allocation debt.
+const OSR_DEBT_EXIT_SHARE: u64 = 100;
 
 #[test]
 fn shared_osr_int32_element_scans_keep_nested_loop_results() {
@@ -12802,6 +13496,45 @@ fn shared_osr_reports_captured_environment_store_rejection_by_site() {
 }
 
 #[test]
+fn lane_define_property_record_matches_interpreter_across_gc_and_throw() {
+    let source = r#"
+      const marker = {};
+      function readThroughGetter(value) {
+        const record = {
+          get value() {
+            if ((value & 63) === 0) $262.gc();
+            if (value === 5050) throw marker;
+            return value;
+          }
+        };
+        return record.value;
+      }
+      let total = 0;
+      let caught = false;
+      for (let value = 0; value < 6000; value++) {
+        try { total += readThroughGetter(value); }
+        catch (error) { caught = error === marker; }
+      }
+      print(total + " " + caught);
+    "#;
+    let program = Engine::specialize(source, "lane-define-property-record.js").unwrap();
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone()).with_test262())
+        .execute(&program)
+        .unwrap();
+
+    let compiled_output = Rc::new(RefCell::new(Vec::new()));
+    let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+
+    assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    assert_eq!(compiled_output.borrow().as_slice(), ["17991950 true"]);
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
     // Five distinct loops call a polymorphic callback. Each reaches the OSR threshold, but
@@ -12918,6 +13651,289 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         super::program_store::ProgramId::MAIN,
         function_id as u32,
     );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once() {
+    for scoped in [false, true] {
+        for captured in [false, true] {
+            let call = if captured { "f()" } else { "g()" };
+            let source = format!(
+                r#"
+            let calls = 0, coercions = 0, caught = 0, seconds = 0;
+            const marker = {{ identity: 'original' }};
+            const operand = {{ valueOf() {{ coercions++; return 7; }} }};
+            let f = function first() {{ return step(); }};
+            function step() {{
+                calls++;
+                if (calls % 64 === 0) $262.gc();
+                if (calls === 1500) {{ f = second; $262.gc(); }}
+                if (calls === 1999) throw marker;
+                return +operand;
+            }}
+            function second() {{ seconds++; return step(); }}
+            function run(g) {{ for (let i = 0; i < 10; i += 1) {call}; }}
+            for (let n = 0; n < 200; n++) {{
+                try {{ run(f); }} catch (error) {{
+                    if (error !== marker) throw Error('throw identity');
+                    caught++;
+                }}
+            }}
+            const last = f();
+            print(calls + ' ' + coercions + ' ' + caught + ' ' + last + ' ' + seconds);
+        "#
+            );
+            let source = if scoped {
+                format!("(function scope() {{ {source} }})();")
+            } else {
+                source
+            };
+            let program = Engine::specialize(&source, "osr-captured-call-entry.js").unwrap();
+            let function = program
+                .functions
+                .iter()
+                .position(|function| {
+                    function
+                        .header()
+                        .name
+                        .is_some_and(|name| &program.atoms[name as usize] == "run")
+                })
+                .unwrap();
+            let interpreted = Rc::new(RefCell::new(Vec::new()));
+            Vm::new(TestHost::writing_to(interpreted.clone()).with_test262())
+                .execute(&program)
+                .unwrap();
+            assert_eq!(interpreted.borrow().as_slice(), ["2000 1999 1 7 500"]);
+            let output = Rc::new(RefCell::new(Vec::new()));
+            let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.programs.enable_js_jit_diagnostics();
+            vm.execute(&program).unwrap();
+            assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+            let diagnostics = vm
+                .programs
+                .lane_views(super::program_store::ProgramId::MAIN)
+                .unwrap()
+                .get(function)
+                .and_then(super::program_store::derived_lane_view)
+                .unwrap()
+                .osr_diagnostics();
+            assert!(
+                diagnostics.compile_successes > 0
+                    && diagnostics.native_region_runs > 0
+                    && diagnostics.exits > 0,
+                "scoped={scoped} captured={captured}: exact-PC call boundary must run natively: {diagnostics:?}"
+            );
+            assert_eq!(
+                diagnostics.entry_guard_misses, 0,
+                "scoped={scoped} captured={captured}: a boxed callee must not be guarded as a Number: {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
+    for strict in [false, true] {
+        let source = r#"
+          (function scope() {
+            let identity = function identity(x) { 'use strict'; return x; };
+            function callShape(n, value) {
+              let sum = 0;
+              for (let i = 0; i < n; i++) sum += identity(value);
+              return sum;
+            }
+            let sum = 0;
+            for (let warm = 0; warm < 40; warm++) sum += callShape(2000, 2);
+            print(sum);
+            print(callShape(10, 2147483647));
+            let coercions = 0;
+            print(callShape(10, { valueOf() { coercions++; $262.gc(); return 3; } }));
+            print(coercions);
+            identity = function replacement(x) { 'use strict'; return x + 7; };
+            $262.gc();
+            print(callShape(20, 2));
+            let effects = 0;
+            const marker = {};
+            const value = { valueOf() {
+              effects++; $262.gc();
+              identity = function after(x) { 'use strict'; return 11; };
+              print(callShape(3, 2));
+              if (effects === 1) throw marker;
+              return 3;
+            } };
+            try { callShape(20, value); } catch (error) { print(error === marker); }
+            print(effects);
+            print(callShape(20, 2));
+          })();
+        "#;
+        let source = source.replace("'use strict';", if strict { "'use strict';" } else { "" });
+        let program = Engine::specialize(&source, "captured-inline-identity.js").unwrap();
+        let function = program.functions.iter().position(|function| {
+            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "callShape")
+        }).unwrap();
+        let expected = Rc::new(RefCell::new(Vec::new()));
+        Vm::new(TestHost::writing_to(expected.clone()).with_test262()).execute(&program).unwrap();
+        assert_eq!(expected.borrow().as_slice(), ["160000", "21474836470", "30", "10", "180", "33", "true", "1", "220"]);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(*output.borrow(), *expected.borrow());
+        let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+            .get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+        assert!(diagnostics.native_region_runs > diagnostics.exits + 20,
+            "captured callee must execute completed native bodies, not call-boundary exits: {diagnostics:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_call_result_is_not_an_incoming_number() {
+    for bypass in [false, true] {
+        let call = if bypass {
+            "let value = 1; if (i < 5) value = g();"
+        } else {
+            "const value = g();"
+        };
+        let rounds = if bypass { 400 } else { 200 };
+        let source = format!(
+            r#"
+            let calls = 0, coercions = 0, caught = 0, checksum = 0;
+            const marker = {{ identity: 'original' }};
+            function make() {{
+                calls++;
+                if (calls % 64 === 0) $262.gc();
+                if (calls === 1999) throw marker;
+                const number = calls;
+                return {{ valueOf() {{ coercions++; if (coercions % 64 === 0) $262.gc(); return number; }} }};
+            }}
+            function run(g) {{
+                let total = 0;
+                for (let i = 0; i < 10; i++) {{
+                    total += 3;
+                    {call}
+                    total += +value;
+                }}
+                return total;
+            }}
+            for (let n = 0; n < {rounds}; n++) {{
+                try {{ checksum += run(make); }} catch (error) {{
+                    if (error !== marker) throw Error('throw identity');
+                    caught++;
+                }}
+            }}
+            print(calls + ' ' + coercions + ' ' + caught + ' ' + checksum);
+        "#
+        );
+        let program = Engine::specialize(&source, "osr-call-result-entry.js").unwrap();
+        let function = program
+            .functions
+            .iter()
+            .position(|function| {
+                function
+                    .header()
+                    .name
+                    .is_some_and(|name| &program.atoms[name as usize] == "run")
+            })
+            .unwrap();
+        let interpreted = Rc::new(RefCell::new(Vec::new()));
+        Vm::new(TestHost::writing_to(interpreted.clone()).with_test262())
+            .execute(&program)
+            .unwrap();
+        assert!(interpreted.borrow()[0].starts_with("1999 1998 1 "));
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+        let diagnostics = vm
+            .programs
+            .lane_views(super::program_store::ProgramId::MAIN)
+            .unwrap()
+            .get(function)
+            .and_then(super::program_store::derived_lane_view)
+            .unwrap()
+            .osr_diagnostics();
+        assert!(
+            diagnostics.compile_successes > 0
+                && diagnostics.native_region_runs > 0
+                && diagnostics.exits > 0,
+            "bypass={bypass}: {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics.entry_guard_misses, 0,
+            "bypass={bypass}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
+    let source = r#"
+        var captured = 1;
+        function run(object) {
+            let total = 0;
+            for (let index = 0; index < 3000; index++) {
+                total += captured;
+                object.captured = index;
+            }
+            return total;
+        }
+        print(run(globalThis));
+        print(captured);
+    "#;
+    let program = Engine::specialize(source, "osr-capture-global-alias.js").unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), ["4495502", "2999"]);
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_captured_array_replacement_preserves_reads_and_stores_after_gc() {
+    for writing in [false, true] {
+        let store = if writing { "values[0] = index;" } else { "" };
+        let source = format!(r#"
+            let values = [1];
+            const original = values;
+            function replace(index) {{
+                if (index === 1500) {{ values = [7]; $262.gc(); }}
+            }}
+            function run(callback) {{
+                let total = 0;
+                for (let index = 0; index < 3000; index++) {{
+                    total += values[0];
+                    {store}
+                    callback(index);
+                }}
+                return total;
+            }}
+            print(run(replace));
+            print(original[0]);
+            print(values[0]);
+        "#);
+        let program = Engine::specialize(&source, "osr-captured-array-replacement.js").unwrap();
+        let interpreted = Rc::new(RefCell::new(Vec::new()));
+        Vm::new(TestHost::writing_to(interpreted.clone()).with_test262()).execute(&program).unwrap();
+        let expected = if writing { ["4494009", "1500", "2999"] } else { ["11994", "1", "7"] };
+        assert_eq!(interpreted.borrow().as_slice(), expected);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice(), "writing={writing}");
+    }
 }
 
 #[test]
@@ -13427,6 +14443,45 @@ print(out);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
         compiled.execute(&program).unwrap();
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_wrapping_left_shift_preserves_negative_zero_products() {
+    let source = r#"
+function shiftedZero(a, n) {
+  var negatives = 0;
+  for (var i = 0; i < n; i++) {
+    var shifted = (a[i] & 0x7fffffff) << 1;
+    var product = shifted * 0;
+    if (1 / product < 0) negatives++;
+  }
+  return negatives;
+}
+var a = [];
+for (var i = 0; i < 400; i++) a.push(i % 2 ? 0x40000000 : 1);
+var result = 0;
+for (var j = 0; j < 100; j++) result = shiftedZero(a, 400);
+print(result);
+"#;
+    let program = Engine::specialize(source, "osr-wrapping-shift-zero.js").unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "shiftedZero")
+    }).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_memory_policy(policy);
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["200"], "{policy:?}");
+        if super::compiled::loop_tier_compiles(policy) {
+            let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+            let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
+            assert!(diagnostics.native_region_runs > 0, "{policy:?}: {diagnostics:?}");
+        }
     }
 }
 
@@ -14084,9 +15139,8 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    // A compiled raw field load embeds an object shape ID. Collection may compact and remap
-    // those IDs, so the next loop admission must retire and rebuild the old region before
-    // it can use the old slot descriptor.
+    // A compiled raw field load embeds a shape ID. Compaction must retire it at
+    // the mutation, before another loop admission can use the old descriptor.
     let native_runs_before_collection = {
         let views = vm
             .programs
@@ -14108,6 +15162,10 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.collect_now(&program);
     assert!(crate::heap::prototype_layout_epoch() > epoch_before_collection);
     assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).unwrap();
+    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 0,
+        "compaction must retire dependent code immediately, without a backedge poll");
 
     let sum_list_atom = vm.intern_atom("sumList");
     let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
@@ -14142,6 +15200,203 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
         Some(0),
         "the out-of-line changing-receiver loads still called the field probe"
     );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_shape_invalidation_retires_only_dependent_code() {
+    let program = Engine::specialize(r#"
+        function sum(node) {
+            let result = 0;
+            while (node !== null) { result += node.value; node = node.next; }
+            return result;
+        }
+        function scalar(n) {
+            let result = 0;
+            for (let i = 0; i < n; i++) result += i;
+            return result;
+        }
+        function mutatePrototype() {
+            Object.defineProperty(Object.prototype, 'unrelatedNativeField', { value: 1 });
+        }
+        let head = null;
+        for (let value = 32; value > 0; value--) head = { pad: 0, marker: 0, value, next: head };
+        globalThis.nativeOwnHead = head;
+        for (let i = 0; i < 300; i++) if (sum(head) !== 528) throw 'sum';
+        if (scalar(3000) !== 4498500) throw 'scalar';
+    "#, "osr-reactive-shapes.js").unwrap();
+    let function_id = |name| program.functions.iter().position(|function|
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let sum_id = function_id("sum");
+    let scalar_id = function_id("scalar");
+    let state = |vm: &Vm<TestHost>, function| {
+        let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+        views.get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics()
+    };
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    let before = state(&vm, sum_id);
+    assert_eq!(before.currently_compiled_sites, 1);
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
+
+    let epoch = crate::heap::prototype_layout_epoch();
+    let mutate_atom = vm.intern_atom("mutatePrototype");
+    let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
+    vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
+    assert!(crate::heap::prototype_layout_epoch() > epoch);
+    let sum_atom = vm.intern_atom("sum");
+    let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
+    let head_atom = vm.intern_atom("nativeOwnHead");
+    let head = vm.own_property(vm.realm.globals, head_atom).unwrap();
+    assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[head]).unwrap(), Value::number(528.0));
+    assert_eq!(state(&vm, sum_id).compile_successes, before.compile_successes,
+        "an unrelated prototype change does not invalidate own-field shape/slot facts");
+
+    let shapes = vm.shapes.len();
+    for index in 0..shapes * 2 {
+        let atom = vm.intern_atom(&format!("dead-reactive-shape-{index}"));
+        vm.transition_shape(0, atom);
+    }
+    let shapes_before_collection = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes_before_collection);
+    assert_eq!(state(&vm, sum_id).currently_compiled_sites, 0,
+        "shape-dependent code is retired by compaction before its next entry");
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1,
+        "scalar code has no shape-ID dependency");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function classify(value) {
+            let total = 0;
+            let iteration = 0;
+            while (iteration < 8) {
+              switch (typeof value) {
+                case 'number': total += 1; break;
+                case 'object': total += 2; break;
+                case 'boolean': total += 3; break;
+                case 'undefined': total += 4; break;
+              }
+              iteration++;
+            }
+            return total;
+          }
+          let total = 0;
+          for (let call = 0; call < 200; call++) total += classify(call % 2 ? 17 : false);
+          print(total);
+          print(classify(null));
+          print(classify(undefined));
+          print(classify('heap string'));
+          print(classify({}));
+          print(classify(NaN));
+          print(classify(-0));
+          print(classify(true));
+          print(classify(1.25));
+          print(classify(Infinity));
+          print(classify(-Infinity));
+        "#,
+        "osr-typeof-switch-index.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "classify")
+        })
+        .expect("typeof switch function");
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+
+    assert_eq!(
+        interpreted_output.borrow().as_slice(),
+        ["3200", "16", "32", "0", "16", "8", "8", "24", "8", "8", "8"],
+    );
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(super::program_store::derived_lane_view)
+        .expect("hot typeof switch lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
+    assert!(diagnostics.native_region_runs > 0, "OSR diagnostics: {diagnostics:?}");
+    assert_eq!(
+        diagnostics.exits, 16,
+        "only the two eight-iteration heap cases should leave at typeof: {diagnostics:?}",
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function classify(value) {
+            let total = 0;
+            let iteration = 0;
+            while (iteration < 8) {
+              if (value === null) total += 100;
+              if (value === 0) total += 1;
+              if (value !== 0) total += 2;
+              iteration++;
+            }
+            return total;
+          }
+          for (let call = 0; call < 200; call++) classify(call % 2);
+          print(classify(0));
+          print(classify(-0));
+          print(classify(NaN));
+          print(classify(1.25));
+          print(classify(Infinity));
+          print(classify(false));
+          print(classify(undefined));
+          print(classify(null));
+          print(classify('0'));
+          print(classify({ valueOf() { throw 'must not coerce'; } }));
+        "#,
+        "osr-tagged-number-equality.js",
+    ))
+    .unwrap();
+    let function_id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|name| &program.atoms[name as usize] == "classify")
+    }).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted.borrow().as_slice(), ["8", "8", "16", "16", "16", "16", "16", "816", "16", "16"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "{diagnostics:?}");
+    assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
+    assert_eq!(diagnostics.exits, 0, "strict comparisons must not coerce or exit: {diagnostics:?}");
 }
 
 #[test]
@@ -14213,6 +15468,97 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
     assert!(
         diagnostics.native_region_runs > 0,
         "native OSR region never ran; diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function sumList(node) {
+            let total = 0;
+            while (node !== null) {
+              total += node.value;
+              node = node.next;
+            }
+            return total;
+          }
+          let head = null;
+          for (let value = 32; value > 0; value--) head = { value, next: head };
+          let repeated = 0;
+          for (let call = 0; call < 300; call++) repeated += sumList(head);
+          print(repeated);
+
+          let getterCount = 0;
+          const getterNode = { next: null };
+          Object.defineProperty(getterNode, 'value', {
+            get() { getterCount++; return 7; }, enumerable: true
+          });
+          print(sumList({ value: 1, next: getterNode }));
+          print(getterCount);
+
+          let proxyGets = 0;
+          const proxyNode = new Proxy({ value: 9, next: null }, {
+            get(target, key, receiver) {
+              if (key === 'value' || key === 'next') proxyGets++;
+              return Reflect.get(target, key, receiver);
+            }
+          });
+          print(sumList({ value: 1, next: proxyNode }));
+          print(proxyGets);
+
+          const thrown = Error('field getter');
+          let throwCount = 0;
+          const throwingNode = { next: null };
+          Object.defineProperty(throwingNode, 'value', {
+            get() { throwCount++; throw thrown; }, enumerable: true
+          });
+          let sameError = false;
+          try { sumList({ value: 1, next: throwingNode }); }
+          catch (error) { sameError = error === thrown; }
+          print(throwCount);
+          print(sameError);
+        "#,
+        "osr-changing-field-receiver.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "sumList")
+        })
+        .expect("changing receiver loop function");
+
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
+    interpreter.execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "8", "1", "10", "2", "1", "true"]);
+
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(super::program_store::derived_lane_view)
+        .expect("hot changing receiver lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
+    assert!(
+        diagnostics.native_region_runs > 0,
+        "changing receiver loop never entered native code: {diagnostics:?}"
     );
 }
 
@@ -14401,7 +15747,7 @@ fn js_jit_merges_boolean_branch_states_for_numeric_equality_chains() {
           }
         "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        &source,
+        source,
         "js-jit-boolean-joins.js",
     ))
     .unwrap();
@@ -14469,7 +15815,7 @@ fn js_jit_compiles_cached_numeric_kind_field_switches() {
       if (isBindingPattern(null) !== false) throw Error('falsey fallback');
     "#;
     let program = Engine::compile(crate::ExecutionRequest::script(
-        &source,
+        source,
         "js-jit-kind-field.js",
     ))
     .unwrap();
@@ -14532,6 +15878,78 @@ fn js_jit_lowers_guarded_numeric_field_reads_from_nonzero_formal() {
         super::js_compiled::JsJitFieldReceiver::Parameter(1)
     );
     assert!(compiled.native_entries() >= 9);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_field_guard_observes_reassigned_parameter() {
+    let source = r#"
+      function read(object, replacement) { object = replacement; return object.value + 1; }
+      const object = {value: 7};
+      for (let i = 0; i < 40; i++) {
+        if (read(object, object) !== 8) throw Error('receiver cache warmup');
+      }
+      for (let i = 0; i < 80; i++) {
+        if (!Number.isNaN(read(object, 5))) throw Error('reassigned field receiver');
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-reassigned-receiver.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.execute(&program).unwrap();
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_compiles_guarded_boolean_fields_and_captures() {
+    let source = r#"
+      function make(mask, expected) {
+        function check() { return (this.value & mask) !== 0 || this.value == expected; }
+        return {check, setMask(value) { mask = value; }};
+      }
+      const reader = make(2, 4);
+      reader.value = 4;
+      for (let i = 0; i < 80; i++) {
+        if (!reader.check()) throw Error('boolean numeric region');
+      }
+      reader.setMask(1);
+      reader.value = 3;
+      if (!reader.check()) throw Error('capture mutation');
+      reader.setMask(1.5);
+      if (!reader.check()) throw Error('fractional bitwise fallback');
+      reader.setMask(1n);
+      let threw = false;
+      try { reader.check(); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw) throw Error('bigint fallback');
+      reader.setMask(2);
+      let reads = 0;
+      Object.defineProperty(reader, 'value', {
+        configurable: true,
+        get() { reads++; return reads === 1 ? 0 : 4; }
+      });
+      if (!reader.check() || reads !== 2) throw Error('getter fallback ordering');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-capture-boolean.js")).unwrap();
+    let check = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "check")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm.programs
+        .js_tier(super::program_store::ProgramId::MAIN, check) else {
+        panic!("guarded field and capture predicate should compile");
+    };
+    assert!(!compiled.is_general_dispatch());
+    assert_eq!(compiled.numeric_field_inputs().len(), 2);
+    assert_eq!(compiled.numeric_field_inputs()[0].source, 0);
+    assert_eq!(compiled.numeric_field_inputs()[1].source, 0);
+    assert!(compiled.native_entries() > 0);
 }
 
 #[test]
@@ -15355,6 +16773,10 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         try { const result = left + right; return result; }
         catch (error) { return error instanceof TypeError; }
       }
+      function subtract(left, right) {
+        try { const result = left - right; return result; }
+        catch (error) { return error instanceof TypeError; }
+      }
       function negate(value) {
         try { return -value; }
         catch (error) { return error instanceof TypeError; }
@@ -15372,12 +16794,41 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         if (negate(index) !== -index) throw Error('unary minus');
         if (positive(index) !== index) throw Error('unary plus');
         if (multiply(index, 2) !== index * 2) throw Error('integer multiply');
+        if (subtract(index, 2) !== index - 2) throw Error('integer subtract');
       }
       if (combine(-2, -3) !== -5) throw Error('negative integer add');
       if (!Object.is(combine(-0, -0), -0)) throw Error('negative zero');
       if (combine(2147483647, 1) !== 2147483648) throw Error('integer boundary');
       if (!Object.is(multiply(0, -1), -0)) throw Error('integer multiply negative zero');
       if (multiply(50000, 50000) !== 2500000000) throw Error('integer multiply overflow');
+      // Explicit Number expectations ensure overflow uses the original operands,
+      // not a wrapped int32 payload. Exercise both signs and both zero factors.
+      for (const row of [
+        [2147483647, 2147483647, 4294967294, 0, 4611686014132420609],
+        [-2147483648, -2147483648, -4294967296, 0, 4611686018427387904],
+        [-2147483648, 1, -2147483647, -2147483649, -2147483648],
+        [2147483647, -1, 2147483646, 2147483648, -2147483647],
+        [-2147483648, -1, -2147483649, -2147483647, 2147483648],
+        [0, -2147483648, -2147483648, 2147483648, -0],
+        [-2147483648, 0, -2147483648, -2147483648, -0],
+        [0, 0, 0, 0, 0],
+        [46340, 46340, 92680, 0, 2147395600],
+        [46341, 46341, 92682, 0, 2147488281],
+      ]) {
+        if (!Object.is(combine(row[0], row[1]), row[2])) throw Error('checked add');
+        if (!Object.is(subtract(row[0], row[1]), row[3])) throw Error('checked subtract');
+        if (!Object.is(multiply(row[0], row[1]), row[4])) throw Error('checked multiply');
+      }
+      let conversions = '';
+      const leftObject = {valueOf() { conversions += 'L'; return -2147483648; }};
+      const rightObject = {valueOf() { conversions += 'R'; return -1; }};
+      if (multiply(leftObject, rightObject) !== 2147483648 || conversions !== 'LR') {
+        throw Error('multiply fallback effects');
+      }
+      conversions = '';
+      if (subtract(leftObject, rightObject) !== -2147483647 || conversions !== 'LR') {
+        throw Error('subtract fallback effects');
+      }
       if (combine('left', 'right') !== 'leftright') throw Error('string fallback');
       if (combine(Symbol('value'), 1) !== true) throw Error('throw fallback');
       if (!Number.isNaN(combine(NaN, 1))) throw Error('NaN result');
@@ -15403,7 +16854,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
 
-    for name in ["combine", "negate", "positive", "multiply"] {
+    for name in ["combine", "subtract", "negate", "positive", "multiply"] {
         let function = program
             .functions
             .iter()
@@ -15427,6 +16878,7 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
 
     for (name, operator) in [
         ("combine", oxc_ast::ast::BinaryOperator::Addition as u32),
+        ("subtract", oxc_ast::ast::BinaryOperator::Subtraction as u32),
         (
             "multiply",
             oxc_ast::ast::BinaryOperator::Multiplication as u32,
@@ -15466,6 +16918,93 @@ fn js_jit_general_dispatch_speculates_number_arithmetic_and_falls_back_exactly()
         assert!(native_pcs
             .into_iter()
             .all(|pc| native.general_dispatch_pc_is_native(pc)));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_returns_number_relations_with_exact_fallback() {
+    let source = r#"
+      function equal(a, b) { return a == b; }
+      function strict(a, b) { return a === b; }
+      function less(a, b) { return a < b; }
+      for (let i = 0; i < 64; i++) {
+        if (!equal(i, i) || !strict(i, i) || !less(i, i + 1)) throw Error('number relation');
+      }
+      if (!strict(0, -0) || strict(NaN, NaN) || less(NaN, 1)) throw Error('number edges');
+      let calls = 0;
+      const object = { valueOf() { calls++; return 4; } };
+      if (!equal(object, 4) || calls !== 1) throw Error('coercion fallback');
+      if (!equal(4n, 4n) || strict(4n, 4) || !less(3n, 4n)) throw Error('bigint fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-return-relation.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["equal", "strict", "less"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+            (instruction.op() == crate::bytecode::Op::Binary && instruction.returns_from_frame()).then_some(pc)
+        }).expect("returning comparison");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_nullish_branches_preserve_html_dda_and_strictness() {
+    let source = r#"
+      function loose(value) { if (value == null) return 1; return 0; }
+      function notLoose(value) { if (value != null) return 1; return 0; }
+      function strict(value) { if (value === null) return 1; return 0; }
+      function notStrict(value) { if (value !== undefined) return 1; return 0; }
+      for (let i = 0; i < 64; i++) {
+        for (const value of [null, undefined, 0, false, '', {}, [], () => {}, $262.IsHTMLDDA]) {
+          const isNullish = value === null || value === undefined || value === $262.IsHTMLDDA;
+          if (loose(value) !== (isNullish ? 1 : 0)) throw Error('loose null');
+          if (notLoose(value) !== (isNullish ? 0 : 1)) throw Error('loose inequality');
+          if (strict(value) !== (value === null ? 1 : 0)) throw Error('strict null');
+          if (notStrict(value) !== (value !== undefined ? 1 : 0)) throw Error('strict undefined');
+        }
+      }
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-nullish.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["loose", "notLoose", "strict", "notStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::JumpBinaryFalse).then_some(pc)
+        }).expect("nullish branch");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
     }
 }
 
@@ -15667,10 +17206,33 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
       if (readField(first) !== 11) throw Error('live value');
 
       const small = { value: 30 };
-      if (readField(small) !== 30) throw Error('inline storage fallback');
+      if (readField(small) !== 30) throw Error('inline storage');
+      const reference = { marker: 1 };
+      for (const value of [-7, 0, 17, true, false, null, undefined, reference, 'text']) {
+        const inline = { value };
+        if (readField(inline) !== value) throw Error('inline value');
+      }
+      small.value = 1.5;
+      if (readField(small) !== 1.5) throw Error('inline to wide storage');
 
       const inherited = Object.create({ value: 40 });
       if (readField(inherited) !== 40) throw Error('prototype holder fallback');
+
+      const prototype = { value: 70, a: 1, b: 2 };
+      const child = Object.assign(Object.create(prototype), { a: 3, b: 4, c: 5 });
+      for (let index = 0; index < 64; index++) {
+        if (readField(child) !== 70) throw Error('prototype cache');
+      }
+      prototype.value = 71;
+      if (readField(child) !== 71) throw Error('prototype live value');
+      child.value = 72;
+      if (readField(child) !== 72) throw Error('own shadow');
+      delete child.value;
+      if (readField(child) !== 71) throw Error('remove shadow');
+      Object.defineProperty(prototype, 'value', { get() { return 73; }, configurable: true });
+      if (readField(child) !== 73) throw Error('prototype accessor');
+      Object.setPrototypeOf(child, { value: 74 });
+      if (readField(child) !== 74) throw Error('prototype replacement');
 
       let getterCalls = 0;
       const accessor = { other: 1, more: 2, get value() { getterCalls++; return 50; } };
@@ -15738,6 +17300,66 @@ fn js_jit_general_dispatch_reads_own_fields_through_the_field_cache_and_falls_ba
         .collect::<Vec<_>>();
     assert_eq!(get_field_pcs.len(), 1);
     assert!(native.general_dispatch_pc_is_native(get_field_pcs[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_stores_preserve_values_and_fallback_effects() {
+    let source = include_str!("../../tests/fixtures/captured-field-store.js");
+    let program = Engine::specialize(source, "captured-field-store.js").unwrap();
+    let store = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "store")
+    }).unwrap();
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(store)).is_some());
+    for name in ["and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id))
+            .is_some_and(|store| store.update.is_some()), "{name} should share the guarded update proof");
+    }
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
+    compiled.programs.enable_js_jit_diagnostics();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    assert!(compiled.js_tier_runs());
+    compiled.execute(&program).unwrap();
+    for name in ["store", "and", "or", "xor", "shl", "shr", "ushr"] {
+        let id = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap();
+        assert!(compiled.programs.js_jit_captured_store_entries(super::ProgramId::MAIN, id as u32)
+            .unwrap_or(0) > 0, "{name} should enter the shared JIT store fast path");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_captured_field_updates_reject_overwritten_read_registers() {
+    let mut program = Engine::specialize(
+        "function make(mask) { function update() { this.value = this.value | mask; } return update; }",
+        "captured-update-register.js",
+    ).unwrap();
+    let id = program.functions.iter().position(|function| {
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "update")
+    }).unwrap();
+    let body = program.function(id);
+    assert!(super::js_compiled::captured_field_store_candidate(&program, body).is_some());
+    let read = body.code[0].as_wide().result_register();
+    let capture = body.code[1].as_wide();
+    let binary = body.code[2].as_wide();
+    program.functions[id].code[1] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::LoadCapture, read, capture.b(), capture.c(), capture.imm(),
+    );
+    program.functions[id].code[2] = crate::bytecode::Instr::new(
+        crate::bytecode::Op::Binary, binary.a(), read, read, binary.imm(),
+    );
+    assert!(super::js_compiled::captured_field_store_candidate(&program, program.function(id)).is_none());
 }
 
 #[test]
@@ -15911,6 +17533,243 @@ fn js_jit_general_dispatch_returns_own_fields_and_falls_back_exactly() {
         .collect::<Vec<_>>();
     assert_eq!(returning_reads.len(), 1, "readX returns its field read");
     assert!(native.general_dispatch_pc_is_native(returning_reads[0]));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_fused_field_copy_preserves_effects_and_collection() {
+    let source = r#"
+      function copy() { this.out = this.holder.value; return this.out; }
+      function install(owner, n) { owner.holder.value = { n }; owner.copy(); }
+      const holder = { a: 1, b: 2, value: 7 };
+      const target = { a: 1, b: 2, c: 3, holder, out: 0, copy };
+      for (let i = 0; i < 64; i++) if (target.copy() !== 7) throw Error('field copy');
+      $262.gc();
+      install(target, 8);
+      install(target, 9);
+      $262.gc();
+      if (target.out.n !== 9) throw Error('field copy barrier');
+      let reads = 0;
+      Object.defineProperty(holder, 'value', { get() { reads++; return 10; }, configurable: true });
+      if (target.copy() !== 10 || reads !== 1) throw Error('getter fallback');
+      Object.defineProperty(holder, 'value', { value: 11, writable: true, configurable: true });
+      let writes = 0;
+      Object.defineProperty(target, 'out', { set(value) { writes += value; }, configurable: true });
+      target.copy();
+      if (writes !== 11) throw Error('setter fallback');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-field-copy.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "copy")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("copy should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField && instruction.writes_current_this()).then_some(pc)
+    }).expect("fused field copy");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_loads_initialized_this_and_preserves_lexical_fallback() {
+    let source = r#"
+      function receiver() { 'use strict'; const value = this; if (value === null) return 1; return value; }
+      const object = { receiver };
+      for (let i = 0; i < 64; i++) if (object.receiver() !== object) throw Error('this identity');
+      if (receiver.call(null) !== 1 || receiver.call(undefined) !== undefined) throw Error('strict this');
+      class Base {}
+      class Derived extends Base {
+        constructor() {
+          const read = () => this;
+          let caught = false;
+          try { read(); } catch (error) { caught = error instanceof ReferenceError; }
+          if (!caught) throw Error('uninitialized lexical this');
+          super();
+          if (read() !== this) throw Error('initialized lexical this');
+        }
+      }
+      new Derived();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-load-this.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "receiver")
+    }).unwrap() as u32;
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("receiver should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        (super::dispatch_fast::decoded_instruction(body, *packed).op() == crate::bytecode::Op::LoadThis).then_some(pc)
+    }).expect("this load");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_writes_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function write(value) { this.x = value; }
+      function writeStrict(value) { 'use strict'; this.x = value; }
+      function setYoung(owner, n) { owner.write({ n }); }
+      const target = { a: 1, b: 2, c: 3, x: 0, write, writeStrict };
+      for (let i = 0; i < 64; i++) { target.write(i); target.writeStrict(i + 1); }
+      if (target.x !== 64) throw Error('cached writes');
+      $262.gc();
+      setYoung(target, 7);
+      setYoung(target, 8);
+      $262.gc();
+      if (target.x.n !== 8) throw Error('heap write barrier');
+      let seen = 0;
+      Object.defineProperty(target, 'x', { set(value) { seen = value; }, configurable: true });
+      target.write(71);
+      if (seen !== 71) throw Error('accessor');
+      Object.defineProperty(target, 'x', { value: 1, writable: false, configurable: true });
+      target.write(2);
+      if (target.x !== 1) throw Error('sloppy readonly');
+      let threw = false;
+      try { target.writeStrict(2); } catch (error) { threw = error instanceof TypeError; }
+      if (!threw || target.x !== 1) throw Error('strict readonly');
+      let proxyCalls = 0;
+      const proxy = new Proxy(target, { set() { proxyCalls++; return true; } });
+      write.call(proxy, 5);
+      if (proxyCalls !== 1) throw Error('proxy');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-store.js")).unwrap();
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    for name in ["write", "writeStrict"] {
+        let function = program.functions.iter().position(|function| {
+            function.header().name.or(function.header().inferred_name)
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)
+        }).unwrap() as u32;
+        let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+            .js_tier(super::program_store::ProgramId::MAIN, function) else {
+            panic!("{name} should use the general JavaScript compiler");
+        };
+        let body = program.function(function as usize);
+        let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+            matches!(super::dispatch_fast::decoded_instruction(body, *packed).op(),
+                crate::bytecode::Op::SetThisField | crate::bytecode::Op::SetThisFieldStrict).then_some(pc)
+        }).expect("this store");
+        assert!(native.general_dispatch_pc_is_native(pc));
+        assert!(native.native_entries() > 0);
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_captures_across_collection_and_mutation() {
+    let source = r#"
+      function outer() {
+        let value = { n: 1 };
+        function read(collect) {
+          let seen;
+          for (let i = 0; i < 32; i++) {
+            seen = value;
+            if (collect && i === 7) $262.gc();
+          }
+          return seen.n;
+        }
+        for (let i = 0; i < 64; i++) if (read(i === 63) !== 1) throw Error('capture');
+        value = { n: 2 };
+        if (read(true) !== 2) throw Error('capture mutation');
+      }
+      outer();
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-capture.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "read")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default().with_test262());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default().with_test262());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("read should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::LoadCapture).then_some(pc)
+    }).expect("capture read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_jit_general_dispatch_reads_initialized_this_with_exact_fallback() {
+    let source = r#"
+      function readThis() { const value = this.x; if (value === null) return null; return value; }
+      const plain = { a: 1, b: 2, c: 3, x: 5 };
+      plain.read = readThis;
+      for (let index = 0; index < 64; index++) {
+        if (plain.read() !== 5) throw Error('own field');
+      }
+      Object.defineProperty(plain, 'x', { get() { return 9; } });
+      if (plain.read() !== 9) throw Error('accessor');
+      if (readThis.call(Object.create({x: 7})) !== 7) throw Error('prototype');
+      let threw = false;
+      try { readThis.call(null); } catch (error) { threw = error instanceof TypeError; }
+      if (threw) throw Error('sloppy this conversion');
+    "#;
+    let program = Engine::compile(crate::ExecutionRequest::script(source, "js-jit-this-field.js")).unwrap();
+    let function = program.functions.iter().position(|function| {
+        function.header().name.or(function.header().inferred_name)
+            .is_some_and(|atom| &program.atoms[atom as usize] == "readThis")
+    }).unwrap() as u32;
+    let mut interpreter = Vm::new(TestHost::default());
+    interpreter.execute(&program).unwrap();
+    let mut compiled = Vm::new(TestHost::default());
+    compiled.programs.enable_js_general_dispatch();
+    compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+    compiled.programs.compile_general_baseline_when_hot();
+    compiled.execute(&program).unwrap();
+    let Some(super::program_store::JsTierState::Compiled(native)) = compiled.programs
+        .js_tier(super::program_store::ProgramId::MAIN, function) else {
+        panic!("readThis should use the general JavaScript compiler");
+    };
+    let body = program.function(function as usize);
+    let pc = body.code.iter().enumerate().find_map(|(pc, packed)| {
+        let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
+        (instruction.op() == crate::bytecode::Op::GetField).then_some(pc)
+    }).expect("field read");
+    assert!(native.general_dispatch_pc_is_native(pc));
+    assert!(native.native_entries() > 0);
 }
 
 #[test]
@@ -16970,12 +18829,16 @@ new A(instance,first);new B(instance,second);
             let strong = vm.heap.root(value);
             weak.push(vm.embedding_host_weak_root(strong).unwrap());
             vm.heap.release_root(strong);
-            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+                .unwrap();
         }
         vm.collect_now(&program);
-        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        for root in &weak {
+            assert!(vm.embedding_host_weak_value(*root).is_some());
+        }
         let instance = vm.intern_atom("instance");
-        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED)
+            .unwrap();
         vm.collect_now(&program);
         for root in weak {
             assert!(vm.embedding_host_weak_value(root).is_none());
@@ -17487,6 +19350,69 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
     assert_eq!(
         output.borrow().as_slice(),
         ["1:0:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:1:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:2:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h"]
+    );
+}
+
+#[test]
+fn lane_in_place_steps_keep_property_definition_records() {
+    // Class methods and accessors and object-literal accessors define their descriptors in
+    // place; computed keys coerce in source order, setters and private methods stay exact, a
+    // throwing key conversion raises there, and repeated definitions keep their attributes.
+    let source = r#"
+      const out = [];
+      function desc(o, key) {
+        const d = Object.getOwnPropertyDescriptor(o, key);
+        if (!d) return "none";
+        const value = typeof d.value === "function" ? d.value() : String(d.value);
+        return [value, d.writable, d.enumerable, d.configurable, typeof d.get, typeof d.set].map(String).join("/");
+      }
+      function run(round) {
+        const log = [];
+        const key = { toString() { log.push("key" + round); return "computed" + round; } };
+        const literal = {
+          method() { return "lm"; },
+          get accessor() { return "lg"; },
+          set accessor(v) { log.push("lset" + v); },
+          [key]() { return "lk"; },
+          get ["ga" + round]() { return 41 + round; },
+        };
+        literal.accessor = 3;
+        const symbol = Symbol("s" + round);
+        class C {
+          #hidden() { return "h"; }
+          method() { return "cm"; }
+          static staticMethod() { return "cs"; }
+          get accessor() { return "cg"; }
+          set accessor(v) { log.push("cset" + v); }
+          static get staticAccessor() { return 7; }
+          static set staticAccessor(v) { log.push("sset" + v); }
+          [key]() { return "ck"; }
+          [symbol]() { return "sk"; }
+          read() { return this.#hidden(); }
+        }
+        const c = new C(); c.accessor = 4; C.staticAccessor = 5;
+        out.push(round,
+          desc(literal, "method"), desc(literal, "accessor"), desc(literal, "computed" + round), desc(literal, "ga" + round),
+          desc(C.prototype, "method"), desc(C.prototype, "accessor"), desc(C.prototype, "computed" + round),
+          desc(C, "staticMethod"), desc(C, "staticAccessor"),
+          literal.method(), literal["computed" + round](), literal["ga" + round],
+          c.method(), c["computed" + round](), c[symbol](), c.read(), C.staticMethod(), C.staticAccessor,
+          Object.keys(literal).join("+"), Object.keys(C.prototype).join("+"), Object.keys(C).join("+"),
+          log.join(","));
+        const boom = { toString() { throw new RangeError("key"); } };
+        for (const thunk of [() => ({ [boom]: 1 }), () => ({ get [boom]() {} }), () => class { [boom]() {} }, () => class { static [boom]() {} }]) {
+          try { thunk(); out.push("ok"); } catch (e) { out.push(e.constructor.name + ":" + e.message); }
+        }
+      }
+      for (let round = 0; round < 3; round++) run(round);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-property-records.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["0|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|41|cm|ck|sk|h|cs|7|method+accessor+computed0+ga0|||key0,lset3,key0,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key|1|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|42|cm|ck|sk|h|cs|7|method+accessor+computed1+ga1|||key1,lset3,key1,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key|2|lm/true/true/true/undefined/undefined|undefined/undefined/true/true/function/function|lk/true/true/true/undefined/undefined|undefined/undefined/true/true/function/undefined|cm/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|ck/true/false/true/undefined/undefined|cs/true/false/true/undefined/undefined|undefined/undefined/false/true/function/function|lm|lk|43|cm|ck|sk|h|cs|7|method+accessor+computed2+ga2|||key2,lset3,key2,cset4,sset5|RangeError:key|RangeError:key|RangeError:key|RangeError:key"]
     );
 }
 
@@ -18465,6 +20391,141 @@ fn set_iteration_copies_only_while_the_intrinsics_iterate() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn in_operator_decides_ordinary_objects_and_leaves_other_receivers_to_general_semantics() {
+    let source = r#"
+      function check(name, actual, expected) {
+        if (!Object.is(actual, expected)) {
+          throw new Error(name + ": " + String(actual) + " !== " + String(expected));
+        }
+      }
+      const proto = { inherited: 1 };
+      const object = Object.create(proto);
+      object.own = 2;
+      check("own", "own" in object, true);
+      check("absent", "absent" in object, false);
+      check("inherited", "inherited" in object, true);
+      check("Object.prototype", "toString" in object, true);
+      check("missing below Object.prototype", "nope" in object, false);
+      const present = "own" in object;
+      const missing = "nope" in object;
+      check("value form present", present, true);
+      check("value form absent", missing, false);
+      if (!("own" in object)) throw new Error("jump form present");
+      if ("nope" in object) throw new Error("jump form absent");
+
+      let getterReads = 0;
+      Object.defineProperty(object, "accessor", {
+        get() { getterReads += 1; return 3; },
+        configurable: true,
+      });
+      check("accessor", "accessor" in object, true);
+      check("getter not run", getterReads, 0);
+      const hidden = {};
+      Object.defineProperty(hidden, "secret", { value: 1, enumerable: false });
+      check("non-enumerable", "secret" in hidden, true);
+
+      check("number key", 1 in { 1: "one" }, true);
+      check("string number key", "1" in { 1: "one" }, true);
+      check("number key absent", 2 in { 1: "one" }, false);
+
+      const symbol = Symbol("s");
+      const keyed = { [symbol]: 1 };
+      check("symbol present", symbol in keyed, true);
+      check("symbol absent", Symbol("s") in keyed, false);
+      check("symbol inherited", symbol in Object.create(keyed), true);
+
+      const array = [1, 2];
+      check("array index", 0 in array, true);
+      check("array end index", 2 in array, false);
+      check("array length", "length" in array, true);
+      function named() {}
+      check("function prototype", "prototype" in named, true);
+
+      const bare = Object.create(null);
+      bare.x = 1;
+      check("null prototype own", "x" in bare, true);
+      check("null prototype absent", "y" in bare, false);
+
+      const dictionary = {};
+      for (let index = 0; index < 64; index += 1) dictionary["k" + index] = index;
+      delete dictionary.k0;
+      check("dictionary present", "k63" in dictionary, true);
+      check("dictionary deleted", "k0" in dictionary, false);
+
+      const primitives = [null, undefined, 1, 1.5, "text", true, 1n, Symbol("p")];
+      for (let index = 0; index < primitives.length; index += 1) {
+        let outcome = "no throw";
+        try { "x" in primitives[index]; }
+        catch (error) { outcome = error.name; }
+        check("primitive " + index, outcome, "TypeError");
+      }
+
+      let trapCalls = 0;
+      const proxy = new Proxy({ hidden: 1 }, {
+        has(target, key) {
+          trapCalls += 1;
+          return key === "ghost" || Reflect.has(target, key);
+        },
+      });
+      check("proxy ghost", "ghost" in proxy, true);
+      check("proxy own", "hidden" in proxy, true);
+      check("proxy absent", "none" in proxy, false);
+      check("proxy trap ran", trapCalls, 3);
+      const throwing = new Proxy({}, { has() { throw new RangeError("trap"); } });
+      let threw = "no throw";
+      try { "x" in throwing; }
+      catch (error) { threw = error.name; }
+      check("proxy throw", threw, "RangeError");
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "in-operator.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "in-operator.js").unwrap(),
+    ] {
+        Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn js_tier_claims_a_general_function_only_where_the_tier_admits_it() {
+    // A general-only function used to claim the tier prologue while the general switch
+    // was off, so a frameless lane call paid and released the prologue without running
+    // native code. The claim must come from the same authority that admits the tier
+    // (`ProgramStore::general_tier_admits`).
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        "function build(seed) { return { value: seed, tag: 'x' }; } build(1);",
+        "js-tier-claim-admission.js",
+    ))
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    // The fixture body is small and loop-free, so price it as hot: the claim is then
+    // decided by the tier's switch and the memory policy alone.
+    vm.programs.compile_general_baseline_when_hot();
+    let id = vm.programs.insert(program.clone()).unwrap();
+    let general_only = (0..program.functions.len())
+        .find_map(|function| {
+            let facts = vm.programs.js_entry_facts(id, function as u32)?;
+            (facts.general && !facts.candidate).then_some(function as u32)
+        })
+        .expect("fixture must contain a general-only function");
+    assert!(
+        !vm.js_tier_may_claim(&program, id, general_only),
+        "a general-only function must not pay the claim while the general tier is off"
+    );
+    vm.programs.enable_js_general_dispatch();
+    assert!(
+        vm.js_tier_may_claim(&program, id, general_only),
+        "the admitted general tier claims its general candidates"
+    );
+}
+
+#[test]
 fn js_function_tiers_follow_the_memory_policy() {
     for policy in crate::MemoryPolicy::ALL {
         let mut vm = Vm::new(TestHost::default());
@@ -18879,5 +20940,102 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
     for compile in [Engine::specialize, Engine::specialize_unspecialized] {
         let program = compile(source, "array-create-species.js").unwrap();
         Vm::new(TestHost::default()).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn global_declarations_survive_abrupt_script_evaluation() {
+    let program = Engine::specialize_unspecialized("", "initial-script.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let error = vm.eval_script_source(&program, "throw 1; let laterBinding;", "later-script.js").unwrap_err();
+    assert_eq!(error.thrown_value(), Some(Value::number(1.0)));
+    let atom = vm.lookup_atom("laterBinding").unwrap();
+    assert!(vm.realm.global_lexical_declarations.contains(&atom));
+    assert_eq!(vm.realm.global_lexical_bindings.get(&atom), Some(&Value::DELETED));
+    let reference = vm.resolve_name(&program, atom, true).unwrap();
+    let error = vm.store_resolved_name(&program, reference, atom, Value::number(2.0), true).unwrap_err();
+    assert!(vm.format_error(&program, &error).contains("ReferenceError"));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_guards_replaced_nested_array_receivers() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function fill(rows, column) {
+            for (let row = 0; row < 4; row++) rows[row][column] = column * 4 + row;
+          }
+          function sumRows(rows, column) {
+            let sum = 0;
+            for (let row = 0; row < 4; row++) sum += rows[row][column];
+            return sum;
+          }
+          const rows = [[], [], [], []];
+          for (let call = 0; call < 500; call++) fill(rows, call);
+          let errors = 0;
+          for (let row = 0; row < 4; row++) {
+            for (let column = 0; column < 500; column++) {
+              if (rows[row][column] !== column * 4 + row) errors++;
+            }
+          }
+          print(errors);
+          let total = 0;
+          for (let column = 0; column < 500; column++) total += sumRows(rows, column);
+          print(total);
+          print(rows.map(row => row.length).join(','));
+          let stores = 0;
+          const thrown = {};
+          const proxy = new Proxy([], { set() { stores++; throw thrown; } });
+          let same = false;
+          try { fill([[], proxy, [], []], 0); } catch (error) { same = error === thrown; }
+          print(stores);
+          print(same);
+        "#,
+        "osr-nested-array-receiver.js",
+    ))
+    .unwrap();
+    let function_ids: Vec<_> = ["fill", "sumRows"]
+        .into_iter()
+        .map(|expected| {
+            program
+                .functions
+                .iter()
+                .position(|function| {
+                    function
+                        .header()
+                        .name
+                        .is_some_and(|name| &program.atoms[name as usize] == expected)
+                })
+                .unwrap()
+        })
+        .collect();
+    for mode in [
+        crate::ExecutionMode::Interpreted,
+        crate::ExecutionMode::Compiled,
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["0", "1999000", "500,500,500,500", "1", "true"]
+        );
+        if mode == crate::ExecutionMode::Compiled {
+            let views = vm
+                .programs
+                .lane_views(super::program_store::ProgramId::MAIN)
+                .unwrap();
+            for &function_id in &function_ids {
+                let view = views
+                    .get(function_id)
+                    .and_then(super::program_store::derived_lane_view)
+                    .unwrap();
+                let diagnostics = view.osr_diagnostics();
+                assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
+            }
+        }
     }
 }

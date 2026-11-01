@@ -1,4 +1,4 @@
-//! Native filesystem-event ownership. Linux uses the same masks as libuv.
+//! Shared filesystem-event lifecycle over Linux inotify and Darwin transports.
 use crate::host::NodeHost;
 use quench_runtime::{
     BuiltinBrand, HostWeakRoot, NativeContext, RootId, RootedError, Runtime, Value,
@@ -6,16 +6,16 @@ use quench_runtime::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod kernel;
 pub(crate) mod promise;
 pub(crate) mod recursive;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use kernel::{EventKind, WatchDescriptor};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct WatchDescriptor(i32);
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[allow(dead_code)] // Backend is not installed on these hosts; preserve their prior fallback.
 #[derive(Clone, Copy)]
 enum EventKind {
@@ -25,7 +25,7 @@ enum EventKind {
 
 const FIRST_WATCH_ID: u64 = 1;
 const MAX_WATCH_ID: u64 = (1_u64 << f64::MANTISSA_DIGITS) - 1;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(Emitter, close, reference, hClose, hReference, hHasRef, hInitialized, nativeWatch) => {
  function FSWatcher() { Emitter.call(this); this._handle = null; this._ignoreMatcher = null; }
@@ -78,7 +78,7 @@ struct Handle {
     phase: Phase,
 }
 struct Group {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     basename: Vec<u8>,
     owners: Vec<u64>,
 }
@@ -94,7 +94,7 @@ pub(crate) struct State {
     handles: HashMap<u64, Handle>,
     groups: HashMap<WatchDescriptor, Group>,
     deliveries: VecDeque<Delivery>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     kernel: kernel::Kernel,
 }
 impl Default for State {
@@ -106,7 +106,7 @@ impl Default for State {
             handles: HashMap::new(),
             groups: HashMap::new(),
             deliveries: VecDeque::new(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             kernel: kernel::Kernel::default(),
         }
     }
@@ -139,12 +139,12 @@ pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     fs: RootId,
 ) -> Result<(), RootedError> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (context, fs);
         return Ok(());
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let global = context.global_root()?;
         let emitter = get(context, global, "__nodeEventEmitter")?;
@@ -523,9 +523,13 @@ pub(crate) fn watch(
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let mut forwarded = [undefined; 3];
-    for (slot, value) in forwarded.iter_mut().zip(args) { *slot = *value; }
+    for (slot, value) in forwarded.iter_mut().zip(args) {
+        *slot = *value;
+    }
     // SDK watch dispatch precedes overload, option and path validation.
-    if let Some(watcher) = crate::modules::fs_policy_shared_vm::vfs_read(context, "watch", &forwarded)? {
+    if let Some(watcher) =
+        crate::modules::fs_policy_shared_vm::vfs_read(context, "watch", &forwarded)?
+    {
         return Ok(watcher);
     }
     let filename = args.first().copied().unwrap_or_else(|| context.undefined());
@@ -626,9 +630,9 @@ fn register(
         state.fs_watch.next_id += 1;
         id
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let result = state.borrow_mut().fs_watch.kernel.subscribe(&_pathname);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let result: std::io::Result<WatchDescriptor> = Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "filesystem watching unsupported",
@@ -643,7 +647,7 @@ fn register(
                 .groups
                 .entry(descriptor)
                 .or_insert_with(|| Group {
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
                     basename: _pathname
                         .file_name()
                         .map(|name| name.as_encoded_bytes().to_vec())
@@ -783,7 +787,7 @@ fn stop(state: &mut State, id: u64) -> Option<RootId> {
         group.owners.retain(|owner| *owner != id);
         if group.owners.is_empty() {
             state.groups.remove(&active.descriptor);
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             state.kernel.unsubscribe(active.descriptor);
         }
     }
@@ -1027,7 +1031,7 @@ pub(crate) fn poll(
     program: &quench_runtime::ResidualProgram,
 ) -> Result<bool, String> {
     let state = runtime.host_mut().shared_state();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if state.borrow().fs_watch.deliveries.is_empty() {
         let event = state
             .borrow_mut()
@@ -1104,7 +1108,7 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     let mut state = state.borrow_mut();
     state.fs_watch.groups.clear();
     state.fs_watch.deliveries.clear();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     state.fs_watch.kernel.reset();
 }
 
@@ -1118,12 +1122,12 @@ impl State {
             handles,
             groups,
             deliveries,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             kernel,
         } = self;
         require_quiescent(handles.is_empty() && groups.is_empty() && deliveries.is_empty(), "a file watcher")?;
-        #[cfg(target_os = "linux")]
-        require_quiescent(kernel.snapshot_quiescent(), "an inotify descriptor")?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        require_quiescent(kernel.snapshot_quiescent(), "a filesystem-event transport")?;
         next_id.write(writer)?;
         api.write(writer)?;
         dispatch.write(writer)

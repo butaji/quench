@@ -25,8 +25,15 @@ pub(crate) enum Phase {
 }
 impl Phase {
     pub(crate) fn from_code(code: u8) -> Self {
-        [Self::AsyncBegin, Self::AsyncInstant, Self::AsyncEnd, Self::Counter]
-            .into_iter().find(|phase| phase.byte() == code).unwrap_or(Self::Raw(code))
+        [
+            Self::AsyncBegin,
+            Self::AsyncInstant,
+            Self::AsyncEnd,
+            Self::Counter,
+        ]
+        .into_iter()
+        .find(|phase| phase.byte() == code)
+        .unwrap_or(Self::Raw(code))
     }
     fn byte(self) -> u8 {
         match self {
@@ -83,7 +90,15 @@ impl TraceState {
         directory.join(filename)
     }
 
-    pub(crate) fn configure(&mut self, args: &[String]) {
+    pub(crate) fn configure(&mut self, invocation: &[String]) {
+        // Node accepts trace settings from NODE_OPTIONS as well as argv.
+        // Apply both here so tracing is initialized before bootstrap touches
+        // the environment or performs other instrumented work.
+        let mut args = std::env::var("NODE_OPTIONS")
+            .ok()
+            .and_then(|options| crate::modules::cli_options::parse_node_options(&options).ok())
+            .unwrap_or_default();
+        args.extend_from_slice(invocation);
         let mut categories = None;
         let mut enabled = false;
         let mut pattern = DEFAULT_FILE_PATTERN.to_owned();
@@ -268,10 +283,19 @@ impl TraceState {
         let mut writer = std::io::BufWriter::new(file);
         writer.write_all(b"{\"traceEvents\":[")?;
         for (index, event) in self.events.iter().enumerate() {
-            if index != 0 { writer.write_all(b",")?; }
+            if index != 0 {
+                writer.write_all(b",")?;
+            }
             writer.write_all(b"{")?;
-            for (index, (key, value)) in event.as_object().expect("trace event object").iter().enumerate() {
-                if index != 0 { writer.write_all(b",")?; }
+            for (index, (key, value)) in event
+                .as_object()
+                .expect("trace event object")
+                .iter()
+                .enumerate()
+            {
+                if index != 0 {
+                    writer.write_all(b",")?;
+                }
                 serde_json::to_writer(&mut writer, key)?;
                 writer.write_all(b":")?;
                 // The SDK/V8 JSONTraceWriter receives already escaped category

@@ -1,10 +1,9 @@
 //! Node IPC serialization (`json` and `advanced`) and duplex channel lifecycle.
 use crate::host::{NodeHost, SharedNodeState};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-use std::{
-    collections::VecDeque,
-    io::{Read, Write},
-};
+use std::collections::VecDeque;
+#[cfg(unix)]
+use std::os::fd::{AsFd, OwnedFd};
 
 const JSON_FRAME_DELIMITER: u8 = b'\n';
 const READ_CHUNK_BYTES: usize = 16 * 1024;
@@ -17,6 +16,10 @@ const PROCESS_OWNER: u64 = 0;
 /// The child bootstrap variable naming the channel's serialization mode.
 pub(crate) const SERIALIZATION_MODE_VARIABLE: &str = "NODE_CHANNEL_SERIALIZATION_MODE";
 const INTERNAL_MESSAGE_PREFIX: &str = "NODE_";
+// Handle frames use a non-JSON prefix, leaving every existing message frame
+// byte-for-byte compatible and avoiding collisions with guest message values.
+#[cfg(unix)]
+const HANDLE_FRAME_PREFIX: &[u8] = b"\0QUENCH_NODE_HANDLE_V1\0";
 
 /// `options.serialization`: how messages are framed and encoded on the channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,6 +85,10 @@ struct PendingWrite {
     bytes: Vec<u8>,
     offset: usize,
     callback: Option<RootId>,
+    #[cfg(unix)]
+    descriptor: crate::modules::unix_rights::PendingHandle,
+    #[cfg(unix)]
+    close_after_send: Option<RootId>,
 }
 
 /// Parent channels start referenced. Child channels instead derive their
@@ -119,6 +126,8 @@ pub(crate) struct IpcChannel {
     phase: Phase,
     serialization: Serialization,
     input: Vec<u8>,
+    #[cfg(unix)]
+    input_descriptors: VecDeque<(usize, OwnedFd)>,
     writes: VecDeque<PendingWrite>,
     completed: VecDeque<(RootId, bool)>,
     reference: Option<bool>,
@@ -132,21 +141,40 @@ pub(crate) struct State {
     parse: Option<RootId>,
     stringify: Option<RootId>,
     /// Received payloads, consumed in order by `ipcDecode`.
-    received: VecDeque<(Serialization, Vec<u8>)>,
+    received: VecDeque<ReceivedMessage>,
 }
 
 struct Progress {
-    frames: Vec<Vec<u8>>,
+    frames: Vec<Frame>,
     callbacks: Vec<(RootId, bool)>,
+    #[cfg(unix)]
+    close_handles: Vec<(RootId, bool)>,
     disconnected: bool,
 }
 
+/// One complete frame's payload and the descriptor that arrived with its bytes.
+struct Frame {
+    bytes: Vec<u8>,
+    #[cfg(unix)]
+    descriptor: Option<OwnedFd>,
+}
+
+/// A received payload awaiting `ipcDecode`, and whether its frame carried a handle: in
+/// `json` mode a `HANDLE_FRAME_PREFIX` marks it, in `advanced` mode the descriptor itself.
+struct ReceivedMessage {
+    serialization: Serialization,
+    bytes: Vec<u8>,
+    carries_handle: bool,
+    #[cfg(unix)]
+    descriptor: Option<OwnedFd>,
+}
+
 impl IpcChannel {
-    fn take_socket(&mut self)->Option<std::os::unix::net::UnixStream>{
-        self.disconnected=true;
-        match std::mem::replace(&mut self.phase,Phase::Closed){
-            Phase::Open(transport)|Phase::Disconnecting(transport)=>Some(transport.socket),
-            Phase::Closed=>None,
+    fn take_socket(&mut self) -> Option<std::os::unix::net::UnixStream> {
+        self.disconnected = true;
+        match std::mem::replace(&mut self.phase, Phase::Closed) {
+            Phase::Open(transport) | Phase::Disconnecting(transport) => Some(transport.socket),
+            Phase::Closed => None,
         }
     }
     pub(crate) fn parent_has_work(&self) -> bool {
@@ -165,6 +193,7 @@ impl IpcChannel {
             phase: Phase::Open(Transport { socket }),
             serialization,
             input: Vec::new(),
+            input_descriptors: VecDeque::new(),
             writes: VecDeque::new(),
             completed: VecDeque::new(),
             reference: None,
@@ -181,11 +210,21 @@ impl IpcChannel {
     fn connected(&self) -> bool {
         matches!(self.phase, Phase::Open(_))
     }
-    fn enqueue(&mut self, bytes: Vec<u8>, callback: Option<RootId>) {
+    fn enqueue(
+        &mut self,
+        bytes: Vec<u8>,
+        callback: Option<RootId>,
+        #[cfg(unix)] descriptor: Option<OwnedFd>,
+        #[cfg(unix)] close_after_send: Option<RootId>,
+    ) {
         self.writes.push_back(PendingWrite {
             bytes,
             offset: 0,
             callback,
+            #[cfg(unix)]
+            descriptor: crate::modules::unix_rights::PendingHandle::from_optional(descriptor),
+            #[cfg(unix)]
+            close_after_send,
         });
     }
     #[cfg(unix)]
@@ -205,19 +244,20 @@ impl IpcChannel {
     fn close(&mut self) {
         self.phase = Phase::Closed;
     }
-    fn flush(&mut self) -> Vec<(RootId, bool)> {
+    fn flush(&mut self) -> (Vec<(RootId, bool)>, Vec<(RootId, bool)>) {
         let mut callbacks = Vec::new();
+        #[cfg(unix)]
+        let mut close_handles = Vec::new();
         #[cfg(unix)]
         {
             while !self.closed() {
                 let Some(write) = self.writes.front_mut() else {
                     break;
                 };
-                match self
-                    .phase
-                    .socket()
-                    .expect("open IPC transport")
-                    .write(&write.bytes[write.offset..])
+                let socket = self.phase.socket().expect("open IPC transport");
+                match write
+                    .descriptor
+                    .send(socket.as_fd(), &write.bytes[write.offset..])
                 {
                     Ok(0) => {
                         self.close();
@@ -226,9 +266,12 @@ impl IpcChannel {
                     Ok(length) => {
                         write.offset += length;
                         if write.offset == write.bytes.len() {
-                            if let Some(callback) =
-                                self.writes.pop_front().and_then(|write| write.callback)
-                            {
+                            let write = self.writes.pop_front().expect("completed IPC write");
+                            #[cfg(unix)]
+                            if let Some(handle) = write.close_after_send {
+                                close_handles.push((handle, true));
+                            }
+                            if let Some(callback) = write.callback {
                                 callbacks.push((callback, false));
                             }
                         }
@@ -244,12 +287,19 @@ impl IpcChannel {
         }
         if self.closed() {
             while let Some(write) = self.writes.pop_front() {
+                #[cfg(unix)]
+                if let Some(handle) = write.close_after_send {
+                    close_handles.push((handle, false));
+                }
                 if let Some(callback) = write.callback {
                     callbacks.push((callback, true));
                 }
             }
         }
-        callbacks
+        #[cfg(unix)]
+        return (callbacks, close_handles);
+        #[cfg(not(unix))]
+        (callbacks, Vec::new())
     }
     fn below_high_water_mark(&self) -> bool {
         self.writes
@@ -260,27 +310,32 @@ impl IpcChannel {
     }
     fn progress(&mut self) -> Progress {
         let mut callbacks = self.completed.drain(..).collect::<Vec<_>>();
-        callbacks.extend(self.flush());
+        let (flush_callbacks, close_handles) = self.flush();
+        callbacks.extend(flush_callbacks);
         let mut result = Progress {
             frames: Vec::new(),
             callbacks,
+            #[cfg(unix)]
+            close_handles,
             disconnected: false,
         };
         #[cfg(unix)]
         {
             let mut bytes = [0; READ_CHUNK_BYTES];
             while !self.closed() {
-                match self
-                    .phase
-                    .socket()
-                    .expect("open IPC transport")
-                    .read(&mut bytes)
-                {
-                    Ok(0) => {
+                let socket = self.phase.socket().expect("open IPC transport");
+                match crate::modules::unix_rights::receive(socket.as_fd(), &mut bytes) {
+                    Ok(received) if received.bytes == 0 => {
                         self.close();
                         break;
                     }
-                    Ok(length) => self.input.extend_from_slice(&bytes[..length]),
+                    Ok(received) => {
+                        if let Some(descriptor) = received.descriptor {
+                            self.input_descriptors
+                                .push_back((self.input.len(), descriptor));
+                        }
+                        self.input.extend_from_slice(&bytes[..received.bytes]);
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                     Err(_) => {
@@ -295,14 +350,33 @@ impl IpcChannel {
         }
         let mut start = 0;
         while let Some((size, payload)) = self.serialization.frame(&self.input[start..]) {
-            result.frames.push(self.input[start + payload.start..start + payload.end].to_vec());
+            #[cfg(unix)]
+            let descriptor = self
+                .input_descriptors
+                .front()
+                .is_some_and(|(offset, _)| *offset >= start && *offset < start + size)
+                .then(|| self.input_descriptors.pop_front().map(|(_, descriptor)| descriptor))
+                .flatten();
+            result.frames.push(Frame {
+                bytes: self.input[start + payload.start..start + payload.end].to_vec(),
+                #[cfg(unix)]
+                descriptor,
+            });
             start += size;
         }
         if start != 0 {
             self.input.drain(..start);
+            #[cfg(unix)]
+            for (offset, _) in &mut self.input_descriptors {
+                *offset = offset.saturating_sub(start);
+            }
         }
         if self.closed() {
             while let Some(write) = self.writes.pop_front() {
+                #[cfg(unix)]
+                if let Some(handle) = write.close_after_send {
+                    result.close_handles.push((handle, false));
+                }
                 if let Some(callback) = write.callback {
                     result.callbacks.push((callback, true));
                 }
@@ -428,10 +502,20 @@ pub(crate) fn activate_process(context:&mut NativeContext<'_,NodeHost>)->Result<
     context.call_rooted(fork,process,&[fd,mode])?;Ok(())
 }
 
-pub(crate) fn take_socket(context:&mut NativeContext<'_,NodeHost>,fd:i32)->Option<std::os::unix::net::UnixStream>{
-    let shared=context.host_mut().shared_state();let mut state=shared.borrow_mut();
-    if let Some(channel)=state.process_ipc.channel.as_mut().filter(|c|c.fd()==fd){return channel.take_socket();}
-    for child in state.child_processes.values_mut(){if let Some(channel)=child.ipc.as_mut().filter(|c|c.fd()==fd){return channel.take_socket();}}
+pub(crate) fn take_socket(
+    context: &mut NativeContext<'_, NodeHost>,
+    fd: i32,
+) -> Option<std::os::unix::net::UnixStream> {
+    let shared = context.host_mut().shared_state();
+    let mut state = shared.borrow_mut();
+    if let Some(channel) = state.process_ipc.channel.as_mut().filter(|c| c.fd() == fd) {
+        return channel.take_socket();
+    }
+    for child in state.child_processes.values_mut() {
+        if let Some(channel) = child.ipc.as_mut().filter(|c| c.fd() == fd) {
+            return channel.take_socket();
+        }
+    }
     None
 }
 
@@ -534,6 +618,28 @@ pub(crate) fn send(
             "one of type string, object, number, or boolean",
         )?);
     }
+    #[cfg(unix)]
+    let transferred_handle = if let Some(handle) = args
+        .get(1)
+        .copied()
+        .filter(|handle| context.truthy_rooted(*handle).unwrap_or(false))
+        .filter(|handle| !context.is_callable_rooted(*handle).unwrap_or(false))
+    {
+        let descriptor = super::net_shared_vm::ipc_socket_handle(context, handle)?
+            .or(duplicate_native_handle(context, handle)?);
+        if descriptor.is_none() {
+            let error = coded_error(
+                context,
+                "ERR_INVALID_HANDLE_TYPE",
+                "This handle type cannot be sent",
+            )?;
+            return Err(context.throw(error));
+        }
+        descriptor
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
     if let Some(handle) = args.get(1).copied() {
         if context.truthy_rooted(handle)? && !context.is_callable_rooted(handle)? {
             let error = coded_error(
@@ -558,7 +664,14 @@ pub(crate) fn send(
             let text = context.to_string(serialized)?;
             let immediate = (text.encode_utf16().count() + 1).saturating_mul(UTF8_BYTES_PER_UTF16_UNIT)
                 <= IMMEDIATE_STRING_STORAGE_BYTES;
-            let mut bytes = text.into_bytes();
+            let mut bytes = Vec::new();
+            // A JSON frame marks the handle its descriptor carries; an advanced frame's
+            // descriptor is its own mark.
+            #[cfg(unix)]
+            if transferred_handle.is_some() {
+                bytes.extend_from_slice(HANDLE_FRAME_PREFIX);
+            }
+            bytes.extend_from_slice(text.as_bytes());
             bytes.push(JSON_FRAME_DELIMITER);
             (bytes, immediate)
         }
@@ -569,24 +682,65 @@ pub(crate) fn send(
             (super::ipc_serdes_shared_vm::serialize(context, message, buffer)?, true)
         }
     };
+    // Node closes a sent handle once its frame is written unless `options.keepOpen`.
+    #[cfg(unix)]
+    let close_after_send = if transferred_handle.is_some() {
+        let options = args.get(2).copied();
+        let keep_open = if let Some(options) =
+            options.filter(|options| context.is_object_rooted(*options).unwrap_or(false))
+        {
+            let key = context.string_rooted("keepOpen");
+            let value = context.get_property_rooted(options, key)?;
+            context.truthy_rooted(value)?
+        } else {
+            false
+        };
+        if keep_open {
+            None
+        } else {
+            args.get(1)
+                .copied()
+                .map(|handle| context.retain(handle))
+                .transpose()?
+        }
+    } else {
+        None
+    };
     let callback = callback
         .map(|callback| context.retain(callback))
         .transpose()?;
-    let (accepted, callbacks) = {
+    let (accepted, callbacks, _close_handles) = {
         let mut state = state.borrow_mut();
         let channel = channel(&mut state, owner)
             .ok_or_else(|| RootedError::host("IPC channel disappeared"))?;
         let immediate = immediate && channel.writes.is_empty() && channel.completed.is_empty();
-        channel.enqueue(bytes, callback);
-        let callbacks = channel.flush();
+        channel.enqueue(
+            bytes,
+            callback,
+            #[cfg(unix)]
+            transferred_handle,
+            #[cfg(unix)]
+            close_after_send,
+        );
+        let (callbacks, close_handles) = channel.flush();
         let callbacks = if immediate {
             callbacks
         } else {
             channel.completed.extend(callbacks);
             Vec::new()
         };
-        (channel.below_high_water_mark(), callbacks)
+        (channel.below_high_water_mark(), callbacks, close_handles)
     };
+    #[cfg(unix)]
+    for (handle, sent) in _close_handles {
+        let closed = if sent {
+            close_transferred_socket_handle(context, handle)
+        } else {
+            Ok(())
+        };
+        context.release_root(handle);
+        closed?;
+    }
     for (callback, failed) in callbacks {
         let complete = context.host_function(crate::host::shared_vm::operation("ipcComplete"))?;
         let undefined = context.undefined();
@@ -667,9 +821,9 @@ pub(crate) fn has_work(state: &SharedNodeState) -> bool {
     !channel.writes.is_empty()
         || !channel.completed.is_empty()
         || matches!(channel.phase, Phase::Disconnecting(_))
-        || channel.reference.unwrap_or_else(|| {
-            channel.counted_references.referenced()
-        })
+        || channel
+            .reference
+            .unwrap_or_else(|| channel.counted_references.referenced())
 }
 
 pub(crate) fn reference_counted(
@@ -723,6 +877,29 @@ pub(crate) fn poll(
         };
         progressed |=
             !progress.frames.is_empty() || !progress.callbacks.is_empty() || progress.disconnected;
+        #[cfg(unix)]
+        {
+            progressed |= !progress.close_handles.is_empty();
+        }
+        #[cfg(unix)]
+        for (handle, sent) in progress.close_handles {
+            if sent {
+                let close = runtime
+                    .host_function(crate::host::shared_vm::operation("ipcCloseHandle"))
+                    .map_err(|error| runtime.format_error(program, &error.error))?;
+                let receiver = runtime.root(Value::UNDEFINED);
+                state.borrow_mut().scheduler.queue_shared_next_tick(
+                    super::shared_event_loop::SharedCallback {
+                        execution: None,
+                        callback: close,
+                        receiver,
+                        args: vec![handle],
+                    },
+                );
+            } else {
+                runtime.release_root(handle);
+            }
+        }
         for (callback, failed) in progress.callbacks {
             let receiver = runtime.root(Value::UNDEFINED);
             let failed = runtime.root(if failed { Value::TRUE } else { Value::FALSE });
@@ -730,14 +907,28 @@ pub(crate) fn poll(
                 .host_function(crate::host::shared_vm::operation("ipcComplete"))
                 .map_err(|error| runtime.format_error(program, &error.error))?;
             state.borrow_mut().scheduler.queue_shared_next_tick(
-                super::shared_event_loop::SharedCallback { execution: None,
+                super::shared_event_loop::SharedCallback {
+                    execution: None,
                     callback: complete,
                     receiver,
                     args: vec![callback, failed],
                 },
             );
         }
-        for bytes in progress.frames {
+        for frame in progress.frames {
+            let mut bytes = frame.bytes;
+            let carries_handle = match serialization {
+                #[cfg(unix)]
+                Serialization::Advanced => frame.descriptor.is_some(),
+                #[cfg(unix)]
+                Serialization::Json => bytes.starts_with(HANDLE_FRAME_PREFIX),
+                #[cfg(not(unix))]
+                _ => false,
+            };
+            #[cfg(unix)]
+            if carries_handle && serialization == Serialization::Json {
+                bytes.drain(..HANDLE_FRAME_PREFIX.len());
+            }
             let decode = runtime
                 .host_function(crate::host::shared_vm::operation("ipcDecode"))
                 .map_err(|error| runtime.format_error(program, &error.error))?;
@@ -748,7 +939,14 @@ pub(crate) fn poll(
                     .ok_or("IPC message target missing")?,
             );
             let mut state = state.borrow_mut();
-            state.process_ipc.received.push_back((serialization, bytes));
+            state.process_ipc.received.push_back(ReceivedMessage {
+                serialization,
+                bytes,
+                carries_handle,
+                // A descriptor without a handle mark is dropped, closing it.
+                #[cfg(unix)]
+                descriptor: frame.descriptor.filter(|_| carries_handle),
+            });
             state.scheduler.queue_shared_next_tick(
                 super::shared_event_loop::SharedCallback { execution: None,
                     callback: decode,
@@ -794,7 +992,8 @@ fn queue_event(
         .shared_state()
         .borrow_mut()
         .scheduler
-        .queue_shared_next_tick(super::shared_event_loop::SharedCallback { execution: None,
+        .queue_shared_next_tick(super::shared_event_loop::SharedCallback {
+            execution: None,
             callback: emit,
             receiver,
             args,
@@ -824,6 +1023,182 @@ pub(crate) fn complete(
     context.call_rooted(callback, undefined, &[error])
 }
 
+/// Node's socket handle conversion passes `_handle` to the IPC transport.
+/// Resolve that registered native handle identity and duplicate its TCP fd
+/// alongside the public Socket form accepted by `ipc_socket_handle`.
+#[cfg(unix)]
+fn duplicate_native_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    handle: RootId,
+) -> Result<Option<OwnedFd>, RootedError> {
+    use std::os::fd::FromRawFd;
+
+    let Some(id) = super::net_reference_shared_vm::optional_handle_id(context, handle)? else {
+        return Ok(None);
+    };
+    let fd = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        super::net_shared_vm::native_tcp_fd(&state.tcp, id)
+    };
+    if fd < 0 {
+        return Ok(None);
+    }
+    let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if duplicate < 0 {
+        return Err(RootedError::host(format!(
+            "cannot duplicate IPC TCP handle: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(Some(unsafe { OwnedFd::from_raw_fd(duplicate) }))
+}
+
+#[cfg(unix)]
+fn close_transferred_socket_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    handle: RootId,
+) -> Result<(), RootedError> {
+    // A public net.Socket owns the native handle and its destroy path also
+    // updates the server's connection bookkeeping and emits `close`. Closing
+    // its `_handle` directly skips that lifecycle and leaves server.close()
+    // waiting forever. The direct native-handle path is only for raw handles.
+    if let Ok(id) = super::net_shared_vm::socket_id(context, handle) {
+        // ChildProcess.send() keeps the public Socket as the post-send handle
+        // on this path. Its native handle has already been detached by the
+        // Node conversion step, so the regular destroy hook can no longer
+        // drain the native listener's connection set. Use the same explicit
+        // transferred-socket cleanup as the native-handle path below.
+        return destroy_transferred_public_socket(context, handle, id);
+    }
+    if let Some(id) = super::net_reference_shared_vm::optional_handle_id(context, handle)? {
+        // Node detaches `socket._handle` before calling postSend. Closing that
+        // native handle directly leaves the public accepted Socket's
+        // `parent_server` bookkeeping alive, so `server.close()` never drains.
+        // Route transferred handles owned by a public Socket through its
+        // destroy path; raw native handles still use close() below.
+        let owner_key = super::net_reference_shared_vm::owner_symbol(context)?;
+        let owner = context.get_property_rooted(handle, owner_key)?;
+        if context.truthy_rooted(owner)? && context.is_object_rooted(owner)? {
+            return destroy_transferred_public_socket(context, owner, id);
+        }
+        let socket = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .net_sockets
+            .get(&id)
+            .map(|socket| socket.root);
+        if let Some(socket) = socket {
+            return destroy_transferred_public_socket(context, socket, id);
+        }
+        let key = context.string_rooted("close");
+        let close = context.get_property_rooted(handle, key)?;
+        if context.is_callable_rooted(close)? {
+            context.call_rooted(close, handle, &[])?;
+            return Ok(());
+        }
+    }
+    super::net_shared_vm::close_ipc_socket(context, handle)
+}
+
+#[cfg(unix)]
+pub(crate) fn destroy_transferred_public_socket(
+    context: &mut NativeContext<'_, NodeHost>,
+    socket: RootId,
+    id: u64,
+) -> Result<(), RootedError> {
+    // A socket passed to an HTTP child is no longer usable by the HTTP server
+    // which owned it. Drop the HTTP bookkeeping alongside the native handle so
+    // the source Socket does not retain a parser, response, or timeout after
+    // the transfer has completed.
+    let timers = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "net.js",
+        "internal/timers.js",
+    )?;
+    let timeout_key = context.string_rooted("kTimeout");
+    let timeout_symbol = context.get_property_rooted(timers, timeout_key)?;
+    let timeout = context.get_property_rooted(socket, timeout_symbol)?;
+    let global = context.global_root()?;
+    let clear_timeout_key = context.string_rooted("clearTimeout");
+    let clear_timeout = context.get_property_rooted(global, clear_timeout_key)?;
+    if context.is_callable_rooted(clear_timeout)? {
+        context.call_rooted(clear_timeout, global, &[timeout])?;
+    }
+    let null = context.null();
+    context.set_property_rooted(socket, timeout_symbol, null, socket)?;
+    for name in ["parser", "_httpMessage"] {
+        let key = context.string_rooted(name);
+        context.set_property_rooted(socket, key, null, socket)?;
+    }
+
+    // Node's net.Socket send conversion already decrements
+    // socket.server._connections before postSend closes the native handle.
+    // Our public destroy hook normally decrements _server as well, so retain
+    // the socket's public server property but clear this close-accounting link
+    // to avoid decrementing the same transferred connection twice.
+    let server_key = context.string_rooted("_server");
+    context.set_property_rooted(socket, server_key, null, socket)?;
+    let key = context.string_rooted("destroy");
+    let destroy = context.get_property_rooted(socket, key)?;
+    if context.is_callable_rooted(destroy)? {
+        context.call_rooted(destroy, socket, &[])?;
+    }
+    // The `child_process` send conversion detaches the native handle before
+    // its post-send close callback runs. Some Node paths leave the source
+    // Socket object alive after that detachment, so its public destroy hook
+    // can complete without closing the underlying transport. Make descriptor
+    // ownership explicit here; close_socket is idempotent if destroy already
+    // queued the native close.
+    {
+        let shared = context.host_mut().shared_state();
+        super::net_shared_vm::close_socket(&mut shared.borrow_mut().tcp, id);
+    }
+    // Give the public Socket destroy hook a chance to decrement
+    // server._connections before removing the native listener identity. The
+    // earlier order made the still-owned check below false unconditionally,
+    // so detached sockets could leave server.close() waiting forever.
+    let still_owned = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .net_servers
+        .values()
+        .any(|server| server.connections.contains(&id));
+    if still_owned {
+        super::net_server_admission::socket_destroyed(context, socket, Some(id))?;
+    }
+    // The transferred handle has been closed on the sending side. Ensure the
+    // transport's listener set is drained even if Socket._destroy had already
+    // cleared its public _server link.
+    {
+        let shared = context.host_mut().shared_state();
+        for server in shared.borrow_mut().net_servers.values_mut() {
+            server.connections.remove(&id);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn close_transferred_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let handle = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("IPC transferred handle is missing"))?;
+    #[cfg(unix)]
+    let closed = close_transferred_socket_handle(context, handle);
+    #[cfg(not(unix))]
+    let closed: Result<(), RootedError> = Ok(());
+    context.release_root(handle);
+    closed?;
+    Ok(context.undefined())
+}
+
 pub(crate) fn emit(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -848,28 +1223,44 @@ pub(crate) fn decode(
         .copied()
         .ok_or_else(|| RootedError::host("IPC decode target missing"))?;
     let state = context.host_mut().shared_state();
-    let (serialization, bytes) = state
+    let received = state
         .borrow_mut()
         .process_ipc
         .received
         .pop_front()
         .ok_or_else(|| RootedError::host("IPC decode frame missing"))?;
     let undefined = context.undefined();
-    let message = match serialization {
+    let message = match received.serialization {
         Serialization::Json => {
             let parse = state
                 .borrow()
                 .process_ipc
                 .parse
                 .ok_or_else(|| RootedError::host("IPC JSON parser missing"))?;
-            let text = context.string_rooted(&String::from_utf8_lossy(&bytes));
+            let text = context.string_rooted(&String::from_utf8_lossy(&received.bytes));
             context.call_rooted(parse, undefined, &[text])?
         }
         Serialization::Advanced => {
-            let payload = super::buffer_shared_vm::from_bytes(context, &bytes)?;
+            let payload = super::buffer_shared_vm::from_bytes(context, &received.bytes)?;
             super::ipc_serdes_shared_vm::deserialize(context, payload)?
         }
     };
+    let has_handle = received.carries_handle;
+    #[cfg(unix)]
+    let handle = if has_handle {
+        let descriptor = received
+            .descriptor
+            .ok_or_else(|| RootedError::host("IPC socket descriptor is missing"))?;
+        // Node's internal child-process handle conversions expect the
+        // transferred native TCP handle: net.Server adopts it with listen(),
+        // while net.Socket wraps it in a public Socket. Keep the descriptor's
+        // listener/stream kind and TCP identity when importing it.
+        Some(super::tcp_binding::from_owned_descriptor(context, descriptor)?)
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    let handle: Option<RootId> = None;
     let mut event = "message";
     if context.is_object_rooted(message)? {
         let key = context.string_rooted("cmd");
@@ -881,17 +1272,37 @@ pub(crate) fn decode(
             event = "internalMessage";
         }
     }
+    // Node's internal handle conversion creates the public Server or Socket
+    // from the native TCP handle and updates the associated connection state.
+    if has_handle {
+        event = "internalMessage";
+    }
     let event = context.string_rooted(event);
-    emit(context, undefined, &[target, event, message])
+    if let Some(handle) = handle {
+        emit(context, undefined, &[target, event, message, handle])
+    } else {
+        emit(context, undefined, &[target, event, message])
+    }
 }
 
-pub(crate) fn listener_reference(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn listener_reference(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let name = args.first().copied().unwrap_or_else(|| context.undefined());
-    if context.string_text(name)?.is_some_and(|name| matches!(name.as_str(), "message" | "disconnect")) {
+    if context
+        .string_text(name)?
+        .is_some_and(|name| matches!(name.as_str(), "message" | "disconnect"))
+    {
         let data = context.host_function_data()?;
         let control = super::event_constructor_shared_vm::get(context, data, "0")?;
         let add = super::event_constructor_shared_vm::get(context, data, "1")?;
-        let name = if context.truthy_rooted(add)? { "refCounted" } else { "unrefCounted" };
+        let name = if context.truthy_rooted(add)? {
+            "refCounted"
+        } else {
+            "unrefCounted"
+        };
         let method = super::event_constructor_shared_vm::get(context, control, name)?;
         context.call_rooted(method, control, &[])?;
     }

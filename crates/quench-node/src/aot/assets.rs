@@ -1,0 +1,307 @@
+//! Frozen module inputs. These are loader assets, not a replacement filesystem.
+use quench_runtime::SourceKind;
+#[cfg(feature = "aot")]
+use std::cell::RefCell;
+use std::{collections::BTreeMap, path::{Path, PathBuf}, rc::Rc, sync::Arc};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PreparedModuleSource<T> {
+    Original,
+    Projected(T),
+}
+
+#[derive(Clone)]
+pub struct ModuleFile {
+    pub bytes: Rc<[u8]>,
+    pub kind: SourceKind,
+    /// Host-policy projection frozen during source staging, when needed.
+    pub prepared: Option<PreparedModuleSource<Rc<str>>>,
+}
+
+#[derive(Default)]
+pub struct ModuleAssets {
+    pub files: BTreeMap<PathBuf, ModuleFile>,
+    pub resolutions: BTreeMap<(PathBuf, String), PathBuf>,
+    pub node_root: Option<PathBuf>,
+    pub entry: Option<PathBuf>,
+    pub views: BTreeMap<(PathBuf, String), Rc<str>>,
+    pub imports: BTreeMap<(String, String), String>,
+    pub modules: BTreeMap<String, (Arc<str>, bool)>,
+}
+
+#[cfg(feature = "aot")]
+impl ModuleAssets {
+    pub(super) fn extend(&mut self, other: Self) -> Result<(), String> {
+        for (path, file) in &other.files {
+            if self.files.get(path).is_some_and(|old| old.bytes != file.bytes || old.kind != file.kind || matches!((&old.prepared, &file.prepared), (Some(a), Some(b)) if a != b)) {
+                return Err(format!("conflicting module input: {}", path.display()));
+            }
+        }
+        for (edge, target) in &other.resolutions {
+            if self.resolutions.get(edge).is_some_and(|old| old != target) {
+                return Err(format!("conflicting module resolution: {} from {}", edge.1, edge.0.display()));
+            }
+        }
+        for (key, view) in &other.views {
+            if self.views.get(key).is_some_and(|previous| previous != view) {
+                return Err(format!("conflicting SDK source view: {} {}", key.0.display(), key.1));
+            }
+        }
+        for (edge, target) in &other.imports {
+            if self.imports.get(edge).is_some_and(|old| old != target) {
+                return Err(format!("conflicting import resolution: {} from {}", edge.1, edge.0));
+            }
+        }
+        for (name, source) in &other.modules {
+            if self.modules.get(name).is_some_and(|old| old != source) {
+                return Err(format!("conflicting module source: {name}"));
+            }
+        }
+        if self.node_root.is_some() && other.node_root.is_some() && self.node_root != other.node_root {
+            return Err("conflicting Node SDK roots".into());
+        }
+        if self.entry.is_some() && other.entry.is_some() && self.entry != other.entry {
+            return Err("conflicting application entries".into());
+        }
+        for (path, mut file) in other.files {
+            if file.prepared.is_none() {
+                file.prepared = self.files.get(&path).and_then(|old| old.prepared.clone());
+            }
+            self.files.insert(path, file);
+        }
+        self.resolutions.extend(other.resolutions);
+        self.views.extend(other.views);
+        self.imports.extend(other.imports);
+        self.modules.extend(other.modules);
+        if other.node_root.is_some() { self.node_root = other.node_root; }
+        if other.entry.is_some() { self.entry = other.entry; }
+        Ok(())
+    }
+}
+
+pub struct EmbeddedModuleFile {
+    pub path: &'static str,
+    pub bytes: &'static [u8],
+    pub kind: SourceKind,
+    pub prepared: Option<PreparedModuleSource<&'static str>>,
+}
+
+pub struct EmbeddedSourceView {
+    pub path: &'static str,
+    pub key: &'static str,
+    pub source: &'static str,
+}
+
+pub struct EmbeddedModuleResolution {
+    pub parent: &'static str,
+    pub specifier: &'static str,
+    pub target: &'static str,
+}
+
+pub struct EmbeddedImportResolution {
+    pub referrer: &'static str,
+    pub specifier: &'static str,
+    pub target: &'static str,
+}
+
+pub struct EmbeddedModuleSource {
+    pub name: &'static str,
+    pub source: &'static str,
+    pub typescript: bool,
+}
+
+/// Compiler-generated, sorted original module bytes and resolved edges.
+pub struct EmbeddedModules {
+    pub node_root: Option<&'static str>,
+    pub entry: Option<&'static str>,
+    pub files: &'static [EmbeddedModuleFile],
+    pub resolutions: &'static [EmbeddedModuleResolution],
+    pub views: &'static [EmbeddedSourceView],
+    pub imports: &'static [EmbeddedImportResolution],
+    pub modules: &'static [EmbeddedModuleSource],
+}
+
+impl EmbeddedModules {
+    pub(crate) fn import_source(&self, referrer: &str, specifier: &str) -> Option<&EmbeddedModuleSource> {
+        let edge = self.imports.binary_search_by(|edge| edge.referrer.cmp(referrer).then_with(|| edge.specifier.cmp(specifier))).ok()?;
+        let name = self.imports[edge].target;
+        let source = self.modules.binary_search_by(|source| source.name.cmp(name)).ok()?;
+        Some(&self.modules[source])
+    }
+    pub(crate) fn view(&self, path: &Path, key: &str) -> Option<&'static str> {
+        self.views.binary_search_by(|view| Path::new(view.path).cmp(path).then_with(|| view.key.cmp(key)))
+            .ok().map(|index| self.views[index].source)
+    }
+
+    pub(crate) fn file(&self, path: &Path) -> Option<&EmbeddedModuleFile> {
+        self.files.binary_search_by(|file| Path::new(file.path).cmp(path)).ok().map(|index| &self.files[index])
+    }
+
+    pub(crate) fn resolve(&self, parent: &Path, specifier: &str) -> Option<&'static Path> {
+        self.resolutions.binary_search_by(|edge| Path::new(edge.parent).cmp(parent).then_with(|| edge.specifier.cmp(specifier)))
+            .ok().map(|index| Path::new(self.resolutions[index].target))
+    }
+}
+
+#[derive(Default)]
+pub(crate) enum ModuleAssetState {
+    #[default]
+    Filesystem,
+    #[cfg(feature = "aot")]
+    Capture(Rc<RefCell<ModuleAssets>>),
+    Embedded {
+        modules: &'static EmbeddedModules,
+        source_cache: BTreeMap<&'static str, Arc<str>>,
+        missing_source: Option<PathBuf>,
+    },
+}
+
+impl crate::NodeHost {
+    /// Use frozen compiler inputs for bundled modules; ordinary data-file APIs
+    /// retain their existing filesystem behavior.
+    pub fn with_embedded_modules(mut self, modules: &'static EmbeddedModules) -> Self {
+        if let Some(root) = modules.node_root { self.node_library_root = root.into(); }
+        if let Some(entry) = modules.entry.filter(|entry| modules.file(Path::new(entry)).is_none_or(|file| file.kind != SourceKind::Module)) {
+            self = self.with_commonjs_entry(entry.into());
+        }
+        self.module_assets = ModuleAssetState::Embedded { modules, source_cache: BTreeMap::new(), missing_source: None };
+        self
+    }
+
+    pub(crate) fn embedded_module(&self, path: &Path) -> Option<&'static EmbeddedModuleFile> {
+        match &self.module_assets {
+            ModuleAssetState::Embedded { modules, .. } => modules.file(path),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn embedded_import(&mut self, referrer: &str, specifier: &str) -> Result<Option<quench_runtime::ModuleSource>, String> {
+        match &mut self.module_assets {
+            ModuleAssetState::Embedded { modules, source_cache, .. } => {
+                let module = modules.import_source(referrer, specifier)
+                    .ok_or_else(|| format!("module import outside frozen image: {specifier} from {referrer}"))?;
+                // ModuleSource's owned contract needs one Arc per immutable
+                // source, shared across the loader's many referring edges.
+                let source = source_cache.entry(module.name).or_insert_with(|| Arc::from(module.source));
+                Ok(Some(quench_runtime::ModuleSource::text(module.name, source.clone()).with_typescript(module.typescript)))
+            },
+            _ => Ok(None),
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_import(&mut self, referrer: &str, specifier: &str, module: &quench_runtime::ModuleSource) -> Result<(), String> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            let edge = (referrer.to_owned(), specifier.to_owned());
+            if assets.imports.get(&edge).is_some_and(|name| name != &module.name)
+                || assets.modules.get(&module.name).is_some_and(|(source, typescript)| source != &module.source || *typescript != module.typescript) {
+                return Err(format!("module import changed during capture: {specifier} from {referrer}"));
+            }
+            assets.imports.insert(edge, module.name.clone());
+            assets.modules.insert(module.name.clone(), (module.source.clone(), module.typescript));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn module_path(&self, path: &Path) -> std::io::Result<PathBuf> {
+        if self.embedded_module(path).is_some() { return Ok(path.to_owned()); }
+        std::fs::canonicalize(path)
+    }
+
+    pub(crate) fn module_bytes(&mut self, path: &Path, _kind: SourceKind) -> std::io::Result<Vec<u8>> {
+        if let ModuleAssetState::Embedded { modules, missing_source, .. } = &mut self.module_assets {
+            return modules.file(path).map(|file| file.bytes.to_vec()).ok_or_else(|| {
+                // A caught loader error cannot turn an incomplete frozen image
+                // into successful native execution. Retain only its first cause.
+                missing_source.get_or_insert_with(|| path.to_owned());
+                std::io::Error::new(std::io::ErrorKind::NotFound,
+                    format!("module source outside frozen image: {}", path.display()))
+            });
+        }
+        let bytes = std::fs::read(path).or_else(|error| {
+            #[cfg(feature = "aot")]
+            if matches!(self.module_assets, ModuleAssetState::Capture(_)) {
+                return crate::node_sources::source(path, &self.node_library_root)
+                    .map(|source| source.as_bytes().to_vec()).ok_or(error);
+            }
+            Err(error)
+        })?;
+        #[cfg(feature = "aot")]
+        self.record_module_bytes(path, _kind, &bytes)?;
+        Ok(bytes)
+    }
+
+    pub(crate) fn missing_frozen_source(&self) -> Option<&Path> {
+        match &self.module_assets {
+            ModuleAssetState::Embedded { missing_source, .. } => missing_source.as_deref(),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_module_bytes(&mut self, path: &Path, kind: SourceKind, bytes: &[u8]) -> std::io::Result<()> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            match assets.files.entry(path.to_owned()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(ModuleFile { bytes: Rc::from(bytes), kind, prepared: None });
+                },
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    if entry.get().bytes.as_ref() != bytes || entry.get().kind != kind {
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("module changed during source capture: {}", path.display())));
+                    }
+                },
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_source_view(&mut self, path: &Path, key: &str, source: &str) -> Result<(), String> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            let key = (path.to_owned(), key.to_owned());
+            if assets.views.get(&key).is_some_and(|previous| previous.as_ref() != source) {
+                return Err(format!("SDK source view changed during capture: {} {}", path.display(), key.1));
+            }
+            assets.views.entry(key).or_insert_with(|| Rc::from(source));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_prepared_module(&mut self, path: &Path, text: &str) -> Result<(), String> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            let file = assets.files.get_mut(path).ok_or("prepared module has no captured original input")?;
+            let prepared = if file.bytes.as_ref() == text.as_bytes() { PreparedModuleSource::Original }
+                else { PreparedModuleSource::Projected(Rc::from(text)) };
+            if file.prepared.as_ref().is_some_and(|previous| previous != &prepared) {
+                return Err(format!("module preparation changed during source capture: {}", path.display()));
+            }
+            file.prepared = Some(prepared);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn embedded_resolution(&self, parent: &Path, specifier: &str) -> Option<PathBuf> {
+        match &self.module_assets {
+            ModuleAssetState::Embedded { modules, .. } => modules.resolve(parent, specifier).map(Path::to_owned),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    pub(crate) fn record_module_resolution(&mut self, parent: &Path, specifier: &str, target: &Path) -> Result<(), String> {
+        if let ModuleAssetState::Capture(assets) = &self.module_assets {
+            let mut assets = assets.borrow_mut();
+            let edge = (parent.to_owned(), specifier.to_owned());
+            if assets.resolutions.get(&edge).is_some_and(|previous| previous != target) {
+                return Err(format!("module resolution changed during source capture: {specifier} from {}", parent.display()));
+            }
+            assets.resolutions.insert(edge, target.to_owned());
+        }
+        Ok(())
+    }
+}

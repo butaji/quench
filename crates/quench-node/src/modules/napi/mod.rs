@@ -35,6 +35,16 @@ pub(crate) fn wake_fd() -> Option<std::os::fd::RawFd> {
     work::wake_fd()
 }
 
+/// The calling thread's wake signal for cross-thread completions outside N-API.
+pub(crate) fn thread_wake() -> std::io::Result<std::sync::Arc<work::WakeSignal>> {
+    work::thread_wake()
+}
+
+/// Notify a retained wake signal after a completion is visible to its thread.
+pub(crate) fn notify_wake(signal: &work::WakeSignal) {
+    work::notify_wake(signal);
+}
+
 pub(crate) fn wake_signal() -> std::io::Result<Arc<WakeSignal>> {
     work::wake_signal()
 }
@@ -308,8 +318,8 @@ fn declared_api_version(library: *mut c_void) -> i32 {
     unsafe { version() }
 }
 
-/// Whether this binary links the C runtime statically (the qualification builds,
-/// `docs/README.md`). An addon links the shared C runtime, and `dlopen` would load a second
+/// Whether this binary links the C runtime statically (the qualification builds).
+/// An addon links the shared C runtime, and `dlopen` would load a second
 /// copy beside the static one, with its own thread-local storage and heap: addon code running
 /// on a thread the static runtime created reads another runtime's thread state and faults
 /// (the vitest scenario's rolldown binding, 2026-10-24).
@@ -323,7 +333,7 @@ pub(crate) fn dlopen(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     for symbol in EXPORTS.iter().flat_map(|symbols| symbols.iter()) {
-        std::hint::black_box(symbol.0);
+        std::hint::black_box(symbol.address);
     }
     let module = args.first().copied().unwrap_or_else(|| c.undefined());
     let filename = match args.get(1) {
@@ -388,7 +398,7 @@ pub(crate) fn dlopen(
 }
 
 /// The exported ABI, referenced so the linker keeps every symbol for `dlopen`ed addons.
-static EXPORTS: [&[ExportedSymbol]; 8] = [
+static EXPORTS: &[&[ExportedSymbol]] = &[
     abi::EXPORTS,
     errors::EXPORTS,
     functions::EXPORTS,
@@ -401,3 +411,10 @@ static EXPORTS: [&[ExportedSymbol]; 8] = [
 
 pub(crate) use functions::invoke;
 pub(crate) use work::{drain, has_work, poll, promise_executor};
+
+/// The linker interface derives from the same declarations as the C functions.
+/// Names are compiler-only; execution support retains just the address table.
+#[cfg(feature = "aot")]
+pub(crate) fn exported_symbol_names() -> impl Iterator<Item = &'static str> {
+    EXPORTS.iter().flat_map(|symbols| symbols.iter()).map(|symbol| symbol.name)
+}

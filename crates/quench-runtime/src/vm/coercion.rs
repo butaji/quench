@@ -86,6 +86,7 @@ impl<H: Host> Vm<H> {
             .map(|kind| self.typeof_name(kind))
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_numeric(
         &mut self,
         p: &ResidualProgram,
@@ -107,6 +108,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_bigint(
         &mut self,
         p: &ResidualProgram,
@@ -120,7 +122,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(primitive) {
             Some(Cell::BigInt(value)) => Ok(value.as_ref().clone()),
             _ if let Some(value) = self.heap.string(primitive)  => {
-                let Some(value) = crate::bigint::parse_string(&value.host_string()) else {
+                let Some(value) = crate::bigint::parse_string(value.host_string()) else {
                     let message = self.bigint_conversion_message(primitive);
                     return self
                         .syntax_error_result(p, &message)
@@ -141,6 +143,7 @@ impl<H: Host> Vm<H> {
         format!("Cannot convert {} to a BigInt", self.detail_string(primitive))
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_property_key(
         &mut self,
         program: &ResidualProgram,
@@ -245,15 +248,15 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    #[expect(clippy::wrong_self_convention)]
     /// ToNumber of `value` where it runs no guest code and raises nothing: an immediate
     /// primitive or a string. `None` for any other value.
     pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
         value
             .immediate_number()
-            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(&text.host_string())))
+            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(text.host_string())))
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_number(
         &mut self,
         program: &ResidualProgram,
@@ -335,6 +338,7 @@ impl<H: Host> Vm<H> {
         Ok("[object Object]".into())
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
     pub(super) fn to_primitive(
         &mut self,
         program: &ResidualProgram,

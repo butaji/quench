@@ -110,6 +110,13 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
+    pub(crate) proto_mask: u32,
+    pub(crate) proto_record_base: u32,
+    pub(crate) proto_record_end: u32,
+    pub(crate) mark_records_per_block: usize,
+    pub(crate) mark_word_bits: usize,
+    pub(crate) mark_block_size: usize,
+    pub(crate) mark_offset: usize,
     pub(crate) property_value_size: usize,
     pub(crate) property_value_align: usize,
 }
@@ -130,6 +137,13 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
+    proto_mask: cell::NATIVE_OBJECT_PROTO_MASK,
+    proto_record_base: cell::NATIVE_OBJECT_PROTO_RECORD_BASE,
+    proto_record_end: cell::NATIVE_OBJECT_PROTO_RECORD_END,
+    mark_records_per_block: records::NATIVE_RECORDS_PER_BLOCK,
+    mark_word_bits: records::NATIVE_RECORD_MARK_WORD_BITS,
+    mark_block_size: records::NATIVE_RECORD_BLOCK_SIZE,
+    mark_offset: records::NATIVE_RECORD_MARK_OFFSET,
     property_value_size: std::mem::size_of::<Value>(),
     property_value_align: std::mem::align_of::<Value>(),
 };
@@ -300,13 +314,12 @@ impl<'slots> ParallelSweepSlab<'slots> {
             if Heap::marked(marks, index) {
                 result.live += 1;
                 result.live_payload_bytes += cell.payload_bytes();
-                if let Some(object) = cell.object() {
-                    if compacts && object.properties().has_compact_range() {
+                if let Some(object) = cell.object()
+                    && compacts && object.properties().has_compact_range() {
                         result
                             .property_owners
                             .push(pack_offset_owner(object.properties().start_offset(), index));
                     }
-                }
                 continue;
             }
 
@@ -1825,9 +1838,9 @@ impl Heap {
                 self.allocated_since_full(),
                 self.pacing_state.cap_backoff,
             )
-            || self.pacing().old_growth_reached(
-                self.reclaimable_program_bytes_after_full / payload_unit(),
-                self.reclaimable_program_bytes_since_full / payload_unit(),
+            || self.pacing().program_growth_reached(
+                self.reclaimable_program_bytes_after_full,
+                self.reclaimable_program_bytes_since_full,
             )
     }
     /// Charges a reclaimable program (dynamic code: `eval`, `new Function`, scripts) of
@@ -1862,6 +1875,12 @@ impl Heap {
     #[cfg(test)]
     pub(crate) fn make_collection_due_for_test(&mut self) {
         self.collect_at = self.allocated;
+    }
+    /// Leave room until the next charged payload growth, for native recovery tests.
+    #[cfg(test)]
+    pub(crate) fn make_collection_due_after_growth_for_test(&mut self) {
+        self.collect_at = self.allocated.saturating_add(1);
+        self.uncharged_payload_bytes = 0;
     }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
@@ -2565,14 +2584,13 @@ impl Heap {
                         if Self::marked(&self.marks, index) {
                             live += 1;
                             live_payload_bytes += slot.cell.as_ref().map_or(0, Cell::payload_bytes);
-                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
-                                if compacts && properties.has_compact_range(object.properties()) {
+                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                                && compacts && properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
                                         object.properties().start_offset(),
                                         index,
                                     ));
                                 }
-                            }
                         } else if let Some(cell) = slot.cell.take() {
                             reclaim(properties, index, cell);
                         }
@@ -3326,7 +3344,7 @@ impl Heap {
         object: Value,
         slot: usize,
     ) -> Option<*mut Value> {
-        let vector = self.object_mut(object)?.properties();
+        let vector = self.object(object)?.properties();
         if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
             return None;
         }
@@ -4095,7 +4113,7 @@ impl Heap {
                 Cell::Environment { slots, scope, .. } => {
                     let with_objects = scope.with_objects();
                     slots.len() * size_of::<EnvironmentSlot>()
-                        + with_objects.len() * size_of::<Value>()
+                        + std::mem::size_of_val(with_objects)
                 }
                 Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
                 Cell::Error(value) => value.capacity(),
@@ -4162,34 +4180,6 @@ fn sort_by_unique_offset(keys: &mut Vec<u64>) {
             counts[bucket] += 1;
         }
         std::mem::swap(keys, &mut scratch);
-    }
-}
-
-#[cfg(test)]
-mod offset_order_tests {
-    #[test]
-    fn radix_offset_order_matches_comparison_sort() {
-        let mut state = 0x2545_f491_u64;
-        let mut offsets: Vec<usize> = (0..5000)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                (state >> 33) as usize
-            })
-            .collect();
-        offsets.sort_unstable();
-        offsets.dedup();
-        let mut keys: Vec<u64> = offsets
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
-            .collect();
-        let mut expected = keys.clone();
-        expected.sort_unstable();
-        super::sort_by_unique_offset(&mut keys);
-        assert_eq!(keys, expected);
     }
 }
 
@@ -4267,4 +4257,32 @@ fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueA
     // SAFETY: the caller proves that the property slot exists outside dictionary storage.
     unsafe { properties.set_flat_unchecked(vector, slot, value) };
     true
+}
+
+#[cfg(test)]
+mod offset_order_tests {
+    #[test]
+    fn radix_offset_order_matches_comparison_sort() {
+        let mut state = 0x2545_f491_u64;
+        let mut offsets: Vec<usize> = (0..5000)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (state >> 33) as usize
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut keys: Vec<u64> = offsets
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
+            .collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        super::sort_by_unique_offset(&mut keys);
+        assert_eq!(keys, expected);
+    }
 }

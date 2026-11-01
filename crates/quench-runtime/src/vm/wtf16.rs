@@ -751,12 +751,11 @@ impl JsStringBuilder {
             self.parts.clear();
             return;
         }
-        if let Some(previous) = self.parts.last_mut() {
-            if previous.units.same_storage(&units) && previous.range.end == range.start {
+        if let Some(previous) = self.parts.last_mut()
+            && previous.units.same_storage(&units) && previous.range.end == range.start {
                 previous.range.end = range.end;
                 return;
             }
-        }
         if self.parts.try_reserve(1).is_err() {
             self.length = Err(StringBuildError::Allocation);
             self.parts.clear();

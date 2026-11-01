@@ -155,6 +155,11 @@ pub(crate) fn spawn(launch: Launch) -> Result<(u64, Arc<WorkerControl>), String>
 }
 
 fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
+    #[cfg(feature = "native-execution")]
+    if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+        control.finish(Err(super::NATIVE_ENTRY_UNAVAILABLE.into()));
+        return;
+    }
     // Process-directed signals belong to the main thread's event loop.
     #[cfg(unix)]
     {

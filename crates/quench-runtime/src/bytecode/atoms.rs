@@ -200,7 +200,7 @@ impl AtomSequence {
             + chunks.iter().map(Vec::capacity).sum::<usize>() * size_of::<JsString>()
     }
 
-    fn name(&self, index: usize) -> &str {
+    pub(crate) fn name(&self, index: usize) -> &str {
         match index.checked_sub(self.base.len()) {
             None => &self.base[index],
             Some(offset) => self.appended(offset).host_string(),

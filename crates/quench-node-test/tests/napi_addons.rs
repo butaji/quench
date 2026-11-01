@@ -1,10 +1,20 @@
 //! Node-API addons: a contract addon built against the pinned Node headers runs on Node and
 //! Quench, and both must print the same observations.
 
+// The contract addon links against the host's headers and the shared VM's addon support, which
+// the suite runs on Linux; every item here is unused elsewhere.
+#![cfg(target_os = "linux")]
+
 use std::{path::Path, process::Command, time::Duration};
 
-const CONTRACT_SOURCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/node-tests/napi/napi_contract.c");
-const CONTRACT_DRIVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/node-tests/napi/napi_contract.cjs");
+const CONTRACT_SOURCE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/node-tests/napi/napi_contract.c"
+);
+const CONTRACT_DRIVER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/node-tests/napi/napi_contract.cjs"
+);
 const NODE_HEADERS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/node/src");
 const CONTRACT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -21,7 +31,6 @@ fn build_contract(directory: &Path) -> std::path::PathBuf {
     addon
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn native_addon_contract_matches_node() {
     let directory = tempfile::tempdir().unwrap();
@@ -36,8 +45,17 @@ fn native_addon_contract_matches_node() {
     });
     for observation in &observations {
         assert!(!observation.timed_out);
-        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
-        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
     }
     assert_eq!(
         String::from_utf8_lossy(&observations[0].stdout),

@@ -18,7 +18,7 @@ const INSTRUCTION_AA_BAND_PERCENT: f64 = 0.14;
 const MAX_RSS_INCREASE_PERCENT: f64 = 0.5;
 const BOOTSTRAP_REPLICATES: usize = 20_000;
 const BOOTSTRAP_INTERVAL_PERCENT: f64 = 95.0;
-const BOOTSTRAP_SEED: u64 = 0x61_F1_7E_D5_2026_1010;
+const BOOTSTRAP_SEED: u64 = 0x61F1_7ED5_2026_1010;
 const BASELINE_ENGINE: &str = "quench_baseline";
 const CANDIDATE_ENGINE: &str = "quench_candidate";
 
@@ -780,7 +780,7 @@ fn validate_report_provenance(report: &Value, expected: &Checkpoint) -> Result<(
             .find(|engine| engine.get("name").and_then(Value::as_str) == Some(name))
             .ok_or_else(|| format!("report omits engine {name}"))?;
         if required_string(actual, "executable_sha256")? != expected_identity.sha256
-            || PathBuf::from(required_string(actual, "executable")?) != expected_identity.path
+            || *required_string(actual, "executable")? != expected_identity.path
         {
             return Err(format!(
                 "pinned {name} executable changed between report batches"
@@ -881,12 +881,10 @@ fn fixture_record<'a>(report: &'a Value, fixture_name: &str) -> Option<&'a Value
 
 fn report_paths(state: &Checkpoint) -> Vec<FileIdentity> {
     std::iter::once(state.initial_report.clone())
-        .chain(state.top_up_batches.iter().filter_map(|batch| {
-            (batch.state == BatchState::Complete).then(|| FileIdentity {
+        .chain(state.top_up_batches.iter().filter(|&batch| batch.state == BatchState::Complete).map(|batch| FileIdentity {
                 path: batch.report.clone(),
                 sha256: batch.report_sha256.clone().unwrap_or_default(),
-            })
-        }))
+            }))
         .collect()
 }
 
@@ -990,7 +988,7 @@ fn median(values: &[f64]) -> Option<f64> {
     let mut ordered = values.to_vec();
     ordered.sort_by(f64::total_cmp);
     let middle = ordered.len() / 2;
-    Some(if ordered.len() % 2 == 0 {
+    Some(if ordered.len().is_multiple_of(2) {
         (ordered[middle - 1] + ordered[middle]) / 2.0
     } else {
         ordered[middle]

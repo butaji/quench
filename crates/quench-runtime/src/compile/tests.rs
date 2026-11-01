@@ -428,3 +428,29 @@ fn discarded_sequence_elements_and_branches_release_their_temporaries() {
     assert!(registers < 32, "{registers} registers");
     program.validate().unwrap();
 }
+
+#[test]
+fn syntax_diagnostics_are_distinct_from_backend_and_resource_rejections() {
+    let errors = super::Engine::specialize("var = ;", "invalid.js").unwrap_err();
+    assert!(!errors.is_empty());
+    assert!(errors.iter().all(super::Diagnostic::is_syntax_error));
+    assert!(!super::Diagnostic::unsupported("backend.js", "unsupported lowering").is_syntax_error());
+    assert!(!super::Diagnostic::stack_exhausted("deep.js").is_syntax_error());
+}
+
+#[test]
+fn global_declarations_include_bindings_whose_initializers_never_execute() {
+    let source = "'use strict'; throw 1; let laterLet; const laterConst = 1; class LaterClass {} var laterVar; function laterFunction() {}";
+    let program = Engine::specialize_script_with_atom_prefix(source, "declarations.js", &NoAtomPrefix, super::ReleasedRecords::Dropped).unwrap();
+    let root = &program.functions[0];
+    for (names, expected) in [
+        (root.global_lexical_atoms(), &["laterLet", "laterConst", "LaterClass"][..]),
+        (root.global_var_atoms(), &["laterVar", "laterFunction"][..]),
+        (root.global_immutable_atoms(), &["laterConst"][..]),
+        (root.global_function_atoms(), &["laterFunction"][..]),
+    ] {
+        for name in expected {
+            assert!(names.iter().any(|atom| &program.atoms[*atom as usize] == *name), "missing {name}");
+        }
+    }
+}

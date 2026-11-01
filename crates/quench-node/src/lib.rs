@@ -5,6 +5,8 @@
 
 #[macro_use]
 mod undici_bindings;
+#[cfg(feature = "native-execution")]
+pub mod aot;
 pub mod esm_imports;
 pub mod host;
 pub mod modules;
@@ -15,10 +17,13 @@ pub mod shared_run;
 pub use host::{NodeHost, NodeOutputSink};
 pub use shared_run::EntryGoal;
 
-/// On Linux, every binary that links this host (the CLI and the Node test runners alike)
+/// On unix, every binary that links this host (the CLI and the Node test runners alike)
 /// allocates through Quench's size-classed small-object allocator, which serves small requests
 /// only once the process's memory policy asks for it (`shared_run::apply_allocator_policy`);
 /// until then, and under the memory-first policy, every request goes to the system allocator.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();
+
+#[cfg(feature = "native-execution")]
+pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !cfg!(any(feature = "jit", feature = "aot", feature = "bundled-sources"));

@@ -1455,10 +1455,40 @@ fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
         heap.set_memory_policy(policy);
         collect_minor(&mut heap, []);
         assert!(!heap.should_full_collect());
-        let growth = heap.pacing().minimum_old_growth;
-        heap.charge_reclaimable_program(growth * payload_unit());
+        let growth = heap.pacing().minimum_external_budget;
+        heap.charge_reclaimable_program(growth);
         assert!(heap.should_full_collect());
         heap.collect_with_object_roots([], |_, _, _, _, _| {}, None, None, true);
         assert!(!heap.should_full_collect());
     }
+}
+
+#[test]
+#[cfg(not(feature = "profile-aggregate"))]
+fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
+    let mut heap = Heap::new();
+    let before = heap.memory_composition();
+    let direct = heap.alloc_v128([0x5a; crate::wasm::V128_BYTES]);
+    assert!(direct.direct_v128_index().is_some());
+    let legacy = heap.alloc_in_slot(Cell::WasmV128([0x66; crate::wasm::V128_BYTES]), false);
+    assert!(legacy.direct_v128_index().is_none());
+    let census = heap.memory_composition();
+    assert_eq!(census.cell_counts[CellKind::WasmV128 as usize], 2);
+    assert_eq!(census.direct_records, before.direct_records + 1);
+    assert_eq!(census.occupied_slots, before.occupied_slots + 2);
+    assert_eq!(census.v128_record_used_bytes, crate::wasm::V128_BYTES);
+    assert!(census.v128_record_reserved_bytes >= census.v128_record_used_bytes);
+    assert_eq!(census.used_bytes() - before.used_bytes(), crate::wasm::V128_BYTES + census.slot_size_bytes);
+    assert_eq!(census.cell_counts.iter().sum::<usize>(), census.occupied_slots);
+    let variant = census.cell_variant_names.iter().position(|name| *name == "wasm_v128").unwrap();
+    assert_eq!(census.cell_variant_counts[variant], 2);
+    heap.collect([direct]);
+    let rooted = heap.memory_composition();
+    assert_eq!(rooted.cell_counts[CellKind::WasmV128 as usize], 1);
+    assert_eq!(rooted.v128_record_used_bytes, crate::wasm::V128_BYTES);
+    assert_eq!(heap.v128(direct), Some([0x5a; crate::wasm::V128_BYTES]));
+    heap.collect([]);
+    let empty = heap.memory_composition();
+    assert_eq!(empty.cell_counts[CellKind::WasmV128 as usize], 0);
+    assert_eq!(empty.v128_record_used_bytes, 0);
 }

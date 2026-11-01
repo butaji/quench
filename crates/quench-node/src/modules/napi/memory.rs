@@ -241,7 +241,7 @@ node_api! {
             let width_key = c.string_rooted("BYTES_PER_ELEMENT");
             let width = c.get_property_rooted(constructor, width_key).napi(env, c)?;
             let width = c.to_number(width).napi(env, c)? as usize;
-            if width > 1 && offset % width != 0 {
+            if width > 1 && !offset.is_multiple_of(width) {
                 let message = format!("start offset of {name} should be a multiple of {width}");
                 return Err(throw_range_error(env, c, "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", &message));
             }

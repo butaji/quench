@@ -159,15 +159,14 @@ impl<H: Host> Vm<H> {
                     TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if self.heap.array(object).is_some() {
-                if atom == self.length_atom
+            if self.heap.array(object).is_some()
+                && atom == self.length_atom
                     && !self
                         .object_data(object)
                         .is_some_and(Object::is_arguments_object)
                 {
                     return self.define_array_length(p, object, descriptor);
                 }
-            }
             self.evaluate_deferred_namespace_for_key(p, object, Some(property))?;
             // A lazy data property is configurable with the attributes its data property
             // will have, so only a descriptor that keeps more of it needs its value.

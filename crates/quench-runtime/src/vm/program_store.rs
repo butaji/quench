@@ -1,5 +1,5 @@
-use crate::Value;
 use super::wtf16::JsString;
+use crate::Value;
 use crate::bytecode::ResidualProgram;
 use std::rc::{Rc, Weak};
 use crate::heap::{PromotionAge, WeakHandle};
@@ -43,6 +43,7 @@ struct JsJitCounters {
     field_increment_candidate_entries: u64,
     field_increment_fixed_this_entries: u64,
     field_increment_fast_entries: u64,
+    captured_store_fast_entries: u64,
     numeric_find_fast_entries: u64,
     fallback_entries: u64,
     interpreter_completions: u64,
@@ -458,7 +459,9 @@ struct JsTierEntryDecision {
 /// One sparse tier-state table per program. Frontend-specific transitions and
 /// artifacts stay typed, while JS and Wasm share the same state owner and
 /// avoid carrying a second empty hash-map header in every program entry.
+#[derive(Default)]
 enum JitTierManager {
+    #[default]
     Empty,
     JavaScript(FxHashMap<u32, JsTierState>),
     Wasm(WasmTiers),
@@ -492,11 +495,6 @@ impl Default for WasmModuleTier {
     }
 }
 
-impl Default for JitTierManager {
-    fn default() -> Self {
-        Self::Empty
-    }
-}
 
 impl JitTierManager {
     /// Apply JavaScript's bounded statistical promotion transition to the
@@ -817,6 +815,8 @@ impl std::ops::Deref for Residual {
 
 struct ProgramEntry {
     residual: Residual,
+    #[cfg(feature = "native-execution")]
+    native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<crate::heap::ArrayElements>>,
@@ -868,9 +868,15 @@ pub(super) const ANONYMOUS_EVAL_ORIGIN: &str = "eval at <anonymous>";
 pub(super) enum CompilationOrigin {
     Source,
     /// Execution state in another realm of one logical host Script.
-    SharedScript { source: ProgramId },
-    Eval { caller: Option<JsString> },
-    FunctionConstructor { caller: JsString },
+    SharedScript {
+        source: ProgramId,
+    },
+    Eval {
+        caller: Option<JsString>,
+    },
+    FunctionConstructor {
+        caller: JsString,
+    },
 }
 
 /// Where a stored program's root body evaluates, which decides whether its
@@ -963,9 +969,10 @@ pub(crate) struct ProgramStore {
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
-    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`:
-    /// a fixed entry count promoted short runs into compile cost (npm p51, TOD-138) until
-    /// promotion weighs size and compile cost.
+    /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_JS_JIT_GENERAL_DISPATCH=1`;
+    /// the memory policy's `js_function_tiers_compile` and the entry price of a
+    /// loop-free body still decide whether the tier takes a function
+    /// (`general_tier_admits`).
     js_jit_general_dispatch_enabled: bool,
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
@@ -1063,6 +1070,14 @@ impl ProgramStore {
         self.programs.get(id.index())?.as_deref()
     }
 
+    /// Linked functions have native entries instead of interpreter lane views.
+    fn lane_entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
+        let entry = self.entry(id)?;
+        #[cfg(feature = "native-execution")]
+        if entry.native_js.is_some() { return None; }
+        Some(entry)
+    }
+
     /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
         let entry = self.programs.get_mut(id.index())?.as_deref_mut()?;
@@ -1096,7 +1111,10 @@ impl ProgramStore {
     /// Whether dynamic code may be reclaimable, including dropped host owners.
     pub(crate) fn has_unchecked_reclaimable(&self) -> bool {
         self.unchecked_reclaimable > 0
-            || self.owned_scripts.values().any(|script| script.owner.strong_count() == 0)
+            || self
+                .owned_scripts
+                .values()
+                .any(|script| script.owner.strong_count() == 0)
     }
 
     /// Drops every reclaimable program that `referenced` does not mark and that
@@ -1108,13 +1126,20 @@ impl ProgramStore {
         // escaped function retains its source record even after the owner drops.
         for (&source, script) in &self.owned_scripts {
             let owned = script.owner.strong_count() != 0;
-            let live_instance = script.instances.iter().any(|(_, id)| {
-                referenced.get(id.index()).copied().unwrap_or(false)
-            });
-            if (owned || live_instance) && let Some(mark) = referenced.get_mut(source.index()) { *mark = true; }
+            let live_instance = script
+                .instances
+                .iter()
+                .any(|(_, id)| referenced.get(id.index()).copied().unwrap_or(false));
+            if (owned || live_instance)
+                && let Some(mark) = referenced.get_mut(source.index())
+            {
+                *mark = true;
+            }
             if owned {
                 for (_, id) in &script.instances {
-                    if let Some(mark) = referenced.get_mut(id.index()) { *mark = true; }
+                    if let Some(mark) = referenced.get_mut(id.index()) {
+                        *mark = true;
+                    }
                 }
             }
         }
@@ -1221,8 +1246,10 @@ impl ProgramStore {
                 self.js_general_dispatch_work = None;
             }
             let programs = &self.programs;
-            self.global_eval_programs.retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
-            self.owned_scripts.retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
+            self.global_eval_programs
+                .retain(|_, id| programs.get(id.index()).is_some_and(Option::is_some));
+            self.owned_scripts
+                .retain(|source, _| programs.get(source.index()).is_some_and(Option::is_some));
         }
         reclaimed
     }
@@ -1268,24 +1295,45 @@ impl ProgramStore {
     }
 
     pub(super) fn register_owned_script(&mut self, script: &Rc<crate::api::CompiledScriptState>) {
-        self.owned_scripts.insert(script.source, OwnedScript { owner: Rc::downgrade(script), instances: Vec::new() });
+        self.owned_scripts.insert(
+            script.source,
+            OwnedScript {
+                owner: Rc::downgrade(script),
+                instances: Vec::new(),
+            },
+        );
     }
 
     pub(super) fn owns_script(&self, script: &Rc<crate::api::CompiledScriptState>) -> bool {
-        self.owned_scripts.get(&script.source).is_some_and(|entry| {
-            std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script))
-        })
+        self.owned_scripts
+            .get(&script.source)
+            .is_some_and(|entry| std::ptr::eq(entry.owner.as_ptr(), Rc::as_ptr(script)))
     }
 
-    pub(super) fn owned_script_instance(&self, source: ProgramId, realm: WeakHandle) -> Option<ProgramId> {
-        self.owned_scripts.get(&source)?.instances.iter()
+    pub(super) fn owned_script_instance(
+        &self,
+        source: ProgramId,
+        realm: WeakHandle,
+    ) -> Option<ProgramId> {
+        self.owned_scripts
+            .get(&source)?
+            .instances
+            .iter()
             .find_map(|(owner, id)| (*owner == realm).then_some(*id))
     }
 
-    pub(super) fn bind_script_instance(&mut self, source: ProgramId, realm: WeakHandle, id: ProgramId) {
+    pub(super) fn bind_script_instance(
+        &mut self,
+        source: ProgramId,
+        realm: WeakHandle,
+        id: ProgramId,
+    ) {
         self.set_origin(id, CompilationOrigin::SharedScript { source });
-        self.owned_scripts.get_mut(&source).expect("registered Script source")
-            .instances.push((realm, id));
+        self.owned_scripts
+            .get_mut(&source)
+            .expect("registered Script source")
+            .instances
+            .push((realm, id));
     }
 
     pub(super) fn source_identity(&self, id: ProgramId) -> ProgramId {
@@ -1321,14 +1369,19 @@ impl ProgramStore {
     }
 
     pub(super) fn set_origin(&mut self, id: ProgramId, origin: CompilationOrigin) {
-        if let Some(entry) = self.entry_mut(id) { entry.origin = origin; }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.origin = origin;
+        }
     }
 
     pub(super) fn eval_origin(&self, id: ProgramId) -> Option<JsString> {
         match &self.entry(id)?.origin {
             CompilationOrigin::Source | CompilationOrigin::SharedScript { .. } => None,
-            CompilationOrigin::Eval { caller } => Some(caller.clone()
-                .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN))),
+            CompilationOrigin::Eval { caller } => Some(
+                caller
+                    .clone()
+                    .unwrap_or_else(|| JsString::from_str(ANONYMOUS_EVAL_ORIGIN)),
+            ),
             CompilationOrigin::FunctionConstructor { caller } => Some(caller.clone()),
         }
     }
@@ -1395,6 +1448,7 @@ impl ProgramStore {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.insert_shared(Rc::new(program))
     }
@@ -1428,6 +1482,8 @@ impl ProgramStore {
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
+            #[cfg(feature = "native-execution")]
+            native_js: None,
             wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
@@ -1611,8 +1667,8 @@ impl ProgramStore {
         self.entry(id)?.wasm_signatures.clone()
     }
 
-    pub(crate) fn insert_module(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        let id = self.insert(program)?;
+    pub(crate) fn insert_module_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
+        let id = self.insert_shared(program)?;
         if let Some(entry) = self.entry_mut(id) {
             entry.module = true;
         }
@@ -2075,6 +2131,12 @@ impl ProgramStore {
             .map(|counters| counters.field_cache_probes)
     }
 
+    #[cfg(all(test, not(quench_profiled)))]
+    pub(super) fn js_jit_captured_store_entries(&self, id: ProgramId, function: u32) -> Option<u64> {
+        self.js_jit_diagnostics.as_ref()?.get(&(id.raw(), function))
+            .map(|counters| counters.captured_store_fast_entries)
+    }
+
     pub(super) fn js_jit_dataview_float64_enabled(&self) -> bool {
         self.js_jit_dataview_float64_enabled
     }
@@ -2466,9 +2528,7 @@ impl ProgramStore {
                 let opcode_counts = opcode_counts
                     .into_iter()
                     .enumerate()
-                    .filter_map(|(opcode, count)| {
-                        (count != 0).then(|| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
-                    })
+                    .filter(|&(_opcode, count)| count != 0).map(|(opcode, count)| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
                     .collect();
                 // This is a bytecode-site census, not a claim that a site is
                 // pure, redundant, or safe to remove. Predicate purity and
@@ -2767,6 +2827,15 @@ impl ProgramStore {
         {
             counters.field_increment_fast_entries =
                 counters.field_increment_fast_entries.saturating_add(1);
+        }
+    }
+
+    pub(super) fn record_js_jit_captured_store_entry(&mut self, id: ProgramId, function: u32) {
+        self.record_js_jit_entry(id, function, false, 0);
+        if let Some(counters) = self.js_jit_diagnostics.as_mut()
+            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
+        {
+            counters.captured_store_fast_entries = counters.captured_store_fast_entries.saturating_add(1);
         }
     }
 
@@ -3177,11 +3246,11 @@ impl ProgramStore {
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
 
-    /// Forgets the own-field hints of every program's lane views: a shape compaction
-    /// renumbered the shapes they name.
-    pub(super) fn clear_field_hints(&self) {
+    /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
+    /// the IDs held by field hints and native own-field descriptors.
+    pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.clear_field_hints();
+            entry.lane_views.invalidate_shape_bindings();
         }
     }
 
@@ -3190,7 +3259,7 @@ impl ProgramStore {
         &self,
         id: ProgramId,
     ) -> Option<&[LaneViewCell]> {
-        let entry = self.entry(id)?;
+        let entry = self.lane_entry(id)?;
         Some(entry.lane_views.of(&entry.residual))
     }
 
@@ -3212,7 +3281,7 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.entry(id)?;
+        let entry = self.lane_entry(id)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view.as_ptr());
@@ -3229,7 +3298,7 @@ impl ProgramStore {
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
-        let Some(entry) = self.entry(id) else {
+        let Some(entry) = self.lane_entry(id) else {
             return false;
         };
         let derived = entry.lane_views.derived(function).is_some();
@@ -3252,7 +3321,7 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.entry(id)?;
+        let entry = self.lane_entry(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(derive_lane_view(entry, function, code, view, derive))
@@ -3265,6 +3334,25 @@ impl ProgramStore {
     pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
         self.entry(id)
             .map_or(&[], |entry| entry.constants.as_slice())
+    }
+
+    #[cfg(feature = "native-execution")]
+    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>) -> Result<(), String> {
+        let entry = self.entry_mut(id).ok_or("native JS program is missing")?;
+        if entry.native_js.is_some() {
+            return Err("native JS program already has code".into());
+        }
+        if code.entries().len() != entry.residual.function_count() {
+            return Err("native entry count does not match program functions".into());
+        }
+        entry.lane_views = LaneViews::default();
+        entry.native_js = Some(code);
+        Ok(())
+    }
+
+    #[cfg(feature = "native-execution")]
+    pub(super) fn native_js_code(&self, id: ProgramId) -> Option<&Rc<super::native_program::NativeJsCode>> {
+        self.entry(id)?.native_js.as_ref()
     }
 
     pub(crate) fn const_array(
@@ -3420,11 +3508,11 @@ impl Drop for ProgramStore {
                     let atom = header.name.or(header.inferred_name)? as usize;
                     (atom < entry.residual.atoms.len()).then(|| &entry.residual.atoms[atom])
                 })
-                .or_else(|| counters.function_name.as_deref())
+                .or(counters.function_name.as_deref())
                 .unwrap_or("");
             let source_name = entry
                 .map(|entry| entry.residual.source_name.as_str())
-                .or_else(|| counters.source_name.as_deref())
+                .or(counters.source_name.as_deref())
                 .unwrap_or("");
             let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
             let total_entries = counters.entries.saturating_add(counters.lane_entries);
@@ -3465,7 +3553,7 @@ impl Drop for ProgramStore {
             }
             let _ = write!(
                 stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
+                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"general_dispatch_compile_attempts\":{},\"general_dispatch_compile_successes\":{},\"general_artifact_cache_hits\":{},\"general_artifact_cache_misses\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"captured_store_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"general_dispatch_work\":{},\"general_dispatch_work_required\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
                 counters.parameter_count,
                 counters.instruction_count,
                 counters.entries,
@@ -3492,6 +3580,7 @@ impl Drop for ProgramStore {
                 counters.field_increment_candidate_entries,
                 counters.field_increment_fixed_this_entries,
                 counters.field_increment_fast_entries,
+                counters.captured_store_fast_entries,
                 counters.numeric_find_fast_entries,
                 counters.fallback_entries,
                 counters.interpreter_completions,
@@ -3735,6 +3824,22 @@ fn numeric_promotion_decision(numeric: u8, observations: u8) -> Option<bool> {
     let minimum = JS_JIT_PROMOTION_LOOKS
         .iter()
         .find_map(|(look, minimum)| (*look == observations).then_some(*minimum))?;
+    #[cfg(feature = "gc-tuning")]
+    {
+        // Measurement builds may require more entries before the specialized tier compiles
+        // (`QUENCH_JS_JIT_PROMOTION_SCALE`), to test an admission threshold against a fixture
+        // whose compiled artifacts are never entered.
+        static SCALE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let scale = *SCALE.get_or_init(|| {
+            std::env::var("QUENCH_JS_JIT_PROMOTION_SCALE")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1)
+        });
+        let minimum = u32::from(minimum).saturating_mul(scale).min(u32::from(u8::MAX));
+        return Some(u32::from(numeric) >= minimum);
+    }
+    #[cfg(not(feature = "gc-tuning"))]
     Some(numeric >= minimum)
 }
 
@@ -3829,10 +3934,10 @@ fn derive_lane_view<'s>(
 }
 
 impl LaneViews {
-    /// Forgets the own-field hints of every derived view (`LaneView::clear_field_hints`).
-    fn clear_field_hints(&self) {
+    /// Notifies every derived view that shape compaction invalidated its bindings.
+    fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
-            view.clear_field_hints();
+            view.invalidate_shape_bindings();
         }
     }
 
@@ -3873,6 +3978,38 @@ mod general_promotion_tests {
         // Below 4 x 32 instructions an entry saves nothing.
         assert!(!general_promotion_due(u32::MAX, 128));
         assert!(!general_promotion_due(u32::MAX, 0));
+    }
+}
+
+// Profiled builds deliberately disable JS function tiers (`Vm::js_tier_runs`).
+#[cfg(all(test, not(quench_profiled)))]
+mod lane_diagnostic_tests {
+    #[test]
+    fn plain_lane_calls_remain_visible_after_numeric_tier_rejection() {
+        let program = crate::Engine::compile(crate::ExecutionRequest::script(
+            r#"
+                function label(value) { return value + '!'; }
+                function drive(count) {
+                    let result;
+                    for (let index = 0; index < count; index++) result = label(index);
+                    return result;
+                }
+                for (let round = 0; round < 4; round++) {
+                    if (drive(2000) !== '1999!') throw Error('lane call result');
+                }
+            "#,
+            "lane-diagnostic-entries.js",
+        )).unwrap();
+        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let counters = vm.programs.js_jit_diagnostics.as_ref().unwrap().values()
+            .find(|counters| counters.function_name.as_deref() == Some("label"))
+            .expect("the called function must have diagnostic counters");
+        assert!(counters.lane_entries > 1000,
+            "hot plain calls must stay visible after tier rejection: {} tier entries, {} lane entries",
+            counters.entries, counters.lane_entries);
     }
 }
 

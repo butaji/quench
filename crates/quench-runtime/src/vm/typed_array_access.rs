@@ -66,13 +66,26 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(&program, "buffer root expired".into()))?;
         let (kind, buffer, byte_offset, byte_length, length) = match self.heap.get(value) {
             Some(Cell::ArrayBuffer { shared, .. }) => {
-                let kind = if *shared { B::SharedArrayBuffer } else { B::ArrayBuffer };
+                let kind = if *shared {
+                    B::SharedArrayBuffer
+                } else {
+                    B::ArrayBuffer
+                };
                 let byte_length = self.array_buffer_byte_length(value);
                 (kind, value, 0, byte_length, byte_length)
             }
-            Some(Cell::TypedArray { object, buffer, kind, .. }) => {
-                let (kind, buffer, offset, width) =
-                    (super::embedding::typed_array_brand(*kind), *buffer, object.offset, kind.width());
+            Some(Cell::TypedArray {
+                object,
+                buffer,
+                kind,
+                ..
+            }) => {
+                let (kind, buffer, offset, width) = (
+                    super::embedding::typed_array_brand(*kind),
+                    *buffer,
+                    object.offset,
+                    kind.width(),
+                );
                 let length = self.typed_array_length(value).unwrap_or(0);
                 (kind, buffer, offset, length * width, length)
             }
@@ -89,42 +102,75 @@ impl<H: Host> Vm<H> {
         // A naked pointer cannot carry the synchronized shared store's guard.
         // Reject this host boundary explicitly rather than copy or expose bytes
         // while other runtimes may access them concurrently.
-        if matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{bytes,shared:true,..}) if bytes.shared_backing().is_some()) {
+        if matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{bytes,shared:true,..}) if bytes.shared_backing().is_some())
+        {
             return Err(self.type_error(&program,"Raw pointer access to synchronized shared backing requires a native lifetime protocol".into()));
         }
         let base = match self.heap.get_mut(buffer) {
-            Some(Cell::ArrayBuffer { bytes, detached: false, resizable, .. }) if !bytes.is_empty() => {
+            Some(Cell::ArrayBuffer {
+                bytes,
+                detached: false,
+                resizable,
+                ..
+            }) if !bytes.is_empty() => {
                 let before = bytes.capacity();
-                let address = if *resizable { bytes.as_ptr_bytes() as usize } else { bytes.pin_address() };
+                let address = if *resizable {
+                    bytes.as_ptr_bytes() as usize
+                } else {
+                    bytes.pin_address()
+                };
                 let after = bytes.capacity();
                 self.heap.adjust_external_bytes(before, after);
                 address as *mut u8
             }
             _ => std::ptr::null_mut(),
         };
-        let data = if base.is_null() { base } else { base.wrapping_add(byte_offset) };
+        let data = if base.is_null() {
+            base
+        } else {
+            base.wrapping_add(byte_offset)
+        };
         Ok(Some((
-            crate::BufferStorage { kind, data, byte_offset, byte_length, length, buffer: root },
+            crate::BufferStorage {
+                kind,
+                data,
+                byte_offset,
+                byte_length,
+                length,
+                buffer: root,
+            },
             buffer,
         )))
     }
 
     fn array_buffer_byte_length(&self, buffer: Value) -> usize {
         match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => bytes.len(),
+            Some(Cell::ArrayBuffer {
+                bytes,
+                detached: false,
+                ..
+            }) => bytes.len(),
             _ => 0,
         }
     }
 
     /// A DataView's current byte length, zero once detached or out of bounds.
     fn embedding_view_bytes_length(&self, view: Value) -> usize {
-        let Some(Cell::DataView { object, buffer, length, length_tracking, .. }) = self.heap.get(view) else {
+        let Some(Cell::DataView {
+            object,
+            buffer,
+            length,
+            length_tracking,
+            ..
+        }) = self.heap.get(view)
+        else {
             return 0;
         };
         if self.array_buffer_detached(*buffer) {
             0
         } else if *length_tracking {
-            self.array_buffer_byte_length(*buffer).saturating_sub(object.offset)
+            self.array_buffer_byte_length(*buffer)
+                .saturating_sub(object.offset)
         } else if self.array_buffer_out_of_bounds(*buffer, object.offset, *length) {
             0
         } else {
@@ -160,8 +206,16 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
-        if let Some(Cell::ArrayBuffer { bytes, detached, .. }) = self.heap.get(value) {
-            let length=bytes.len().min(maximum);return Some(if *detached { Vec::new() } else { bytes.read()[..length].to_vec() });
+        if let Some(Cell::ArrayBuffer {
+            bytes, detached, ..
+        }) = self.heap.get(value)
+        {
+            let length = bytes.len().min(maximum);
+            return Some(if *detached {
+                Vec::new()
+            } else {
+                bytes.read()[..length].to_vec()
+            });
         }
         self.embedding_view_bytes_prefix(value, maximum)
     }
@@ -222,9 +276,11 @@ impl<H: Host> Vm<H> {
                 object.offset,
                 self.typed_array_length(value)?.checked_mul(kind.width())?,
             ),
-            Cell::DataView { object, buffer, .. } => {
-                (*buffer, object.offset, self.embedding_view_bytes_length(value))
-            }
+            Cell::DataView { object, buffer, .. } => (
+                *buffer,
+                object.offset,
+                self.embedding_view_bytes_length(value),
+            ),
             _ => return None,
         };
         let Cell::ArrayBuffer {
@@ -358,7 +414,8 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let detached = self.array_buffer_detached(*buffer);
-        let out = if *length_tracking {
+        
+        if *length_tracking {
             match self.heap.get(*buffer) {
                 Some(Cell::ArrayBuffer { bytes, .. }) => detached || object.offset > bytes.len(),
                 _ => true,
@@ -369,8 +426,7 @@ impl<H: Host> Vm<H> {
                 object.offset,
                 length.saturating_mul(kind.width()),
             )
-        };
-        out
+        }
     }
 
     pub(super) fn typed_array_shared(&self, object: Value) -> Option<bool> {
@@ -663,13 +719,20 @@ impl<H: Host> Vm<H> {
         if source_kind == target_kind {
             let target_offset = target_offset + target_start * target_kind.width();
             let byte_length = length * source_kind.width();
-            if self.array_buffers_share_data_block(source_buffer,target_buffer) {
+            if self.array_buffers_share_data_block(source_buffer, target_buffer) {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
                     unreachable!("typed copy backing buffer was validated");
                 };
                 // Set snapshots overlapping source bytes, unlike slice's forward copy.
-                bytes.make_mut()
-                    .copy_within(source_offset..source_offset + byte_length, target_offset);
+                if let Some(backing) = bytes.shared_backing() {
+                    // Growth can leave source and target with different visible prefixes
+                    // of the same data block. The source range was checked on its view.
+                    backing.copy_from(&backing, source_offset..source_offset + byte_length,
+                        target_offset..target_offset + byte_length);
+                } else {
+                    bytes.make_mut()
+                        .copy_within(source_offset..source_offset + byte_length, target_offset);
+                }
             } else {
                 let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {
                     unreachable!("typed copy source backing buffer was validated");

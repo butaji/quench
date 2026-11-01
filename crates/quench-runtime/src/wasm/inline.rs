@@ -32,6 +32,8 @@ use crate::Diagnostic;
 /// so copying a body pays up to this size. The budget bounds code growth per
 /// call site; larger callees keep their call.
 const INTERPRETED_LEAF_OPERATORS: usize = 512;
+/// Keep call structure for a native backend to resolve.
+const RETAIN_CALLS: usize = 0;
 
 /// Operators up to which a module lowered for compiled code inlines leaves as the
 /// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
@@ -54,11 +56,13 @@ pub(super) fn leaf_budget(mode: crate::ExecutionMode, module_operators: impl FnO
     match mode {
         crate::ExecutionMode::Interpreted => INTERPRETED_LEAF_OPERATORS,
         #[cfg(test)]
-        crate::ExecutionMode::Compiled if COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => 0,
+        crate::ExecutionMode::Compiled if COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => RETAIN_CALLS,
         crate::ExecutionMode::Compiled if module_operators() <= COMPILED_INLINING_MODULE_OPERATORS => {
             INTERPRETED_LEAF_OPERATORS
         }
-        crate::ExecutionMode::Compiled => 0,
+        crate::ExecutionMode::Compiled => RETAIN_CALLS,
+        #[cfg(feature = "native-execution")]
+        crate::ExecutionMode::NativeOnly => RETAIN_CALLS,
     }
 }
 

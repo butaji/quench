@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -342,6 +348,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf79003ebfa1eed5e87f3b84446ad5236f540268289960e14f387dc9b28e40b7"
 
 [[package]]
+name = "cranelift-module"
+version = "0.134.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c89882b932e6ae6b9c9a9c0d4ee784c53208d2db5cccb6e099e298cf35572cf"
+dependencies = [
+ "anyhow",
+ "cranelift-codegen",
+ "cranelift-control",
+]
+
+[[package]]
 name = "cranelift-native"
 version = "0.134.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -349,6 +366,21 @@ checksum = "05bf4f235743c81e67ee4db617c5a4a0b65d58d3f0cfc575ee0f1a4e0cd58273"
 dependencies = [
  "cranelift-codegen",
  "libc",
+ "target-lexicon",
+]
+
+[[package]]
+name = "cranelift-object"
+version = "0.134.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de62346d98fa0345ed187e0daf565a1c8b3117d027e76653a1100b0a1e3ba0bf"
+dependencies = [
+ "anyhow",
+ "cranelift-codegen",
+ "cranelift-control",
+ "cranelift-module",
+ "log",
+ "object",
  "target-lexicon",
 ]
 
@@ -1096,6 +1128,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "crc32fast",
+ "hashbrown 0.17.1",
+ "indexmap",
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1552,6 +1596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "quench-node"
 version = "0.1.0"
 dependencies = [
@@ -1586,10 +1639,12 @@ dependencies = [
  "quench-wasm",
  "regex",
  "rustc-hash",
+ "serde",
  "serde_json",
  "sha1",
  "socket2",
  "sysinfo",
+ "unicode-normalization",
  "url",
  "zstd",
 ]
@@ -1632,7 +1687,9 @@ dependencies = [
  "chrono-tz",
  "cranelift-codegen",
  "cranelift-frontend",
+ "cranelift-module",
  "cranelift-native",
+ "cranelift-object",
  "foldhash",
  "hashbrown 0.16.1",
  "indexmap",
@@ -1642,6 +1699,7 @@ dependencies = [
  "memchr",
  "num-bigint 0.4.8",
  "num-traits",
+ "object",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
@@ -1652,6 +1710,7 @@ dependencies = [
  "oxc_syntax",
  "phf 0.14.0",
  "quench-intl",
+ "quench-macros",
  "quench-regexp",
  "quench-stack",
  "quench-temporal",
@@ -1659,6 +1718,7 @@ dependencies = [
  "rustc-hash",
  "ryu",
  "serde",
+ "serde_json",
  "smallvec",
  "syn 2.0.119",
  "unicode-normalization",
@@ -1679,6 +1739,8 @@ version = "0.1.0"
 name = "quench-test262"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "oxc_syntax",
  "quench-runtime",
  "serde",
  "serde_json",

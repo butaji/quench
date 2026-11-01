@@ -79,6 +79,38 @@ enum FieldCacheRead {
     Hit(FieldCacheHit),
 }
 
+/// A census of shape creations by transition key (`QUENCH_SHAPE_TRACE`, `profile-memory`):
+/// which operations keep making a shape instead of finding it in the cached child index.
+#[cfg(feature = "profile-memory")]
+mod shape_trace {
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    static CREATED: OnceLock<Mutex<std::collections::HashMap<String, u64>>> = OnceLock::new();
+
+    pub(super) fn record(label: String) {
+        let created = CREATED.get_or_init(|| {
+            // SAFETY: `report` is a plain function that outlives the process.
+            unsafe { libc::atexit(report) };
+            Mutex::new(std::collections::HashMap::new())
+        });
+        if let Ok(mut created) = created.lock() {
+            *created.entry(label).or_default() += 1;
+        }
+    }
+
+    extern "C" fn report() {
+        let Some(created) = CREATED.get() else { return };
+        let Ok(created) = created.lock() else { return };
+        let mut rows: Vec<_> = created.iter().collect();
+        rows.sort_unstable_by(|left, right| right.1.cmp(left.1));
+        eprintln!("QUENCH_SHAPE_TRACE created={}", rows.iter().map(|(_, count)| **count).sum::<u64>());
+        for (label, count) in rows.iter().take(20) {
+            eprintln!("  shape {count:>9} {label}");
+        }
+    }
+}
+
 pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     let mut entries = Vec::new();
     let mut seen_keys = FxHashSet::default();
@@ -112,7 +144,9 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+            ShapeTransition::FunctionName { .. }
+            | ShapeTransition::FunctionNameReconfigured
+            | ShapeTransition::FunctionLengthReconfigured
             | ShapeTransition::Constructed { .. }
             | ShapeTransition::Root
             | ShapeTransition::Vacant
@@ -203,7 +237,7 @@ impl<H: Host> Vm<H> {
         }
         let slot = self.walked_property_shape_slot(shape, key);
         // A slot past u32 is never memoized; it is walked again.
-        if let Some(recorded) = slot.map(u32::try_from).transpose().ok() {
+        if let Ok(recorded) = slot.map(u32::try_from).transpose() {
             self.shape_slot_memo.record(shape, key, recorded);
         }
         slot
@@ -240,7 +274,9 @@ impl<H: Host> Vm<H> {
                     ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
+                ShapeTransition::FunctionName { .. }
+                | ShapeTransition::FunctionNameReconfigured
+                | ShapeTransition::FunctionLengthReconfigured
                 | ShapeTransition::Constructed { .. }
                 | ShapeTransition::Root
                 | ShapeTransition::Add { .. }
@@ -375,6 +411,31 @@ impl<H: Host> Vm<H> {
         transition: ShapeTransition,
         storage_len: usize,
     ) -> u32 {
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_SHAPE_TRACE").is_some() {
+            // Which transitions keep missing the cached child index, by key: a shape a
+            // repeated operation re-creates names the key that fails to dedupe.
+            let label = match &transition {
+                ShapeTransition::Add { key, .. } => match key {
+                    property_key::PropertyKey::String(atom) => format!("Add:{}", self.atom_name(*atom)),
+                    property_key::PropertyKey::Symbol(_) => "Add:<symbol>".to_owned(),
+                    property_key::PropertyKey::Private(_) => "Add:<private>".to_owned(),
+                },
+                ShapeTransition::Delete { key, .. } => match key {
+                    property_key::PropertyKey::String(atom) => format!("Delete:{}", self.atom_name(*atom)),
+                    _ => "Delete:<nonstring>".to_owned(),
+                },
+                ShapeTransition::Descriptor { slot, .. } => format!("Descriptor:{slot}"),
+                ShapeTransition::Dictionary { .. } => "Dictionary".to_owned(),
+                ShapeTransition::Root => "Root".to_owned(),
+                ShapeTransition::Vacant => "Vacant".to_owned(),
+                ShapeTransition::FunctionName { .. } => "FunctionName".to_owned(),
+                ShapeTransition::FunctionNameReconfigured => "FunctionNameReconfigured".to_owned(),
+                ShapeTransition::FunctionLengthReconfigured => "FunctionLengthReconfigured".to_owned(),
+                ShapeTransition::Constructed { .. } => "Constructed".to_owned(),
+            };
+            shape_trace::record(label);
+        }
         let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
         let dictionary_trigger = match transition {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
@@ -521,7 +582,8 @@ impl<H: Host> Vm<H> {
         if self.lacks_own_index(holder, index) {
             return None;
         }
-        let named = atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
+        let named =
+            atom.and_then(|atom| self.property_attributes(holder, PropertyKey::string(atom)));
         if self.own_element_present(holder, index) {
             let attributes = named.unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let frozen = self.object_data(holder).is_some_and(Object::is_frozen);
@@ -601,7 +663,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether array `array` has no element, dense or sparse.
     fn array_holds_no_element(&self, array: Value) -> bool {
-        self.heap.array_elements(array).is_none_or(|elements| elements.len() == 0)
+        self.heap.array_elements(array).is_none_or(|elements| elements.is_empty())
             && self.heap.sparse_length(array).is_none()
     }
 
@@ -1187,9 +1249,9 @@ impl<H: Host> Vm<H> {
     /// The shape an empty object reaches by adding `atoms` as data properties in order: the
     /// transitions an object literal with those keys walks.
     pub(super) fn literal_shape(&mut self, atoms: &[Atom]) -> u32 {
-        atoms
-            .iter()
-            .fold(EMPTY_SHAPE, |shape, atom| self.transition_shape(shape, *atom))
+        atoms.iter().fold(EMPTY_SHAPE, |shape, atom| {
+            self.transition_shape(shape, *atom)
+        })
     }
     /// A user function's own data `length`, as its closure's shape holds it: `None` for a
     /// native or bound function, whose `length` other paths answer, a shape with getter slots
@@ -2311,12 +2373,9 @@ impl<H: Host> Vm<H> {
         let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
         {
             (cache, 0)
-        } else if let Some(cache) =
-            self.megamorphic_field_cache(site, receiver.shape(), holder.shape())
-        {
-            (cache, 2)
         } else {
-            return None;
+            let cache = self.megamorphic_field_cache(site, receiver.shape(), holder.shape())?;
+            (cache, 2)
         };
         let value = unsafe {
             // SAFETY: both immutable shapes and the property slot were recorded
@@ -2739,9 +2798,7 @@ impl<H: Host> Vm<H> {
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
-            let Some(data) = self.inherited_chain_link(prototype, cache.atom, cache.function_links) else {
-                return None;
-            };
+            let data = self.inherited_chain_link(prototype, cache.atom, cache.function_links)?;
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
                 return None;
             }
@@ -2851,9 +2908,7 @@ impl<H: Host> Vm<H> {
             if prototype.is_null() {
                 return absence_cacheable.then_some((cache, Value::UNDEFINED));
             }
-            let Some(data) = self.inherited_chain_link(prototype, atom, function_links) else {
-                return None;
-            };
+            let data = self.inherited_chain_link(prototype, atom, function_links)?;
             let shape = data.shape();
             if data.is_module_namespace()
                 || data.is_arguments_object()
@@ -2962,7 +3017,9 @@ impl<H: Host> Vm<H> {
         let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
-            if self.set_private_field_value(p, target, atom, value) { return Ok(true); }
+            if self.set_private_field_value(p, target, atom, value) {
+                return Ok(true);
+            }
         }
         let typed_array_index = if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(self.atom_name(atom)) {
@@ -3053,7 +3110,9 @@ impl<H: Host> Vm<H> {
                 self.own_index_attributes(current, index as usize, Some(atom))
             } else {
                 self.property_attributes(current, PropertyKey::string(atom))
-                    .filter(|attributes| self.own_property(current, atom).is_some() || attributes.accessor)
+                    .filter(|attributes| {
+                        self.own_property(current, atom).is_some() || attributes.accessor
+                    })
             };
             if let Some(attributes) = held {
                 found = Some((current, attributes));
@@ -3419,13 +3478,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// The raw address for a warmed, own-data store site whose exact receiver shape still
-    /// matches. Shared OSR uses this only for Number values in a region that cannot allocate,
-    /// collect, or call guest code; misses stay on the interpreter path before the store.
+    /// matches. Shared native execution uses this only for Numbers, without allocation,
+    /// collection, or guest calls; misses stay on the ordinary path before the store.
     ///
     /// # Safety
     /// The caller must keep `object` rooted and must use the returned pointer only during the
-    /// current no-allocation OSR run. It may write only non-reference values; heap references
-    /// require the collector's write barrier.
+    /// current no-allocation native operation. It may write only non-reference values;
+    /// heap references require the collector's write barrier.
     #[inline(always)]
     pub(super) unsafe fn cached_field_store_pointer(
         &mut self,
@@ -3465,11 +3524,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: the exact own-data cache shape proves this slot. The caller guarantees the
-        // pointer does not outlive the no-allocation native region and applies the owner's
-        // write barrier before native code may store a tagged value through it.
-        let pointer = unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }?;
-        self.heap.write_barrier(object);
-        Some(pointer)
+        // pointer does not outlive the no-allocation native operation and writes only
+        // non-reference Numbers, which cannot add a collector edge to this owner.
+        unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot) }
     }
 
     /// Increment or decrement a cached own writable Number field without
@@ -3580,7 +3637,9 @@ impl<H: Host> Vm<H> {
             let key = self.atom_name(atom).to_owned();
             return Err(self.nullish_assignment_error(p, object, &key));
         }
-        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) { return Ok(()); }
+        if self.is_private_name(atom) && self.set_private_field_value(p, object, atom, value) {
+            return Ok(());
+        }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() && self.host.nonextensible_applies_to_private() {
@@ -3594,8 +3653,15 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            let written =
-                self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?;
+            let written = self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?;
             return if written || !strict {
                 Ok(())
             } else {
@@ -3874,9 +3940,7 @@ impl<H: Host> Vm<H> {
             if depth == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
                 return None;
             }
-            let Some(data) = self.heap.object_record(prototype) else {
-                return None;
-            };
+            let data = self.heap.object_record(prototype)?;
             let shape = data.shape();
             if data.is_module_namespace()
                 || data.is_arguments_object()
@@ -4121,7 +4185,15 @@ impl<H: Host> Vm<H> {
             };
         }
         let written = if let Some((target, handler)) = self.proxy_parts(object) {
-            self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?
+            self.proxy_set_mode(
+                p,
+                target,
+                handler,
+                object,
+                PropertyKey::string(atom),
+                value,
+                strict,
+            )?
         } else {
             self.set_property_with_receiver(p, object, atom, value, object)?
         };
@@ -4279,7 +4351,11 @@ impl<H: Host> Vm<H> {
         };
         self.append_cached_shape_transition(shape, transition)
     }
-    pub(super) fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
+    pub(super) fn append_cached_shape_transition(
+        &mut self,
+        shape: u32,
+        transition: ShapeTransition,
+    ) -> u32 {
         let key = transition.cache_key();
         if let Some(key) = key {
             let last = self.shapes[shape as usize].last_child.get();

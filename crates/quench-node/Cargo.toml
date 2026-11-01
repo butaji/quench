@@ -13,16 +13,24 @@ name = "quench-node"
 path = "src/bin/quench-node.rs"
 
 [features]
-default = []
+default = ["jit", "bundled-sources"]
+jit = ["quench-runtime/jit", "quench-wasm/jit"]
+bundled-sources = []
+native-execution = ["quench-runtime/native-execution"]
+aot = ["bundled-sources", "native-execution", "quench-runtime/aot"]
 profile-memory = ["quench-runtime/profile-memory"]
+profile-native-ops = ["native-execution", "quench-runtime/profile-native-ops"]
 verify-replay = ["quench-runtime/verify-replay"]
 profile-allocator = ["quench-runtime/profile-allocator"]
+# Reads the memory-first compile-release knobs from the environment (measurement builds only).
+release-tuning = []
 
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
-quench-runtime = { path = "../quench-runtime" }
-quench-wasm = { path = "../quench-wasm" }
+quench-runtime = { path = "../quench-runtime", default-features = false }
+quench-wasm = { path = "../quench-wasm", default-features = false }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
 sha1 = "0.10"
 base64 = "0.22"
@@ -48,6 +56,7 @@ brotli = "7"
 encoding_rs = "0.8"
 crc32fast = "1"
 idna = "1"
+unicode-normalization = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 libc = "0.2"
 socket2 = { version = "0.6", features = ["all"] }
@@ -58,8 +67,12 @@ libz-rs-sys = "0.6.8"
 cc = "1"
 pkg-config = "0.3"
 
-# The global allocator on Linux; the memory policy decides whether it serves small requests
-# (`shared_run::apply_allocator_policy`). Other platforms keep the system allocator until the
-# reservation's commit behavior is measured there (macOS has no MAP_NORESERVE semantics).
-[target.'cfg(target_os = "linux")'.dependencies]
+# The global allocator on unix; the memory policy decides whether it serves small requests
+# (`shared_run::apply_allocator_policy`). On macOS the reservation is granted as PROT_NONE
+# address space and pages are faulted on use; paired M4 screens against the system allocator
+# measured 0.7-2.1% lower maximum RSS and 2.6-4.7% higher throughput (TOD-173 npm rows).
+[target.'cfg(unix)'.dependencies]
 quench-alloc = { path = "../quench-alloc" }
+
+[lints]
+workspace = true

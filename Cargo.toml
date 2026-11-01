@@ -7,6 +7,7 @@ exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression"]
 members = [
     "quench-bench",
     "crates/quench-js-check",
+    "crates/quench-macros",
     "crates/quench-node",
     "crates/quench-node-test",
     "crates/quench-runtime",
@@ -19,6 +20,12 @@ members = [
     "crates/quench-wasm",
     "crates/quench-wasm-test",
 ]
+
+# Function arity and type size are not review caps here (AGENTS.md: no mandatory
+# complexity caps); every other clippy lint stays at its default level.
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
 
 [workspace.dependencies]
 oxc = "=0.153.0"
@@ -51,6 +58,9 @@ panic = "abort"
 # Fast optimized execution for iterative conformance work, without whole-
 # program LTO invalidating the incremental build graph after each runtime edit.
 # The final release profile remains the production/performance authority.
+# This is the edit/measure loop: on the M4 host a quench-node edit rebuilds in
+# ~2 s against ~2 m 35 s for `production`, which stays non-incremental because
+# it is the qualified artifact.
 [profile.iteration]
 inherits = "release"
 # Share dependency artifacts between iterative binaries and Rust API tests,
@@ -80,6 +90,12 @@ panic = "abort"
 lto = "thin"
 codegen-units = 1
 rpath = false
+
+# Native SDK consumers link optimized machine-code archive members directly.
+# This keeps whole-image LLVM optimization out of repeated SDK consumer links.
+[profile.native-support]
+inherits = "production"
+lto = false
 
 # Optimized measurements with full address-to-source attribution. DWARF makes
 # samples explainable; operation counts still come from explicit counters.

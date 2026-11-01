@@ -98,7 +98,7 @@ impl<H: Host> Vm<H> {
             }
             let value = self.to_string(p, value)?;
             if !allowed.contains(&value.as_str()) {
-                return Err(self.range_error(p, format!("invalid {key}").into()));
+                return Err(self.range_error(p, format!("invalid {key}")));
             }
             match key {
                 "style" => style = value,

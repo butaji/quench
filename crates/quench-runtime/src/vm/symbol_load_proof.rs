@@ -40,6 +40,7 @@ struct SymbolLoadProof {
     answer: SymbolLoadAnswer,
 }
 
+#[derive(Default)]
 pub(super) struct SymbolLoadProofs {
     entries: super::shape_memo::DirectMappedTable<SymbolLoadProof, SYMBOL_LOAD_PROOF_ENTRIES>,
     /// Per read site: the own data slot a proof gave the site's last receiver shape and key
@@ -63,11 +64,6 @@ struct SiteOwnRead {
     slot: u32,
 }
 
-impl Default for SymbolLoadProofs {
-    fn default() -> Self {
-        Self { entries: Default::default(), sites: Default::default() }
-    }
-}
 
 impl SymbolLoadProofs {
     fn index(shape: u32, key: PropertyKey) -> usize {

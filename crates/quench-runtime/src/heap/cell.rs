@@ -435,7 +435,11 @@ pub(crate) enum Native {
     Error, ErrorToString, ErrorIsError, ErrorCaptureStackTrace, ErrorStackGetter, ErrorStackSetter,
     CallSiteGetFileName, CallSiteGetThis, CallSiteGetFunctionName, CallSiteGetLineNumber, CallSiteGetColumnNumber,
     CallSiteGetTypeName, CallSiteGetMethodName, CallSiteIsEval, CallSiteGetEvalOrigin,
-    CallSiteIsConstructor, CallSiteIsNative, CallSiteToString,
+    CallSiteIsConstructor,
+    // Named for `CallSite.prototype.isNative`, like every `<Builtin><Method>` variant.
+    #[allow(clippy::enum_variant_names)]
+    CallSiteIsNative,
+    CallSiteToString,
     AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
     RegExp, RegExpCompile, RegExpEscape, RegExpLegacyGetter, RegExpLegacySetter, RegExpToString, RegExpSymbolMatch, RegExpSymbolSearch, RegExpSymbolReplace,
     RegExpSymbolMatchAll, RegExpSymbolSplit, RegExpSpecies,
@@ -692,14 +696,19 @@ pub(crate) struct WasmMemoryHeader {
 pub(crate) enum WasmObjectSlot {
     Module(Box<crate::WasmModule>),
     /// The frozen exports object of an instance; its bindings stay alive through it.
-    Instance { exports: Value },
+    Instance {
+        exports: Value,
+    },
 }
 
 impl std::fmt::Debug for WasmObjectSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module(_) => f.write_str("Module"),
-            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
+            Self::Instance { exports } => f
+                .debug_struct("Instance")
+                .field("exports", exports)
+                .finish(),
         }
     }
 }
@@ -1314,11 +1323,7 @@ impl IteratorKind {
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
-            Self::MapKeys
-                | Self::MapValues
-                | Self::MapEntries
-                | Self::SetValues
-                | Self::SetEntries
+            Self::MapKeys | Self::MapValues | Self::MapEntries | Self::SetValues | Self::SetEntries
         )
     }
 }
@@ -1549,6 +1554,9 @@ pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
 pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
+pub(super) const NATIVE_OBJECT_PROTO_MASK: u32 = PROTO_INDEX_BITS;
+pub(super) const NATIVE_OBJECT_PROTO_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE;
+pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE;
 
 const _: () =
     assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);
@@ -1714,13 +1722,18 @@ pub(crate) struct CallSiteRecord {
 impl CallSiteRecord {
     fn visit_roots(&self, visit: &mut impl FnMut(Value)) {
         visit(self.this_value);
-        if let CallSiteName::Callable(function) = self.name { visit(function); }
+        if let CallSiteName::Callable(function) = self.name {
+            visit(function);
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
-    Captured { records: Vec<CallSiteRecord>, source: Option<crate::bytecode::ProgramSource> },
+    Captured {
+        records: Vec<CallSiteRecord>,
+        source: Option<crate::bytecode::ProgramSource>,
+    },
     Formatted(Value),
     CallSite(CallSiteRecord),
 }
@@ -1804,7 +1817,10 @@ impl StackData {
             (match &record.location {
                 CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
                 CallSiteLocation::Native => 0,
-            }) + match &record.name { CallSiteName::Static(name) => name.capacity(), _ => 0 }
+            }) + match &record.name {
+                CallSiteName::Static(name) => name.capacity(),
+                _ => 0,
+            }
         }
         match self {
             Self::Captured { records, .. } => {
@@ -2334,10 +2350,14 @@ impl Object {
         let Some(extras) = self.extras() else {
             return;
         };
-        if let Some(value) = extras.boxed_primitive { visit(value); }
+        if let Some(value) = extras.boxed_primitive {
+            visit(value);
+        }
         for element in &extras.private_elements {
             visit(element.brand.home);
-            if let Some(value) = element.data { visit(value); }
+            if let Some(value) = element.data {
+                visit(value);
+            }
         }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
@@ -2347,26 +2367,32 @@ impl Object {
             }
             Some(StackData::CallSite(record)) => {
                 record.visit_roots(&mut visit);
-            },
+            }
             Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
     }
 
     pub(crate) fn was_used_as_prototype(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
     }
 
     pub(crate) fn mark_as_prototype(&mut self) {
-        if !self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Setup; }
+        if !self.was_used_as_prototype() {
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
+        }
     }
 
     pub(crate) fn prototype_lookup_ready(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
     }
 
     pub(crate) fn prepare_prototype_lookup(&mut self) {
-        if self.was_used_as_prototype() { self.extras_mut().prototype_lookup = PrototypeLookupState::Ready; }
+        if self.was_used_as_prototype() {
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Ready;
+        }
     }
 
     pub(crate) fn shape(&self) -> u32 {
@@ -2497,18 +2523,26 @@ impl Object {
         self.extras_mut().deferred_module = module;
     }
     pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
-        self.extras().into_iter().flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
+        self.extras()
+            .into_iter()
+            .flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_names().any(|candidate| candidate == brand)
     }
     pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
         if !self.has_private_name(brand) {
-            self.extras_mut().private_elements.push(PrivateElement { brand, data: None });
+            self.extras_mut()
+                .private_elements
+                .push(PrivateElement { brand, data: None });
         }
     }
     pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
-        self.extras()?.private_elements.iter().find(|element| element.brand == brand)?.data
+        self.extras()?
+            .private_elements
+            .iter()
+            .find(|element| element.brand == brand)?
+            .data
     }
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
         let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
@@ -2518,10 +2552,15 @@ impl Object {
     pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
         let elements = &mut self.extras_mut().private_elements;
         if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
-            if element.data.is_some() { return false; }
+            if element.data.is_some() {
+                return false;
+            }
             element.data = Some(value);
         } else {
-            elements.push(PrivateElement { brand, data: Some(value) });
+            elements.push(PrivateElement {
+                brand,
+                data: Some(value),
+            });
         }
         true
     }
@@ -2838,6 +2877,15 @@ const SPARSE_ENTRIES_START: usize = 2;
 const SPARSE_ENTRY_WORDS: usize = 2;
 
 impl EnvironmentSlots {
+    /// A dense slot view for native reads. The caller must keep the environment live and
+    /// discard the pointer at a safepoint, where collection or mutation can replace storage.
+    pub(crate) fn native_dense_view(&self) -> Option<(*const Value, usize)> {
+        let dense = self.dense()?;
+        const { assert!(std::mem::size_of::<EnvironmentSlot>() == std::mem::size_of::<Value>()) };
+        const { assert!(std::mem::align_of::<EnvironmentSlot>() == std::mem::align_of::<Value>()) };
+        Some((dense.0.as_ptr().cast::<Value>(), dense.0.len()))
+    }
+
     /// The logical length and default owner of sparse storage.
     #[inline(always)]
     fn sparse(&self) -> Option<(usize, Value)> {
@@ -3376,18 +3424,29 @@ pub(crate) struct SymbolData {
     pub(crate) kind: SymbolKind,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SymbolKind { Public, HostPrivate }
+pub(crate) enum SymbolKind {
+    Public,
+    HostPrivate,
+}
 impl SymbolData {
     pub(crate) fn public(description: Option<String>) -> Self {
-        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::Public }
+        Self {
+            description: description.map(String::into_boxed_str),
+            kind: SymbolKind::Public,
+        }
     }
     pub(crate) fn host_private(description: Option<String>) -> Self {
-        Self { description: description.map(String::into_boxed_str), kind: SymbolKind::HostPrivate }
+        Self {
+            description: description.map(String::into_boxed_str),
+            kind: SymbolKind::HostPrivate,
+        }
     }
 }
 impl std::ops::Deref for SymbolData {
     type Target = Option<Box<str>>;
-    fn deref(&self) -> &Self::Target { &self.description }
+    fn deref(&self) -> &Self::Target {
+        &self.description
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3438,6 +3497,8 @@ pub(crate) enum Cell {
     },
     WeakSet {
         object: Box<Object>,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         entries: Box<Vec<Value>>,
     },
     WeakRef {
@@ -3478,7 +3539,12 @@ pub(crate) enum Cell {
     /// Opaque external payload in the internal anyref hierarchy, outside eqref.
     WasmExtern(Value),
     /// One exception identity owns its original tag and traced payload.
-    WasmException { tag: Value, payload: Box<Vec<Value>> },
+    WasmException {
+        tag: Value,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
+        payload: Box<Vec<Value>>,
+    },
     /// A tag retains its original declaration; identity is independent of type equality.
     WasmTag { declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
@@ -3533,17 +3599,23 @@ pub(crate) enum Cell {
         year: i32,
         month: u32,
         day: u32,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
     },
     TemporalPlainDateTime {
         object: Box<Object>,
         date_time: Box<IsoDateTimeFields>,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
     },
     TemporalPlainMonthDay {
         object: Box<Object>,
         month: u32,
         day: u32,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
         reference_iso_year: i32,
     },
@@ -3551,12 +3623,16 @@ pub(crate) enum Cell {
         object: Box<Object>,
         year: i32,
         month: u32,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
         reference_iso_day: u32,
     },
     TemporalZonedDateTime {
         object: Box<Object>,
         instant: Box<ZonedInstant>,
+        // Boxed so this payload keeps `Cell` narrow; the heap stores cells inline.
+        #[allow(clippy::box_collection)]
         calendar: Box<String>,
     },
     TemporalInstant {

@@ -41,6 +41,11 @@ impl FunctionCompiler<'_, '_> {
         // nested operand starts unmarked.
         let last_operand = std::mem::take(&mut self.last_operand);
         match expression {
+            Expression::TSAsExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSSatisfiesExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSTypeAssertion(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSNonNullExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
+            Expression::TSInstantiationExpression(value) => self.expression_with_debug_name(&value.expression, debug_name),
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
             Expression::BigIntLiteral(value) => self.bigint_literal(value),
@@ -70,7 +75,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::Super(_) => self.super_base(),
             Expression::FunctionExpression(value) => {
                 let function = self.function_expression(value);
-                if value.id.is_none() { if let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); } }
+                if value.id.is_none() && let Some(name) = debug_name { self.emit(Op::SetFunctionDebugName, function, 0, 0, name); }
                 function
             },
             Expression::ArrowFunctionExpression(value) => {
@@ -397,7 +402,7 @@ impl FunctionCompiler<'_, '_> {
                     u32::from(slot),
                 );
             }
-            if lexical.is_none() && self.function_id == 0 && !self.owner.module_goal {
+            if lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
                 self.emit(
                     Op::StoreName,
@@ -788,12 +793,12 @@ impl FunctionCompiler<'_, '_> {
         if let Some(test) = self.typeof_test(value) {
             return test;
         }
-        let left = if let Some(constant) = binding_time::expression(&value.left).static_value() {
+        let left = if let Some(constant) = binding_time::expression(&value.left) {
             self.constant_operand(constant)
         } else {
             Operand::register(self.expression(&value.left))
         };
-        let right = if let Some(constant) = binding_time::expression(&value.right).static_value() {
+        let right = if let Some(constant) = binding_time::expression(&value.right) {
             self.constant_operand(constant)
         } else if let Expression::Identifier(identifier) = &value.right
             && let Some(operand) = self.local_operand(identifier.name.as_str())
@@ -894,14 +899,14 @@ impl FunctionCompiler<'_, '_> {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
-            let left = if let Some(constant) = binding_time::expression(&binary.left).static_value()
+            let left = if let Some(constant) = binding_time::expression(&binary.left)
             {
                 self.constant_operand(constant)
             } else {
                 Operand::register(self.expression(&binary.left))
             };
             let right =
-                if let Some(constant) = binding_time::expression(&binary.right).static_value() {
+                if let Some(constant) = binding_time::expression(&binary.right) {
                     self.constant_operand(constant)
                 } else if let Expression::Identifier(identifier) = &binary.right
                     && let Some(operand) = self.local_operand(identifier.name.as_str())

@@ -728,7 +728,7 @@ impl<H: Host> Vm<H> {
         let number = self.to_number(p, value)?;
         let integer = number.trunc();
         if !integer.is_finite() || number.fract() != 0.0 || integer < minimum || integer > maximum {
-            return Err(self.range_error(p, format!("invalid {name}").into()));
+            return Err(self.range_error(p, format!("invalid {name}")));
         }
         Ok(integer as u32)
     }
@@ -1318,7 +1318,7 @@ impl<H: Host> Vm<H> {
             .char_indices()
             .filter(|(_, character)| character.is_numeric())
             .map(|(index, character)| index + character.len_utf8())
-            .last()
+            .next_back()
             .unwrap_or(number_start);
         let prefix = &text[..number_start];
         let number = &text[number_start..number_end];

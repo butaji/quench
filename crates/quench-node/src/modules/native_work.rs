@@ -29,12 +29,14 @@ impl Pool {
             let receiver = Arc::clone(&receiver);
             std::thread::Builder::new()
                 .name(format!("quench-work-{i}"))
-                .spawn(move || loop {
-                    let next = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                    let Ok(job) = next else { break };
-                    // A failed work item drops its real completion sender. Its VM owner sees
-                    // disconnection; keep the remaining pool available for independent work.
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                .spawn(move || {
+                    loop {
+                        let next = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                        let Ok(job) = next else { break };
+                        // A failed work item drops its real completion sender. Its VM owner sees
+                        // disconnection; keep the remaining pool available for independent work.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                    }
                 })
                 .map_err(|e| e.to_string())?;
         }
@@ -42,6 +44,14 @@ impl Pool {
     }
 }
 pub(crate) fn submit(job: impl FnOnce() + Send + 'static) -> Result<(), String> {
+    let wake = crate::modules::napi::thread_wake().ok();
     let pool = POOL.get_or_init(Pool::new).as_ref().map_err(Clone::clone)?;
-    pool.sender.send(Box::new(job)).map_err(|e| e.to_string())
+    pool.sender
+        .send(Box::new(move || {
+            job();
+            // The completion sender published before this point; wake its event loop
+            // instead of leaving it to the poll interval.
+            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
+        }))
+        .map_err(|e| e.to_string())
 }

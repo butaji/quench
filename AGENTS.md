@@ -44,9 +44,10 @@ review requirements, not optional style preferences.
 ## Work and evidence
 
 [The Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview) owns backlog, status, lane ownership and
-coordination; its overview holds the lanes and sync rules. `evidence/` holds
-measurement artifacts. [Documentation](docs/README.md) owns contracts and
-commands.
+coordination; its overview holds the lanes and sync rules. Plans, handoffs,
+historical measurements and other progress artifacts live only in Linear.
+The repository holds code, executable tools, tests, fixtures and build inputs;
+do not add progress or evidence directories here.
 Measure V8-v7 at meaningful milestones after the affected execution path passes
 its safety/correctness checks. Evidence is a completion check on each critical-path
 state transition, not a separate prerequisite or replacement for the backlog order;

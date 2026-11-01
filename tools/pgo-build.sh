@@ -6,9 +6,10 @@
 # --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
 # model), the input of the BOLT layout step in docs/README.md: both the instrumented and the
 # profile-guided build add `-Ctarget-feature=+crt-static -Crelocation-model=static` and build
-# for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. The
-# repository's own rustflags (.cargo/config.toml) stay in force in every mode: each build
-# appends its flags with `--config`, which cargo concatenates with the configured array.
+# for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. Every build
+# passes its flags in `RUSTFLAGS`, which replaces the repository's rustflags
+# (.cargo/config.toml) rather than appending to them, so the script repeats that baseline in
+# `repo_rustflags` and refuses an inherited `RUSTFLAGS`.
 #
 # 1. Builds an instrumented quench-node into target/pgo-instrumented.
 # 2. Runs the training corpus: the interpreter curriculum micro programs, the numbered
@@ -65,19 +66,23 @@ http_training_rounds="${QUENCH_PGO_HTTP_ROUNDS:-3000}"
 micros_budget_ms=1500
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
-# RUSTFLAGS replaces every configured rustflags array, the repository's and the ones this
-# script passes with `--config`, so a build under it would silently lose the profile.
+# `RUSTFLAGS` has precedence over the repository's target-specific rustflags.
+# Passing only `--config build.rustflags=...` silently loses the PGO flag on
+# targets whose configuration has its own rustflags (aarch64-apple-darwin), so
+# this script appends the PGO flag to the same baseline flags in RUSTFLAGS.
+# It replaces every configured array, so an inherited `RUSTFLAGS` would lose both
+# the baseline and the profile flag.
 if [[ -n "${RUSTFLAGS:-}" ]]; then
     printf 'unset RUSTFLAGS: it would replace the profile flags and the repository rustflags\n' >&2
     exit 1
 fi
+repo_rustflags="-D warnings -C llvm-args=-align-all-functions=6"
 # The static mode's link flags, appended to both builds, and the target directory layout a
 # `--target` build uses.
-mode_flags=""
 target_args=()
 binary_subdir="$profile"
 if [[ "$static" == true ]]; then
-    mode_flags='"-Ctarget-feature=+crt-static", "-Crelocation-model=static", '
+    repo_rustflags="$repo_rustflags -Ctarget-feature=+crt-static -Crelocation-model=static"
     target_args=(--target "$host")
     binary_subdir="$host/$profile"
 fi
@@ -117,13 +122,15 @@ fi
 cd "$root_dir"
 rm -rf "$data_dir"
 mkdir -p "$data_dir"
-# `--config` appends to the repository's configured rustflags instead of replacing them.
-CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}" \
-    --config "build.rustflags=[${mode_flags}\"-Cprofile-generate=$data_dir\"]"
+# `RUSTFLAGS` replaces the repository's target-specific rustflags instead of appending to
+# them; see `repo_rustflags` above.
+RUSTFLAGS="$repo_rustflags -Cprofile-generate=$data_dir" \
+    CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
 instrumented="$instrumented_dir/$binary_subdir/quench-node"
 
-# A fixed pool of profiles merged in place as programs exit keeps the raw data small.
-export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
+# One raw profile per process: Darwin's runtime does not reliably merge concurrent
+# writers into a shared pool file here (llvm-profdata then reports "too much profile data").
+export LLVM_PROFILE_FILE="$data_dir/quench-%p.profraw"
 drivers_dir="$target_dir/pgo-curriculum"
 rm -rf "$drivers_dir"
 mkdir -p "$drivers_dir"
@@ -166,15 +173,19 @@ if (( react_training_rounds > 0 )); then
 fi
 unset LLVM_PROFILE_FILE
 
-"$llvm_profdata" merge -o "$profdata" "$data_dir"/*.profraw
+# A training process the per-program wall limit kills writes a truncated profile, and one
+# whose counters overflow writes a "too much profile data" one; both are still merged. The
+# default failure mode rejects the run when the last of them is truncated, so ask for
+# warnings instead of an abort and let a genuinely empty corpus fail below.
+"$llvm_profdata" merge --failure-mode=warn -o "$profdata" "$data_dir"/*.profraw
 rm -rf "$data_dir"
 # Indirect call promotion turns a profiled indirect call into a guarded direct call and may
 # inline the callee there. The lane's dispatches are indirect tail calls between handlers;
 # promoting one inlines a large handler (a frameless call) into a small one (a register
 # move), whose every dispatch then pays the large one's prologue: Crypto and NavierStokes
 # ran 38% more instructions once training made a call the move's most frequent successor.
-CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}" \
-    --config "build.rustflags=[${mode_flags}\"-Cprofile-use=$profdata\", \"-Cllvm-args=-disable-icp\"]"
+RUSTFLAGS="$repo_rustflags -Cprofile-use=$profdata -Cllvm-args=-disable-icp" \
+    CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node "${target_args[@]}"
 binary="$target_dir/$binary_subdir/quench-node"
 printf 'PGO build: %s\n' "$binary"
 # Profile-guided inlining decides which lane handlers form their dispatch as a sibling jump

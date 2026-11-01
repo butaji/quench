@@ -292,15 +292,17 @@ impl<'a> Reader<'a> {
     pub(crate) fn u16s(&mut self) -> SnapshotResult<Vec<u16>> {
         let len = self.len()?;
         let bytes = self.take(len.checked_mul(2).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
-        Ok(bytes.chunks_exact(2).map(|unit| u16::from_le_bytes([unit[0], unit[1]])).collect())
+        Ok(bytes.as_chunks::<2>().0.iter().map(|unit| u16::from_le_bytes(*unit)).collect())
     }
 
     pub(crate) fn u32s(&mut self) -> SnapshotResult<Vec<u32>> {
         let len = self.len()?;
         let bytes = self.take(len.checked_mul(4).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
         Ok(bytes
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes(word.try_into().expect("chunks of four")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
             .collect())
     }
 
@@ -702,6 +704,8 @@ impl SnapshotReader<'_, '_> {
     pub fn f64(&mut self) -> Result<f64, String> {
         self.reader.f64().map_err(|error| error.0)
     }
+    // Reads a length prefix from the stream; the reader has no emptiness to report.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&mut self) -> Result<usize, String> {
         self.reader.len().map_err(|error| error.0)
     }

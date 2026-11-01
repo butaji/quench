@@ -2,16 +2,7 @@
 
 use super::memory::{MemoryLoad, MemoryStorage, MemoryStore};
 use super::{WasmTrap, WasmType, WasmValue};
-use std::sync::{Mutex, MutexGuard};
-
-// One order for atomic accesses across all linear memories and for size/growth.
-// Take this before a backing lock; ordinary byte accesses need only that lock.
-static MEMORY_ORDER: Mutex<()> = Mutex::new(());
-pub(crate) fn memory_order() -> MutexGuard<'static, ()> {
-    MEMORY_ORDER
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
+use crate::shared_backing::memory_order;
 
 pub(crate) fn fence() {
     let _order = memory_order();

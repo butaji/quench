@@ -52,7 +52,10 @@ impl<C: Config> Lexer<'_, C> {
     fn read_non_decimal(&mut self, kind: Kind) -> Kind {
         self.consume_char();
 
-        if self.peek_byte().is_some_and(|b| kind.matches_number_byte(b)) {
+        if self
+            .peek_byte()
+            .is_some_and(|b| kind.matches_number_byte(b))
+        {
             self.consume_char();
         } else {
             self.unexpected_err();
@@ -69,7 +72,10 @@ impl<C: Config> Lexer<'_, C> {
                     // call here instead of after we ensure the next character
                     // is a number character
                     self.token.set_has_separator(true);
-                    if self.peek_byte().is_some_and(|b| kind.matches_number_byte(b)) {
+                    if self
+                        .peek_byte()
+                        .is_some_and(|b| kind.matches_number_byte(b))
+                    {
                         self.consume_char();
                     } else {
                         self.unexpected_err();
@@ -240,7 +246,10 @@ impl<C: Config> Lexer<'_, C> {
                     break;
                 }
             }
-            self.error(diagnostics::invalid_number_end(Span::new(offset, self.offset())));
+            self.error(diagnostics::invalid_number_end(Span::new(
+                offset,
+                self.offset(),
+            )));
             self.advance_to_end();
             Kind::Eof
         })

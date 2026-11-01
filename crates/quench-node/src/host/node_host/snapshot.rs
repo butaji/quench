@@ -8,9 +8,15 @@ use quench_runtime::{SnapshotReader, SnapshotWriter};
 impl NodeHost {
     pub(crate) fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         let Self {
+            #[cfg(feature = "native-execution")]
+            module_assets: _,
             // The installation and the process's own entry and environment.
             node_library_root: _,
             compile_cache: _,
+            #[cfg(feature = "native-execution")]
+            native_program_resolver: _,
+            #[cfg(feature = "aot")]
+            native_source_staging: _,
             shared_state,
             commonjs_entry: _,
             inline_source: _,
@@ -90,6 +96,10 @@ impl SharedNodeState {
             serdes,
             unhandled_rejection_mode: _,
             output: _,
+            stdout_output: _,
+            process_env_override: _,
+            process_env_shared: _,
+            module_require_trace_active: _,
             net_auto_select_family_attempt_timeout,
             net_auto_select_family,
             process_module,

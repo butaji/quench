@@ -597,15 +597,14 @@ impl<H: Host> Vm<H> {
                     return value;
                 }
                 // JS host numbers in the signed i31 range have the canonical immediate representation.
-                if let Some(number) = value.as_number() {
-                    if number >= f64::from(crate::wasm::i31::SIGNED_MIN)
+                if let Some(number) = value.as_number()
+                    && number >= f64::from(crate::wasm::i31::SIGNED_MIN)
                         && number <= f64::from(crate::wasm::i31::SIGNED_MAX)
                         && number.fract() == 0.0
                         && !(number == 0.0 && number.is_sign_negative())
                     {
                         return Value::integer((number as i32) & crate::wasm::i31::I31_MASK);
                     }
-                }
                 self.heap.alloc(Cell::WasmExtern(value))
             }
             ExternalConversion::Externalize => self.wasm_external_value(value),
@@ -1277,7 +1276,13 @@ impl<H: Host> Vm<H> {
                     destination.copy_from(source, input, output)
                 }
                 Some(Cell::ArrayBuffer { bytes: source, .. }) => {
-                    destination.lock()[output].copy_from_slice(&source.read()[input])
+                    if source.is_wasm_view_of(destination) {
+                        destination.lock().copy_within(input, output.start);
+                    } else if let (crate::wasm::memory::MemoryStorage::Shared(destination), Some(source)) = (&**destination, source.shared_backing()) {
+                        destination.0.copy_from(&source, input, output);
+                    } else {
+                        destination.lock()[output].copy_from_slice(&source.read()[input]);
+                    }
                 }
                 _ => unreachable!("validated source binding"),
             }
@@ -1290,7 +1295,7 @@ impl<H: Host> Vm<H> {
         memory: Value,
         delta: u64,
     ) -> Result<Option<u64>, JsError> {
-        let _order = crate::wasm::atomic::memory_order();
+        let _order = crate::shared_backing::memory_order();
         let page_size = self.wasm_memory_type(memory)?.page_size() as usize;
         let (mut bytes, max_byte_length) = self.wasm_memory_mut(memory)?;
         let old_pages = bytes.len() / page_size;
@@ -1313,21 +1318,23 @@ impl<H: Host> Vm<H> {
         Ok(Some(old_pages as u64))
     }
 
-    /// The ArrayBuffer viewing `memory`'s current bytes, created on first request; `None`
-    /// for a shared memory, whose buffer is not supported yet.
+    /// The buffer viewing the memory's bytes, created on first request. Shared
+    /// buffers preserve their accessible prefix when another agent grows the memory.
     pub(super) fn wasm_memory_buffer(&mut self, memory: Value) -> Option<Value> {
         let Some(Cell::WasmMemory { bytes, buffer, .. }) = self.heap.get(memory) else {
             return None;
         };
-        if !buffer.is_undefined() {
+        let shared = matches!(&**bytes, crate::wasm::memory::MemoryStorage::Shared(_));
+        if !buffer.is_undefined() && (!shared || matches!(self.heap.get(*buffer),
+            Some(Cell::ArrayBuffer { bytes: view, .. }) if view.len() == bytes.len())) {
             return Some(*buffer);
         }
         let view = crate::heap::BufferBytes::wasm_view(bytes)?;
         let byte_length = view.len();
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(self.array_buffer_proto)),
+            object: Box::new(Self::empty_object(if shared { self.shared_array_buffer_proto } else { self.array_buffer_proto })),
             bytes: view,
-            shared: false,
+            shared,
             detached: false,
             max_byte_length: byte_length,
             resizable: false,
@@ -1349,7 +1356,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         let previous = std::mem::replace(buffer, Value::UNDEFINED);
-        if !previous.is_undefined() {
+        if matches!(self.heap.get(previous), Some(Cell::ArrayBuffer { shared: false, .. })) {
             self.detach_array_buffer(previous);
         }
     }
@@ -1689,11 +1696,7 @@ impl<H: Host> Vm<H> {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
         } else if let Some(bits) = self.decode_bits64(value) {
             Some(crate::wasm::ScalarBits::Bits64(bits))
-        } else if let Some(bits) = self.heap.v128(value) {
-            Some(crate::wasm::ScalarBits::Bits128(bits))
-        } else {
-            None
-        };
+        } else { self.heap.v128(value).map(crate::wasm::ScalarBits::Bits128) };
         bits.and_then(|bits| ty.decode(bits))
             .ok_or_else(|| JsError::validation("invalid Wasm scalar representation".into()))
     }
@@ -2104,6 +2107,16 @@ mod tests {
             .and_then(|program| vm.programs.compiled(program).flatten())
             .expect("compiled program");
         assert_eq!(compiled.native_entries(0), Some(1));
+        // Last full source/destination vectors fit; partial and wrapped accesses trap.
+        vm.invoke_wasm(&instance, 0, &i32s(&[65_536 - 32])).unwrap();
+        for address in [65_536 - 31, 65_536 - 16, -1] {
+            assert_eq!(
+                vm.invoke_wasm(&instance, 0, &i32s(&[address])).unwrap_err().wasm_trap(),
+                Some(crate::WasmTrap::OutOfBoundsMemory),
+                "vector boundary {address}"
+            );
+        }
+
     }
 
     #[test]
@@ -2570,113 +2583,149 @@ mod tests {
 
     #[test]
     fn compiled_wasm_indirect_call_refreshes_guarded_memory_after_growth() {
-        let signature = crate::WasmSignature {
-            params: vec![],
-            results: vec![crate::WasmType::I32],
-        };
-        let memarg = wasmparser::MemArg {
-            align: 2,
-            max_align: 2,
-            offset: 0,
-            memory: 0,
-        };
-        let module = crate::Engine::lower_wasm_module_with_tables(
-            "compiled-indirect-growth",
-            [
-                crate::WasmFunctionBody {
-                    ty: crate::WasmCallableType::Embedded(signature.clone()),
-                    locals: vec![],
-                    operators: vec![
-                        Operator::I32Const { value: 1 },
-                        Operator::MemoryGrow { mem: 0 },
-                        Operator::Drop,
-                        Operator::I32Const { value: 73 },
-                        Operator::End,
-                    ]
-                    .into_iter()
-                    .map(Ok),
-                },
-                crate::WasmFunctionBody {
-                    ty: crate::WasmCallableType::Embedded(signature.clone()),
-                    locals: vec![],
-                    operators: vec![
-                        Operator::I32Const { value: 0 },
-                        Operator::CallIndirect {
-                            type_index: 0,
-                            table_index: 0,
-                        },
-                        Operator::Drop,
-                        Operator::I32Const { value: 65_536 },
-                        Operator::I32Const { value: 0x5a },
-                        Operator::I32Const { value: 1 },
-                        Operator::MemoryFill { mem: 0 },
-                        Operator::I32Const { value: 65_536 },
-                        Operator::I32Load { memarg },
-                        Operator::End,
-                    ]
-                    .into_iter()
-                    .map(Ok),
-                },
-                crate::WasmFunctionBody {
-                    ty: crate::WasmCallableType::Embedded(signature),
-                    locals: vec![],
-                    operators: vec![Operator::MemorySize { mem: 0 }, Operator::End]
+        for indirect in [false, true] {
+            let signature = crate::WasmSignature {
+                params: vec![],
+                results: vec![crate::WasmType::I32],
+            };
+            let memarg = wasmparser::MemArg {
+                align: 2,
+                max_align: 2,
+                offset: 0,
+                memory: 0,
+            };
+            let vector = wasmparser::MemArg { align: 0, max_align: 4, offset: 0, memory: 0 };
+            // The first vector bounds check reads the old length. The second must see
+            // growth across the call, before any fill/helper can refresh or clobber it.
+            let mut caller = vec![
+                Operator::I32Const { value: 0 },
+                Operator::V128Load { memarg: vector },
+                Operator::Drop,
+            ];
+            if indirect {
+                caller.extend([
+                    Operator::I32Const { value: 0 },
+                    Operator::CallIndirect { type_index: 0, table_index: 0 },
+                ]);
+            } else {
+                // A native callee may grow via its supported indirect VM callout.
+                // A direct call to the unsupported memory.grow body itself is not admitted.
+                caller.push(Operator::Call { function_index: 3 });
+            }
+            caller.extend([
+                Operator::Drop,
+                Operator::I32Const { value: 65_536 },
+                Operator::V128Load { memarg: vector },
+                Operator::Drop,
+                Operator::I32Const { value: 65_536 },
+                Operator::I32Const { value: 0x5a },
+                Operator::I32Const { value: 1 },
+                Operator::MemoryFill { mem: 0 },
+                Operator::I32Const { value: 65_536 },
+                Operator::I32Load { memarg },
+                Operator::End,
+            ]);
+            // This regression tests invalidation across actual compiled calls, not
+            // inlining of the growth helper into an interpreted caller.
+            let kept_before = crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.replace(true));
+            let module = crate::Engine::lower_wasm_module_for(
+                crate::ExecutionMode::Compiled,
+                "compiled-call-growth",
+                [
+                    crate::WasmFunctionBody {
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        locals: vec![],
+                        operators: vec![
+                            Operator::I32Const { value: 1 },
+                            Operator::MemoryGrow { mem: 0 },
+                            Operator::Drop,
+                            Operator::I32Const { value: 73 },
+                            Operator::End,
+                        ]
                         .into_iter()
                         .map(Ok),
-                },
-            ],
-            &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
-                [],
-                [wasmparser::ValType::I32],
-            )]),
-            &[],
-            &[crate::WasmMemory {
-                ty: wasmparser::MemoryType {
-                    initial: 1,
-                    maximum: Some(2),
-                    memory64: false,
-                    shared: false,
-                    page_size_log2: None,
-                },
-                import: None,
-            }],
-            &[],
-            &[crate::WasmTable {
-                ty: wasmparser::TableType {
-                    element_type: wasmparser::RefType::FUNCREF,
-                    table64: false,
-                    initial: 1,
-                    maximum: Some(1),
-                    shared: false,
-                },
-                initializer: crate::WasmReferenceInitializer::Function(0).into(),
-            }],
-        )
-        .unwrap();
-        let mut vm = Vm::new(crate::SystemHost);
-        vm.programs.compile_wasm_modules_at_first_entry();
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        let instance = vm.instantiate_wasm_module(&module).unwrap();
+                    },
+                    crate::WasmFunctionBody {
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        locals: vec![],
+                        operators: caller.into_iter().map(Ok),
+                    },
+                    crate::WasmFunctionBody {
+                        ty: crate::WasmCallableType::Embedded(signature.clone()),
+                        locals: vec![],
+                        operators: vec![Operator::MemorySize { mem: 0 }, Operator::End]
+                            .into_iter()
+                            .map(Ok),
+                    },
+                    crate::WasmFunctionBody {
+                        ty: crate::WasmCallableType::Embedded(signature),
+                        locals: vec![],
+                        operators: vec![
+                            Operator::I32Const { value: 0 },
+                            Operator::CallIndirect { type_index: 0, table_index: 0 },
+                            Operator::End,
+                        ].into_iter().map(Ok),
+                    },
+                ],
+                &crate::WasmTypes::from_functions([wasmparser::FuncType::new(
+                    [],
+                    [wasmparser::ValType::I32],
+                )]),
+                &[],
+                &[crate::WasmMemory {
+                    ty: wasmparser::MemoryType {
+                        initial: 1,
+                        maximum: Some(2),
+                        memory64: false,
+                        shared: false,
+                        page_size_log2: None,
+                    },
+                    import: None,
+                }],
+                &[],
+                &[crate::WasmTable {
+                    ty: wasmparser::TableType {
+                        element_type: wasmparser::RefType::FUNCREF,
+                        table64: false,
+                        initial: 1,
+                        maximum: Some(1),
+                        shared: false,
+                    },
+                    initializer: crate::WasmReferenceInitializer::Function(0).into(),
+                }],
+                &[],
+                &[],
+                &[],
+            );
+            crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(|kept| kept.set(kept_before));
+            let module = module.unwrap();
+            let mut vm = Vm::new(crate::SystemHost);
+            vm.programs.compile_wasm_modules_at_first_entry();
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            let instance = vm.instantiate_wasm_module(&module).unwrap();
 
-        assert_eq!(
-            vm.invoke_wasm(&instance, 1, &[]).unwrap(),
-            Some(crate::WasmValue::I32(0x5a))
-        );
-        assert_eq!(
-            vm.invoke_wasm(&instance, 2, &[]).unwrap(),
-            Some(crate::WasmValue::I32(2))
-        );
-        let program = vm
-            .programs
-            .find_shared(&module.program)
-            .expect("registered Wasm program");
-        let compiled = vm
-            .programs
-            .compiled(program)
-            .flatten()
-            .expect("indirect caller compiled");
-        assert_eq!(compiled.native_entries(1), Some(1));
-        assert_eq!(compiled.native_entries(2), Some(1));
+            assert_eq!(
+                vm.invoke_wasm(&instance, 1, &[]).unwrap(),
+                Some(crate::WasmValue::I32(0x5a))
+            );
+            assert_eq!(
+                vm.invoke_wasm(&instance, 2, &[]).unwrap(),
+                Some(crate::WasmValue::I32(2))
+            );
+            let program = vm
+                .programs
+                .find_shared(&module.program)
+                .expect("registered Wasm program");
+            let compiled = vm
+                .programs
+                .compiled(program)
+                .flatten()
+                .expect("caller compiled");
+            assert_eq!(compiled.native_entries(1), Some(1));
+            assert_eq!(compiled.native_entries(2), Some(1));
+            // native_entries counts entry-ABI requests. The direct body call to
+            // function 3 stays native without crossing that entry ABI.
+        }
     }
 
     #[test]
@@ -3860,7 +3909,7 @@ mod tests {
         let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
             unreachable!("memory is unshared");
         };
-        assert!(state.borrow().bytes.guard().is_none());
+        assert!(state.borrow().guard().is_none());
 
         assert_eq!(
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
@@ -4298,7 +4347,7 @@ mod tests {
                 &[crate::WasmMemory {
                     ty: wasmparser::MemoryType {
                         initial: 1,
-                        maximum: maximum,
+                        maximum,
                         memory64: false,
                         shared,
                         page_size_log2: None,
@@ -6473,4 +6522,6 @@ mod tests {
         assert_eq!(vm.execute_wasm_i32(&function, &[7, 2]).unwrap(), Some(3));
         assert!(vm.frames.is_empty());
     }
+
+
 }

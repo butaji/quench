@@ -202,12 +202,14 @@ impl<H: Host> Vm<H> {
                 if this.as_number().is_some() {
                     Ok(this)
                 } else {
-                    self.boxed_primitive_value(this).filter(|value| value.as_number().is_some()).ok_or_else(|| {
-                        self.type_error(
-                            p,
-                            "Number.prototype.valueOf called on incompatible receiver".into(),
-                        )
-                    })
+                    self.boxed_primitive_value(this)
+                        .filter(|value| value.as_number().is_some())
+                        .ok_or_else(|| {
+                            self.type_error(
+                                p,
+                                "Number.prototype.valueOf called on incompatible receiver".into(),
+                            )
+                        })
                 }
             }
             Native::BooleanValueOf => self.boolean_prototype_value(this).ok_or_else(|| {
@@ -695,6 +697,7 @@ impl<H: Host> Vm<H> {
 
     /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any
     /// argument is another value.
+    #[expect(clippy::wrong_self_convention, reason = "named for `String.fromCharCode`; allocates its result on the VM heap")]
     pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
         let units = args
             .iter()

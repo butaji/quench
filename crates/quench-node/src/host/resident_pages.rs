@@ -58,6 +58,10 @@ pub fn phase_peak(phase: &str) {
 #[cfg(not(target_os = "linux"))]
 pub fn phase_peak(_phase: &str) {}
 
+/// Preserve the profiling boundary in the native image's exported interface.
+#[cfg(feature = "aot")]
+pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
+
 /// The process's own mapping table.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MAPS_PATH: &str = "/proc/self/maps";
@@ -84,7 +88,7 @@ const LOAD_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// at 18-100 ms, during that warm-up. A release costs the refaults that follow, about 0.35 ms
 /// (npm scenarios with 300-1800 first calls, x86_64 VM, 2026-10-22), so a release at every
 /// first call slowed TypeScript's transpile 313 -> 829 ms. At 5 ms (plain x86_64 build,
-/// MemoryFirst, 10 runs; `evidence/tod137-first-call-release-linux-2026-10-23`): V8-v7 max
+/// MemoryFirst, 10 runs): V8-v7 max
 /// RSS without JIT -124 to -516 KiB on six fixtures, with JIT -144 to +48 KiB, scores within
 /// noise; npm scenarios run 7-21% longer for -3.4 to +0.1 MB. Memory-first is the opt-in
 /// policy that trades speed for memory; the throughput default keeps `LOAD_RELEASE_INTERVAL`.
@@ -472,10 +476,13 @@ enum CompileRelease {
     FirstCall,
     Encoding,
     Kept,
+    /// Constructed only by the Linux page releases (`at_compile_phase`).
+    #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
     LaneDerivation,
 }
 
 impl CompileRelease {
+    #[cfg_attr(not(all(target_os = "linux", target_arch = "x86_64")), allow(dead_code))]
     const COUNT: usize = 5;
 
     /// The releases that may come inside their interval once resident code passes the budget
@@ -499,7 +506,7 @@ impl CompileRelease {
 /// How far apart each compile-phase release's runs are kept, by the process's memory policy.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn compile_release_interval() -> std::time::Duration {
-    MEMORY_FIRST_COMPILE_RELEASE_INTERVAL
+    std::time::Duration::from_micros(tuned("QUENCH_TUNE_COMPILE_RELEASE_US", MEMORY_FIRST_COMPILE_RELEASE_INTERVAL.as_micros() as u64))
 }
 
 /// Under a policy that returns pages at collections, the resident file pages past which a
@@ -558,9 +565,9 @@ impl CompileRelease {
             return false;
         };
         let (started, count) = releases.get_or_insert_with(|| (std::time::Instant::now(), 0));
-        let allowed = started.elapsed() / BUDGET_RELEASE_TIME_DIVISOR + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
+        let allowed = started.elapsed() / tuned("QUENCH_TUNE_BUDGET_TIME_DIVISOR", u64::from(BUDGET_RELEASE_TIME_DIVISOR)) as u32 + RELEASE_REFAULT_COST * MEMORY_FIRST_START_RELEASES;
         if RELEASE_REFAULT_COST * (*count + 1) > allowed
-            || resident_file_bytes().is_none_or(|bytes| bytes <= MEMORY_FIRST_RESIDENT_FILE_BUDGET)
+            || resident_file_bytes().is_none_or(|bytes| bytes as u64 <= tuned("QUENCH_TUNE_FIRST_CALL_BUDGET_BYTES", MEMORY_FIRST_RESIDENT_FILE_BUDGET as u64))
         {
             return false;
         }
@@ -824,8 +831,8 @@ fn file_page_runs(start: usize, end: usize) -> Vec<(usize, usize)> {
         return Vec::new();
     }
     let mut runs: Vec<(usize, usize)> = Vec::new();
-    for (index, entry) in entries.chunks_exact(PAGEMAP_ENTRY_BYTES).enumerate() {
-        let entry = u64::from_le_bytes(entry.try_into().expect("a page map entry"));
+    for (index, entry) in entries.as_chunks::<PAGEMAP_ENTRY_BYTES>().0.iter().enumerate() {
+        let entry = u64::from_le_bytes(*entry);
         let private = entry & PAGEMAP_SWAPPED != 0
             || entry & (PAGEMAP_PRESENT | PAGEMAP_FILE) == PAGEMAP_PRESENT;
         if private {
@@ -1002,7 +1009,11 @@ pub fn map_touched_pages_only() {
         if fd < 0 {
             return;
         }
-        let mut api = UffdioApi { api: UFFD_API, features: UFFD_FEATURE_WP_ASYNC, ioctls: 0 };
+        let mut api = UffdioApi {
+            api: UFFD_API,
+            features: UFFD_FEATURE_WP_ASYNC,
+            ioctls: 0,
+        };
         if libc::ioctl(fd, UFFDIO_API, &mut api) != 0 {
             libc::close(fd);
             return;
@@ -1189,4 +1200,16 @@ pub fn at_native_compilation(boundary: NativeCompilation) {
     if matches!(boundary, NativeCompilation::After) {
         release_free_heap_pages();
     }
+}
+
+/// Measurement builds (`release-tuning`) read a release knob from the environment, in place
+/// of its value; other builds use the value.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "release-tuning"))]
+fn tuned(name: &str, value: u64) -> u64 {
+    std::env::var(name).ok().and_then(|text| text.parse().ok()).unwrap_or(value)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "release-tuning")))]
+const fn tuned(_name: &str, value: u64) -> u64 {
+    value
 }

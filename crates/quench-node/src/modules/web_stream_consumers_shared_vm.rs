@@ -5,42 +5,61 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(Buffer, Decoder) => {
-  async function bytes(stream) {
-    if (stream === null || typeof stream?.getReader !== "function") {
-      throw new TypeError("The \"stream\" argument must be a ReadableStream");
+  async function bytes(stream) { return new Uint8Array(await (await blob(stream)).arrayBuffer()); }
+  async function blob(stream) {
+    const reader = typeof stream?.getReader === "function" ? stream.getReader() : undefined;
+    const iterator = reader ? { next: () => reader.read() } : (typeof stream?.[Symbol.asyncIterator] === "function"
+      ? stream[Symbol.asyncIterator]()
+      : typeof stream?.[Symbol.iterator] === "function" ? stream[Symbol.iterator]() : undefined);
+    if (iterator === undefined) {
+      const error = new TypeError('The "stream" argument must be an AsyncIterable, Iterable, or ReadableStream');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
     }
-    const reader = stream.getReader();
     const chunks = [];
-    let size = 0;
     try {
       for (;;) {
-        const item = await reader.read();
+        const item = await iterator.next();
         if (item.done) break;
-        let chunk = item.value;
-        if (typeof chunk === "string") chunk = new TextEncoder().encode(chunk);
-        else if (ArrayBuffer.isView(chunk)) chunk = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-        else if (chunk instanceof ArrayBuffer) chunk = new Uint8Array(chunk);
-        else throw new TypeError("The stream yielded a non-byte chunk");
-        chunks.push(chunk);
-        size += chunk.byteLength;
+        chunks.push(item.value);
       }
     } catch (error) {
-      try { await reader.cancel(error); } catch {}
+      try { if (reader) await reader.cancel(error); else await iterator.return?.(); } catch {}
       throw error;
-    } finally {
-      reader.releaseLock();
-    }
-    const output = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
-    return output;
+    } finally { reader?.releaseLock(); }
+    return new Blob(chunks);
   }
-  async function arrayBuffer(stream) { return (await bytes(stream)).buffer; }
-  async function buffer(stream) { return Buffer.from(await bytes(stream)); }
-  async function text(stream) { return new Decoder().decode(await bytes(stream)); }
+  async function arrayBuffer(stream) { return (await blob(stream)).arrayBuffer(); }
+  async function buffer(stream) { return Buffer.from(await arrayBuffer(stream)); }
+  async function text(stream) {
+    const reader = typeof stream?.getReader === "function" ? stream.getReader() : undefined;
+    const iterator = reader ? { next: () => reader.read() } : (typeof stream?.[Symbol.asyncIterator] === "function"
+      ? stream[Symbol.asyncIterator]()
+      : typeof stream?.[Symbol.iterator] === "function" ? stream[Symbol.iterator]() : undefined);
+    if (iterator === undefined) {
+      const error = new TypeError('The "stream" argument must be an AsyncIterable, Iterable, or ReadableStream');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const decoder = new Decoder();
+    let result = '';
+    try {
+      for (;;) {
+        const item = await iterator.next();
+        if (item.done) break;
+        if (typeof item.value === 'string') result += item.value;
+        else if (ArrayBuffer.isView(item.value) || item.value instanceof ArrayBuffer)
+          result += decoder.decode(item.value, { stream: true });
+        else throw Object.assign(new TypeError('The "chunk" argument must be of type string or an instance of Buffer or TypedArray.'), { code: 'ERR_INVALID_ARG_TYPE' });
+      }
+      return result + decoder.decode();
+    } catch (error) {
+      try { if (reader) await reader.cancel(error); else await iterator.return?.(); } catch {}
+      throw error;
+    } finally { reader?.releaseLock(); }
+  }
   async function json(stream) { return JSON.parse(await text(stream)); }
-  async function blob(stream) { return new Blob([await bytes(stream)]); }
-  return { arrayBuffer, blob, buffer, json, text };
+  return { arrayBuffer, blob, buffer, bytes, json, text };
 }"#
 );
 

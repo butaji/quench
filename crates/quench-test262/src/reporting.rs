@@ -3,6 +3,29 @@ use crate::ratchet::RATCHET_ENGINE;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+pub fn variant_report_path(root: &std::path::Path, path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let directory = std::env::var_os("TEST262_CASE_REPORT_DIR")?;
+    Some(std::path::PathBuf::from(directory).join(crate::ratchet::relative_test_path(path, &root.join("test"))).with_extension("json"))
+}
+
+pub fn write_variant_report(root: &std::path::Path, path: &std::path::Path, outcomes: &[crate::VariantOutcome]) -> Result<(), String> {
+    let Some(report) = variant_report_path(root, path) else { return Ok(()); };
+    if let Some(parent) = report.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    let variants: Vec<_> = outcomes.iter().map(|record| {
+        let (outcome, reason) = match &record.outcome {
+            crate::TestOutcome::Pass => ("pass", None),
+            crate::TestOutcome::Fail { reason } => ("fail", Some(reason)),
+        };
+        let compilation = record.compilation.as_ref().map(|compilation| compilation.units.iter().map(|unit| json!({
+            "functions": unit.functions, "object_bytes": unit.object_bytes, "object": unit.object,
+        })).collect::<Vec<_>>());
+        json!({"variant":record.variant.name(),"outcome":outcome,"reason":reason,"native_units":compilation,
+            "dynamic_source":record.compilation.as_ref().map(|compilation| compilation.dynamic_source),
+            "native_rejections":record.compilation.as_ref().map(|compilation| compilation.rejections)})
+    }).collect();
+    std::fs::write(report, serde_json::to_vec(&variants).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+}
+
 pub fn normalize_failure(reason: &str) -> String {
     let message = ["text: ", "message: "]
         .into_iter()

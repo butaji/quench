@@ -345,9 +345,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let completes = |vm: &Self, group: Value| {
             vm.heap.environment_slot(group, GroupSlot::CompletesKeys as usize) == Some(Value::TRUE)
-                && vm.heap.environment_slot(group, GroupSlot::State as usize)
-                    .map(GroupState::of)
-                    == Some(GroupState::Pending)
+                && vm.lazy_group_state(group) == GroupState::Pending
         };
         let groups = self
             .lazy_data_properties(holder)
@@ -368,10 +366,16 @@ impl<H: Host> Vm<H> {
         holder: Value,
         key: PropertyKey,
     ) -> Result<(), JsError> {
-        match self.lazy_data_group(holder, key) {
-            Some(group) => self.materialize_lazy_group(p, group),
-            None => Ok(()),
+        while let Some(group) = self.lazy_data_group(holder, key) {
+            if self.lazy_group_state(group) != GroupState::Pending {
+                break;
+            }
+            // One bootstrap layer may replace its member with a different lazy
+            // group. Reflection must observe the final data property, while a
+            // running group still keeps the existing reentrancy behavior.
+            self.materialize_lazy_group(p, group)?;
         }
+        Ok(())
     }
 
     fn materialize_lazy_group(&mut self, p: &ResidualProgram, group: Value) -> Result<(), JsError> {
@@ -380,7 +384,7 @@ impl<H: Host> Vm<H> {
                 .environment_slot(group, slot as usize)
                 .unwrap_or(Value::UNDEFINED)
         };
-        if GroupState::of(slot(self, GroupSlot::State)) != GroupState::Pending {
+        if self.lazy_group_state(group) != GroupState::Pending {
             return Ok(());
         }
         self.set_lazy_group_state(group, GroupState::Running);
@@ -435,15 +439,19 @@ impl<H: Host> Vm<H> {
                     let PropertyKey::String(atom) = key else { continue };
                     let value = vm.get_property(p, holder, atom)?;
                     let entries = vm.heap.array_elements(listeners).map(|elements| elements.to_vec()).unwrap_or_default();
-                    for entry in entries.chunks_exact(2) {
+                    for &[listener, argument] in entries.as_chunks::<2>().0 {
                         vm.with_call_roots([value], |vm| {
-                            vm.call_value(p, entry[0], Value::UNDEFINED, &[entry[1], value])
+                            vm.call_value(p, listener, Value::UNDEFINED, &[argument, value])
                         })?;
                     }
                 }
                 Ok(())
             })
         })
+    }
+
+    fn lazy_group_state(&self, group: Value) -> GroupState {
+        GroupState::of(self.heap.environment_slot(group, GroupSlot::State as usize).unwrap_or(Value::UNDEFINED))
     }
 
     fn set_lazy_group_state(&mut self, group: Value, state: GroupState) {

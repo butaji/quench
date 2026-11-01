@@ -20,6 +20,7 @@ pub use collator::{canonical_locale_identifier, compare_collator, CollatorOption
 pub use digits::localize_digits;
 pub use locale_canonicalization::{
     canonical_region, canonicalize_locale_identifier, language_alias, titlecase_script,
+    InvalidLanguageTag,
 };
 pub use locale_case::locale_case;
 pub use locale_data::{

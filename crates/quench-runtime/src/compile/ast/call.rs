@@ -21,21 +21,13 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn call_source_offset(&self, call: &CallExpression<'_>) -> u32 {
-        if !call.optional {
-            match &call.callee {
-                Expression::Identifier(_) | Expression::Super(_) => return call.callee.span().start,
-                Expression::StaticMemberExpression(member) => return member.property.span.start,
-                _ => {}
-            }
-        }
-        let start = call.type_arguments.as_ref().map_or(call.callee.span().end, |arguments| arguments.span.end);
-        self.owner.source_delimiter(start, call.span.end, '(')
+        crate::compile::source_syntax::call_offset(call, self.owner.text, &self.owner.source_comments)
     }
 
     pub(super) fn throw_invalid_call_assignment(&mut self, call: &Expression<'_>) -> Register {
         if self.strict {
             self.owner
-                .reject(call.span(), "SyntaxError: invalid call assignment target");
+                .reject_syntax(call.span(), "SyntaxError: invalid call assignment target");
             return self.literal(Constant::Undefined);
         }
         self.expression(call);
@@ -61,7 +53,7 @@ impl FunctionCompiler<'_, '_> {
         if value.operator == UnaryOperator::Delete {
             return self.delete_expression(&value.argument);
         }
-        if let Some(constant) = binding_time::unary(value).static_value() {
+        if let Some(constant) = binding_time::unary(value) {
             return self.literal(constant);
         }
         let input = if value.operator == UnaryOperator::Typeof {
@@ -409,7 +401,7 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
         }
-        bindings.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut bindings);
         self.binding_sites.push(crate::bytecode::BindingSite {
             resume_pc: (pc + 1) as u32,
             bindings,
@@ -458,7 +450,7 @@ impl FunctionCompiler<'_, '_> {
                 });
             }
         }
-        direct.sort_unstable_by_key(|binding| binding.atom);
+        crate::bytecode::EvalBinding::sort_by_atom(&mut direct);
         // The captured and hidden names are consulted only by lookups through dynamic name
         // resolution, which the whole program decides; `Compiler::finish` resolves them for
         // the functions that may see such a lookup (`capture_layout::dynamic_name_scopes`).

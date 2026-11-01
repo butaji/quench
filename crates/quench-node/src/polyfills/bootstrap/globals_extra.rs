@@ -39,6 +39,53 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDomExceptionCod
   InvalidNodeTypeError: 24,
   DataCloneError: 25,
 };
+if (typeof RegExp.escape !== "function") {
+  Object.defineProperty(RegExp, "escape", {
+    configurable: true,
+    writable: true,
+    value: function escape(value) {
+      const string = `${value}`;
+      let result = "";
+      for (let index = 0; index < string.length; index++) {
+        const character = string[index];
+        const code = string.charCodeAt(index);
+        if (index === 0 && /[0-9A-Za-z]/.test(character)) {
+          result += `\\x${code.toString(16).padStart(2, "0")}`;
+        } else if ("^$\\.*+?()[]{}|/".includes(character)) {
+          result += `\\${character}`;
+        } else if (",-=<>#&!%:;@~'\"`".includes(character)) {
+          result += `\\x${code.toString(16).padStart(2, "0")}`;
+        } else if (character === "\n") {
+          result += "\\n";
+        } else if (character === "\r") {
+          result += "\\r";
+        } else if (character === "\t") {
+          result += "\\t";
+        } else if (character === "\v") {
+          result += "\\v";
+        } else if (character === "\f") {
+          result += "\\f";
+        } else if (character === " ") {
+          result += "\\x20";
+        } else if (code >= 0xd800 && code <= 0xdbff) {
+          const next = string.charCodeAt(index + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) {
+            result += character + string[++index];
+          } else {
+            result += `\\u${code.toString(16).padStart(4, "0")}`;
+          }
+        } else if (code >= 0xdc00 && code <= 0xdfff) {
+          result += `\\u${code.toString(16).padStart(4, "0")}`;
+        } else if (/\s/u.test(character)) {
+          result += `\\u${code.toString(16).padStart(4, "0")}`;
+        } else {
+          result += character;
+        }
+      }
+      return result;
+    },
+  });
+}
 if (typeof globalThis.require === "function" && !globalThis.worker_threads) {
   globalThis.worker_threads = globalThis.require("worker_threads");
 }

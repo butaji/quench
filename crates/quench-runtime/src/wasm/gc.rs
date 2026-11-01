@@ -207,20 +207,19 @@ impl Lowering<'_> {
             .ok_or_else(|| {
                 Diagnostic::unsupported(self.name, "unsupported Wasm array declaration")
             })?;
-        if let StorageType::Val(ty) = field.element_type {
-            if self
+        if let StorageType::Val(ty) = field.element_type
+            && (self
                 .signatures
                 .declarations
                 .callable_value_type(ty)
                 .is_none()
-                || op == Op::WasmArrayNewDefault && !ty.is_defaultable()
+                || op == Op::WasmArrayNewDefault && !ty.is_defaultable())
             {
                 return Err(Diagnostic::unsupported(
                     self.name,
                     "unsupported Wasm array element",
                 ));
             }
-        }
         if self.path == Reachability::Live {
             let (base, extra) = match fixed {
                 Some(count) => {
@@ -280,8 +279,8 @@ impl Lowering<'_> {
                 .ok_or_else(|| {
                     Diagnostic::unsupported(self.name, "invalid Wasm array element access")
                 })?;
-            if let StorageType::Val(ty) = field.element_type {
-                if self
+            if let StorageType::Val(ty) = field.element_type
+                && self
                     .signatures
                     .declarations
                     .callable_value_type(ty)
@@ -292,7 +291,6 @@ impl Lowering<'_> {
                         "unsupported Wasm array element",
                     ));
                 }
-            }
             if self.path == Reachability::Live {
                 let value = if access == GcFieldAccess::Write {
                     Some(self.pop()?)
@@ -462,20 +460,19 @@ impl Lowering<'_> {
                 Diagnostic::unsupported(self.name, "unsupported Wasm struct declaration")
             })?;
         for field in fields {
-            if let wasmparser::StorageType::Val(ty) = field.element_type {
-                if self
+            if let wasmparser::StorageType::Val(ty) = field.element_type
+                && (self
                     .signatures
                     .declarations
                     .callable_value_type(ty)
                     .is_none()
-                    || default && !ty.is_defaultable()
+                    || default && !ty.is_defaultable())
                 {
                     return Err(Diagnostic::unsupported(
                         self.name,
                         "unsupported Wasm struct field",
                     ));
                 }
-            }
         }
         if self.path == Reachability::Live {
             let inputs = if default {
@@ -605,14 +602,13 @@ impl Lowering<'_> {
                     "incompatible Wasm array copy storage",
                 ));
             }
-        } else if let StorageType::Val(ty) = destination.element_type {
-            if owner.callable_value_type(ty).is_none() {
+        } else if let StorageType::Val(ty) = destination.element_type
+            && owner.callable_value_type(ty).is_none() {
                 return Err(Diagnostic::unsupported(
                     self.name,
                     "unsupported Wasm array fill storage",
                 ));
             }
-        }
         if self.path == Reachability::Live {
             let count = self.pop()?;
             let (input, source_value) = if source.is_some() {
@@ -657,8 +653,8 @@ impl Lowering<'_> {
             .ok_or_else(|| {
                 Diagnostic::unsupported(self.name, "invalid Wasm struct field access")
             })?;
-        if let StorageType::Val(ty) = declaration.element_type {
-            if self
+        if let StorageType::Val(ty) = declaration.element_type
+            && self
                 .signatures
                 .declarations
                 .callable_value_type(ty)
@@ -669,7 +665,6 @@ impl Lowering<'_> {
                     "unsupported Wasm struct field",
                 ));
             }
-        }
         if self.path == Reachability::Live {
             let value = if access == GcFieldAccess::Write {
                 Some(self.pop()?)
