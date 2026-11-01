@@ -259,6 +259,9 @@ pub(super) struct LaneView {
     /// The prologue's direct run of the compiled body, once the tier compiled it
     /// (`Vm::direct_tier_entry`).
     tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
+    /// The general-tier artifact the prologue runs over each activation's window once the
+    /// tier installed it (`Vm::run_lane_general`), ahead of every other tier check.
+    general_native: std::cell::OnceCell<std::rc::Rc<super::compiled::CompiledJsFunction>>,
     plain_backward_jump_sites: usize,
     osr_rejections: Option<Box<[(super::compiled::RegionRejection, usize)]>>,
     /// The `GetField` and `SetField` records past the loop headers its sites hold, whose
@@ -13470,15 +13473,23 @@ script_handler! {
         let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
         // SAFETY: the program's views outlive the lane run.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
-        let entered = own
-            .and_then(|own| lane_tier_direct(vm, own, program, parameters))
-            .or_else(|| lane_tier_enter(cx, function, i.b != 0, own, parameters));
-        if let Some((pc, register, value)) = entered {
-            r.set(register, value);
-            // SAFETY: the tier returns a PC of the function, whose records are contiguous.
-            next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
+        let general = own.and_then(|own| own.general_native.get()).cloned();
+        let entered = general
+            // SAFETY: the activation just set the context to its own function's program.
+            .and_then(|native| vm.run_lane_general(&native, unsafe { &*(*cx).code }, program, function, r.0, unsafe { (*cx).this }, capture_reads(unsafe { (*cx).capture })))
+            .or_else(|| own.and_then(|own| lane_tier_direct(vm, own, program, parameters))
+                .map(|(pc, register, value)| super::compiled::LaneNativeExit::Return { pc, register, value }))
+            .or_else(|| lane_tier_enter(cx, r, function, i.b != 0, own, parameters));
+        match entered {
+            Some(super::compiled::LaneNativeExit::Return { pc, register, value }) => {
+                r.set(register, value);
+                // SAFETY: the tier returns a PC of the function, whose records are contiguous.
+                next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx))
+            }
+            // SAFETY: as above; native code left the window as the lane reads it at `pc`.
+            Some(super::compiled::LaneNativeExit::At(pc)) => next!(cx, r, unsafe { base.add(pc) }, Carried::script(cx)),
+            None => next!(cx, r, base, Carried::script(cx)),
         }
-        next!(cx, r, base, Carried::script(cx))
     }
 }
 
@@ -13508,27 +13519,36 @@ fn lane_tier_direct<H: Host>(
 #[inline(never)]
 fn lane_tier_enter<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     function: u32,
     binds_this: bool,
     own: Option<&LaneView>,
     parameters: &[Value],
-) -> Option<(usize, crate::bytecode::Register, Value)> {
+) -> Option<super::compiled::LaneNativeExit> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the activation just set the context to its own function's.
     let (code, program, this, env) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).env) };
     let receiver = (binds_this && !this.is_deleted()).then_some(this);
-    if let Some(entered) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env) {
+    if let Some((pc, register, value)) = vm.js_tier_activation_entry(code, program, function, parameters, receiver, env) {
         if let Some(own) = own
             && let Some(direct) = vm.direct_tier_entry(code, program, function)
         {
             own.tier_direct.set(Some(direct));
         }
-        return Some(entered);
+        return Some(super::compiled::LaneNativeExit::Return { pc, register, value });
     }
-    // The general baseline runs only from a VM frame (`Vm::js_tier_frame_entry`), so a
-    // function the general tier holds gains nothing from frameless claims either.
+    // The general baseline runs over the activation's own window and leaves at the exact
+    // PC the lane continues from (`Vm::js_general_lane_entry`).
+    if let Some(native) = vm.js_general_lane_artifact(code, program, function) {
+        let exit = vm.run_lane_general(&native, code, program, function, r.0, this, capture_reads(unsafe { (*cx).capture }));
+        if let Some(own) = own {
+            let _ = own.general_native.set(native);
+        }
+        return exit;
+    }
     if let Some(own) = own
-        && (vm.js_tier_holds_for_general(program, function) || !vm.js_tier_may_claim(code, program, function))
+        && !vm.js_tier_holds_for_general(program, function)
+        && !vm.js_tier_may_claim(code, program, function)
     {
         own.release_from_tier();
     }
@@ -14556,7 +14576,41 @@ fn lane_return_from<H: Host, const CROSSES: bool>(cx: *mut LaneContext<H>, value
         (*cx).capture = capture;
     }
     caller_registers.set(destination, value);
-    Some((caller_registers, following(call)))
+    Some((caller_registers, lane_native_resume(cx, caller_registers, caller_base, following(call))))
+}
+
+/// Where a returning call's caller activation continues: at `next`, its record after the
+/// call, unless its function's general-tier artifact holds native code (`LaneView::general_native`),
+/// which runs from that PC over the caller's window first and continues where it leaves
+/// (`Vm::run_lane_general`), a native `Return` at its record with the result written.
+#[inline(always)]
+fn lane_native_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, base: Ip, next: Ip) -> Ip {
+    let vm = unsafe { vm(cx) };
+    // Only an activation's function: a frame homes locals native code does not read.
+    let Some(function) = vm.lane_stack.activations.last().map(|caller| caller.function) else {
+        return next;
+    };
+    // SAFETY: the restored context's program and views outlive the lane run.
+    let native = unsafe { &*(*cx).views }
+        .get(function as usize)
+        .and_then(super::program_store::derived_lane_view)
+        .and_then(|view| view.general_native.get().cloned());
+    let Some(native) = native else {
+        return next;
+    };
+    // SAFETY: `next` and `base` are records of the caller's view.
+    let start = unsafe { next.offset_from(base) } as usize;
+    let (code, program, this, capture) = unsafe { (&*(*cx).code, (*cx).program, (*cx).this, (*cx).capture) };
+    match vm.run_lane_general_from(&native, code, program, function, r.0, this, capture_reads(capture), start) {
+        Some(super::compiled::LaneNativeExit::Return { pc, register, value }) => {
+            r.set(register, value);
+            // SAFETY: a PC of the caller's function, whose records are contiguous.
+            unsafe { base.add(pc) }
+        }
+        // SAFETY: as above.
+        Some(super::compiled::LaneNativeExit::At(pc)) => unsafe { base.add(pc) },
+        None => next,
+    }
 }
 
 /// Whether a call record that returns its callee's completion runs in the lane: from an
@@ -17715,6 +17769,7 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
+        general_native: std::cell::OnceCell::new(),
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()

@@ -1486,11 +1486,36 @@ fn emit_js_dense_array_get(
 /// neither a module namespace nor an arguments object. The entry, the record and the arena
 /// are read on every execution, so a cache refill, a receiver change or arena movement is
 /// seen; any failed proof branches to `fallback`.
+/// Where a native field access finds its receiver: a register of the frame or window, or
+/// the activation's `this` (`JsStepDispatch::this`).
+#[derive(Clone, Copy)]
+enum JsFieldBase {
+    Register(i32),
+    This,
+}
+
+impl JsFieldBase {
+    /// The base of a bytecode field lookup, when native code can read it.
+    fn of(base: crate::bytecode::FieldBase, register_offset: impl Fn(u16) -> Option<i32>) -> Option<Self> {
+        if base == crate::bytecode::FieldBase::THIS {
+            return Some(Self::This);
+        }
+        base.register_index().and_then(register_offset).map(Self::Register)
+    }
+
+    fn load(self, builder: &mut FunctionBuilder<'_>, arguments: ir::Value, payload: ir::Value) -> ir::Value {
+        match self {
+            Self::Register(offset) => builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, offset),
+            Self::This => emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, this)),
+        }
+    }
+}
+
 fn emit_js_own_field_slot(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    base: JsFieldBase,
     site: u16,
     fallback: ir::Block,
 ) -> ir::Value {
@@ -1498,7 +1523,7 @@ fn emit_js_own_field_slot(
     use crate::value::ValueLayout;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
-    let base = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, base_offset);
+    let base = base.load(builder, arguments, payload);
     let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
     let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
     emit_js_guard(builder, is_object, fallback);
@@ -1623,18 +1648,39 @@ fn emit_js_own_field_get(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    base: JsFieldBase,
     site: u16,
     destination_offset: i32,
     next: ir::Block,
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let address = emit_js_own_field_slot(builder, arguments, payload, base, site, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
-    exact.emit(builder, fallback);
+    // Past the own-field proof, the entry's cached read (`js_lane_cached_field`), where it
+    // provides one; its miss, like an absent read, leaves at this PC.
+    builder.switch_to_block(fallback);
+    let exit = builder.create_block();
+    let read = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_read));
+    let provided = builder.ins().icmp_imm_u(IntCC::NotEqual, read, 0);
+    emit_js_guard(builder, provided, exit);
+    let object = base.load(builder, arguments, payload);
+    let mut signature = Signature::new(builder.func.signature.call_conv);
+    for _ in 0..3 {
+        signature.params.push(AbiParam::new(types::I64));
+    }
+    signature.returns.push(AbiParam::new(types::I64));
+    let signature = builder.import_signature(signature);
+    let site = builder.ins().iconst(types::I64, i64::from(site));
+    let call = builder.ins().call_indirect(signature, read, &[payload, object, site]);
+    let value = builder.inst_results(call)[0];
+    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    emit_js_guard(builder, hit, exit);
+    builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
+    builder.ins().jump(next, &[]);
+    exact.emit(builder, exit);
 }
 
 /// Lower a returning own data-field read: the value `emit_js_own_field_slot` finds becomes
@@ -1644,13 +1690,13 @@ fn emit_js_own_field_return(
     builder: &mut RegionCore<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    base: JsFieldBase,
     site: u16,
     result_pointer: ir::Value,
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let address = emit_js_own_field_slot(builder, arguments, payload, base, site, fallback);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     let returns = builder.create_block();
     let interrupted = builder.interrupt_requested();
@@ -1678,7 +1724,7 @@ fn emit_js_own_field_set(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    base: JsFieldBase,
     value_offset: i32,
     atom: Atom,
     site: u16,
@@ -1716,7 +1762,7 @@ fn emit_js_own_field_set(
     builder.ins().brif(unnamed, name_free, &[], fallback, &[]);
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
-    let address = emit_js_own_field_slot(builder, arguments, payload, base_offset, site, fallback);
+    let address = emit_js_own_field_slot(builder, arguments, payload, base, site, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     builder.ins().jump(next, &[]);
     exact.emit(builder, fallback);
@@ -1739,6 +1785,80 @@ enum JsGeneralBranch {
         left: Operand,
         right: Operand,
     },
+    /// An (in)equality of `source` with a `null` or `undefined` constant: `strict` compares
+    /// with `constant` alone, loose with both nullish values (`emit_js_nullish_equality`).
+    NullishFalse {
+        source: u16,
+        constant: Value,
+        strict: bool,
+        negated: bool,
+    },
+}
+
+/// The (in)equality operators a nullish branch lowers, as oxc numbers them.
+const JS_LOOSE_EQUALITY: u32 = oxc_ast::ast::BinaryOperator::Equality as u32;
+const JS_LOOSE_INEQUALITY: u32 = oxc_ast::ast::BinaryOperator::Inequality as u32;
+const JS_STRICT_EQUALITY: u32 = oxc_ast::ast::BinaryOperator::StrictEquality as u32;
+const JS_STRICT_INEQUALITY: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+
+/// The nullish branch of `operator` between `left` and `right` (`JsGeneralBranch::NullishFalse`):
+/// one a register, the other a `null` or `undefined` constant.
+fn js_nullish_branch(
+    program: &ResidualProgram,
+    operator: u32,
+    left: Operand,
+    right: Operand,
+    register_offset: impl Fn(u16) -> Option<i32>,
+) -> Option<JsGeneralBranch> {
+    let (strict, negated) = match operator {
+        JS_LOOSE_EQUALITY => (false, false),
+        JS_LOOSE_INEQUALITY => (false, true),
+        JS_STRICT_EQUALITY => (true, false),
+        JS_STRICT_INEQUALITY => (true, true),
+        _ => return None,
+    };
+    let nullish = |operand: Operand| -> Option<Value> {
+        (operand.kind()? == OperandKind::Constant).then_some(())?;
+        match program.constants.get(usize::from(operand.payload()))? {
+            crate::bytecode::Constant::Null => Some(Value::NULL),
+            crate::bytecode::Constant::Undefined => Some(Value::UNDEFINED),
+            _ => None,
+        }
+    };
+    let (source, constant) = match (nullish(left), nullish(right)) {
+        (None, Some(constant)) => (left, constant),
+        (Some(constant), None) => (right, constant),
+        _ => return None,
+    };
+    let source = source.register_index().filter(|register| register_offset(*register).is_some())?;
+    Some(JsGeneralBranch::NullishFalse { source, constant, strict, negated })
+}
+
+/// Whether `bits` equals a nullish constant: strictly, it is `constant`; loosely, `null` or
+/// `undefined`. A loose comparison also decides immediates (unequal) and object and array
+/// records, which are never the IsHTMLDDA object; any other heap value leaves at `fallback`.
+fn emit_js_nullish_equality(
+    builder: &mut FunctionBuilder<'_>,
+    bits: ir::Value,
+    constant: Value,
+    strict: bool,
+    fallback: ir::Block,
+) -> ir::Value {
+    use crate::value::ValueLayout;
+    if strict {
+        return builder.ins().icmp_imm_u(IntCC::Equal, bits, constant.to_bits() as i64);
+    }
+    let tag = builder.ins().band_imm_u(bits, ValueLayout::TAG_MASK as i64);
+    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    let family = builder.ins().band_imm_u(bits, ValueLayout::HEAP_FAMILY_MASK as i64);
+    let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+    let array = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_ARRAY_TAG as i64);
+    let record = builder.ins().bor(object, array);
+    let decided = builder.ins().bor(immediate, record);
+    emit_js_guard(builder, decided, fallback);
+    let null = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+    let undefined = builder.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+    builder.ins().bor(null, undefined)
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -1958,7 +2078,7 @@ pub(super) fn compile_js_general_dispatch(
             && instruction.numeric_local_target().is_none()
             && let Some(next) = next
             && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
-            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(base) = JsFieldBase::of(base, &register_offset)
             && let Some(destination_offset) = register_offset(instruction.result_register())
         {
             let exact = JsExactFallback {
@@ -1970,7 +2090,7 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_get(&mut builder, arguments, payload, base_offset, cache_site, destination_offset, next, &exact);
+            emit_js_own_field_get(&mut builder, arguments, payload, base, cache_site, destination_offset, next, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
@@ -1983,7 +2103,7 @@ pub(super) fn compile_js_general_dispatch(
             && !instruction.writes_current_this()
             && instruction.numeric_local_target().is_none()
             && let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup()
-            && let Some(base_offset) = base.register_index().and_then(register_offset)
+            && let Some(base) = JsFieldBase::of(base, &register_offset)
         {
             let exact = JsExactFallback {
                 context,
@@ -1994,16 +2114,92 @@ pub(super) fn compile_js_general_dispatch(
                 continue_block,
                 pc,
             };
-            emit_js_own_field_return(&mut builder, arguments, payload, base_offset, cache_site, result_pointer, &exact);
+            emit_js_own_field_return(&mut builder, arguments, payload, base, cache_site, result_pointer, &exact);
             general_dispatch_native_pcs[pc] = 1;
             continue;
         }
-        if instruction.op() == Op::SetField
+        if instruction.op() == Op::LoadCapture
+            && instruction.capture_depth() == 0
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && !instruction.writes_current_this()
             && let Some(next) = next
-            && let Some(base_offset) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let fallback = builder.create_block();
+            let slots = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, captures));
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.returns.push(AbiParam::new(types::I64));
+            let signature = builder.import_signature(signature);
+            let helper = builder.ins().iconst(types::I64, js_lane_load_capture as *const () as usize as i64);
+            let slot = builder.ins().iconst(types::I64, i64::from(instruction.capture_slot()));
+            let call = builder.ins().call_indirect(signature, helper, &[slots, slot]);
+            let value = builder.inst_results(call)[0];
+            let present = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut builder, present, fallback);
+            builder.ins().store(MemFlagsData::trusted(), value, arguments, destination);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        // A Number's update: its value plus or minus one, boxed as `Value::number` boxes it.
+        // Any other value (a BigInt, or one ToNumeric converts) leaves at this PC.
+        if instruction.op() == Op::IncDec
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && let Some(next) = next
+            && let Some(decrement) = instruction.boolean_flag()
+            && let Some(source) = register_offset(instruction.register_b())
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let fallback = builder.create_block();
+            let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+            let number = emit_js_tagged_number(&mut builder, bits, fallback);
+            let one = builder.ins().f64const(1.0);
+            let updated = if decrement { builder.ins().fsub(number, one) } else { builder.ins().fadd(number, one) };
+            let encoded = emit_js_box_number(&mut builder, updated);
+            builder.ins().store(MemFlagsData::trusted(), encoded, arguments, destination);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        // `this` holds an activation's own receiver, which native code reads where the entry
+        // provides it (`JsStepDispatch::this`); elsewhere the guard leaves at this PC.
+        if instruction.op() == Op::LoadThis
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && let Some(next) = next
+            && let Some(destination) = register_offset(instruction.result_register())
+        {
+            let fallback = builder.create_block();
+            let this = JsFieldBase::This.load(&mut builder, arguments, payload);
+            let present = builder.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut builder, present, fallback);
+            builder.ins().store(MemFlagsData::trusted(), this, arguments, destination);
+            builder.ins().jump(next, &[]);
+            builder.switch_to_block(fallback);
+            emit_js_step_fallback(&mut builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
+            general_dispatch_native_pcs[pc] = 1;
+            continue;
+        }
+        let field_store_base = match instruction.op() {
+            Op::SetField => register_offset(instruction.register_b()).map(JsFieldBase::Register),
+            Op::SetThisField => Some(JsFieldBase::This),
+            _ => None,
+        };
+        if let Some(base) = field_store_base
+            && instruction.result_flags() == 0
+            && !instruction.returns_from_frame()
+            && !instruction.writes_current_this()
+            && let Some(next) = next
             && let Some(value_offset) = register_offset(instruction.register_a())
         {
             let exact = JsExactFallback {
@@ -2019,7 +2215,7 @@ pub(super) fn compile_js_general_dispatch(
                 &mut builder,
                 arguments,
                 payload,
-                base_offset,
+                base,
                 value_offset,
                 instruction.atom_index(),
                 instruction.cache_site_index(),
@@ -2305,13 +2501,15 @@ pub(super) fn compile_js_general_dispatch(
                 let operator = instruction.binary_operator_field();
                 let left = instruction.operand_b();
                 let right = instruction.operand_c();
-                (super::operations::NumberRelation::from_operator(operator).is_some()
-                    && js_tagged_operand_supported(program, left, &register_offset)
-                    && js_tagged_operand_supported(program, right, &register_offset))
-                .then_some(JsGeneralBranch::NumberFalse {
-                    operator,
-                    left,
-                    right,
+                js_nullish_branch(program, operator, left, right, &register_offset).or_else(|| {
+                    (super::operations::NumberRelation::from_operator(operator).is_some()
+                        && js_tagged_operand_supported(program, left, &register_offset)
+                        && js_tagged_operand_supported(program, right, &register_offset))
+                    .then_some(JsGeneralBranch::NumberFalse {
+                        operator,
+                        left,
+                        right,
+                    })
                 })
             }
             _ => None,
@@ -2377,6 +2575,13 @@ pub(super) fn compile_js_general_dispatch(
                     )
                     .expect("prevalidated JavaScript numeric relation");
                     builder.ins().icmp_imm_u(IntCC::Equal, holds, 0)
+                }
+                JsGeneralBranch::NullishFalse { source, constant, strict, negated } => {
+                    let source = register_offset(source).expect("prevalidated nullish branch register");
+                    let bits = builder.ins().load(types::I64, MemFlagsData::trusted(), arguments, source);
+                    let equal = emit_js_nullish_equality(&mut builder, bits, constant, strict, fallback);
+                    // The branch is taken where the comparison is false.
+                    if negated { equal } else { builder.ins().icmp_imm_u(IntCC::Equal, equal, 0) }
                 }
             };
             if target <= pc {
@@ -6001,6 +6206,17 @@ struct JsStepDispatch {
     method_cache_atoms: usize,
     method_cache_atom_words: usize,
     stores_specialized: usize,
+    /// The activation's `this` where native code may read it (a frameless lane activation's,
+    /// `JsStepDispatch::for_lane`); `Value::DELETED` elsewhere, which no object guard passes.
+    this: u64,
+    /// The activation's dense depth-0 capture slots where native code may read them
+    /// (`LaneContext::capture`, `js_lane_load_capture`); null elsewhere.
+    captures: usize,
+    /// The cached field read native code takes past its own-field fast path
+    /// (`js_lane_cached_field::<H>`), with the program it reads for; zero elsewhere.
+    field_read: usize,
+    code: usize,
+    vm: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6012,14 +6228,14 @@ struct JsStepDispatch {
 fn run_js_native_entry<H: Host>(
     entry: Entry, vm: *mut Vm<H>, program: ProgramId, payload: *mut (),
     interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
-    native_pcs: &[u8],
+    native_pcs: &[u8], callout: Callout,
 ) -> Option<(u32, u64)> {
     let mut context = CallContext::native_adapter(payload, interrupt, poll_page);
     context.vm = vm.cast();
     context.program = program;
     // Linked entries import their fixed semantic operations directly.
     if crate::DYNAMIC_EXECUTION_ENABLED {
-        context.callout = js_step_callout::<H> as Callout as usize;
+        context.callout = callout as usize;
     }
     let constants = unsafe { &(*vm.cast::<Vm<H>>()).programs }.constants(program);
     context.js_constants = constants.as_ptr();
@@ -6072,6 +6288,11 @@ impl JsStepDispatch {
             array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
+            this: Value::DELETED.to_bits(),
+            captures: 0,
+            field_read: 0,
+            code: 0,
+            vm: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
@@ -6081,6 +6302,56 @@ impl JsStepDispatch {
         dispatch.refresh_heap_bases(vm);
         dispatch
     }
+    /// The payload of a frameless lane activation's run: its register window, no frame and
+    /// no locals. Only the lane exit callout reads it besides generated code.
+    fn for_lane<H: Host>(vm: &Vm<H>, code: &ResidualProgram, program_id: ProgramId, registers: *mut Value, register_count: usize, start_pc: usize, this: Value, captures: *const crate::heap::EnvironmentSlots) -> Self {
+        let mut dispatch = Self {
+            program_id, frame: usize::MAX, allow_inline_calls: false, start_pc,
+            #[cfg(feature = "native-execution")]
+            stop_pc: None,
+            native_registers: registers,
+            register_count,
+            native_locals: std::ptr::null_mut(),
+            local_count: 0,
+            native_pcs: std::ptr::null(), native_pc_count: 0,
+            array_record_base: 0, object_record_base: 0, property_values: 0, property_len: 0,
+            field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
+            stores_specialized: 0,
+            this: Value::DELETED.to_bits(),
+            captures: 0,
+            field_read: 0,
+            code: 0,
+            vm: 0,
+            #[cfg(test)]
+            island_steps: 0,
+            #[cfg(test)]
+            global_name_cache_hits: 0,
+            outcome: None,
+        };
+        dispatch.this = this.to_bits();
+        dispatch.captures = captures as usize;
+        dispatch.field_read = js_lane_cached_field::<H> as *const () as usize;
+        dispatch.code = std::ptr::from_ref(code) as usize;
+        dispatch.vm = std::ptr::from_ref(vm) as usize;
+        dispatch.refresh_heap_bases(vm);
+        dispatch
+    }
+
+    /// Points this payload at a lane activation's window from `start_pc`, with its receiver
+    /// and capture slots, and the heap bases as they stand.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_lane<H: Host>(&mut self, vm: &Vm<H>, code: &ResidualProgram, program_id: ProgramId, registers: *mut Value, start_pc: usize, this: Value, captures: *const crate::heap::EnvironmentSlots) {
+        self.program_id = program_id;
+        self.native_registers = registers;
+        self.start_pc = start_pc;
+        self.this = this.to_bits();
+        self.captures = captures as usize;
+        self.field_read = js_lane_cached_field::<H> as *const () as usize;
+        self.code = std::ptr::from_ref(code) as usize;
+        self.vm = std::ptr::from_ref(vm) as usize;
+        self.refresh_heap_bases(vm);
+    }
+
     /// Reads the heap bases generated code uses again, after anything that may have grown,
     /// compacted or replaced them.
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
@@ -6119,6 +6390,65 @@ pub(super) enum JsTierFrameEntry {
 enum JsCalloutStep {
     Continue(usize),
     Stop(JsNativeStep),
+}
+
+/// A depth-0 capture read of a frameless lane activation, as `lane_load_capture` reads it:
+/// the plain value of `slot` in the activation's dense capture slots, else `Value::DELETED`
+/// (never a slot's plain value), on which native code leaves at the instruction.
+unsafe extern "C" fn js_lane_load_capture(slots: *const crate::heap::EnvironmentSlots, slot: u64) -> u64 {
+    if slots.is_null() {
+        return Value::DELETED.to_bits();
+    }
+    // SAFETY: the payload's slots are the running activation's dense capture slots, which
+    // stay in place while the lane runs (`LaneContext::capture`).
+    unsafe { &*slots }
+        .dense_plain(slot as usize)
+        .map_or(Value::DELETED.to_bits(), Value::to_bits)
+}
+
+/// A side-effect-free cached read of `site` on `object` (`Vm::cached_field_hit`): own,
+/// prototype and polymorphic entries alike; `Value::DELETED` on any miss, on which native
+/// code leaves at the instruction.
+unsafe extern "C" fn js_lane_cached_field<H: Host>(payload: *mut JsStepDispatch, object: u64, site: u64) -> u64 {
+    // SAFETY: the payload of a running lane entry names its VM and program, which outlive it.
+    let (vm, code) = unsafe { ((*payload).vm as *mut Vm<H>, (*payload).code as *const ResidualProgram) };
+    match unsafe { (*vm).cached_field_hit(&*code, Value::from_bits(object), site as u16) } {
+        super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
+        _ => Value::DELETED.to_bits(),
+    }
+}
+
+/// The fallback a general-tier artifact takes on a frameless lane activation: every
+/// instruction native code does not complete leaves at its exact PC, before its effects,
+/// and the lane runs on from that record over the same register window.
+unsafe extern "C" fn js_lane_exit_callout(
+    _context: *mut CallContext,
+    pc: u64,
+    _arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
+    // SAFETY: the native entry passes its own result word.
+    unsafe { *result = pc };
+    1
+}
+
+/// The adapter context and payload a thread's lane entries reuse (`Vm::run_lane_general_from`).
+struct LaneEntry {
+    context: CallContext,
+    dispatch: JsStepDispatch,
+}
+
+thread_local! {
+    static LANE_ENTRY: std::cell::UnsafeCell<Option<Box<LaneEntry>>> = const { std::cell::UnsafeCell::new(None) };
+}
+
+/// Where a lane activation continues after its general-tier artifact ran
+/// (`Vm::js_general_lane_entry`).
+pub(super) enum LaneNativeExit {
+    /// The `Return` at `pc` completes the activation with `value` in its `register`.
+    Return { pc: usize, register: crate::bytecode::Register, value: Value },
+    /// The lane runs on from the record at this PC.
+    At(usize),
 }
 
 unsafe extern "C" fn js_step_callout<H: Host>(
@@ -6997,7 +7327,7 @@ impl CompiledJsFunction {
         let CompiledJsEntry::GeneralDispatch(entry) = self.entry else {
             return None;
         };
-        let (status, word) = run_js_native_entry(entry, vm, program, payload, interrupt, poll_page, &self.general_dispatch_native_pcs)?;
+        let (status, word) = run_js_native_entry(entry, vm, program, payload, interrupt, poll_page, &self.general_dispatch_native_pcs, js_step_callout::<H>)?;
         // The payload retains the pre-entry register homes for storage-change recovery.
         let dispatch = unsafe { &*payload.cast::<JsStepDispatch>() };
         let dispatch_frame = dispatch.frame;
@@ -7054,6 +7384,29 @@ impl CompiledJsFunction {
             }
             _ => None,
         }
+    }
+
+    /// Runs this general-tier artifact over a frameless lane activation's window from the
+    /// payload's start PC (`LaneEntry`), leaving at the first instruction it does not
+    /// complete. A native `Return` leaves at its own record too: it read only the register
+    /// that record returns, or, returning a field, a cached read the record repeats exactly.
+    fn run_general_dispatch_lane(&self, context: &mut CallContext, arguments: *const u64) -> Option<LaneNativeExit> {
+        let CompiledJsEntry::GeneralDispatch(entry) = self.entry else {
+            return None;
+        };
+        let mut word = 0u64;
+        // SAFETY: the lane activation's window, the program and the payload outlive the
+        // call. No poll page is set, so interrupt checks read the flag and no fault needs
+        // the guard trampoline; the lane exit callout neither raises nor reenters the VM.
+        let status = unsafe { entry(context, 0, 0, arguments, &mut word) };
+        if let Some(pc) = status
+            .checked_sub(JS_GENERAL_RETURN_STATUS_BASE)
+            .and_then(|pc| usize::try_from(pc).ok())
+            .filter(|pc| *pc < self.general_dispatch_native_pcs.len())
+        {
+            return Some(LaneNativeExit::At(pc));
+        }
+        (status == NATIVE_JS_STOPPED).then(|| LaneNativeExit::At(word as usize))
     }
 
     fn call_capture_number(
@@ -12474,7 +12827,120 @@ impl<H: Host> Vm<H> {
         }
         let program_id = self.frames[frame].program;
         let function_id = self.frames[frame].function;
-        let compiled = match self.programs.js_tier(program_id, function_id) {
+        let compiled = self.js_general_artifact(program, program_id, function_id, promote)?;
+
+        let mut dispatch = JsStepDispatch::new(self, program_id, frame, start_pc, allow_inline_calls);
+        // Native dispatch starts at the next unexecuted bytecode. Callouts
+        // overwrite this with the exact failing PC before invoking VM semantics.
+        self.frames[frame].pc = start_pc;
+        self.frames[frame].pc_is_resume = false;
+        let interrupt = self.execution_interrupt.atomic_flag();
+        let interrupt = interrupt as *const std::sync::atomic::AtomicBool;
+        let poll_page = self.compiled_poll_page();
+        let outcome = compiled.run_general_dispatch(
+            self as *mut Self,
+            program_id,
+            (&mut dispatch as *mut JsStepDispatch).cast(),
+            interrupt,
+            poll_page,
+        )?;
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs
+                .record_js_jit_native_entry(program_id, function_id);
+        }
+        Some(outcome)
+    }
+
+    /// The general-tier artifact a frameless lane activation of `function` runs
+    /// (`Vm::run_lane_general`): installed, or due and compiled now. `None` where the tier
+    /// holds none for the function. The activation homes no frame locals: it passes none
+    /// (`JsStepDispatch::for_lane`), so each local access fails its bounds check and leaves.
+    pub(super) fn js_general_lane_artifact(
+        &mut self,
+        program: &ResidualProgram,
+        program_id: ProgramId,
+        function: u32,
+    ) -> Option<Rc<CompiledJsFunction>> {
+        if !self.js_tier_runs() || !self.programs.js_jit_general_dispatch_enabled() {
+            return None;
+        }
+        let due = matches!(
+            self.programs.js_tier(program_id, function),
+            Some(super::program_store::JsTierState::GeneralCompileDue)
+        );
+        self.js_general_artifact(program, program_id, function, due)
+    }
+
+    /// Runs `compiled`, `function`'s general-tier artifact, over the register window of a
+    /// frameless lane activation in place. It leaves at the first instruction it does not
+    /// complete (`js_lane_exit_callout`), so the lane continues exactly there.
+    pub(super) fn run_lane_general(
+        &mut self,
+        compiled: &CompiledJsFunction,
+        program: &ResidualProgram,
+        program_id: ProgramId,
+        function: u32,
+        registers: *mut Value,
+        this: Value,
+        captures: *const crate::heap::EnvironmentSlots,
+    ) -> Option<LaneNativeExit> {
+        self.run_lane_general_from(compiled, program, program_id, function, registers, this, captures, 0)
+    }
+
+    /// `run_lane_general` from `start_pc`: the activation resumes there, after a call the
+    /// lane made returned into it (`lane_native_resume`). The thread's `LANE_ENTRY` holds the
+    /// adapter context and payload every lane entry reuses: generated code calls only pure
+    /// helpers, so no entry nests in another.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_lane_general_from(
+        &mut self,
+        compiled: &CompiledJsFunction,
+        program: &ResidualProgram,
+        program_id: ProgramId,
+        function: u32,
+        registers: *mut Value,
+        this: Value,
+        captures: *const crate::heap::EnvironmentSlots,
+        start_pc: usize,
+    ) -> Option<LaneNativeExit> {
+        let vm: *mut Self = self;
+        let exit = LANE_ENTRY.with(|cell| {
+            // SAFETY: entries never nest (above), so this is the only borrow.
+            let state = unsafe { &mut *cell.get() };
+            let state = state.get_or_insert_with(|| {
+                let context = CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None);
+                let dispatch = JsStepDispatch::for_lane(self, program, program_id, registers, 0, 0, this, captures);
+                Box::new(LaneEntry { context, dispatch })
+            });
+            let LaneEntry { context, dispatch } = &mut **state;
+            dispatch.prepare_lane(self, program, program_id, registers, start_pc, this, captures);
+            context.adapter_payload = std::ptr::from_mut(dispatch).cast();
+            context.interrupt = self.execution_interrupt.atomic_flag() as *const std::sync::atomic::AtomicBool;
+            context.vm = vm.cast();
+            context.program = program_id;
+            context.callout = js_lane_exit_callout as Callout as usize;
+            let constants = self.programs.constants(program_id);
+            context.js_constants = constants.as_ptr();
+            context.js_constant_count = constants.len();
+            compiled.run_general_dispatch_lane(context, registers.cast::<u64>())
+        })?;
+        if self.programs.js_jit_diagnostics_enabled() {
+            self.programs.record_js_jit_native_entry(program_id, function);
+        }
+        Some(exit)
+    }
+
+    /// The general-tier artifact of `function_id`: the installed one, or, when `promote`
+    /// and the function is a candidate, one compiled (or taken from the shared artifact
+    /// cache) and installed now. Frame and lane entries share it.
+    fn js_general_artifact(
+        &mut self,
+        program: &ResidualProgram,
+        program_id: ProgramId,
+        function_id: u32,
+        promote: bool,
+    ) -> Option<Rc<CompiledJsFunction>> {
+        match self.programs.js_tier(program_id, function_id) {
             Some(super::program_store::JsTierState::Compiled(compiled))
                 if compiled.is_general_dispatch() => Some(compiled),
             Some(super::program_store::JsTierState::Compiled(_)
@@ -12563,28 +13029,7 @@ impl<H: Host> Vm<H> {
                 }
                 compiled
             }
-        }?;
-
-        let mut dispatch = JsStepDispatch::new(self, program_id, frame, start_pc, allow_inline_calls);
-        // Native dispatch starts at the next unexecuted bytecode. Callouts
-        // overwrite this with the exact failing PC before invoking VM semantics.
-        self.frames[frame].pc = start_pc;
-        self.frames[frame].pc_is_resume = false;
-        let interrupt = self.execution_interrupt.atomic_flag();
-        let interrupt = interrupt as *const std::sync::atomic::AtomicBool;
-        let poll_page = self.compiled_poll_page();
-        let outcome = compiled.run_general_dispatch(
-            self as *mut Self,
-            program_id,
-            (&mut dispatch as *mut JsStepDispatch).cast(),
-            interrupt,
-            poll_page,
-        )?;
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs
-                .record_js_jit_native_entry(program_id, function_id);
         }
-        Some(outcome)
     }
 
     /// Run a narrow numeric linked-entry search using guarded VM field and
@@ -14977,7 +15422,7 @@ impl<H: Host> Vm<H> {
         let interrupt = self.execution_interrupt.atomic_flag() as *const _;
         let poll_page = self.compiled_poll_page();
         let exited = run_js_native_entry(entry, self as *mut Self, program,
-            (&mut dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page, &[]);
+            (&mut dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page, &[], js_step_callout::<H>);
         match exited {
             Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
                 failure("linked native function stopped without a transition".into()))),
