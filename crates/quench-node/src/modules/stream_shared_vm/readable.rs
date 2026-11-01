@@ -4,7 +4,7 @@ use super::destroy::{self, error_or_destroy};
 use super::errors::{self, StreamError};
 use super::state::{self, bits, change, readable::*};
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsics, is_function, is_null,
+    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsics, is_null,
     is_nullish, is_string, is_undefined, listener_count, next_tick, number, on, once, put, put_bool, put_number,
     remove_listener, tick, Class, Context, Key, Outcome, Slot, Tick,
 };
@@ -40,7 +40,7 @@ pub(crate) fn shape_events(c: &mut Context<'_>, stream: RootId, events: &[&str])
 pub(crate) fn adopt_options(c: &mut Context<'_>, stream: RootId, options: RootId, members: &[(&str, &str)]) -> Result<(), RootedError> {
     for &(option, member) in members {
         let value = get(c, options, option)?;
-        if is_function(c, value)? {
+        if c.is_callable_rooted(value)? {
             put(c, stream, member, value)?;
         }
     }
@@ -1275,7 +1275,7 @@ pub(crate) fn wrap(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     for key in c.array_like_values_rooted(keys)?.into_iter().skip(1) {
         let own = c.get_property_rooted(this, key)?;
         let member = c.get_property_rooted(source, key)?;
-        if is_undefined(c, own) && is_function(c, member)? {
+        if is_undefined(c, own) && c.is_callable_rooted(member)? {
             let bound = call_method(c, member, "bind", &[source])?;
             c.set_property_rooted(this, key, bound, this)?;
         }

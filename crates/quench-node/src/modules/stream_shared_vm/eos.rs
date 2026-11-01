@@ -2,9 +2,9 @@
 //! promise form.
 
 use super::errors::{self, StreamError};
-use super::utils::{self, is_readable_node_stream, is_writable_node_stream, Tri};
+use super::utils::{self, is_readable_node_stream, is_writable_node_stream};
 use super::{
-    arg, captures, closure, get, intrinsics, is_function, is_nullish, is_undefined, next_tick, on, put,
+    arg, captures, closure, get, intrinsics, is_nullish, is_undefined, next_tick, on, put,
     put_bool, remove_listener, Context, Outcome,
 };
 use quench_runtime::{RootId, RootedError};
@@ -19,13 +19,6 @@ const LISTENERS: &[(&str, &str)] = &[
     ("onclosed", "streamEosOnClosed"),
     ("onrequest", "streamEosOnRequest"),
 ];
-
-fn tri_root(c: &mut Context<'_>, value: Tri) -> RootId {
-    match value {
-        Some(value) => c.boolean(value),
-        None => c.null(),
-    }
-}
 
 /// `eos(stream[, options], callback)`, the exported `finished`.
 pub(crate) fn finished(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
@@ -42,12 +35,12 @@ pub(crate) fn eos(c: &mut Context<'_>, stream: RootId, options: RootId, callback
     let options = if is_nullish(c, options) {
         c.object_rooted()?
     } else {
-        if !c.is_object_rooted(options)? || c.is_array_rooted(options)? || is_function(c, options)? {
+        if !c.is_object_rooted(options)? || c.is_array_rooted(options)? || c.is_callable_rooted(options)? {
             return Err(super::super::util_shared_vm::argument_type_error(c, options, "options", "Object")?);
         }
         options
     };
-    if !is_function(c, callback)? {
+    if !c.is_callable_rooted(callback)? {
         return Err(super::super::util_shared_vm::argument_type_error(c, callback, "callback", "function")?);
     }
     let signal = get(c, options, "signal")?;
@@ -87,10 +80,10 @@ pub(crate) fn eos(c: &mut Context<'_>, stream: RootId, options: RootId, callback
     };
     put_bool(c, record, "willEmitClose", will_emit_close)?;
     let writable_finished = utils::is_writable_finished(c, stream, Some(false))?;
-    let value = tri_root(c, writable_finished);
+    let value = utils::tri(c, writable_finished);
     put(c, record, "writableFinished", value)?;
     let readable_finished = utils::is_readable_finished(c, stream, Some(false))?;
-    let value = tri_root(c, readable_finished);
+    let value = utils::tri(c, readable_finished);
     put(c, record, "readableFinished", value)?;
     let closed = utils::is_closed(c, stream)?;
     put(c, record, "closed", closed)?;

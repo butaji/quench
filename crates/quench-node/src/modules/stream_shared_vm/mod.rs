@@ -246,15 +246,29 @@ crate::host::startup_snapshot::host_snap_struct!(Intrinsics { slots, classes, ti
 
 impl Intrinsics {
     pub(crate) fn slot(&self, slot: Slot) -> RootId {
-        self.slots[Slot::ALL.iter().position(|candidate| *candidate == slot).expect("listed slot")]
+        self.slots[slot as usize]
     }
     pub(crate) fn class(&self, class: Class) -> RootId {
         self.classes[class as usize]
     }
     fn tick(&self, tick: Tick) -> RootId {
-        self.ticks[Tick::ALL.iter().position(|candidate| *candidate == tick).expect("listed tick")]
+        self.ticks[tick as usize]
     }
 }
+
+// The intrinsic arrays are indexed by discriminant: each `ALL` lists its enum in order.
+const _: () = {
+    let mut index = 0;
+    while index < Slot::ALL.len() {
+        assert!(Slot::ALL[index] as usize == index);
+        index += 1;
+    }
+    let mut index = 0;
+    while index < Tick::ALL.len() {
+        assert!(Tick::ALL[index] as usize == index);
+        index += 1;
+    }
+};
 
 pub(crate) fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
     match c.host_mut().shared_state().borrow().stream_intrinsics {
@@ -302,10 +316,6 @@ pub(crate) fn is_nullish(c: &Context<'_>, value: RootId) -> bool {
 
 pub(crate) fn is_string(c: &Context<'_>, value: RootId) -> bool {
     matches!(c.value_type_rooted(value), Some(quench_runtime::ValueType::String))
-}
-
-pub(crate) fn is_function(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedError> {
-    c.is_callable_rooted(value)
 }
 
 /// Whether `object[name]` is truthy.

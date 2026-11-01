@@ -3,7 +3,7 @@
 
 use super::errors;
 use super::state::{self, bits, change, writable as w};
-use super::{arg, call_method, define_accessor, get, intrinsics, is_function, is_nullish, put, Context, Outcome, Slot};
+use super::{arg, call_method, define_accessor, get, intrinsics, is_nullish, put, Context, Outcome, Slot};
 use quench_runtime::{RootId, RootedError};
 
 /// `true`, `false`, or Node's `null` for "not that kind of stream".
@@ -11,7 +11,7 @@ pub(crate) type Tri = Option<bool>;
 
 fn has_function(c: &mut Context<'_>, object: RootId, name: &str) -> Result<bool, RootedError> {
     let value = get(c, object, name)?;
-    is_function(c, value)
+    c.is_callable_rooted(value)
 }
 
 /// `object?.[name]`.
@@ -117,7 +117,7 @@ pub(crate) fn is_iterable(c: &mut Context<'_>, object: RootId, asynchronous: Opt
     let intrinsics = intrinsics(c)?;
     let protocol = |c: &mut Context<'_>, slot: Slot| -> Result<bool, RootedError> {
         let value = c.get_property_rooted(object, intrinsics.slot(slot))?;
-        is_function(c, value)
+        c.is_callable_rooted(value)
     };
     match asynchronous {
         Some(true) => protocol(c, Slot::AsyncIterator),
@@ -511,15 +511,12 @@ pub(crate) fn define_predicates(c: &mut Context<'_>, target: RootId, names: &[&s
     Ok(())
 }
 
-fn tri(c: &mut Context<'_>, value: Tri) -> RootId {
+/// A `Tri` as the value Node returns.
+pub(crate) fn tri(c: &mut Context<'_>, value: Tri) -> RootId {
     match value {
         Some(value) => c.boolean(value),
         None => c.null(),
     }
-}
-
-fn strictness(c: &mut Context<'_>, value: RootId) -> Option<bool> {
-    as_bool(c, value)
 }
 
 /// The dispatching operation behind every exported predicate.
@@ -568,13 +565,13 @@ pub(crate) fn predicate(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outc
         }
         Predicate::IsReadableEnded => Ok(is_readable_ended(c, subject).map(|value| tri(c, value))?),
         Predicate::IsReadableFinished => {
-            let strict = strictness(c, second);
+            let strict = as_bool(c, second);
             Ok(is_readable_finished(c, subject, strict).map(|value| tri(c, value))?)
         }
         Predicate::IsReadableErrored => readable_errored(c, subject),
         Predicate::IsWritableEnded => Ok(is_writable_ended(c, subject).map(|value| tri(c, value))?),
         Predicate::IsWritableFinished => {
-            let strict = strictness(c, second);
+            let strict = as_bool(c, second);
             Ok(is_writable_finished(c, subject, strict).map(|value| tri(c, value))?)
         }
         Predicate::IsWritableErrored => writable_errored(c, subject),
@@ -656,7 +653,7 @@ pub(crate) fn add_abort_listener(c: &mut Context<'_>, signal: RootId, listener: 
 
 /// `typeof signal === 'object' && 'aborted' in signal`.
 fn is_signal_shaped(c: &mut Context<'_>, signal: RootId) -> Result<bool, RootedError> {
-    if !c.is_object_rooted(signal)? || is_function(c, signal)? {
+    if !c.is_object_rooted(signal)? || c.is_callable_rooted(signal)? {
         return Ok(false);
     }
     let key = c.string_rooted("aborted");
@@ -754,7 +751,9 @@ pub(crate) enum Accessor {
 /// `(name, accessor, whether it has a setter)`.
 type AccessorRow = (&'static str, Accessor, bool);
 
-pub(crate) const READABLE_ACCESSORS: &[AccessorRow] = &[
+/// Every accessor, in discriminant order: the readable ones, the writable ones, then the
+/// duplex's.
+const ACCESSORS: [AccessorRow; 27] = [
     ("readable", Accessor::Readable, true),
     ("readableDidRead", Accessor::ReadableDidRead, false),
     ("readableAborted", Accessor::ReadableAborted, false),
@@ -768,9 +767,6 @@ pub(crate) const READABLE_ACCESSORS: &[AccessorRow] = &[
     ("closed", Accessor::ReadableClosed, false),
     ("destroyed", Accessor::ReadableDestroyed, true),
     ("readableEnded", Accessor::ReadableEnded, false),
-];
-
-pub(crate) const WRITABLE_ACCESSORS: &[AccessorRow] = &[
     ("closed", Accessor::WritableClosed, false),
     ("destroyed", Accessor::WritableDestroyed, true),
     ("writable", Accessor::Writable, true),
@@ -784,20 +780,25 @@ pub(crate) const WRITABLE_ACCESSORS: &[AccessorRow] = &[
     ("writableLength", Accessor::WritableLength, false),
     ("errored", Accessor::WritableErrored, false),
     ("writableAborted", Accessor::WritableAborted, false),
+    ("destroyed", Accessor::DuplexDestroyed, true),
 ];
 
-pub(crate) const DUPLEX_ACCESSORS: &[AccessorRow] = &[("destroyed", Accessor::DuplexDestroyed, true)];
+const _: () = {
+    let mut index = 0;
+    while index < ACCESSORS.len() {
+        assert!(ACCESSORS[index].1 as usize == index);
+        index += 1;
+    }
+};
 
-fn all_accessors() -> impl Iterator<Item = &'static AccessorRow> {
-    READABLE_ACCESSORS.iter().chain(WRITABLE_ACCESSORS).chain(DUPLEX_ACCESSORS)
-}
+pub(crate) const READABLE_ACCESSORS: &[AccessorRow] = ACCESSORS.split_at(Accessor::WritableClosed as usize).0;
+pub(crate) const WRITABLE_ACCESSORS: &[AccessorRow] =
+    ACCESSORS.split_at(Accessor::DuplexDestroyed as usize).0.split_at(Accessor::WritableClosed as usize).1;
+pub(crate) const DUPLEX_ACCESSORS: &[AccessorRow] = ACCESSORS.split_at(Accessor::DuplexDestroyed as usize).1;
 
 pub(crate) fn define_stream_accessors(c: &mut Context<'_>, prototype: RootId, rows: &[AccessorRow]) -> Result<(), RootedError> {
     for &(name, accessor, settable) in rows {
-        let index = all_accessors()
-            .position(|(_, kind, _)| *kind == accessor)
-            .expect("listed accessor");
-        let data = c.number(index as f64);
+        let data = c.number(accessor as usize as f64);
         let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("streamAccessorGet"), "get", data)?;
         let setter = if settable {
             Some(c.host_function_named_with_data(crate::host::shared_vm::operation("streamAccessorSet"), "set", data)?)
@@ -812,7 +813,7 @@ pub(crate) fn define_stream_accessors(c: &mut Context<'_>, prototype: RootId, ro
 fn accessor(c: &mut Context<'_>) -> Result<Accessor, RootedError> {
     let data = c.host_function_data()?;
     let index = c.to_number(data)? as usize;
-    Ok(all_accessors().nth(index).expect("accessor index").1)
+    Ok(ACCESSORS[index].1)
 }
 
 /// `state ? state[name] : absent`.

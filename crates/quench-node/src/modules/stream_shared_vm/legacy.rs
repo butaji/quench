@@ -1,7 +1,7 @@
 //! `internal/streams/legacy`: the `Stream` base class and its old-style `pipe`.
 
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, intrinsics, is_function, listener_count, on,
+    arg, call_method, captures, closure, define_methods, emit, get, intrinsics, listener_count, on,
     put, put_bool, remove_listener, Class, Context, Key, Outcome,
 };
 use quench_runtime::{RootId, RootedError};
@@ -134,7 +134,7 @@ pub(crate) fn on_close(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome 
     if end_once(c, record)? {
         let dest = get(c, record, "dest")?;
         let destroy = get(c, dest, "destroy")?;
-        if is_function(c, destroy)? {
+        if c.is_callable_rooted(destroy)? {
             c.call_rooted(destroy, dest, &[])?;
         }
     }
@@ -183,7 +183,7 @@ pub(crate) fn event_names(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Ou
     let mut names = Vec::new();
     for key in c.own_keys_rooted(events)? {
         let value = c.get_property_rooted(events, key)?;
-        let listed = if is_function(c, value)? {
+        let listed = if c.is_callable_rooted(value)? {
             true
         } else {
             c.is_array_rooted(value)? && super::number(c, value, "length")? > 0.0
@@ -198,7 +198,7 @@ pub(crate) fn event_names(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Ou
 /// `prependListener(emitter, event, fn)`, for emitters with or without `prependListener`.
 pub(crate) fn prepend_listener(c: &mut Context<'_>, emitter: RootId, event: RootId, listener: RootId) -> Result<(), RootedError> {
     let prepend = get(c, emitter, "prependListener")?;
-    if is_function(c, prepend)? {
+    if c.is_callable_rooted(prepend)? {
         c.call_rooted(prepend, emitter, &[event, listener])?;
         return Ok(());
     }

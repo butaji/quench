@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::utils::{self, is_iterable, is_node_stream, is_readable_node_stream};
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsics, is_function, is_nullish, next_tick,
+    arg, await_then, call_method, captures, closure, get, intrinsics, is_nullish, next_tick,
     number, on, once, put, put_bool, put_number, remove_listener, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -12,7 +12,7 @@ use quench_runtime::{RootId, RootedError};
 /// `pipeline(...streams, callback)`.
 pub(crate) fn pipeline(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let callback = arg(c, args, args.len().saturating_sub(1));
-    if !is_function(c, callback)? {
+    if !c.is_callable_rooted(callback)? {
         return Err(super::super::util_shared_vm::argument_type_error(c, callback, "streams[stream.length - 1]", "function")?);
     }
     let streams = c.array_rooted(&args[..args.len() - 1])?;
@@ -83,7 +83,7 @@ fn run(c: &mut Context<'_>, streams: RootId, callback: RootId, options: RootId) 
         }
         current = if index == 0 {
             source(c, record, stream)?
-        } else if is_function(c, stream)? {
+        } else if c.is_callable_rooted(stream)? {
             function_stage(c, record, current, stream, index, reading, end, last)?
         } else if is_node_stream(c, stream)? {
             node_stage(c, record, current, stream, end, last)?;
@@ -142,7 +142,7 @@ fn stage_options(c: &mut Context<'_>, record: RootId) -> Outcome {
 
 /// The first stage: a source function's iterable, or the source itself.
 fn source(c: &mut Context<'_>, record: RootId, stream: RootId) -> Outcome {
-    if is_function(c, stream)? {
+    if c.is_callable_rooted(stream)? {
         let options = stage_options(c, record)?;
         let undefined = c.undefined();
         let produced = c.call_rooted(stream, undefined, &[options])?;
@@ -207,7 +207,7 @@ fn function_stage(
     put_bool(c, options, "objectMode", true)?;
     let destination = c.construct_rooted(pass_through, pass_through, &[options])?;
     let then = if is_nullish(c, produced) { c.undefined() } else { get(c, produced, "then")? };
-    if is_function(c, then)? {
+    if c.is_callable_rooted(then)? {
         add_finishes(c, record, 1.0)?;
         let end_flag = c.boolean(end);
         let fulfilled = closure(c, "streamPipelineValue", "", &[record, destination, end_flag])?;
@@ -652,7 +652,7 @@ fn body_failed_now(c: &mut Context<'_>, pump: RootId, error: RootId) -> Result<(
     };
     if opened {
         let method = get(c, iterator, "return")?;
-        if is_function(c, method)? {
+        if c.is_callable_rooted(method)? {
             if let Ok(result) = super::attempt(c.call_rooted(method, iterator, &[]))? {
                 let after = closure(c, "streamPumpClosed", "", &[pump, error])?;
                 return await_then(c, result, after, after);

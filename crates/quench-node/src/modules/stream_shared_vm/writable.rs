@@ -5,7 +5,7 @@ use super::errors::{self, StreamError};
 use super::readable::{adopt_options, encode, is_buffer, is_view, length_of, needs_new, shape_events, view_to_buffer};
 use super::state::{self, bits, change, reset_buffer, writable::*};
 use super::{
-    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsics, is_function, is_null,
+    arg, call_method, captures, closure, define_methods, emit, get, get_slot, intrinsics, is_null,
     is_nullish, is_string, next_tick, number, put, put_number, put_slot, tick, Class, Context, Key, Outcome, Slot,
     Tick,
 };
@@ -106,7 +106,7 @@ enum Written {
 /// `_write(stream, chunk, encoding, cb)`.
 fn write_chunk(c: &mut Context<'_>, stream: RootId, chunk: RootId, encoding: RootId, callback: RootId) -> Result<Written, RootedError> {
     let state = state_of(c, stream)?;
-    let callback = if is_function(c, callback)? { callback } else { intrinsics(c)?.nop };
+    let callback = if c.is_callable_rooted(callback)? { callback } else { intrinsics(c)?.nop };
     if is_null(c, chunk) {
         return Err(errors::throw(c, StreamError::NullValues));
     }
@@ -159,7 +159,7 @@ fn write_chunk(c: &mut Context<'_>, stream: RootId, chunk: RootId, encoding: Roo
 
 pub(crate) fn write(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let (chunk, mut encoding, mut callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
-    if !is_nullish(c, encoding) && is_function(c, encoding)? {
+    if !is_nullish(c, encoding) && c.is_callable_rooted(encoding)? {
         callback = encoding;
         encoding = c.null();
     }
@@ -578,11 +578,11 @@ pub(crate) fn default_write(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
 pub(crate) fn end(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     let state = state_of(c, this)?;
     let (mut chunk, mut encoding, mut callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
-    if is_function(c, chunk)? {
+    if c.is_callable_rooted(chunk)? {
         callback = chunk;
         chunk = c.null();
         encoding = c.null();
-    } else if is_function(c, encoding)? {
+    } else if c.is_callable_rooted(encoding)? {
         callback = encoding;
         encoding = c.null();
     }
@@ -609,7 +609,7 @@ pub(crate) fn end(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome
             error = Some(errors::create(c, StreamError::Destroyed("end"))?);
         }
     }
-    if is_function(c, callback)? {
+    if c.is_callable_rooted(callback)? {
         let field = bits(c, state)?;
         if let Some(error) = error {
             next_tick(c, callback, &[error])?;
@@ -683,7 +683,7 @@ fn prefinish(c: &mut Context<'_>, stream: RootId, state: RootId) -> Result<(), R
         return Ok(());
     }
     let final_method = get(c, stream, "_final")?;
-    if is_function(c, final_method)? && field & state::DESTROYED == 0 {
+    if c.is_callable_rooted(final_method)? && field & state::DESTROYED == 0 {
         change(c, state, FINAL_CALLED | SYNC, 0)?;
         let pending = number(c, state, "pendingcb")?;
         put_number(c, state, "pendingcb", pending + 1.0)?;

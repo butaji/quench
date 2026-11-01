@@ -5,7 +5,7 @@ use super::readable::{adopt_options, needs_new, shape_events, READABLE_EVENTS};
 use super::state::{self, change};
 use super::writable::{WRITABLE_EVENTS, WRITABLE_OPTIONS};
 use super::{
-    arg, call_method, captures, closure, define_methods, get, get_slot, intrinsics, is_function, is_nullish, next_tick,
+    arg, call_method, captures, closure, define_methods, get, get_slot, intrinsics, is_nullish, next_tick,
     number, on, put, put_bool, put_slot, Class, Context, Key, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -160,7 +160,7 @@ pub(crate) fn transform_final(c: &mut Context<'_>, this: RootId, args: &[RootId]
     let callback = arg(c, args, 0);
     let flush = get(c, this, "_flush")?;
     let destroyed = get(c, this, "destroyed")?;
-    if is_function(c, flush)? && !c.truthy_rooted(destroyed)? {
+    if c.is_callable_rooted(flush)? && !c.truthy_rooted(destroyed)? {
         let done = closure(c, "streamTransformFlushed", "", &[this, callback])?;
         c.call_rooted(flush, this, &[done])?;
     } else {

@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::state::{self, bits, change, raw_bits};
 use super::{
-    arg, attempt, call_method, captures, closure, emit, emit_key, get, get_slot, intrinsics, is_function, is_nullish,
+    arg, attempt, call_method, captures, closure, emit, emit_key, get, get_slot, intrinsics, is_nullish,
     put, set_capture, tick, utils, Context, Outcome, Slot, Tick,
 };
 use quench_runtime::{RootId, RootedError};
@@ -77,7 +77,7 @@ pub(crate) fn destroy(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Out
 pub(crate) fn destroy_with(c: &mut Context<'_>, stream: RootId, error: RootId, callback: RootId) -> Result<(), RootedError> {
     let halves = Halves::of(c, stream)?;
     if halves.any(c, state::DESTROYED)? {
-        if is_function(c, callback)? {
+        if c.is_callable_rooted(callback)? {
             let undefined = c.undefined();
             c.call_rooted(callback, undefined, &[])?;
         }
@@ -132,7 +132,7 @@ pub(crate) fn on_destroy(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
     let halves = Halves::of(c, stream)?;
     check_error(c, error, &halves)?;
     halves.set(c, state::CLOSED)?;
-    if is_function(c, callback)? {
+    if c.is_callable_rooted(callback)? {
         let undefined = c.undefined();
         c.call_rooted(callback, undefined, &[error])?;
     }
@@ -260,7 +260,7 @@ pub(crate) fn error_or_destroy_export(c: &mut Context<'_>, _: RootId, args: &[Ro
 /// unconstructed until it calls back.
 pub(crate) fn construct(c: &mut Context<'_>, stream: RootId, callback: RootId) -> Result<(), RootedError> {
     let method = get(c, stream, "_construct")?;
-    if !is_function(c, method)? {
+    if !c.is_callable_rooted(method)? {
         return Ok(());
     }
     let halves = Halves::of(c, stream)?;
@@ -380,11 +380,11 @@ fn destruction(c: &mut Context<'_>, stream: RootId) -> Result<Destruction, Roote
         return Ok(Destruction::Abort(request));
     }
     let destroy = get(c, stream, "destroy")?;
-    if is_function(c, destroy)? {
+    if c.is_callable_rooted(destroy)? {
         return Ok(Destruction::Destroy);
     }
     let close = get(c, stream, "close")?;
-    Ok(if is_function(c, close)? { Destruction::Close } else { Destruction::Emit })
+    Ok(if c.is_callable_rooted(close)? { Destruction::Close } else { Destruction::Emit })
 }
 
 /// `destroyer(stream, err)`: destroy any stream-like value the way it supports.

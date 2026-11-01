@@ -197,13 +197,10 @@ fn read_only(field: Field) -> bool {
 /// The field an accessor's data index names: the readable fields, then the writable ones,
 /// then `bufferedRequestCount`.
 fn field(index: usize) -> Field {
-    READABLE_FIELDS
-        .iter()
-        .chain(WRITABLE_FIELDS)
-        .map(|(_, field)| *field)
-        .chain(std::iter::once(Field::BufferedRequestCount))
-        .nth(index)
-        .expect("accessor index names a field")
+    match index.checked_sub(READABLE_FIELDS.len()) {
+        None => READABLE_FIELDS[index].1,
+        Some(index) => WRITABLE_FIELDS.get(index).map_or(Field::BufferedRequestCount, |(_, field)| *field),
+    }
 }
 
 fn field_index(c: &mut Context<'_>) -> Result<usize, RootedError> {

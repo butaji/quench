@@ -4,7 +4,7 @@
 use super::errors::{self, StreamError};
 use super::readable::is_buffer;
 use super::{
-    arg, await_then, call_method, captures, closure, get, intrinsics, is_function, is_null, is_nullish, is_string,
+    arg, await_then, call_method, captures, closure, get, intrinsics, is_null, is_nullish, is_string,
     next_tick, put, put_bool, Class, Context, Outcome, Slot,
 };
 use quench_runtime::{RootId, RootedError};
@@ -150,7 +150,7 @@ fn is_thenable(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedError> 
         return Ok(false);
     }
     let then = get(c, value, "then")?;
-    is_function(c, then)
+    c.is_callable_rooted(then)
 }
 
 /// `nextSyncWithSyncValues()`.
@@ -334,7 +334,7 @@ fn close(c: &mut Context<'_>, settle: RootId) -> Result<(), RootedError> {
     let error = get(c, settle, "error")?;
     let promise = get(c, settle, "promise")?;
     let throw = get(c, iterator, "throw")?;
-    if !is_nullish(c, error) && is_function(c, throw)? {
+    if !is_nullish(c, error) && c.is_callable_rooted(throw)? {
         match super::attempt(c.call_rooted(throw, iterator, &[error]))? {
             Ok(result) => {
                 let fulfilled = closure(c, "streamFromThrown", "", &[settle])?;
@@ -353,7 +353,7 @@ fn close_return(c: &mut Context<'_>, settle: RootId) -> Result<(), RootedError> 
     let iterator = get(c, record, "iterator")?;
     let promise = get(c, settle, "promise")?;
     let method = get(c, iterator, "return")?;
-    if !is_function(c, method)? {
+    if !c.is_callable_rooted(method)? {
         let undefined = c.undefined();
         return c.resolve_promise_rooted(promise, undefined);
     }
