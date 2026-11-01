@@ -50,7 +50,7 @@ use std::rc::{Rc, Weak};
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod wavefront;
-pub(super) use osr_loop::{NATIVE_FIELD_SHAPES, 
+pub(super) use osr_loop::{CALLEE_CAPTURE, NATIVE_FIELD_SHAPES, 
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion, NativeFieldLoad,
     Observation, RegionAnalysisFailure, RegionRejection, Widening,
 };
@@ -12367,6 +12367,12 @@ impl<H: Host> Vm<H> {
                 self.owned_capture(unsafe { &*slots }, root, slot)
             }
         }
+    }
+
+    /// The depth-0 capture `slot` of a closure environment `env`, as an activation of a
+    /// function closed over it reads it (`lane_load_capture`).
+    pub(super) fn environment_capture(&mut self, env: Value, slot: u16) -> Option<Value> {
+        self.tier_capture(TierCaptures::Environment(env), 0, slot)
     }
 
     /// `tier_capture`, and for a frame the root bindings `jit_owned_capture` also reads.
