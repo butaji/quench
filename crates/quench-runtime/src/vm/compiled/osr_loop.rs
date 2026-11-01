@@ -309,7 +309,7 @@ impl RegionAnalysisFailure {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum FieldReceiver {
     This,
     /// A register the region never writes.
@@ -469,7 +469,8 @@ pub(crate) struct FieldUse {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FieldStore {
-    pub(crate) receiver: Register,
+    /// `this`, or a register the region never writes.
+    pub(crate) receiver: FieldReceiver,
     pub(crate) atom: crate::bytecode::Atom,
     pub(crate) cache_site: u16,
 }
@@ -648,11 +649,13 @@ fn tagged_registers_with_failure(
         .chain(instructions.iter().filter(|instruction| {
             matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
                 && instructions.iter().any(|candidate| candidate.defined_register() == Some(instruction.register_b()))
-        }).flat_map(|instruction| {
+        }).map(|instruction| instruction.register_b()))
+        // Any store of a value only field reads give stores it tagged: it may be an object,
+        // which the entry's barrier on the receiver covers (`lane_loop_entry`).
+        .chain(instructions.iter().filter(|instruction| matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField)).filter_map(|instruction| {
             let value = instruction.register_a();
             let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(value)).peekable();
-            let field_value = definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField);
-            std::iter::once(instruction.register_b()).chain(field_value.then_some(value))
+            (definitions.peek().is_some() && definitions.all(|definition| definition.op() == Op::GetField)).then_some(value)
         }))
         .collect();
     loop {
@@ -767,6 +770,9 @@ pub(crate) struct Inlining {
 /// The capture slot bit an inlined callee's capture read carries (`Inlining::callee_captures`):
 /// no function's own depth-0 slot reaches it, which `inline_region` checks.
 pub(crate) const CALLEE_CAPTURE: u16 = 1 << 15;
+/// The capture slot that carries the activation's `this` into a region whose field reads of
+/// `this` read its current slots (`Lowering::dynamic_field`); no function's slot reaches it.
+pub(crate) const THIS_CAPTURE: u16 = CALLEE_CAPTURE - 1;
 
 /// The exit PC native code reports for an inlined callee's instruction: its region PC with
 /// this bit, which no function PC has (`MAX_REGION_INSTRUCTIONS`).
@@ -1917,7 +1923,9 @@ fn admit_lifetime_roles(
             *register = original[usize::from(*register)];
         }
     }
-    for store in &mut region.field_store_sites { store.receiver = original[usize::from(store.receiver)]; }
+    for store in &mut region.field_store_sites {
+        if let FieldReceiver::Register(register) = &mut store.receiver { *register = original[usize::from(*register)]; }
+    }
     region.held = std::mem::take(&mut region.held).into_iter()
         .map(|(register, (mut path, index))| {
             if let FieldReceiver::Register(root) = &mut path.root {
@@ -2018,6 +2026,20 @@ fn admit_register_roles(
     let mut field_reads = std::collections::BTreeMap::new();
     let mut dynamic_field_reads = std::collections::BTreeMap::new();
     let mut field_stores = std::collections::BTreeMap::new();
+    // The names the region stores on a receiver it never rewrites (`this`, or an unchanged
+    // register): a read of one through that receiver reads its current slot at the read.
+    let written: std::collections::BTreeSet<Register> =
+        instructions.iter().filter_map(|instruction| instruction.defined_register()).collect();
+    let stored_fixed: std::collections::BTreeSet<(crate::bytecode::Atom, FieldReceiver)> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction.op() {
+            Op::SetThisField => Some((instruction.atom_index(), FieldReceiver::This)),
+            Op::SetField | Op::SetFieldStrict if !written.contains(&instruction.register_b()) => {
+                Some((instruction.atom_index(), FieldReceiver::Register(instruction.register_b())))
+            }
+            _ => None,
+        })
+        .collect();
     let mut dynamic_field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers: std::collections::BTreeSet<Register> = instructions
@@ -2046,9 +2068,14 @@ fn admit_register_roles(
                 })
             {
                 dynamic_field_reads.insert(offset as u32, index);
+            } else if path.steps.len() == 1 && stored_fixed.contains(&(path.steps[0].0, path.root)) {
+                dynamic_field_reads.insert(offset as u32, index);
+                if path.root == FieldReceiver::This && !admission.captures.contains(&THIS_CAPTURE) {
+                    admission.captures.push(THIS_CAPTURE);
+                }
             }
         }
-        if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
+        if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
                 return Err(RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(instruction.op()),
@@ -2056,12 +2083,18 @@ fn admit_register_roles(
                     offset,
                 ));
             }
-            let receiver = instruction.register_b();
+            let receiver = if instruction.op() == Op::SetThisField {
+                FieldReceiver::This
+            } else {
+                FieldReceiver::Register(instruction.register_b())
+            };
             let atom = instruction.atom_index();
             let cache_site = instruction.cache_site_index();
             // A receiver the region redefines stores through the VM's cached store at the
             // instruction; every read of its name must then read the current slot too.
-            if defined_registers.contains(&receiver) {
+            if let FieldReceiver::Register(register) = receiver
+                && defined_registers.contains(&register)
+            {
                 let current = |candidate: &WideInstruction| {
                     field_path(*candidate, sites, &paths).is_some_and(|path| {
                         path.steps.len() == 1
@@ -2075,38 +2108,23 @@ fn admit_register_roles(
                 }
                 dynamic_field_stores.insert(offset as u32, (atom, cache_site));
             } else {
-            // A cached read of this atom could otherwise keep using its entry value after a
-            // native store. Be conservative about aliases: reject every same-name read in
-            // this small region.
-            if let Some(read_offset) = instructions.iter().position(|candidate| {
-                candidate.op() == Op::GetField && candidate.atom_index() == atom
-            }) {
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
-                    eprintln!(
-                        "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=read_after_or_before_store atom={atom} read_offset={read_offset} store_offset={offset} receiver={receiver}"
-                    );
+                // The slot pointer is captured at entry, of a receiver the region never
+                // rewrites. A read of the name through that receiver reads the current slot
+                // (`stored_fixed`); any other read of it could alias and keep a stale value.
+                if instructions.iter().any(|candidate| {
+                    candidate.op() == Op::GetField
+                        && candidate.atom_index() == atom
+                        && !field_path(*candidate, sites, &paths)
+                            .is_some_and(|path| path.steps.len() == 1 && path.root == receiver)
+                }) {
+                    return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
                 }
-                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
-            }
-            // The slot pointer is captured at entry. The receiver must therefore stay in its
-            // tagged register for the entire region.
-            if let Some(write_offset) = instructions
-                .iter()
-                .position(|candidate| candidate.defined_register() == Some(receiver))
-            {
-                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
-                    eprintln!(
-                        "QUENCH_JS_JIT_OSR_FIELD_REJECT header={header} reason=store_receiver_redefined atom={atom} write_offset={write_offset} store_offset={offset} receiver={receiver}"
-                    );
-                }
-                return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, offset));
-            }
-            let site = FieldStore { receiver, atom, cache_site };
-            let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
-                field_store_sites.push(site);
-                field_store_sites.len() - 1
-            });
-            field_stores.insert(offset as u32, index);
+                let site = FieldStore { receiver, atom, cache_site };
+                let index = field_store_sites.iter().position(|existing| *existing == site).unwrap_or_else(|| {
+                    field_store_sites.push(site);
+                    field_store_sites.len() - 1
+                });
+                field_stores.insert(offset as u32, index);
             }
         }
         // A field-resolved method call is owned by the existing inliner. Falling back to
@@ -2376,6 +2394,14 @@ fn admit(
                 admission.array(instruction.register_b(), true)?;
             }
             admission.number(instruction.register_c())?;
+        }
+        Op::SetThisField => {
+            let value_register = instruction.register_a();
+            if tagged.contains(&value_register) || !defined_registers.contains(&value_register) {
+                admission.tagged(value_register)?;
+            } else {
+                admission.number(value_register)?;
+            }
         }
         Op::SetField | Op::SetFieldStrict => {
             let value_register = instruction.register_a();
@@ -5102,10 +5128,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// full property semantics once with this PC's live register state written back.
     fn dynamic_field(&mut self, pc: u32, index: usize) -> Option<Typed> {
         let field = *self.region.fields.get(index)?;
-        let FieldReceiver::Register(receiver_register) = field.receiver else {
-            return None;
+        let receiver = match field.receiver {
+            FieldReceiver::Register(receiver_register) => self.register(receiver_register),
+            FieldReceiver::This => {
+                let slot = self.region.captures.iter().position(|slot| *slot == THIS_CAPTURE)?;
+                self.capture(slot)
+            }
+            FieldReceiver::Field(_) => return None,
         };
-        let receiver = self.register(receiver_register);
         if receiver.representation != Representation::Tagged {
             return None;
         }
@@ -6320,7 +6350,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.guard(pc, miss);
                 self.fall_through(pc)
             }
-            Op::SetField | Op::SetFieldStrict => {
+            Op::SetField | Op::SetFieldStrict | Op::SetThisField => {
                 let index = *self.region.field_stores.get(&(pc - self.region.header))?;
                 let pointer = self.field_store_pointer(index);
                 let value = self.register(instruction.register_a());
