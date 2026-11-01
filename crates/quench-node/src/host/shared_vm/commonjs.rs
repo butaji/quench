@@ -377,8 +377,7 @@ fn valid_source(source: &str, source_type: oxc_span::SourceType) -> bool {
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let process_surface = crate::host::removed_javascript("node:bootstrap/process-surface.js")?;
-    context.release_root(process_surface);
+    crate::modules::process_surface::initialize(context)?;
     let global = context.global_root()?;
     let process_key = context.string_rooted("process");
     let process = context.get_property_rooted(global, process_key)?;

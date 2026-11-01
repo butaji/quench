@@ -1666,6 +1666,16 @@ impl<H: Host> Vm<H> {
         Ok(accepted.as_bool().expect("Reflect.set returns a boolean"))
     }
 
+    /// `Reflect.deleteProperty(object, key)`: the object's `[[Delete]]`, whose result says
+    /// whether the property is gone; a strict-mode `delete` throws where it is `false`.
+    pub(crate) fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        let deleted = self.call_reflect_native(&program, Native::ReflectDeleteProperty, &[object, key])?;
+        Ok(deleted.as_bool().expect("Reflect.deleteProperty returns a boolean"))
+    }
+
     /// `Reflect.set(object, name, value)` for a string key the host spells, without
     /// allocating the key: the same `[[Set]]` that `Reflect.set` makes after `ToPropertyKey`.
     pub(crate) fn set_named_property_rooted(

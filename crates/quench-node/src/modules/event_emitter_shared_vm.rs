@@ -68,61 +68,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
-    let once_factory = crate::host::removed_javascript("node:events/once-wrapper.js")?;
-    context.assign_named_property_rooted(data,
-        "onceFactory",
-        once_factory,
-    )?;
-    let emit_bridge = get(context, prototype, "emit")?;
-    context.assign_named_property_rooted(data, "emitBridge", emit_bridge)?;
-    let mut operations = [
-        "emitterEventNames",
-        "emitterListeners",
-        "emitterRawListeners",
-        "emitterListenerCount",
-    ]
-    .into_iter()
-    .map(|name| context.host_function(crate::host::shared_vm::operation(name)))
-    .collect::<Result<Vec<_>, _>>()?;
-    for operation in [
-        "emitterAddListener",
-        "emitterOnce",
-        "emitterRemoveListener",
-        "emitterRemoveAllListeners",
-        "emitterEmit",
-        "emitterEmitListeners",
-        "emitterCaptureResult",
-    ] {
-        operations.push(
-            context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?,
-        );
-    }
-    let reflect = get(context, global, "Reflect")?;
-    operations.push(get(context, reflect, "apply")?);
-    operations.push(context.evaluate_script_rooted(
-        "Function.prototype.call.bind(Function.prototype.call)",
-        "node:events/call.js",
-    )?);
-    operations.push(get(context, data, "shapeKey")?);
-    let factory = crate::host::removed_javascript("node:events/inspection.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &operations)?;
-    for name in [
-        "eventNames",
-        "listeners",
-        "rawListeners",
-        "listenerCount",
-        "addListener",
-        "prependListener",
-        "once",
-        "prependOnceListener",
-        "removeListener",
-        "removeAllListeners",
-        "emit",
-    ] {
-        let value = get(context, api, name)?;
+    for (name, operation, length) in PROTOTYPE_METHODS {
+        let method = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        let _ = length;
         let key = context.string_rooted(name);
-        context.define_data_property_rooted(prototype, key, value, true, true, true)?;
+        context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     }
     for (source, alias) in [("addListener", "on"), ("removeListener", "off")] {
         let value = get(context, prototype, source)?;
@@ -685,12 +635,12 @@ pub(crate) fn once(
     ] {
         context.assign_named_property_rooted(state, name, value)?;
     }
-    let invoke = context.host_function_with_data(
+    // Named as Node's bound wrapper reads.
+    let wrapper = context.host_function_named_with_data(
         crate::host::shared_vm::operation("emitterOnceInvoke"),
+        "bound onceWrapper",
         state,
     )?;
-    let factory = get(context, data, "onceFactory")?;
-    let wrapper = context.call_rooted(factory, missing, &[invoke])?;
     context.assign_named_property_rooted(state, "wrapper", wrapper)?;
     context.assign_named_property_rooted(wrapper, "listener", listener)?;
     let add = get(
@@ -774,6 +724,241 @@ pub(crate) fn emit(
             return Ok(context.boolean(true));
         }
     }
-    let bridge = get(context, data, "emitBridge")?;
-    context.call_rooted(bridge, target, &[event, arguments, listeners])
+    unhandled_or_dispatch(context, target, event, arguments, listeners)
+}
+
+/// Node's `emit` for an event with no listener left to take it: an `'error'` event that no
+/// listener (or only internal listeners of a destroyed stream) handles throws its error, or
+/// `ERR_UNHANDLED_ERROR` describing a non-Error value; anything else dispatches to its
+/// listeners.
+fn unhandled_or_dispatch(
+    context: &mut NativeContext<'_, NodeHost>,
+    target: RootId,
+    event: RootId,
+    arguments: RootId,
+    listeners: RootId,
+) -> Result<RootId, RootedError> {
+    let values = if undefined(context, listeners) {
+        Vec::new()
+    } else if context.is_array_rooted(listeners)? {
+        entries(context, listeners)?
+    } else {
+        vec![listeners]
+    };
+    let error_event = error_event_name(context)?;
+    if !context.strict_equal_rooted(event, error_event)? {
+        return emit_listeners(context, target, &[target, event, arguments, listeners]);
+    }
+    let mut internal_only = !values.is_empty();
+    for listener in &values {
+        let flag = get(context, *listener, "__quenchInternal")?;
+        let yes = context.boolean(true);
+        if !context.strict_equal_rooted(flag, yes)? {
+            internal_only = false;
+            break;
+        }
+    }
+    let owner_destroyed = if internal_only {
+        let owner_key = symbol_for(context, STREAM_OWNER)?;
+        let owner = context.get_property_rooted(target, owner_key)?;
+        if context.is_object_rooted(owner)? {
+            let destroyed = get(context, owner, "destroyed")?;
+            let yes = context.boolean(true);
+            context.strict_equal_rooted(destroyed, yes)?
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if !values.is_empty() && !(internal_only && owner_destroyed) {
+        return emit_listeners(context, target, &[target, event, arguments, listeners]);
+    }
+    let call_arguments = if undefined(context, arguments) { Vec::new() } else { entries(context, arguments)? };
+    if internal_only {
+        for listener in values {
+            if context.is_callable_rooted(listener)? {
+                context.call_rooted(listener, target, &call_arguments)?;
+            }
+        }
+    }
+    let missing = context.undefined();
+    let error = call_arguments.first().copied().unwrap_or(missing);
+    if context.is_error_rooted(error)? {
+        return Err(context.throw(error));
+    }
+    let detail = match super::util_shared_vm::internal_inspect(context)
+        .and_then(|inspect| context.call_rooted(inspect, missing, &[error]))
+        .and_then(|text| context.to_string(text))
+    {
+        Ok(detail) => detail,
+        Err(_) => context.to_string(error)?,
+    };
+    let unhandled = context.error_rooted(&format!("Unhandled error. ({detail})"))?;
+    let code = context.string_rooted("ERR_UNHANDLED_ERROR");
+    context.assign_named_property_rooted(unhandled, "code", code)?;
+    context.assign_named_property_rooted(unhandled, "context", error)?;
+    Err(context.throw(unhandled))
+}
+
+/// The registry symbol a stream stores its owning stream under.
+const STREAM_OWNER: &str = "quench.internal.streamOwner";
+/// `EventEmitter.captureRejectionSymbol`.
+const REJECTION_SYMBOL: &str = "nodejs.rejection";
+
+fn symbol_for(context: &mut NativeContext<'_, NodeHost>, description: &str) -> Result<RootId, RootedError> {
+    let global = context.global_root()?;
+    let symbol = get(context, global, "Symbol")?;
+    let registry = get(context, symbol, "for")?;
+    let description = context.string_rooted(description);
+    context.call_rooted(registry, symbol, &[description])
+}
+
+/// `EventEmitter.prototype`'s methods, as `(name, operation, length)`; each passes `this`
+/// and its arguments to its operation.
+const PROTOTYPE_METHODS: &[(&str, &str, u32)] = &[
+    ("eventNames", "emitterProtoEventNames", 0),
+    ("listeners", "emitterProtoListeners", 1),
+    ("rawListeners", "emitterProtoRawListeners", 1),
+    ("listenerCount", "emitterProtoListenerCount", 2),
+    ("addListener", "emitterProtoAddListener", 2),
+    ("prependListener", "emitterProtoPrependListener", 2),
+    ("once", "emitterProtoOnce", 2),
+    ("prependOnceListener", "emitterProtoPrependOnceListener", 2),
+    ("removeListener", "emitterProtoRemoveListener", 2),
+    ("removeAllListeners", "emitterProtoRemoveAllListeners", 1),
+    ("emit", "emitterProtoEmit", 1),
+];
+
+fn argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], index: usize) -> RootId {
+    match args.get(index) {
+        Some(value) => *value,
+        None => context.undefined(),
+    }
+}
+
+pub(crate) fn proto_event_names(c: &mut NativeContext<'_, NodeHost>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    names(c, missing, &[this])
+}
+
+pub(crate) fn proto_listeners(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (missing, event) = (c.undefined(), argument(c, args, 0));
+    listeners(c, missing, &[this, event])
+}
+
+pub(crate) fn proto_raw_listeners(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (missing, event) = (c.undefined(), argument(c, args, 0));
+    raw_listeners(c, missing, &[this, event])
+}
+
+pub(crate) fn proto_listener_count(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
+    count(c, missing, &[this, event, listener])
+}
+
+fn proto_add(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId], prepend: bool) -> Result<RootId, RootedError> {
+    let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
+    let prepend = c.boolean(prepend);
+    add_listener(c, missing, &[this, event, listener, prepend])
+}
+
+pub(crate) fn proto_add_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    proto_add(c, this, args, false)
+}
+
+pub(crate) fn proto_prepend_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    proto_add(c, this, args, true)
+}
+
+fn proto_once_with(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId], prepend: bool) -> Result<RootId, RootedError> {
+    let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
+    let prepend = c.boolean(prepend);
+    once(c, missing, &[this, event, listener, prepend])
+}
+
+pub(crate) fn proto_once(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    proto_once_with(c, this, args, false)
+}
+
+pub(crate) fn proto_prepend_once_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    proto_once_with(c, this, args, true)
+}
+
+pub(crate) fn proto_remove_listener(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (missing, event, listener) = (c.undefined(), argument(c, args, 0), argument(c, args, 1));
+    remove_listener(c, missing, &[this, event, listener])
+}
+
+pub(crate) fn proto_remove_all_listeners(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (missing, event) = (c.undefined(), argument(c, args, 0));
+    let has_event = c.boolean(!args.is_empty());
+    remove_all_listeners(c, missing, &[this, event, has_event])
+}
+
+pub(crate) fn proto_emit(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (missing, event) = (c.undefined(), argument(c, args, 0));
+    let rest = c.array_rooted(args.get(1..).unwrap_or(&[]))?;
+    emit(c, missing, &[this, event, rest])
+}
+
+/// `EventEmitter` (callable as `EventEmitter.call(this)` and with `new`): runs
+/// `EventEmitter.init` on the receiver.
+pub(crate) fn constructor(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    init(c, this, args)?;
+    Ok(c.undefined())
+}
+
+/// `EventEmitter.init(options)`: a fresh listener store unless the receiver inherits one it
+/// already shadows, `_maxListeners` kept or `undefined`, and the capture-rejections flag.
+pub(crate) fn init(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let shape_key = get(c, data, "shapeKey")?;
+    let capture_key = get(c, data, "captureKey")?;
+    let events = get(c, this, "_events")?;
+    let prototype = c.prototype_rooted(this)?;
+    let inherited = if c.is_object_rooted(prototype)? { get(c, prototype, "_events")? } else { c.undefined() };
+    let fresh = undefined(c, events) || c.strict_equal_rooted(events, inherited)?;
+    if fresh {
+        let store = c.null_object_rooted()?;
+        c.assign_named_property_rooted(this, "_events", store)?;
+        let zero = c.number(0.0);
+        c.assign_named_property_rooted(this, "_eventsCount", zero)?;
+    }
+    let shaped = c.boolean(!fresh);
+    let missing = c.undefined();
+    c.set_property_rooted(this, shape_key, shaped, this)?;
+    let maximum = get(c, this, "_maxListeners")?;
+    if !c.truthy_rooted(maximum)? {
+        c.assign_named_property_rooted(this, "_maxListeners", missing)?;
+    }
+    let options = argument(c, args, 0);
+    let capture = if c.is_object_rooted(options)? { get(c, options, "captureRejections")? } else { missing };
+    let value = if c.truthy_rooted(capture)? {
+        super::event_constructor_shared_vm::validate_capture_rejections(c, missing, &[capture])?;
+        c.boolean(true)
+    } else {
+        let emitter = get(c, data, "emitter")?;
+        let shared = get(c, emitter, "prototype")?;
+        c.get_property_rooted(shared, capture_key)?
+    };
+    c.set_property_rooted(this, capture_key, value, this)?;
+    Ok(missing)
+}
+
+/// Defines the shared `EventEmitter` class as `globalThis.__nodeEventEmitter`.
+pub(crate) fn install_class(c: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<RootId, RootedError> {
+    let emitter = c.host_constructor_named_with_data(crate::host::shared_vm::operation("emitterConstructor"), "EventEmitter", data)?;
+    c.assign_named_property_rooted(data, "emitter", emitter)?;
+    // Node assigns `init` an anonymous function.
+    let init = c.host_function_named_with_data(crate::host::shared_vm::operation("emitterInit"), "", data)?;
+    c.assign_named_property_rooted(emitter, "init", init)?;
+    let rejection = symbol_for(c, REJECTION_SYMBOL)?;
+    c.assign_named_property_rooted(emitter, "captureRejectionSymbol", rejection)?;
+    let no = c.boolean(false);
+    c.assign_named_property_rooted(emitter, "usingDomains", no)?;
+    let global = c.global_root()?;
+    let key = c.string_rooted("__nodeEventEmitter");
+    c.define_data_property_rooted(global, key, emitter, false, false, true)?;
+    Ok(emitter)
 }

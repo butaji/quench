@@ -349,46 +349,6 @@ pub(crate) fn refresh_identity(context: &mut NativeContext<'_, NodeHost>) -> Res
     Ok(())
 }
 
-pub(crate) fn env_define_property(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let target = args.first().copied().unwrap_or_else(|| context.undefined());
-    let key = args.get(1).copied().unwrap_or_else(|| context.undefined());
-    let descriptor = args.get(2).copied().unwrap_or_else(|| context.undefined());
-    let mut valid = true;
-    for name in ["configurable", "enumerable", "writable"] {
-        let key = context.string_rooted(name);
-        let field = context.get_property_rooted(descriptor, key)?;
-        valid &= context.rooted_value(field).and_then(Value::as_bool) == Some(true);
-    }
-    for name in ["get", "set"] {
-        let key = context.string_rooted(name);
-        let field = context.get_property_rooted(descriptor, key)?;
-        valid &= context
-            .rooted_value(field)
-            .is_some_and(|value| value.is_undefined());
-    }
-    if !valid {
-        let error = context.type_error_rooted(
-            "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
-        )?;
-        crate::modules::node_errors_shared_vm::decorate_type_error(
-            context,
-            error,
-            "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
-        )?;
-        return Err(context.throw(error));
-    }
-    let global = context.global_root()?;
-    let reflect_key = context.string_rooted("Reflect");
-    let reflect = context.get_property_rooted(global, reflect_key)?;
-    let define_key = context.string_rooted("defineProperty");
-    let define = context.get_property_rooted(reflect, define_key)?;
-    context.call_rooted(define, reflect, &[target, key, descriptor])
-}
-
 fn install_exit_code(
     context: &mut NativeContext<'_, NodeHost>,
     process: RootId,
@@ -4542,11 +4502,21 @@ pub(crate) fn initialize_env(context: &mut NativeContext<'_, NodeHost>, _: RootI
             Ok(())
         })?;
     }
-    let factory = crate::host::removed_javascript("node:process/env.js")?;
-    let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
-    let delete_env = context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
-    let undefined = context.undefined();
-    let env = context.call_rooted(factory, undefined, &[env, set_env, delete_env])?;
+    // `process.env` is a Proxy whose traps keep its target and the process environment
+    // in step, with Node's string conversion and descriptor rules.
+    let handler = context.null_object_rooted()?;
+    for (trap, operation) in [
+        ("set", "processEnvSet"),
+        ("defineProperty", "processEnvDefineProperty"),
+        ("deleteProperty", "processEnvDeleteProperty"),
+    ] {
+        let function = context.host_function_named(crate::host::shared_vm::operation(operation), trap)?;
+        context.assign_named_property_rooted(handler, trap, function)?;
+    }
+    let global = context.global_root()?;
+    let proxy_key = context.string_rooted("Proxy");
+    let proxy = context.get_property_rooted(global, proxy_key)?;
+    let env = context.construct_rooted(proxy, proxy, &[env, handler])?;
     let key = context.string_rooted("env");
     context.define_data_property_rooted(process, key, env, true, true, true)?;
     Ok(context.undefined())
@@ -4575,4 +4545,111 @@ pub(crate) fn initialize_warning_listener(context: &mut NativeContext<'_, NodeHo
     let key = context.string_rooted(WARNING_EVENT);
     context.define_data_property_rooted(events, key, listener, true, true, true)?;
     Ok(context.undefined())
+}
+
+fn env_argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], index: usize) -> RootId {
+    match args.get(index) {
+        Some(value) => *value,
+        None => context.undefined(),
+    }
+}
+
+/// The `TypeError` converting a Symbol to a string throws.
+fn symbol_conversion_error(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedError, RootedError> {
+    let error = context.type_error_rooted("Cannot convert a Symbol value to a string")?;
+    Ok(context.throw(error))
+}
+
+/// Stores `text` under `key` on the env target as Node's environment stores every key (a
+/// data property, so no inherited setter such as `__proto__`'s runs), and in the process
+/// environment.
+fn env_store(context: &mut NativeContext<'_, NodeHost>, target: RootId, key: RootId, text: &str) -> Result<RootId, RootedError> {
+    let value = context.string_rooted(text);
+    let stored = context.define_data_property_rooted(target, key, value, true, true, true)?;
+    if stored {
+        let missing = context.undefined();
+        let name = context.to_string(key)?;
+        let name = context.string_rooted(&name);
+        set_env(context, missing, &[name, value])?;
+    }
+    Ok(context.boolean(stored))
+}
+
+/// `process.env`'s `set` trap.
+pub(crate) fn env_set(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (target, key, value) = (env_argument(context, args, 0), env_argument(context, args, 1), env_argument(context, args, 2));
+    if context.is_symbol_rooted(key)? || context.is_symbol_rooted(value)? {
+        return Err(symbol_conversion_error(context)?);
+    }
+    if context.string_text(key)?.is_some_and(|key| key.is_empty()) {
+        return Ok(context.boolean(true));
+    }
+    let primitive = context.string_text(value)?.is_some()
+        || context.rooted_value(value).is_some_and(|value| value.as_number().is_some() || value.as_bool().is_some());
+    let pending = context.host_mut().shared_state().borrow().exec_argv.iter().any(|flag| flag == "--pending-deprecation");
+    if !primitive && pending {
+        let process = context.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))?;
+        let emit_key = context.string_rooted("emitWarning");
+        let emit = context.get_property_rooted(process, emit_key)?;
+        let message = context.string_rooted("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it.");
+        let options = context.object_rooted()?;
+        let kind = context.string_rooted("DeprecationWarning");
+        context.assign_named_property_rooted(options, "type", kind)?;
+        let code = context.string_rooted("DEP0104");
+        context.assign_named_property_rooted(options, "code", code)?;
+        context.call_rooted(emit, process, &[message, options])?;
+    }
+    let text = context.to_string(value)?;
+    env_store(context, target, key, &text)
+}
+
+fn invalid_env_descriptor(context: &mut NativeContext<'_, NodeHost>, message: &str) -> Result<RootedError, RootedError> {
+    let error = context.type_error_rooted(message)?;
+    Ok(throw_with_code(context, error, "ERR_INVALID_OBJECT_DEFINE_PROPERTY"))
+}
+
+/// `process.env`'s `defineProperty` trap: only configurable, writable, enumerable data
+/// descriptors, stored as strings.
+pub(crate) fn env_define_property(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (target, key, descriptor) = (env_argument(context, args, 0), env_argument(context, args, 1), env_argument(context, args, 2));
+    if context.is_symbol_rooted(key)? {
+        return Err(invalid_env_descriptor(context, "'process.env' does not accept symbol properties")?);
+    }
+    if context.string_text(key)?.is_some_and(|key| key.is_empty()) {
+        return Ok(context.boolean(true));
+    }
+    let get_key = context.string_rooted("get");
+    let set_key = context.string_rooted("set");
+    if context.has_property_rooted(descriptor, get_key)? || context.has_property_rooted(descriptor, set_key)? {
+        return Err(invalid_env_descriptor(context, "'process.env' does not accept an accessor(getter/setter) descriptor")?);
+    }
+    let yes = context.boolean(true);
+    for flag in ["configurable", "writable", "enumerable"] {
+        let key = context.string_rooted(flag);
+        let value = context.get_property_rooted(descriptor, key)?;
+        if !context.strict_equal_rooted(value, yes)? {
+            return Err(invalid_env_descriptor(context, "'process.env' only accepts a configurable, writable, and enumerable data descriptor")?);
+        }
+    }
+    let value_key = context.string_rooted("value");
+    let value = context.get_property_rooted(descriptor, value_key)?;
+    if context.is_symbol_rooted(value)? {
+        return Err(symbol_conversion_error(context)?);
+    }
+    let text = context.to_string(value)?;
+    env_store(context, target, key, &text)
+}
+
+/// `process.env`'s `deleteProperty` trap.
+pub(crate) fn env_delete_property(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let (target, key) = (env_argument(context, args, 0), env_argument(context, args, 1));
+    let deleted = context.delete_property_rooted(target, key)?;
+    let named = !context.is_symbol_rooted(key)? && !context.string_text(key)?.is_some_and(|key| key.is_empty());
+    if deleted && named {
+        let missing = context.undefined();
+        let name = context.to_string(key)?;
+        let name = context.string_rooted(&name);
+        delete_env(context, missing, &[name])?;
+    }
+    Ok(context.boolean(deleted))
 }

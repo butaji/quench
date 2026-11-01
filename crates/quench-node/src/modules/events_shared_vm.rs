@@ -111,9 +111,9 @@ pub(crate) fn initialize_targets(
     set(context, data, "defaultMaxListeners", maximum)?;
     set(context, data, "maxKey", max_key)?;
     set(context, data, "warnedKey", warned_key)?;
-    let assign = crate::host::removed_javascript("node:events/assignment.js")?;
+    let assign = context.host_function_named(crate::host::shared_vm::operation("strictAssign"), "assign")?;
     set(context, data, "assign", assign)?;
-    let delete = crate::host::removed_javascript("node:events/deletion.js")?;
+    let delete = context.host_function_named(crate::host::shared_vm::operation("strictDelete"), "delete")?;
     set(context, data, "delete", delete)?;
     let string = get(context, global, "String")?;
     set(context, data, "stringCtor", string)?;
@@ -130,7 +130,7 @@ pub(crate) fn initialize_targets(
     set(context, data, "abortListenerOptions", options)?;
     let dispose_symbol = get(context, symbol, "dispose")?;
     set(context, data, "disposeKey", dispose_symbol)?;
-    let dispose_factory = crate::host::removed_javascript("node:events/abort-listener-disposable.js")?;
+    let dispose_factory = context.host_function(crate::host::shared_vm::operation("disposableFactory"))?;
     set(context, data, "disposeFactory", dispose_factory)?;
     set(context, data, "recordsKey", records_key)?;
     set(context, data, "brandKey", brand_key)?;
@@ -485,4 +485,69 @@ pub(crate) fn abort_signal_brand(
     let state = context.weak_map_get_rooted(map, value)?;
     let branded = !context.rooted_value(state).is_some_and(|value| value.is_undefined());
     Ok(context.boolean(branded))
+}
+
+fn argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], index: usize) -> RootId {
+    match args.get(index) {
+        Some(value) => *value,
+        None => context.undefined(),
+    }
+}
+
+/// `(object, key, value) => { 'use strict'; object[key] = value; }`: an assignment that
+/// throws where `[[Set]]` refuses it.
+pub(crate) fn strict_assign(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (object, key, value) = (argument(context, args, 0), argument(context, args, 1), argument(context, args, 2));
+    if !context.set_property_rooted(object, key, value, object)? {
+        let name = context.to_string(key)?;
+        let error = context.type_error_rooted(&format!("Cannot assign to read only property '{name}' of object"))?;
+        return Err(context.throw(error));
+    }
+    Ok(context.undefined())
+}
+
+/// `(object, key) => { 'use strict'; delete object[key]; }`: a deletion that throws where
+/// `[[Delete]]` refuses it.
+pub(crate) fn strict_delete(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (object, key) = (argument(context, args, 0), argument(context, args, 1));
+    if !context.delete_property_rooted(object, key)? {
+        let name = context.to_string(key)?;
+        let error = context.type_error_rooted(&format!("Cannot delete property '{name}' of object"))?;
+        return Err(context.throw(error));
+    }
+    Ok(context.undefined())
+}
+
+/// `(dispose, key) => ({ __proto__: null, [key]() { dispose(); } })`: the disposable an
+/// abort listener registration returns.
+pub(crate) fn disposable_factory(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (dispose, key) = (argument(context, args, 0), argument(context, args, 1));
+    let disposable = context.null_object_rooted()?;
+    let method = context.host_function_with_data(crate::host::shared_vm::operation("disposableDispose"), dispose)?;
+    context.define_data_property_rooted(disposable, key, method, true, true, true)?;
+    Ok(disposable)
+}
+
+/// The disposable's method: calls its `dispose`.
+pub(crate) fn disposable_dispose(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let dispose = context.host_function_data()?;
+    let undefined = context.undefined();
+    context.call_rooted(dispose, undefined, &[])?;
+    Ok(context.undefined())
 }

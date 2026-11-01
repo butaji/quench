@@ -98,13 +98,36 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
         method "processEmitExitEvent" (1) => crate::modules::process_shared_vm::emit_exit_event,
         method "reallyExit" (1) => crate::modules::process_shared_vm::really_exit,
+        method "asyncHookFatalError" (1) => crate::modules::async_hook_registry_shared_vm::fatal_error,
+        method "processConstructor" (0) => crate::modules::process_surface::constructor,
+        method "processProtoAccess" (0) => crate::modules::process_surface::proto_access,
+        method "processLoadEnvFileNone" (0) => crate::modules::process_surface::load_env_file_none,
+        method "processKillPortable" (2) => crate::modules::process_surface::kill_portable,
+        method "emitterProtoMaxGet" (0) => crate::modules::event_limits_shared_vm::proto_max_get,
+        method "emitterProtoMaxSet" (1) => crate::modules::event_limits_shared_vm::proto_max_set,
+        method "emitterConstructor" (1) => crate::modules::event_emitter_shared_vm::constructor,
+        method "emitterInit" (1) => crate::modules::event_emitter_shared_vm::init,
+        method "emitterProtoEventNames" (0) => crate::modules::event_emitter_shared_vm::proto_event_names,
+        method "emitterProtoListeners" (1) => crate::modules::event_emitter_shared_vm::proto_listeners,
+        method "emitterProtoRawListeners" (1) => crate::modules::event_emitter_shared_vm::proto_raw_listeners,
+        method "emitterProtoListenerCount" (2) => crate::modules::event_emitter_shared_vm::proto_listener_count,
+        method "emitterProtoAddListener" (2) => crate::modules::event_emitter_shared_vm::proto_add_listener,
+        method "emitterProtoPrependListener" (2) => crate::modules::event_emitter_shared_vm::proto_prepend_listener,
+        method "emitterProtoOnce" (2) => crate::modules::event_emitter_shared_vm::proto_once,
+        method "emitterProtoPrependOnceListener" (2) => crate::modules::event_emitter_shared_vm::proto_prepend_once_listener,
+        method "emitterProtoRemoveListener" (2) => crate::modules::event_emitter_shared_vm::proto_remove_listener,
+        method "emitterProtoRemoveAllListeners" (1) => crate::modules::event_emitter_shared_vm::proto_remove_all_listeners,
+        method "emitterProtoEmit" (1) => crate::modules::event_emitter_shared_vm::proto_emit,
+        method "strictAssign" (3) => crate::modules::events_shared_vm::strict_assign,
+        method "strictDelete" (2) => crate::modules::events_shared_vm::strict_delete,
+        method "disposableFactory" (2) => crate::modules::events_shared_vm::disposable_factory,
+        method "disposableDispose" (0) => crate::modules::events_shared_vm::disposable_dispose,
         method "processStreamWrite" (1) => crate::modules::process_shared_vm::stream_write,
         method "processStdioEnd" (3) => crate::modules::process_shared_vm::stdio_end,
         method "processStdioEndCallback" (0) => crate::modules::process_shared_vm::stdio_end_callback,
         method "processStdioReference" (0) => crate::modules::process_shared_vm::stdio_reference,
         method "processGlobalGet" (0) => crate::modules::process_shared_vm::global_get,
         method "processGlobalSet" (1) => crate::modules::process_shared_vm::global_set,
-        method "processEnvDefineProperty" (3) => crate::modules::process_shared_vm::env_define_property,
         method "processOpenStdin" (0) => crate::modules::process_stdin_shared_vm::open,
         method "processStdin" (0) => crate::modules::process_stdin_shared_vm::get,
         method "processStdinRead" (1) => crate::modules::process_stdin_shared_vm::read,
@@ -205,6 +228,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "reportBindingGetReport" (0) => crate::modules::report_configuration_shared_vm::binding_get_report,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
+        method "processEnvSet" (4) => crate::modules::process_shared_vm::env_set,
+        method "processEnvDefineProperty" (3) => crate::modules::process_shared_vm::env_define_property,
+        method "processEnvDeleteProperty" (2) => crate::modules::process_shared_vm::env_delete_property,
         method "processDeleteEnv" (1) => crate::modules::process_shared_vm::delete_env,
         method "processGetSharedEnv" (1) => crate::modules::process_shared_vm::get_shared_env,
         method "processBinding" (1) => crate::modules::process_binding_shared_vm::binding,
@@ -1538,18 +1564,8 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
     let capture_key =
         crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
-    let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
-    let dispatch =
-        context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
-    let emitter_factory = crate::host::removed_javascript("node:bootstrap/event-emitter.js")?;
-    let undefined = context.undefined();
-    let inspector = context.host_function(operation("emitterErrorInspector"))?;
-    let event_emitter = context.call_rooted(
-        emitter_factory,
-        undefined,
-        &[shape_key, capture_key, validate, dispatch, inspector],
-    )?;
-    context.release_root(event_emitter);
+    let _ = (shape_key, capture_key);
+    crate::modules::event_emitter_shared_vm::install_class(context, event_data)?;
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;
     crate::modules::event_limits_shared_vm::initialize(context)?;

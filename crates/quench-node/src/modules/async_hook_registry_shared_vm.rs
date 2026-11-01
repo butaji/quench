@@ -95,7 +95,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
         return Ok(api);
     }
     let api = context.null_object_rooted()?;
-    let fatal_error = crate::host::removed_javascript("node:async_hooks/fatal-error.js")?;
+    let fatal_error = context.host_function_named(
+        crate::host::shared_vm::operation("asyncHookFatalError"),
+        "asyncHookFatalError",
+    )?;
     let fatal_error_key = context.string_rooted("fatalError");
     context.define_data_property_rooted(api, fatal_error_key, fatal_error, true, false, true)?;
     let operations = context
@@ -459,4 +462,36 @@ impl Registry {
         self.api = crate::host::startup_snapshot::HostSnap::read(reader)?;
         Ok(())
     }
+}
+
+/// A hook callback's error ends the process: its stack (or `Error: <value>`) goes to stderr
+/// through `process._rawDebug`, then `process.exit(1)`.
+pub(crate) fn fatal_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let error = match args.first() {
+        Some(error) => *error,
+        None => context.undefined(),
+    };
+    let stack = if context.is_object_rooted(error)? {
+        let key = context.string_rooted("stack");
+        let stack = context.get_property_rooted(error, key)?;
+        context.string_text(stack)?
+    } else {
+        None
+    };
+    let message = match stack {
+        Some(stack) => stack,
+        None => format!("Error: {}", context.to_string(error)?),
+    };
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let raw_debug = get(context, process, "_rawDebug")?;
+    let message = context.string_rooted(&message);
+    context.call_rooted(raw_debug, process, &[message])?;
+    let exit = get(context, process, "exit")?;
+    let code = context.number(1.0);
+    context.call_rooted(exit, process, &[code])
 }

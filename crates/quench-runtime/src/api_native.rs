@@ -2002,6 +2002,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// `Reflect.deleteProperty(object, key)`.
+    pub fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.delete_property_rooted(object, key);
+        result.map_err(|error| self.error(error))
+    }
+
     /// `define_data_property_rooted` with a string key the host spells, without allocating
     /// the key where the object is plain.
     pub fn define_named_data_property_rooted(

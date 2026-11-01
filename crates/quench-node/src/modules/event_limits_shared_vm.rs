@@ -74,37 +74,23 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let mut operations = Vec::new();
-    for name in [
-        "eventsDefaultMaxGet",
-        "eventsDefaultMaxSet",
-        "emitterMaxGet",
-        "emitterMaxSet",
-        "eventsMaxGet",
-        "eventsMaxSet",
-    ] {
-        operations
-            .push(context.host_function_with_data(crate::host::shared_vm::operation(name), data)?);
-    }
-    let factory = crate::host::removed_javascript("node:events/limits.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &operations)?;
     let global = context.global_root()?;
     let emitter = get(context, global, "__nodeEventEmitter")?;
     let prototype = get(context, emitter, "prototype")?;
-    for (target, name, projection) in [
-        (prototype, "getMaxListeners", "get"),
-        (prototype, "setMaxListeners", "set"),
-        (emitter, "getMaxListeners", "globalGet"),
-        (emitter, "setMaxListeners", "globalSet"),
+    // Node's `EventEmitter.setMaxListeners` is an anonymous function assignment.
+    for (target, name, function_name, operation) in [
+        (prototype, "getMaxListeners", "getMaxListeners", "emitterProtoMaxGet"),
+        (prototype, "setMaxListeners", "setMaxListeners", "emitterProtoMaxSet"),
+        (emitter, "getMaxListeners", "getMaxListeners", "eventsMaxGet"),
+        (emitter, "setMaxListeners", "", "eventsMaxSet"),
     ] {
         let key = context.string_rooted(name);
-        let value = get(context, api, projection)?;
+        let value = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), function_name, data)?;
         context.define_data_property_rooted(target, key, value, true, true, true)?;
     }
     let descriptor = context.null_object_rooted()?;
-    let getter = get(context, api, "defaultGet")?;
-    let setter = get(context, api, "defaultSet")?;
+    let getter = context.host_function_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxGet"), "get", data)?;
+    let setter = context.host_function_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxSet"), "set", data)?;
     set(context, descriptor, "get", getter)?;
     set(context, descriptor, "set", setter)?;
     let yes = context.boolean(true);
@@ -328,4 +314,25 @@ pub(super) fn registered(
     let emit_warning = get(context, process, "emitWarning")?;
     context.call_rooted(emit_warning, process, &[warning])?;
     Ok(undefined)
+}
+
+/// `EventEmitter.prototype.getMaxListeners()`.
+pub(crate) fn proto_max_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    emitter_get(context, missing, &[this])
+}
+
+/// `EventEmitter.prototype.setMaxListeners(n)`.
+pub(crate) fn proto_max_set(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let value = args.first().copied().unwrap_or(missing);
+    emitter_set(context, missing, &[this, value])
 }
