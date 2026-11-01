@@ -6444,6 +6444,9 @@ enum JsCalloutStep {
     Stop(JsNativeStep),
 }
 
+/// Dynamic dispatch selects its opcode from the instruction, not a specialization.
+const DYNAMIC_JS_OPCODE: usize = Op::COUNT;
+
 unsafe extern "C" fn js_step_callout<H: Host>(
     context: *mut CallContext,
     function: u64,
@@ -6451,7 +6454,7 @@ unsafe extern "C" fn js_step_callout<H: Host>(
     result: *mut u64,
 ) -> i64 {
     // SAFETY: the native entry owns the context and result storage.
-    unsafe { js_semantic_callout::<H, false>(context, function, arguments, result, None) }
+    unsafe { js_semantic_callout::<H, false, DYNAMIC_JS_OPCODE>(context, function, arguments, result) }
 }
 
 struct StaticJsOperation<H: Host> {
@@ -6636,28 +6639,32 @@ pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>
 ) -> i64 {
     #[cfg(feature = "profile-native-ops")]
     super::native_op_profile::record(OPCODE);
-    // Resolve the complete semantic descriptor before emitting this helper.
-    let operation = const {
-        match Op::from_index(OPCODE) {
-            Some(opcode) => Some(StaticJsOperation {
-                opcode,
-                execute: Vm::<H>::resolve_step_operation(opcode),
-            }),
-            None => None,
-        }
-    };
     // SAFETY: forwarded from this entry's native ABI contract. Invalid opcode
     // constants are reported inside the shared exception boundary.
-    unsafe { js_semantic_callout::<H, true>(context.cast(), pc, arguments, result, operation) }
+    unsafe { js_semantic_callout::<H, true, OPCODE>(context.cast(), pc, arguments, result) }
 }
 
-unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool>(
+unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCODE: usize>(
     context: *mut CallContext,
     function: u64,
     arguments: *const u64,
     result: *mut u64,
-    operation: Option<StaticJsOperation<H>>,
 ) -> i64 {
+    // Keep the opcode static through the shared exception/continuation boundary,
+    // so specialization resolves the operation and its guards in this body.
+    let operation = const {
+        if SINGLE_OPERATION {
+            match Op::from_index(OPCODE) {
+                Some(opcode) => Some(StaticJsOperation {
+                    opcode,
+                    execute: Vm::<H>::resolve_step_operation(opcode),
+                }),
+                None => None,
+            }
+        } else {
+            None
+        }
+    };
     // The shared trampoline marks its active context while native code runs.
     // Clear it while Rust semantics and any host or guest helper run, so a
     // fault there is never mistaken for a generated-code fault.
@@ -16415,6 +16422,7 @@ mod tests {
         for entry in [
             native_js_operation_entry::<crate::test_host::TestHost, { Op::LoadConst as usize }>,
             native_js_operation_entry::<crate::test_host::TestHost, { Op::COUNT }>,
+            native_js_operation_entry::<crate::test_host::TestHost, { usize::MAX }>,
         ] {
             let (status, _, outcome) = invoke_semantic(&mut vm, pc, entry);
             assert_eq!(status, 1);
