@@ -29,12 +29,14 @@ impl Pool {
             let receiver = Arc::clone(&receiver);
             std::thread::Builder::new()
                 .name(format!("quench-work-{i}"))
-                .spawn(move || loop {
-                    let next = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                    let Ok(job) = next else { break };
-                    // A failed work item drops its real completion sender. Its VM owner sees
-                    // disconnection; keep the remaining pool available for independent work.
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                .spawn(move || {
+                    loop {
+                        let next = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                        let Ok(job) = next else { break };
+                        // A failed work item drops its real completion sender. Its VM owner sees
+                        // disconnection; keep the remaining pool available for independent work.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                    }
                 })
                 .map_err(|e| e.to_string())?;
         }

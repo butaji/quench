@@ -546,7 +546,9 @@ impl<H: Host> Vm<H> {
             let target = self.heap.root_value(source).unwrap();
             let key = self.heap.root_value(key).unwrap();
             if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
-                if self.is_host_private_symbol(key) { return Ok(Value::UNDEFINED); }
+                if self.is_host_private_symbol(key) {
+                    return Ok(Value::UNDEFINED);
+                }
                 return self.proxy_own_property_descriptor(p, target, key);
             }
             match self.ordinary_get_own_property(p, target, key)? {

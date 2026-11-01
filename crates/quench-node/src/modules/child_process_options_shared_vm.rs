@@ -196,9 +196,12 @@ impl Identity {
         let Some(options) = options else {
             return Ok(Self::default());
         };
-        let detached = get(context, options, "detached")?;
-        let uid = get(context, options, "uid")?;
-        let gid = get(context, options, "gid")?;
+        // These fields are consumed at the process-launch boundary. Ignore
+        // inherited values so Object.prototype pollution cannot change the
+        // child identity or make an otherwise valid spawn fail with EPERM.
+        let detached = own_option(context, options, "detached")?;
+        let uid = own_option(context, options, "uid")?;
+        let gid = own_option(context, options, "gid")?;
         Ok(Self {
             detached: context
                 .rooted_value(detached)
@@ -246,6 +249,22 @@ impl Identity {
         #[cfg(not(unix))]
         let _ = (self, command);
     }
+}
+
+fn own_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    let descriptor = context.own_property_descriptor_rooted(options, key)?;
+    if context
+        .rooted_value(descriptor)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Ok(context.undefined());
+    }
+    context.get_property_rooted(options, key)
 }
 
 pub(crate) fn validate_file(
@@ -334,11 +353,12 @@ pub(crate) fn sync_options(
 }
 
 pub(super) fn validate_serialization(
-    context: &mut NativeContext<'_, NodeHost>, serialization: RootId,
+    context: &mut NativeContext<'_, NodeHost>,
+    serialization: RootId,
 ) -> Result<(), RootedError> {
     if !context
-            .rooted_value(serialization)
-            .is_some_and(|value| value.is_undefined())
+        .rooted_value(serialization)
+        .is_some_and(|value| value.is_undefined())
         && !matches!(
             context.string_text(serialization)?.as_deref(),
             Some("json" | "advanced")

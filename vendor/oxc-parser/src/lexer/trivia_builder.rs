@@ -265,7 +265,10 @@ impl<'a> TriviaBuilder<'a> {
     /// idempotency once a transform emits `? consequent : // comment\nalternate`.
     fn should_be_treated_as_trailing_comment(&self) -> bool {
         !self.saw_newline
-            && !matches!(self.previous_token.kind(), Kind::Eq | Kind::LParen | Kind::Colon)
+            && !matches!(
+                self.previous_token.kind(),
+                Kind::Eq | Kind::LParen | Kind::Colon
+            )
     }
 
     fn should_stay_leading(comment: &Comment) -> bool {
@@ -640,7 +643,12 @@ mod test {
 
         assert_eq!(comments.len(), expected.len());
         for (comment, expected) in comments.iter().copied().zip(expected) {
-            assert_eq!(comment, expected, "{}", comment.content_span().source_text(source_text));
+            assert_eq!(
+                comment,
+                expected,
+                "{}",
+                comment.content_span().source_text(source_text)
+            );
         }
     }
 
@@ -679,7 +687,11 @@ token /* Trailing 1 */
         let ret = Parser::new(&allocator, source, SourceType::script()).parse();
         assert!(ret.diagnostics.is_empty());
         assert_eq!(ret.program.comments.len(), 3);
-        let expected = [(Span::new(0, 5), "a"), (Span::new(6, 9), ""), (Span::new(10, 14), "")];
+        let expected = [
+            (Span::new(0, 5), "a"),
+            (Span::new(6, 9), ""),
+            (Span::new(10, 14), ""),
+        ];
         for (comment, (span, content)) in ret.program.comments.iter().zip(expected) {
             assert!(comment.is_line());
             assert_eq!(comment.span, span);
@@ -992,7 +1004,11 @@ function bar() {}";
         ];
         for source_text in cases {
             let comments = get_comments_typescript(source_text);
-            assert_eq!(comments[0].content, CommentContent::PureNotApplied, "{source_text}");
+            assert_eq!(
+                comments[0].content,
+                CommentContent::PureNotApplied,
+                "{source_text}"
+            );
         }
     }
 
@@ -1067,7 +1083,11 @@ function bar() {}";
         let comments = get_comments(source_text);
 
         assert_eq!(comments.len(), 2, "{source_text}");
-        assert_eq!(comments[0].content, CommentContent::PureNotApplied, "{source_text}");
+        assert_eq!(
+            comments[0].content,
+            CommentContent::PureNotApplied,
+            "{source_text}"
+        );
         assert_eq!(comments[1].content, CommentContent::Pure, "{source_text}");
         let source_text = concat!(
             "/*#__NO_SIDE_EFFECTS__*/ value;",
@@ -1117,7 +1137,11 @@ function bar() {}";
         ];
         for source_text in cases {
             let comments = get_comments(source_text);
-            assert_eq!(comments[0].content, CommentContent::NoSideEffects, "{source_text}");
+            assert_eq!(
+                comments[0].content,
+                CommentContent::NoSideEffects,
+                "{source_text}"
+            );
         }
     }
 
@@ -1176,12 +1200,21 @@ function bar() {}";
             ("/****/", CommentContent::None),
             ("/* @vite-ignore */", CommentContent::Vite),
             ("/* @vite-xxx */", CommentContent::Vite),
-            ("/* webpackChunkName: 'my-chunk-name' */", CommentContent::Webpack),
+            (
+                "/* webpackChunkName: 'my-chunk-name' */",
+                CommentContent::Webpack,
+            ),
             ("/* webpack */", CommentContent::None),
             ("/* @__PURE__ */", CommentContent::PureNotApplied),
-            ("/* @__NO_SIDE_EFFECTS__ */", CommentContent::NoSideEffectsNotApplied),
+            (
+                "/* @__NO_SIDE_EFFECTS__ */",
+                CommentContent::NoSideEffectsNotApplied,
+            ),
             ("/* #__PURE__ */", CommentContent::PureNotApplied),
-            ("/* #__NO_SIDE_EFFECTS__ */", CommentContent::NoSideEffectsNotApplied),
+            (
+                "/* #__NO_SIDE_EFFECTS__ */",
+                CommentContent::NoSideEffectsNotApplied,
+            ),
             ("/* @__KEY__ */", CommentContent::PropertyKey),
             ("/* #__KEY__ */", CommentContent::PropertyKey),
             ("/*\u{a0}@__KEY__\u{a0}*/", CommentContent::PropertyKey),
@@ -1199,9 +1232,18 @@ function bar() {}";
             ("/* c8 ignore file */", CommentContent::CoverageIgnore),
             ("/* v8 ignore file */", CommentContent::CoverageIgnoreFile),
             ("// v8 ignore file", CommentContent::CoverageIgnoreFile),
-            ("/* v8 ignore file -- @preserve */", CommentContent::CoverageIgnoreFile),
-            ("/* istanbul ignore file */", CommentContent::CoverageIgnoreFile),
-            ("// istanbul ignore file -- generated", CommentContent::CoverageIgnoreFile),
+            (
+                "/* v8 ignore file -- @preserve */",
+                CommentContent::CoverageIgnoreFile,
+            ),
+            (
+                "/* istanbul ignore file */",
+                CommentContent::CoverageIgnoreFile,
+            ),
+            (
+                "// istanbul ignore file -- generated",
+                CommentContent::CoverageIgnoreFile,
+            ),
         ];
 
         for (source_text, expected) in data {

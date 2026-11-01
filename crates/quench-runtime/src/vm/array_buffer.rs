@@ -493,7 +493,16 @@ impl<H: Host> Vm<H> {
                 })?;
         }
         let prototype = self.array_buffer_prototype_from_new_target(p, new_target, shared)?;
-        let bytes = if shared {crate::heap::BufferBytes::from_shared(crate::shared_backing::SharedBacking::new(length,max_byte_length,resizable).map_err(|_|self.range_error(p,"SharedArrayBuffer allocation failed".into()))?)}else{self.array_buffer_zeroed_bytes(p,length)?.into()};
+        let bytes = if shared {
+            crate::heap::BufferBytes::from_shared(
+                crate::shared_backing::SharedBacking::new(length, max_byte_length, resizable)
+                    .map_err(|_| {
+                        self.range_error(p, "SharedArrayBuffer allocation failed".into())
+                    })?,
+            )
+        } else {
+            self.array_buffer_zeroed_bytes(p, length)?.into()
+        };
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
             object: Box::new(Self::empty_object(prototype)),
             bytes,
@@ -659,7 +668,11 @@ impl<H: Host> Vm<H> {
                     );
                 }
             };
-        if self.array_buffers_share_data_block(result,this) || result_shared != shared || result_detached || result_immutable {
+        if self.array_buffers_share_data_block(result, this)
+            || result_shared != shared
+            || result_detached
+            || result_immutable
+        {
             return Err(self.type_error(p, "ArrayBuffer species returned an invalid buffer".into()));
         }
         if result_bytes.len() < count {
@@ -904,7 +917,14 @@ impl<H: Host> Vm<H> {
         if requested < current_length || requested > max_length {
             return Err(self.range_error(p, "SharedArrayBuffer grow length is out of range".into()));
         }
-        if let Some(Cell::ArrayBuffer{bytes,..})=self.heap.get(this){if let Some(backing)=bytes.shared_backing(){backing.grow(requested).map_err(|_|self.range_error(p,"SharedArrayBuffer grow failed".into()))?;return Ok(Value::UNDEFINED)}}
+        if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(this) {
+            if let Some(backing) = bytes.shared_backing() {
+                backing
+                    .grow(requested)
+                    .map_err(|_| self.range_error(p, "SharedArrayBuffer grow failed".into()))?;
+                return Ok(Value::UNDEFINED);
+            }
+        }
         let (before, after) = {
             let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(this) else {
                 unreachable!("grow receiver validated before mutation");

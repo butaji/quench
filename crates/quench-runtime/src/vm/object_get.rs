@@ -91,7 +91,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn diagnostic_own_property(&self, object: Value, key: PropertyKey) -> DiagnosticProperty {
         if self.default_function_name_info(object, key)
             || self.proxy_parts(object).is_some()
-            || self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor)
+            || self
+                .property_attributes(object, key)
+                .is_some_and(|attributes| attributes.accessor)
         {
             return DiagnosticProperty::Blocked;
         }
@@ -104,7 +106,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
-    pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
+    pub(super) fn diagnostic_data_property(
+        &self,
+        mut object: Value,
+        key: PropertyKey,
+    ) -> Option<Value> {
         loop {
             let data = self.object_data(object)?;
             match self.diagnostic_own_property(object, key) {
@@ -113,19 +119,35 @@ impl<H: Host> Vm<H> {
                 DiagnosticProperty::Absent => {}
             }
             object = data.proto();
-            if object.is_null() { return None; }
+            if object.is_null() {
+                return None;
+            }
         }
     }
 
-    pub(super) fn nullish_property_error(&mut self, p: &ResidualProgram, object: Value, property: Option<&str>) -> JsError {
-        let kind = if object.is_null() { "null" } else { "undefined" };
-        let message = match property { Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"), None => format!("Cannot read properties of {kind}") };
+    pub(super) fn nullish_property_error(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        property: Option<&str>,
+    ) -> JsError {
+        let kind = if object.is_null() {
+            "null"
+        } else {
+            "undefined"
+        };
+        let message = match property {
+            Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"),
+            None => format!("Cannot read properties of {kind}"),
+        };
         self.type_error(p, message)
     }
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         let (program, slot) = self.object_data(object)?.module_binding(atom)?;
-        if let Some(value) = self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot)) {
+        if let Some(value) =
+            self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot))
+        {
             return Some(value);
         }
         let environment = self.programs.module_environment(program)?;
@@ -328,13 +350,25 @@ impl<H: Host> Vm<H> {
                 let receiver = self.heap.root_value(receiver).unwrap();
                 let value = self.heap.root_value(value).unwrap();
                 if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
-                    return self.proxy_set_mode(p, inner, handler, receiver, property, value, strict);
+                    return self
+                        .proxy_set_mode(p, inner, handler, receiver, property, value, strict);
                 }
                 return match property {
                     PropertyKey::String(atom) => {
-                        let written = self.set_property_with_receiver(p, delegate_target, atom, value, receiver)?;
+                        let written = self.set_property_with_receiver(
+                            p,
+                            delegate_target,
+                            atom,
+                            value,
+                            receiver,
+                        )?;
                         if !written && strict {
-                            return Err(self.rejected_assignment_error(p, self.heap.root_value(target).unwrap(), atom, true));
+                            return Err(self.rejected_assignment_error(
+                                p,
+                                self.heap.root_value(target).unwrap(),
+                                atom,
+                                true,
+                            ));
                         }
                         Ok(written)
                     }
@@ -365,7 +399,10 @@ impl<H: Host> Vm<H> {
             if !self.truthy(result) {
                 if strict {
                     let property = self.detail_string(self.heap.root_value(key).unwrap());
-                    return Err(self.type_error(p, format!("'set' on proxy: trap returned falsish for property '{property}'")));
+                    return Err(self.type_error(
+                        p,
+                        format!("'set' on proxy: trap returned falsish for property '{property}'"),
+                    ));
                 }
                 return Ok(false);
             }
@@ -410,14 +447,20 @@ impl<H: Host> Vm<H> {
         receiver: Value,
     ) -> Result<Value, JsError> {
         if self.is_host_private_symbol(key) {
-            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) { return Ok(Value::UNDEFINED); }
-            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else { return Ok(Value::UNDEFINED); };
+            if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
+                return Ok(Value::UNDEFINED);
+            }
+            let Some((value, attributes)) = self.ordinary_own_property(p, object, key)? else {
+                return Ok(Value::UNDEFINED);
+            };
             return if attributes.accessor {
                 match attributes.getter.filter(|value| !value.is_undefined()) {
                     Some(getter) => self.call_value(p, getter, receiver, &[]),
                     None => Ok(Value::UNDEFINED),
                 }
-            } else { Ok(value) };
+            } else {
+                Ok(value)
+            };
         }
         if object == receiver
             && let Some(value) = self.plain_property_get(object, PropertyKey::symbol(key))
@@ -955,8 +998,10 @@ impl<H: Host> Vm<H> {
             Some(super::property_key::PropertyKey::string(atom)),
         )?;
         if private_name {
-            self.check_private_brand(p, private_target, atom)?;
-            if let Some(value) = self.private_field_value(p, private_target, atom) { return Ok(value); }
+            self.check_private_brand_for_read(p, private_target, atom)?;
+            if let Some(value) = self.private_field_value(p, private_target, atom) {
+                return Ok(value);
+            }
         }
         loop {
             self.evaluate_deferred_namespace_for_key(
@@ -1288,6 +1333,37 @@ impl<H: Host> Vm<H> {
         Err(self.type_error(p, "private member is not present on this object".into()))
     }
 
+    /// Report a failed private read with V8/Node's public error wording. Keep
+    /// `check_private_brand` unchanged for writes and brand checks whose error
+    /// semantics are distinct from reading a private member.
+    pub(super) fn check_private_brand_for_read(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        atom: Atom,
+    ) -> Result<(), JsError> {
+        if self.has_private_brand(p, target, atom) {
+            return Ok(());
+        }
+        Err(self.undeclared_private_read_error(p, atom))
+    }
+
+    /// V8/Node's TypeError for reading private member `atom` from an object without its brand.
+    fn undeclared_private_read_error(&mut self, p: &ResidualProgram, atom: Atom) -> JsError {
+        let name = self.atom_name(atom);
+        let member = if name.starts_with('#') {
+            name.to_owned()
+        } else {
+            format!("#{name}")
+        };
+        self.type_error(
+            p,
+            format!(
+                "Cannot read private member {member} from an object whose class did not declare it"
+            ),
+        )
+    }
+
     pub(super) fn has_private_brand(
         &mut self,
         p: &ResidualProgram,
@@ -1422,9 +1498,11 @@ impl<H: Host> Vm<H> {
         proxy: Value,
         atom: Atom,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.private_field_value(p, proxy, atom) { return Ok(value); }
+        if let Some(value) = self.private_field_value(p, proxy, atom) {
+            return Ok(value);
+        }
         let Some(home) = self.private_brand_home(p, proxy, atom) else {
-            return Err(self.type_error(p, "private member is not present on this object".into()));
+            return Err(self.undeclared_private_read_error(p, atom));
         };
         if let Some(value) = self.own_property(proxy, atom) {
             return Ok(value);

@@ -122,6 +122,15 @@ fn string_array(
 }
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    // Node disables trace_events inside Worker isolates because the tracing
+    // provider is owned by the process main thread. Keep the module unavailable
+    // in the same way instead of exposing an isolated per-worker trace facade.
+    if crate::modules::worker_threads_shared_vm::is_child(context) {
+        let error = context.error_rooted("Trace events are unavailable")?;
+        let code = context.string_rooted("ERR_TRACE_EVENTS_UNAVAILABLE");
+        put(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
     let api = context.null_object_rooted()?;
     let state =
         context.evaluate_script_rooted("new WeakMap()", "node:trace_events/private-state")?;
@@ -372,7 +381,8 @@ pub(crate) fn internal_binding(
 }
 
 fn build_internal_binding(
-    context: &mut NativeContext<'_, NodeHost>, name: &str,
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
 ) -> Result<RootId, RootedError> {
     match name {
         #[cfg(unix)]
@@ -385,17 +395,21 @@ fn build_internal_binding(
         "report" => return super::report_configuration_shared_vm::binding(context),
         #[cfg(unix)]
         "process_methods" => return super::process_metrics_shared_vm::binding(context),
-        "modules" => return crate::host::shared_vm::commonjs::cached_native_binding(
-            context, "\0binding:modules", module_protocol_binding,
-        ),
+        "modules" => {
+            return crate::host::shared_vm::commonjs::cached_native_binding(
+                context,
+                "\0binding:modules",
+                module_protocol_binding,
+            );
+        }
         "stream_wrap" => return super::stream_binding::binding(context),
+        "tty_wrap" => return tty_binding(context),
         "udp_wrap" => return super::udp_binding::binding(context),
         "pipe_wrap" => return super::pipe_binding::binding(context),
         "tcp_wrap" => return super::tcp_binding::binding(context),
         "contextify" => return super::contextify_shared_vm::binding(context),
         "types" => return super::util_shared_vm::types_binding(context),
-        #[cfg(quench_openssl_provider)]
-        "messaging" => return super::dom_exception_shared_vm::module(context),
+        "messaging" => return super::messaging_binding_shared_vm::binding(context),
         "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
         "options" => return super::cli_options_shared_vm::binding(context),
@@ -417,6 +431,7 @@ fn build_internal_binding(
         }
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "cares_wrap" => return crate::host::shared_vm::commonjs::cares_binding(context),
+        "http_parser" => return super::http_common_shared_vm::module(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
         "buffer" => return super::buffer_binding_shared_vm::binding(context),
         "url" => return super::url_binding_shared_vm::binding(context),
@@ -442,6 +457,13 @@ fn build_internal_binding(
             put(context, binding, "usePerfetto", perfetto)?;
             Ok(binding)
         }
+        "cjs_lexer" => {
+            let binding = context.object_rooted()?;
+            let parse =
+                context.host_function(crate::host::shared_vm::operation("cjsLexerParse"))?;
+            put(context, binding, "parse", parse)?;
+            Ok(binding)
+        }
         "constants" => {
             let binding = context.object_rooted()?;
             let fs = super::fs_shared_vm::fs_constants(context)?;
@@ -453,7 +475,8 @@ fn build_internal_binding(
             }
             let zlib = super::zlib_constants::constants(context)?;
             put(context, binding, "zlib", zlib)?;
-            let crypto=super::crypto_constants::binding(context)?;put(context,binding,"crypto",crypto)?;
+            let crypto = super::crypto_constants::binding(context)?;
+            put(context, binding, "crypto", crypto)?;
             let trace = context.object_rooted()?;
             for (name, code) in [
                 ("TRACE_EVENT_PHASE_BEGIN", b'B'),
@@ -477,6 +500,83 @@ fn build_internal_binding(
             return Err(context.throw(error));
         }
     }
+}
+
+pub(crate) fn cjs_lexer_parse(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let absent = context.undefined();
+    let source = args.first().copied().unwrap_or(absent);
+    let source_text = if undefined(context, source)
+        || context
+            .rooted_value(source)
+            .is_some_and(|value| value.is_null())
+    {
+        String::new()
+    } else if let Some(source) = context.string_text(source)? {
+        source
+    } else {
+        let error = context.type_error_rooted("source must be a string")?;
+        return Err(context.throw(error));
+    };
+    let (exports, reexports) = crate::host::shared_vm::commonjs_exports::parse(&source_text);
+    let export_values = exports
+        .iter()
+        .map(|name| context.string_rooted(name))
+        .collect::<Vec<_>>();
+    let reexport_values = reexports
+        .iter()
+        .map(|name| context.string_rooted(name))
+        .collect::<Vec<_>>();
+    let export_values = context.array_rooted(&export_values)?;
+    let reexport_values = context.array_rooted(&reexport_values)?;
+    let global = context.global_root()?;
+    let set_constructor = get(context, global, "Set")?;
+    let export_set =
+        context.construct_rooted(set_constructor, set_constructor, &[export_values])?;
+    context.array_rooted(&[export_set, reexport_values])
+}
+
+/// Surface the parts of Node's tty_wrap binding used by the public tty module
+/// and by code that inspects native stream prototype descriptors. The runtime
+/// does not expose a terminal handle, so isTTY reports false and the handle
+/// constructor preserves the public shape while its descriptor accessors
+/// reject forged receivers like Node's native accessors do.
+fn tty_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let source = r#"(() => {
+      const streamBase = {};
+      const invalid = function() { throw new TypeError('Illegal invocation'); };
+      for (const name of ['bytesRead', 'fd', '_externalStream']) {
+        Object.defineProperty(streamBase, name, { get: invalid, configurable: true });
+      }
+      function TTY(fd, ctx) {
+        if (!(this instanceof TTY)) return new TTY(fd, ctx);
+        this._handle = this;
+        this.fd = fd;
+        if (ctx && typeof ctx === 'object') ctx.code = undefined;
+      }
+      TTY.prototype = Object.create(streamBase);
+      Object.defineProperties(TTY.prototype, {
+        constructor: { value: TTY, writable: true, configurable: true },
+        setBlocking: { value() {}, writable: true, configurable: true },
+        setRawMode: { value() { return 0; }, writable: true, configurable: true },
+        getWindowSize: { value(size) { if (size) { size[0] = 0; size[1] = 0; } return 0; }, writable: true, configurable: true },
+        readStart: { value() { return 0; }, writable: true, configurable: true },
+        readStop: { value() { return 0; }, writable: true, configurable: true },
+        close: { value() {}, writable: true, configurable: true }
+      });
+      return {
+        TTY,
+        isTTY() { return false; },
+        UV_TTY_MODE_NORMAL: 0,
+        UV_TTY_MODE_RAW: 1,
+        UV_TTY_MODE_IO: 2,
+        UV_TTY_MODE_RAW_VT: 3
+      };
+    })()"#;
+    context.evaluate_script_rooted(source, "internalBinding/tty_wrap.js")
 }
 
 fn required_string(
@@ -630,10 +730,14 @@ fn refresh_category_buffers(context: &mut NativeContext<'_, NodeHost>) -> Result
     result
 }
 
-fn module_protocol_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+fn module_protocol_binding(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
-    let statuses = super::node_protocol_constants::COMPILE_CACHE_STATUS.iter()
-        .map(|status| context.string_rooted(status)).collect::<Vec<_>>();
+    let statuses = super::node_protocol_constants::COMPILE_CACHE_STATUS
+        .iter()
+        .map(|status| context.string_rooted(status))
+        .collect::<Vec<_>>();
     let statuses = context.array_rooted(&statuses)?;
     put(context, binding, "compileCacheStatus", statuses)?;
     let types = context.null_object_rooted()?;

@@ -18,6 +18,13 @@ pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
     names.into_iter().collect()
 }
 
+/// A CommonJS source's export and re-export names, as Node's `cjs-module-lexer` binding
+/// reports them (`file_exports`).
+pub(crate) fn parse(source: &str) -> (Vec<String>, Vec<String>) {
+    let FileExports { names, reexports } = file_exports(source);
+    (names, reexports)
+}
+
 fn collect(
     path: &Path,
     source: &str,

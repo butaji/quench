@@ -4430,7 +4430,12 @@ fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
 fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
-    let value = vm.object_pair(unsafe { &*(*cx).code }, i.imm() as usize, r.get(i.b), r.get(i.c));
+    let value = vm.object_pair(
+        unsafe { &*(*cx).code },
+        i.imm() as usize,
+        r.get(i.b),
+        r.get(i.c),
+    );
     note_allocation(vm);
     value
 }
@@ -10147,7 +10152,11 @@ impl<H: Host> Vm<H> {
     /// The lane's `this` for frame `frame` (`LaneContext::this`).
     fn frame_lane_this(&self, frame: usize) -> Value {
         let frame = &self.frames[frame];
-        if frame.fixed_this { frame.this } else { Value::DELETED }
+        if frame.fixed_this {
+            frame.this
+        } else {
+            Value::DELETED
+        }
     }
 
     /// The cached frameless target of a lane call to `callee`, if resolved, in place: its
@@ -13110,7 +13119,12 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
     let script = activation.script().filter(|script| script.forwards)?;
     let registers = usize::from(unsafe { &*(*cx).code }.function(activation.function as usize).registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
-    let values = unsafe { vm.lane_stack.values.as_ptr().add(activation.window + registers) };
+    let values = unsafe {
+        vm.lane_stack
+            .values
+            .as_ptr()
+            .add(activation.window + registers)
+    };
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
 }
 
@@ -13342,7 +13356,8 @@ script_handler! {
 /// holds (`Vm::construct_target`): a lane activation would not bind it.
 #[inline(always)]
 fn lane_constructing<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
-    vm.construct_target.is_some_and(|target| target.callee == callee)
+    vm.construct_target
+        .is_some_and(|target| target.callee == callee)
 }
 
 #[inline(always)]
@@ -14271,7 +14286,9 @@ fn lane_script_call_frame<H: Host>(ip: Ip) -> Ip {
     vm.materialize_lane_activations(cx);
     if values_full {
         let capacity = vm.lane_stack.values.capacity();
-        vm.lane_stack.values.reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
+        vm.lane_stack
+            .values
+            .reserve((2 * capacity).max(LANE_SCRIPT_WINDOW));
     }
     if activations_full {
         let capacity = vm.lane_stack.activations.capacity();
@@ -16401,8 +16418,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                             | Op::MakeObject2
                             | Op::MakeObjectLiteral
                             | Op::SuperConstArrayObject2
-                    )
-                        || (op == Op::Binary && instruction.returns_from_frame())) =>
+                    ) || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
             }
@@ -16725,15 +16741,19 @@ fn derive_lane_view<'live, H: Host>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
-                    LaneHandler::producer(match acc {
-                        ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
-                        ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
-                        ACC_B => lane_f64_sqrt::<H, ACC_B> as Handler,
-                        ACC_C => lane_f64_sqrt::<H, ACC_C> as Handler,
-                        _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
+                tables[usize::from(backward_jump)][usize::from(acc)]
+                    .get(op as usize)
+                    .copied()
+                    .flatten()
+                    .and_then(|_| {
+                        LaneHandler::producer(match acc {
+                            ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
+                            ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
+                            ACC_B => lane_f64_sqrt::<H, ACC_B> as Handler,
+                            ACC_C => lane_f64_sqrt::<H, ACC_C> as Handler,
+                            _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
+                        })
                     })
-                })
             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
                     LaneHandler::producer(
@@ -16803,7 +16823,10 @@ fn derive_lane_view<'live, H: Host>(
                 // which reads the context a JavaScript view carries, never runs in Wasm.
                 None
             } else {
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                tables[usize::from(backward_jump)][usize::from(acc)]
+                    .get(op as usize)
+                    .copied()
+                    .flatten()
             });
             producer = selected
                 .filter(|selected| selected.produces)
@@ -16827,7 +16850,10 @@ fn derive_lane_view<'live, H: Host>(
     let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: Op, acc: u8| {
-        tables[0][usize::from(acc)].get(op as usize).copied().flatten()
+        tables[0][usize::from(acc)]
+            .get(op as usize)
+            .copied()
+            .flatten()
             .is_some_and(|served| handler == served.handler as *const ())
     };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`

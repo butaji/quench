@@ -42,7 +42,10 @@ pub(crate) fn error(context: &mut NativeContext<'_, NodeHost>, failure: Failure)
     }
 }
 
-fn engine_arguments(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<(String, u32), RootedError> {
+fn engine_arguments(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+) -> Result<(String, u32), RootedError> {
     let id = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(name) = context.string_text(id)? else {
         return Err(super::util_shared_vm::argument_type_error(
@@ -95,7 +98,9 @@ pub(crate) fn set_engine(
 /// The private binding returns the actual native engine-selection result;
 /// the configured standard library owns the public error and warning policy.
 pub(crate) fn set_engine_binding(
-    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (name, flags) = engine_arguments(context, args)?;
     let result = match native::set_default(&name, flags) {

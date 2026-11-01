@@ -425,6 +425,13 @@ export X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=$DEPS/openssl/lib \
   X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS=ssl:crypto
 ```
 
+For an extracted Node release source tree without `.git`, the zlib and Brotli tools
+replace their `tests/node` submodule revision check with release-source mode, which
+names the version `src/node_version.h` must hold (`--release-source
+--expected-node-version v26.12.1`). Use a separate prefix per codec so each archive keeps
+its own `provenance.json` (Node version, version-header hash, codec source and
+build-definition hashes, compiler, platform and archive hash).
+
 `tcp_reuse_port_shares_os_listeners_across_processes_like_node` also needs an IPv6
 interface (it listens on `::`).
 

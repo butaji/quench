@@ -1590,7 +1590,10 @@ fn local_bindings_shadow_captured_function_names_and_constants() {
          var result = named() + ',' + finallyVar();\n\
          var message = (() => { try { n = 1; } catch (error) { return error.message; } })();";
     assert_eq!(global_text(source, "result"), "2,3,4,5");
-    assert_eq!(global_text(source, "message"), "Assignment to constant variable.");
+    assert_eq!(
+        global_text(source, "message"),
+        "Assignment to constant variable."
+    );
 }
 
 #[test]
@@ -4343,7 +4346,8 @@ fn spread_and_aggregate_roots_release_after_guest_failures() {
                     vm.construct_aggregate_error(&program, &args[..3], args[3])
                 } else {
                     let array = vm.new_array(Vec::new());
-                    vm.spread_into_array(&program, array, args[0]).map(|()| array)
+                    vm.spread_into_array(&program, array, args[0])
+                        .map(|()| array)
                 };
                 assert_eq!(
                     result.is_err(),
@@ -6349,9 +6353,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .collect::<Vec<_>>();
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
-                    super::property_key::PropertyKey::symbol(
-                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into())))),
-                    )
+                    super::property_key::PropertyKey::symbol(vm.heap.alloc(super::Cell::Symbol(
+                        crate::heap::SymbolData::public(Some("entry".into())),
+                    )))
                 } else {
                     super::property_key::PropertyKey::string(atom)
                 };
@@ -6819,7 +6823,10 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
-                        vm.heap.alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some("entry".into()))))
+                        vm.heap
+                            .alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some(
+                                "entry".into(),
+                            ))))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -10783,7 +10790,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
       }
     "#;
     for program in [
-        Engine::compile(crate::ExecutionRequest { source, name: "wtf16-string-coercion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "wtf16-string-coercion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize(source, "wtf16-string-coercion.js").unwrap(),
     ] {
         Vm::new(TestHost::default()).execute(&program).unwrap();
@@ -10793,7 +10805,12 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
 #[test]
 fn script_directive_completion_survives_declarations_and_preserves_string_units() {
     for program in [
-        Engine::compile(crate::ExecutionRequest { source: "", name: "directive-completion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::compile(crate::ExecutionRequest {
+            source: "",
+            name: "directive-completion.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
         Engine::specialize("", "directive-completion.js").unwrap(),
     ] {
         for (source, expected) in [
@@ -10806,7 +10823,9 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
         ] {
             let mut vm = Vm::new(TestHost::default());
             vm.execute(&program).unwrap();
-            let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
+            let value = vm
+                .eval_global_script_named(&program, source, false, "directive-completion.js")
+                .unwrap();
             match expected {
                 Some(expected) => assert!(vm.heap.string(value).is_some_and(|text| text.host_string() == expected), "{source}"),
                 None => assert!(value.is_undefined(), "{source}"),
@@ -10848,7 +10867,7 @@ fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collecti
 
 #[test]
 fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
@@ -10868,7 +10887,7 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
 
 #[test]
 fn nullish_property_diagnostics_include_original_property_names() {
-    let source=r#"
+    let source = r#"
       let hooks=0;const key={toString(){hooks++;throw Error('key hook');}};
       for(const value of [null,undefined]) {
         for(const property of ['length',1,Symbol('x')]) {
@@ -10900,11 +10919,22 @@ for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigI
         let mut vm=Vm::new(TestHost::writing_to(output.clone()));
         let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),[
-            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
-        ]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "RangeError",
+                "Start offset -1.5 is outside the bounds of the buffer",
+                "offset",
+                "5",
+                "true",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+                "0,0",
+            ]
+        );
     }
 }
 
@@ -10918,11 +10948,24 @@ check('proxy-readonly',()=>store(new Proxy(Object.freeze({x:0}),{}),'x'));check(
 check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get toString(){events.push('unexpected-string');throw marker},get [Symbol.toStringTag](){events.push('unexpected-tag');throw marker}};Object.defineProperty(hostile,'x',{value:0,writable:false});check('hostile',()=>field(hostile));for(const key of ['0','length','5'])check(['string',key],()=>store('abc',key));Object.defineProperty(Boolean.prototype,'x',{configurable:true,get(){events.push('unexpected-boolean-get')}});check('primitive-getter',()=>field(false));delete Boolean.prototype.x;out.push(['reflect',Reflect.set(new Proxy({}, {set(){return false}}),'x',1)]);out.push(events);print(JSON.stringify(out));
 
 "#;
-    for program in [Engine::compile(crate::ExecutionRequest { source, name: "assignment-diagnostics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "assignment-diagnostics.js").unwrap()] {
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "assignment-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "assignment-diagnostics.js").unwrap(),
+    ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#
+            ]
+        );
     }
 }
 
@@ -10952,7 +10995,7 @@ fn private_field_initialization_does_not_follow_proxy_prototypes() {
         let output=Rc::new(RefCell::new(Vec::new()));
         let mut vm=Vm::new(TestHost::writing_to(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(),["[true,true,42,[]]"]);
+        assert_eq!(output.borrow().as_slice(), ["[true,true,42,[]]"]);
     }
 }
 
@@ -10999,7 +11042,9 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     let program = Engine::specialize("void 0", "owned-code-lifetime.js").unwrap();
     vm.execute(&program).unwrap();
     let before = vm.programs.live_count();
-    let script = vm.compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0)).unwrap();
+    let script = vm
+        .compile_embedding_host_script("({value:42})", "owned-object.js", (0, 0))
+        .unwrap();
     let owner = Rc::downgrade(&script.state);
     vm.collect_now(&program);
     vm.collect_now(&program);
@@ -11015,7 +11060,9 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert_eq!(vm.programs.live_count(), before);
 
-    let script = vm.compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0)).unwrap();
+    let script = vm
+        .compile_embedding_host_script("(()=>41)", "escaped-owned.js", (0, 0))
+        .unwrap();
     let function = vm.evaluate_embedding_compiled_script(&script).unwrap();
     let root = vm.heap.root(function);
     drop(script);
@@ -11023,7 +11070,11 @@ fn owned_host_script_code_reclaims_after_owners_and_escaped_functions_drop() {
     vm.collect_now(&program);
     assert!(vm.programs.live_count() > before);
     let function = vm.heap.root_value(root).unwrap();
-    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap(), Value::number(41.0));
+    assert_eq!(
+        vm.call_value(&program, function, Value::UNDEFINED, &[])
+            .unwrap(),
+        Value::number(41.0)
+    );
     vm.heap.release_root(root);
     vm.collect_now(&program);
     vm.collect_now(&program);
@@ -18146,12 +18197,16 @@ new A(instance,first);new B(instance,second);
             let strong = vm.heap.root(value);
             weak.push(vm.embedding_host_weak_root(strong).unwrap());
             vm.heap.release_root(strong);
-            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED).unwrap();
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+                .unwrap();
         }
         vm.collect_now(&program);
-        for root in &weak { assert!(vm.embedding_host_weak_value(*root).is_some()); }
+        for root in &weak {
+            assert!(vm.embedding_host_weak_value(*root).is_some());
+        }
         let instance = vm.intern_atom("instance");
-        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED).unwrap();
+        vm.set_property(vm.realm.globals, instance, Value::UNDEFINED)
+            .unwrap();
         vm.collect_now(&program);
         for root in weak {
             assert!(vm.embedding_host_weak_value(root).is_none());

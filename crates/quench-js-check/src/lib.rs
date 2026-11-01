@@ -8,7 +8,7 @@ use proc_macro::TokenStream;
 use oxc_allocator::Allocator;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use syn::{LitStr, parse_macro_input};
+use syn::{parse_macro_input, LitStr};
 
 #[proc_macro]
 pub fn checked_js(input: TokenStream) -> TokenStream {

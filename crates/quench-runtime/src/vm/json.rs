@@ -1485,9 +1485,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
-        self.boxed_primitive_data(value).and_then(|(brand, payload)| {
-            matches!(brand, crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject).then_some(payload)
-        })
+        self.boxed_primitive_data(value)
+            .and_then(|(brand, payload)| {
+                matches!(
+                    brand,
+                    crate::BuiltinBrand::StringObject | crate::BuiltinBrand::NumberObject
+                )
+                .then_some(payload)
+            })
     }
 
     fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
