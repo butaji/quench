@@ -27,12 +27,41 @@ pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
         .insert(CACHE_KEY.into(), root);
     Ok(module)
 }
+/// `getCLIOptionsInfo()`: `{ options, aliases }`, Maps from each option to its
+/// `{ type, defaultIsTrue }` and from each alias to the options it stands for.
 pub(crate) fn info(
-    _: &mut NativeContext<'_, NodeHost>,
+    context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    crate::host::removed_javascript("internal/options/cli-info.js")
+    let (map, set) = context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let map = context.get_named_property_rooted(global, "Map")?;
+        let prototype = context.get_named_property_rooted(map, "prototype")?;
+        let set = context.get_named_property_rooted(prototype, "set")?;
+        Ok((map, set))
+    })?;
+    let options = context.construct_rooted(map, map, &[])?;
+    for (name, kind, default) in super::cli_options::option_types() {
+        let entry = context.object_rooted()?;
+        let kind = context.number(f64::from(kind as u8));
+        context.assign_named_property_rooted(entry, "type", kind)?;
+        let default = context.boolean(default);
+        context.assign_named_property_rooted(entry, "defaultIsTrue", default)?;
+        let name = context.string_rooted(name);
+        context.call_rooted(set, options, &[name, entry])?;
+    }
+    let aliases = context.construct_rooted(map, map, &[])?;
+    for (alias, name) in super::cli_options::OPTION_ALIASES {
+        let alias = context.string_rooted(alias);
+        let name = context.string_rooted(name);
+        let names = context.array_rooted(&[name])?;
+        context.call_rooted(set, aliases, &[alias, names])?;
+    }
+    let result = context.object_rooted()?;
+    context.assign_named_property_rooted(result, "options", options)?;
+    context.assign_named_property_rooted(result, "aliases", aliases)?;
+    Ok(result)
 }
 pub(crate) fn flags(
     context: &mut NativeContext<'_, NodeHost>,
