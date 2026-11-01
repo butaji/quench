@@ -126,6 +126,74 @@ pub(crate) fn error_inspector(context: &mut NativeContext<'_, NodeHost>, _: Root
     crate::modules::util_shared_vm::internal_inspect(context)
 }
 
+/// A factory of the events configuration (`event_targets_api`) that a host script builds,
+/// on its first read (`initialize_script_member`): an emitter's `once` or an abort
+/// listener's disposable reads it, which a run that does neither never decodes.
+#[derive(Clone, Copy)]
+pub(crate) enum ScriptMember {
+    OnceFactory,
+    DisposeFactory,
+}
+
+impl ScriptMember {
+    const ALL: [Self; 2] = [Self::OnceFactory, Self::DisposeFactory];
+
+    /// The member's name, its script and the script's name.
+    fn parts(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::OnceFactory => (
+                "onceFactory",
+                "(invoke) => function wrapper(...args) { return invoke(...args); }",
+                "node:events/once-wrapper.js",
+            ),
+            Self::DisposeFactory => (
+                "disposeFactory",
+                "(dispose, key) => ({ __proto__: null, [key]() { dispose(); } })",
+                "node:events/abort-listener-disposable.js",
+            ),
+        }
+    }
+}
+
+/// Defines `member` on the events configuration `data` as a lazy data property.
+pub(crate) fn define_script_member(
+    context: &mut NativeContext<'_, NodeHost>,
+    data: RootId,
+    member: ScriptMember,
+) -> Result<(), RootedError> {
+    let (name, ..) = member.parts();
+    // `ALL` lists the variants in declaration order, so a variant's discriminant is its index.
+    let index = context.number(member as usize as f64);
+    let initializer =
+        context.host_function_with_data(crate::host::shared_vm::operation("eventsScriptMemberInitialize"), index)?;
+    context.define_lazy_data_properties_rooted(data, &[name], true, initializer)
+}
+
+/// The lazy initializer of a `ScriptMember` (its index in `ScriptMember::ALL` is the data) on
+/// the events configuration, which bootstrap has stored by the time a script reads one.
+pub(crate) fn initialize_script_member(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let index = context.host_function_data()?;
+    let data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("events configuration missing"))?;
+    let member = context
+        .rooted_value(index)
+        .and_then(quench_runtime::Value::as_number)
+        .and_then(|index| ScriptMember::ALL.get(index as usize).copied())
+        .ok_or_else(|| RootedError::host("unknown events script member"))?;
+    let (name, source, script_name) = member.parts();
+    let factory = context.evaluate_script_rooted(source, script_name)?;
+    set(context, data, name, factory)?;
+    Ok(context.undefined())
+}
+
 fn set(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -209,11 +277,7 @@ pub(crate) fn initialize_targets(
     set(context, data, "abortListenerOptions", options)?;
     let dispose_symbol = get(context, symbol, "dispose")?;
     set(context, data, "disposeKey", dispose_symbol)?;
-    let dispose_factory = context.evaluate_script_rooted(
-        "(dispose, key) => ({ __proto__: null, [key]() { dispose(); } })",
-        "node:events/abort-listener-disposable.js",
-    )?;
-    set(context, data, "disposeFactory", dispose_factory)?;
+    define_script_member(context, data, ScriptMember::DisposeFactory)?;
     set(context, data, "recordsKey", records_key)?;
     set(context, data, "brandKey", brand_key)?;
     super::events_weak_shared_vm::initialize(context, data)?;

@@ -159,14 +159,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("emitter configuration missing"))?;
-    let once_factory = context.evaluate_script_rooted(
-        "(invoke) => function wrapper(...args) { return invoke(...args); }",
-        "node:events/once-wrapper.js",
-    )?;
-    context.assign_named_property_rooted(data,
-        "onceFactory",
-        once_factory,
-    )?;
+    super::events_shared_vm::define_script_member(context, data, super::events_shared_vm::ScriptMember::OnceFactory)?;
     let emit_bridge = get(context, prototype, "emit")?;
     context.assign_named_property_rooted(data, "emitBridge", emit_bridge)?;
     let mut operations = [
@@ -193,10 +186,13 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let reflect = get(context, global, "Reflect")?;
     operations.push(get(context, reflect, "apply")?);
-    operations.push(context.evaluate_script_rooted(
-        "Function.prototype.call.bind(Function.prototype.call)",
-        "node:events/call.js",
-    )?);
+    // `Function.prototype.call.bind(Function.prototype.call)`, bound here rather than by one
+    // more host script.
+    let function = get(context, global, "Function")?;
+    let function_prototype = get(context, function, "prototype")?;
+    let call = get(context, function_prototype, "call")?;
+    let bind = get(context, call, "bind")?;
+    operations.push(context.call_rooted(bind, call, &[call])?);
     operations.push(get(context, data, "shapeKey")?);
     let factory = context.evaluate_script_rooted(FACTORY, "node:events/inspection.js")?;
     let undefined = context.undefined();

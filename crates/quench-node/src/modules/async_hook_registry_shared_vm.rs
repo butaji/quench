@@ -83,6 +83,19 @@ impl Registry {
     }
 }
 
+/// Reports a hook callback's uncaught `error` and exits, as Node's `fatalError` does.
+/// Only a throwing hook runs it, so its script is evaluated then, not at bootstrap.
+const FATAL_ERROR: &str = quench_js_check::checked_js!(
+    r#"(function asyncHookFatalError(error) {
+            if (typeof error?.stack === 'string') {
+              process._rawDebug(error.stack);
+            } else {
+              process._rawDebug(`Error: ${String(error)}`);
+            }
+            process.exit(1);
+          })"#
+);
+
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     if let Some(api) = context
         .host_mut()
@@ -95,21 +108,6 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
         return Ok(api);
     }
     let api = context.null_object_rooted()?;
-    let fatal_error = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            r#"(function asyncHookFatalError(error) {
-            if (typeof error?.stack === 'string') {
-              process._rawDebug(error.stack);
-            } else {
-              process._rawDebug(`Error: ${String(error)}`);
-            }
-            process.exit(1);
-          })"#
-        ),
-        "node:async_hooks/fatal-error.js",
-    )?;
-    let fatal_error_key = context.string_rooted("fatalError");
-    context.define_data_property_rooted(api, fatal_error_key, fatal_error, true, false, true)?;
     let operations = context
         .host_mut()
         .shared_state()
@@ -425,7 +423,8 @@ pub(super) fn emit(
                         let Some(value) = context.scope_root(exception) else {
                             return Err(error);
                         };
-                        let fatal_error = get(context, api, "fatalError")?;
+                        let fatal_error =
+                            context.evaluate_script_rooted(FATAL_ERROR, "node:async_hooks/fatal-error.js")?;
                         let undefined = context.undefined();
                         let result = context.call_rooted(fatal_error, undefined, &[value]);
                         context.release_root(exception);

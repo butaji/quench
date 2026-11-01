@@ -421,12 +421,13 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let raw_queue_microtask = get(context, global, "queueMicrotask")?;
     let raw_queue_key = context.string_rooted("\0quench:queueMicrotaskRaw");
     context.define_data_property_rooted(global, raw_queue_key, raw_queue_microtask, false, false, true)?;
+    // The public one is task_queues' wrapper, loaded on a script's first observation of it
+    // (`initialize_queue_microtask_global`).
     let require = get(context, global, BOOTSTRAP_REQUIRE)?;
-    let task_queues_name = context.string_rooted("internal/process/task_queues");
-    let undefined = context.undefined();
-    let task_queues = context.call_rooted(require, undefined, &[task_queues_name])?;
-    let queue_microtask = get(context, task_queues, "queueMicrotask")?;
-    set(context, global, "queueMicrotask", queue_microtask)?;
+    let initializer = context.host_function_with_data(super::operation("queueMicrotaskGlobalInitialize"), require)?;
+    let enumerable = NODE_ENUMERABLE_GLOBALS.contains(&QUEUE_MICROTASK);
+    context.define_lazy_data_properties_rooted(global, &[QUEUE_MICROTASK], enumerable, initializer)?;
+    context.release_root(initializer);
     let export_values = context.host_function(crate::host::shared_vm::operation("builtinExportValues"))?;
     let key = context.string_rooted(BUILTIN_EXPORT_VALUES);
     context.define_data_property_rooted(global, key, export_values, false, false, false)?;
@@ -439,15 +440,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(install_performance_global)?;
     context.scoped(crate::modules::crypto_shared_vm::install_global)?;
     if node_primordials_source(context).is_some() {
-        // Node 24 exposes these well-known disposal symbols before its
-        // primordial snapshot is built. The runtime may not provide them yet,
-        // so seed stable symbols for Node's internal modules first.
-        let seed_disposal_symbols = context.evaluate_script_rooted(
-            "() => { Symbol.dispose ||= Symbol('Symbol.dispose'); Symbol.asyncDispose ||= Symbol('Symbol.asyncDispose'); }",
-            "node:bootstrap/disposal-symbols.js",
-        )?;
-        let undefined = context.undefined();
-        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
+        context.scoped(seed_disposal_symbols)?;
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
@@ -520,29 +513,7 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
     context.scoped(initialize_cluster_worker)?;
-    // Node exposes these web and timer globals as enumerable own properties.
-    // The host bindings and several bootstrap polyfills use non-enumerable
-    // descriptors by default, so normalize their public descriptors before
-    // user preloads inspect globalThis. Node 26 also provides navigator by
-    // default; retain the standard getter shape even when the engine lacks it.
-    let install_node_global_descriptors = context.evaluate_script_rooted(
-        "() => {\n\
-          for (const name of ['queueMicrotask', 'clearImmediate', 'clearInterval', 'clearTimeout', 'setImmediate', 'setInterval', 'setTimeout', 'structuredClone', 'fetch', 'crypto', 'performance']) {\n\
-            const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);\n\
-            if (descriptor && !descriptor.enumerable) Object.defineProperty(globalThis, name, { ...descriptor, enumerable: true });\n\
-          }\n\
-          if (!Object.getOwnPropertyDescriptor(globalThis, 'navigator')) {\n\
-            const navigator = { userAgent: `Node.js/${process.versions.node.split('.')[0]}` };\n\
-            Object.defineProperty(globalThis, 'navigator', { configurable: true, enumerable: true, get: Object.defineProperty(() => navigator, 'name', { value: 'get navigator' }) });\n\
-          }\n\
-          if (!Object.hasOwn(globalThis, Symbol.toStringTag)) {\n\
-            Object.defineProperty(globalThis, Symbol.toStringTag, { value: 'global', configurable: true });\n\
-          }\n\
-        }",
-        "node:bootstrap/global-descriptors.js",
-    )?;
-    let undefined = context.undefined();
-    context.call_rooted(install_node_global_descriptors, undefined, &[])?;
+    context.scoped(install_node_global_descriptors)?;
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -578,6 +549,123 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         set(context, global, "__dirname", dirname)?;
     }
     Ok(())
+}
+
+/// The well-known disposal symbols, each `Symbol[name]` and its description.
+const DISPOSAL_SYMBOLS: [(&str, &str); 2] =
+    [("dispose", "Symbol.dispose"), ("asyncDispose", "Symbol.asyncDispose")];
+
+/// Node 24 exposes the well-known disposal symbols before its primordial snapshot is built.
+/// A runtime without them gets stable symbols for Node's internal modules first, as
+/// `Symbol[name] ||= Symbol(description)`, in Rust rather than one more host script.
+fn seed_disposal_symbols(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let symbol = get(context, global, "Symbol")?;
+    for (name, description) in DISPOSAL_SYMBOLS {
+        let present = get(context, symbol, name)?;
+        if !context.truthy_rooted(present)? {
+            let seeded = context.symbol_rooted(Some(description));
+            set(context, symbol, name, seeded)?;
+        }
+    }
+    Ok(())
+}
+
+/// The global Node exposes as `queueMicrotask`.
+const QUEUE_MICROTASK: &str = "queueMicrotask";
+
+/// The web and timer globals Node exposes as enumerable own properties. The host bindings
+/// and several bootstrap polyfills define them non-enumerable, so their public descriptors
+/// are normalized before user preloads inspect `globalThis` (`install_node_global_descriptors`).
+const NODE_ENUMERABLE_GLOBALS: [&str; 11] = [
+    QUEUE_MICROTASK,
+    "clearImmediate",
+    "clearInterval",
+    "clearTimeout",
+    "setImmediate",
+    "setInterval",
+    "setTimeout",
+    "structuredClone",
+    "fetch",
+    "crypto",
+    "performance",
+];
+
+/// The source of the `navigator` getter, which closes over its object (`NAVIGATOR_GETTER`).
+const NAVIGATOR_GETTER_FACTORY: &str = "(navigator) => () => navigator";
+/// The name Node gives the `navigator` getter.
+const NAVIGATOR_GETTER: &str = "get navigator";
+
+/// Node's own-property shape of `globalThis` past the host's bindings, in Rust: a script for
+/// it had been one more host program for every run. `NODE_ENUMERABLE_GLOBALS` become
+/// enumerable, as `Object.defineProperty` with the rest of the descriptor kept; a lazy one
+/// still pending was defined enumerable from that list and stays pending. Node 26 provides
+/// `navigator` by default, whose getter Quench still builds from a script (so it reads as
+/// JavaScript), and names `globalThis`'s tag `global`.
+fn install_node_global_descriptors(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    for name in NODE_ENUMERABLE_GLOBALS {
+        if context.is_pending_lazy_data_property_rooted(global, name)? {
+            continue;
+        }
+        let key = context.string_rooted(name);
+        let Some(fields) = context.own_property_fields_rooted(global, key)? else { continue };
+        if fields.enumerable == Some(false) {
+            let enumerable = quench_runtime::DescriptorFields { enumerable: Some(true), ..fields };
+            if !context.define_property_fields_rooted(global, key, enumerable)? {
+                return Err(RootedError::host(format!("cannot make global {name} enumerable")));
+            }
+        }
+    }
+    let navigator_key = context.string_rooted("navigator");
+    if context.own_property_fields_rooted(global, navigator_key)?.is_none() {
+        let navigator = context.object_rooted()?;
+        let major = crate::modules::process_state::NODE_VERSION.split('.').next().unwrap_or_default();
+        let user_agent = context.string_rooted(&format!("Node.js/{major}"));
+        set(context, navigator, "userAgent", user_agent)?;
+        let factory = context.evaluate_script_rooted(NAVIGATOR_GETTER_FACTORY, "node:bootstrap/navigator.js")?;
+        let undefined = context.undefined();
+        let getter = context.call_rooted(factory, undefined, &[navigator])?;
+        let name_key = context.string_rooted("name");
+        let name = context.string_rooted(NAVIGATOR_GETTER);
+        context.define_data_property_rooted(getter, name_key, name, false, false, true)?;
+        let accessor = quench_runtime::DescriptorFields {
+            get: Some(getter),
+            enumerable: Some(true),
+            configurable: Some(true),
+            ..quench_runtime::DescriptorFields::default()
+        };
+        if !context.define_property_fields_rooted(global, navigator_key, accessor)? {
+            return Err(RootedError::host("cannot define global navigator"));
+        }
+    }
+    let symbol = get(context, global, "Symbol")?;
+    let tag = get(context, symbol, "toStringTag")?;
+    if context.own_property_fields_rooted(global, tag)?.is_none() {
+        let value = context.string_rooted("global");
+        if !context.define_data_property_rooted(global, tag, value, false, false, true)? {
+            return Err(RootedError::host("cannot define globalThis's tag"));
+        }
+    }
+    Ok(())
+}
+
+/// The lazy initializer of the global `queueMicrotask` (`QUEUE_MICROTASK`): Node's
+/// `internal/process/task_queues` wrapper, loaded through the bootstrap `require` (its data),
+/// which adds the AsyncResource lifecycle around each callback.
+pub(super) fn initialize_queue_microtask_global(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let require = context.host_function_data()?;
+    let name = context.string_rooted("internal/process/task_queues");
+    let undefined = context.undefined();
+    let task_queues = context.call_rooted(require, undefined, &[name])?;
+    let queue_microtask = get(context, task_queues, QUEUE_MICROTASK)?;
+    let global = context.global_root()?;
+    set(context, global, QUEUE_MICROTASK, queue_microtask)?;
+    Ok(context.undefined())
 }
 
 /// CLI preloads execute in order through the ordinary CommonJS loader/cache.

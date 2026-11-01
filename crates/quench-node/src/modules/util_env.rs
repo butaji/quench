@@ -83,9 +83,6 @@ pub(crate) fn load_startup_env_files(
         .unwrap_or_default();
     options.extend(arguments.iter().cloned());
 
-    let inherited: std::collections::HashSet<String> = std::env::vars_os()
-        .filter_map(|(key, _)| key.into_string().ok())
-        .collect();
     let mut loaded = BTreeMap::new();
     let mut index = 0;
     while index < options.len() {
@@ -118,8 +115,11 @@ pub(crate) fn load_startup_env_files(
         index += 1;
     }
 
+    // A variable the environment already holds keeps its value. Each key is set at most once,
+    // so asking the environment as each is set reads what it held before the files: copying
+    // every inherited name up front had cost each start-up 36 KiB of heap with no file to load.
     for (key, value) in loaded {
-        if inherited.contains(&key) {
+        if std::env::var_os(&key).is_some() {
             continue;
         }
         // SAFETY: startup happens synchronously before guest code observes

@@ -188,15 +188,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "__quenchGetActiveTimerResources",
         active_timer_resources,
     )?;
-    let hrtime_raw =
-        context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
-    let hrtime_factory = context.evaluate_script_rooted(
-        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
-        "node:process/shared-hrtime.js",
-    )?;
-    let undefined = context.undefined();
-    let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
-    install(context, process, "hrtime", hrtime)?;
+    define_script_method(context, process, ScriptMethod::Hrtime)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
     let shared_state = context.host_mut().shared_state();
@@ -432,6 +424,100 @@ fn install_exit_code(
     Ok(())
 }
 
+/// A process method Node defines in JavaScript, which Quench builds by calling a host
+/// script's factory with the method's host operation. The bootstrap defines it as a lazy data
+/// property (`define_script_method`), built on a script's first observation of it: a run
+/// that never reads it decodes no script. Each decoded host program a run keeps costs about
+/// 4 KiB of heap however small it is (200 one-line programs: +800 KiB start-up anonymous
+/// memory, static production build, x86_64, 2026-11-01). `process.kill` stays eager: the
+/// process surface script reads it at bootstrap.
+#[derive(Clone, Copy)]
+pub(crate) enum ScriptMethod {
+    OpenStdin,
+    Hrtime,
+}
+
+/// What a script method's host operation holds as its data.
+enum OperationData {
+    Nothing,
+    /// The process object.
+    Process,
+}
+
+impl ScriptMethod {
+    const ALL: [Self; 2] = [Self::OpenStdin, Self::Hrtime];
+
+    /// The property name, host operation, operation data, and factory script and its name.
+    fn parts(self) -> (&'static str, &'static str, OperationData, &'static str, &'static str) {
+        match self {
+            Self::OpenStdin => (
+                "openStdin",
+                "processOpenStdin",
+                OperationData::Process,
+                "operation => function() { return operation(); }",
+                "node:process/open-stdin.js",
+            ),
+            Self::Hrtime => (
+                "hrtime",
+                "processHrtimeNow",
+                OperationData::Nothing,
+                HRTIME_FACTORY,
+                "node:process/shared-hrtime.js",
+            ),
+        }
+    }
+}
+
+/// The factory of `process.hrtime` and `process.hrtime.bigint` over the raw clock.
+const HRTIME_FACTORY: &str = "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }";
+
+/// Defines `method` on `process` as a lazy data property at this position.
+pub(crate) fn define_script_method(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+    method: ScriptMethod,
+) -> Result<(), RootedError> {
+    let (name, ..) = method.parts();
+    // `ALL` lists the variants in declaration order, so a variant's discriminant is its index.
+    let index = context.number(method as usize as f64);
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("processScriptMethodInitialize"),
+        index,
+    )?;
+    context.define_lazy_data_properties_rooted(process, &[name], true, initializer)
+}
+
+/// The lazy initializer of a `ScriptMethod` (its index in `ScriptMethod::ALL` is the data).
+pub(crate) fn initialize_script_method(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let index = context.host_function_data()?;
+    let method = context
+        .rooted_value(index)
+        .and_then(Value::as_number)
+        .and_then(|index| ScriptMethod::ALL.get(index as usize).copied())
+        .ok_or_else(|| RootedError::host("unknown process script method"))?;
+    let (name, operation, data, factory, script_name) = method.parts();
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let operation = crate::host::shared_vm::operation(operation);
+    let operation = match data {
+        OperationData::Nothing => context.host_function(operation)?,
+        OperationData::Process => context.host_function_with_data(operation, process)?,
+    };
+    let factory = context.evaluate_script_rooted(factory, script_name)?;
+    let undefined = context.undefined();
+    let method = context.call_rooted(factory, undefined, &[operation])?;
+    install(context, process, name, method)?;
+    Ok(context.undefined())
+}
+
 /// Whether the stream's descriptor is a terminal, as `isTTY`.
 fn install_terminal(context: &mut NativeContext<'_, NodeHost>, stream: RootId, fd: i32) -> Result<(), RootedError> {
     let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
@@ -455,6 +541,29 @@ fn create_stream(
         data,
     )?;
     install(context, stream, "write", write)?;
+    // `end`, `ref` and `unref` are built from host scripts on a script's first observation
+    // of one of them (`initialize_stream_members`).
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("processStreamMembersInitialize"),
+        stream,
+    )?;
+    context.define_lazy_data_properties_rooted(stream, &STREAM_SCRIPT_MEMBERS, true, initializer)?;
+    Ok(stream)
+}
+
+/// The members of `process.stdout` and `process.stderr` that their own host scripts build
+/// (`initialize_stream_members`), in their order on each stream. A run that never ends or
+/// (un)references a standard stream decodes neither script: two programs a stream, which a
+/// one-line script's bootstrap had decoded for both streams.
+const STREAM_SCRIPT_MEMBERS: [&str; 3] = ["end", "ref", "unref"];
+
+/// The lazy initializer of `STREAM_SCRIPT_MEMBERS` on a standard stream (its data).
+pub(crate) fn initialize_stream_members(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let stream = context.host_function_data()?;
     // process.stdout/stderr are special Node streams: calling end() flushes
     // any final chunk, but it must not close the underlying process file
     // descriptor. Quench writes synchronously, so an end callback can run in
@@ -488,7 +597,7 @@ fn create_stream(
     let reference = context.call_rooted(reference, undefined, &[])?;
     install(context, stream, "ref", reference)?;
     install(context, stream, "unref", reference)?;
-    Ok(stream)
+    Ok(context.undefined())
 }
 
 fn define_global_process(

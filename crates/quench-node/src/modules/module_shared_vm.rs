@@ -180,21 +180,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "builtinModules", names)?;
     let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
     set(context, module, "isBuiltin", is_builtin)?;
-    let require_native =
-        context.host_function(crate::host::shared_vm::operation("createRequire"))?;
-    let paths_native =
-        context.host_function(crate::host::shared_vm::operation("moduleNodePaths"))?;
     let stat = context.host_function(crate::host::shared_vm::operation(
         "fsBindingInternalModuleStat",
     ))?;
-    let factory =
-        context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
-    let undefined = context.undefined();
-    let facades = context.call_rooted(factory, undefined, &[require_native, paths_native])?;
-    let create_require = get(context, facades, "0")?;
-    let paths = get(context, facades, "1")?;
-    set(context, module, "createRequire", create_require)?;
-    set(context, module, "_nodeModulePaths", paths)?;
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleRequireFacadesInitialize"),
+        module,
+    )?;
+    context.define_lazy_data_properties_rooted(module, &REQUIRE_FACADE_MEMBERS, true, initializer)?;
     let global_paths = global_paths()
         .iter()
         .map(|path| context.string_rooted(&path.to_string_lossy()))
@@ -204,9 +197,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let run_main = context.host_function(crate::host::shared_vm::operation("moduleRunMain"))?;
     set(context, module, "runMain", run_main)?;
     set(context, module, "_stat", stat)?;
-    let process = get(context, global, "process")?;
-    let path_module = crate::modules::path_shared_vm::module(context)?;
-    let path_delimiter = get(context, path_module, "delimiter")?;
     // The compile-cache members forward to `internal/modules/helpers.js`, whose load pulls in
     // the library's errors, inspect, buffer, url and fs utilities: a lazy group defers it to
     // a script's first observation of one of them (`initialize_compile_cache`).
@@ -215,43 +205,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         module,
     )?;
     context.define_lazy_data_properties_rooted(module, &COMPILE_CACHE_MEMBERS, true, initializer)?;
-    let initialize_paths = context.evaluate_script_rooted(
-        "(Module, process, delimiter, path) => {\n\
-          Module._initPaths = function _initPaths() {\n\
-            const homeDir = process.env.HOME;\n\
-            const nodePath = process.env.NODE_PATH;\n\
-            let paths = [path.resolve(process.execPath, '..', '..', 'lib', 'node')];\n\
-            if (homeDir) paths.unshift(path.resolve(homeDir, '.node_modules'), path.resolve(homeDir, '.node_libraries'));\n\
-            if (nodePath) paths = nodePath.split(delimiter).filter(Boolean).concat(paths);\n\
-            Module.globalPaths = paths;\n\
-          };\n\
-          Module._resolveLookupPaths = function _resolveLookupPaths(request, parent) {\n\
-            request = String(request);\n\
-            const relative = request[0] === '.' && (request.length === 1 || request[1] === '.' || request[1] === '/' || (path.sep === '\\\\' && request[1] === '\\\\'));\n\
-            if (!relative && (Module.builtinModules.includes(request) || Module.builtinModules.includes(request.replace(/^node:/, '')))) return null;\n\
-            if (!relative) {\n\
-              const paths = parent?.paths?.length ? [...parent.paths, ...Module.globalPaths] : Module.globalPaths;\n\
-              return paths.length ? [...paths] : null;\n\
-            }\n\
-            if (!parent || !parent.id || !parent.filename) return ['.'];\n\
-            return [path.dirname(parent.filename)];\n\
-          };\n\
-          Module._load = function _load(request, parent) {\n\
-            if (parent && typeof parent.require === 'function') return parent.require(request);\n\
-            request = String(request);\n\
-            if (Module.builtinModules.includes(request)) return process.getBuiltinModule(request.replace(/^node:/, ''));\n\
-            const entry = path.resolve(process.cwd(), '__quench_module_load__.js');\n\
-            return Module.createRequire(entry)(request);\n\
-          };\n\
-        }",
-        "node:module/shared-path-facades.js",
+    // `PATH_FACADE_MEMBERS` read the process the builtin is constructed with.
+    let process = get(context, global, "process")?;
+    let data = context.array_rooted(&[module, process])?;
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("modulePathFacadesInitialize"),
+        data,
     )?;
-    let undefined = context.undefined();
-    context.call_rooted(
-        initialize_paths,
-        undefined,
-        &[module, process, path_delimiter, path_module],
-    )?;
+    context.define_lazy_data_properties_rooted(module, &PATH_FACADE_MEMBERS, true, initializer)?;
     let resolve_filename =
         context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
     set(context, module, "_resolveFilename", resolve_filename)?;
@@ -259,6 +220,86 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
     Ok(module)
+}
+
+/// The `node:module` members its require facades script builds (`initialize_require_facades`).
+const REQUIRE_FACADE_MEMBERS: [&str; 2] = ["createRequire", "_nodeModulePaths"];
+
+/// The `node:module` members its path facades script defines (`initialize_path_facades`).
+const PATH_FACADE_MEMBERS: [&str; 3] = ["_initPaths", "_resolveLookupPaths", "_load"];
+
+/// The source of `PATH_FACADE_MEMBERS`: Node's loader paths over this host's `require`.
+const PATH_FACADES: &str = "(Module, process, delimiter, path) => {\n\
+      Module._initPaths = function _initPaths() {\n\
+        const homeDir = process.env.HOME;\n\
+        const nodePath = process.env.NODE_PATH;\n\
+        let paths = [path.resolve(process.execPath, '..', '..', 'lib', 'node')];\n\
+        if (homeDir) paths.unshift(path.resolve(homeDir, '.node_modules'), path.resolve(homeDir, '.node_libraries'));\n\
+        if (nodePath) paths = nodePath.split(delimiter).filter(Boolean).concat(paths);\n\
+        Module.globalPaths = paths;\n\
+      };\n\
+      Module._resolveLookupPaths = function _resolveLookupPaths(request, parent) {\n\
+        request = String(request);\n\
+        const relative = request[0] === '.' && (request.length === 1 || request[1] === '.' || request[1] === '/' || (path.sep === '\\\\' && request[1] === '\\\\'));\n\
+        if (!relative && (Module.builtinModules.includes(request) || Module.builtinModules.includes(request.replace(/^node:/, '')))) return null;\n\
+        if (!relative) {\n\
+          const paths = parent?.paths?.length ? [...parent.paths, ...Module.globalPaths] : Module.globalPaths;\n\
+          return paths.length ? [...paths] : null;\n\
+        }\n\
+        if (!parent || !parent.id || !parent.filename) return ['.'];\n\
+        return [path.dirname(parent.filename)];\n\
+      };\n\
+      Module._load = function _load(request, parent) {\n\
+        if (parent && typeof parent.require === 'function') return parent.require(request);\n\
+        request = String(request);\n\
+        if (Module.builtinModules.includes(request)) return process.getBuiltinModule(request.replace(/^node:/, ''));\n\
+        const entry = path.resolve(process.cwd(), '__quench_module_load__.js');\n\
+        return Module.createRequire(entry)(request);\n\
+      };\n\
+    }";
+
+/// The lazy initializer of `REQUIRE_FACADE_MEMBERS` on the `node:module` builtin (its data).
+pub(crate) fn initialize_require_facades(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let require_native =
+        context.host_function(crate::host::shared_vm::operation("createRequire"))?;
+    let paths_native =
+        context.host_function(crate::host::shared_vm::operation("moduleNodePaths"))?;
+    let factory =
+        context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
+    let undefined = context.undefined();
+    let facades = context.call_rooted(factory, undefined, &[require_native, paths_native])?;
+    let create_require = get(context, facades, "0")?;
+    let paths = get(context, facades, "1")?;
+    set(context, module, "createRequire", create_require)?;
+    set(context, module, "_nodeModulePaths", paths)?;
+    Ok(context.undefined())
+}
+
+/// The lazy initializer of `PATH_FACADE_MEMBERS` on the `node:module` builtin; its data holds
+/// the builtin and the process it was constructed with.
+pub(crate) fn initialize_path_facades(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let module = get(context, data, "0")?;
+    let process = get(context, data, "1")?;
+    let path_module = crate::modules::path_shared_vm::module(context)?;
+    let path_delimiter = get(context, path_module, "delimiter")?;
+    let initialize_paths = context.evaluate_script_rooted(PATH_FACADES, "node:module/shared-path-facades.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(
+        initialize_paths,
+        undefined,
+        &[module, process, path_delimiter, path_module],
+    )?;
+    Ok(context.undefined())
 }
 
 fn name_function(
