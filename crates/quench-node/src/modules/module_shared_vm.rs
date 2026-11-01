@@ -207,98 +207,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let process = get(context, global, "process")?;
     let path_module = crate::modules::path_shared_vm::module(context)?;
     let path_delimiter = get(context, path_module, "delimiter")?;
-    // The public `node:module` builtin is constructed here rather than from
-    // lib/module.js, so its compile-cache methods must explicitly forward to
-    // the same internal helpers used by the Node library and module loaders.
-    // Keeping a second native stub here shadowed those helpers with an
-    // always-failed API and bypassed their diagnostics and directory state.
-    let helpers = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "internal/modules/helpers.js",
-        "internal/modules/helpers.js",
+    // The compile-cache members forward to `internal/modules/helpers.js`, whose load pulls in
+    // the library's errors, inspect, buffer, url and fs utilities: a lazy group defers it to
+    // a script's first observation of one of them (`initialize_compile_cache`).
+    let initializer = context.host_function_with_data(
+        crate::host::shared_vm::operation("moduleCompileCacheInitialize"),
+        module,
     )?;
-    for name in [
-        "constants",
-        "enableCompileCache",
-        "flushCompileCache",
-        "getCompileCacheDir",
-    ] {
-        let key = context.string_rooted(name);
-        let mut value = context.get_property_rooted(helpers, key)?;
-        if name == "enableCompileCache" {
-            // Node's native modules binding validates the cache directory
-            // type. Quench does not yet implement native compile-cache entry
-            // points, so preserve this observable validation at the public
-            // API boundary rather than leaking a generic call error.
-            let wrap = context.evaluate_script_rooted(
-                r#"(nativeEnableCompileCache, constants, process) => function enableCompileCache(options) {
-                  if (options === null ||
-                      (options !== undefined && typeof options !== 'string' && typeof options !== 'object')) {
-                    const error = new TypeError('The "directory" argument must be of type string.');
-                    error.code = 'ERR_INVALID_ARG_TYPE';
-                    throw error;
-                  }
-                  const directory = typeof options === 'object' ? options.directory : options;
-                  if (directory !== undefined && typeof directory !== 'string') {
-                    const error = new TypeError('The "directory" argument must be of type string.');
-                    error.code = 'ERR_INVALID_ARG_TYPE';
-                    throw error;
-                  }
-                  if (process.env.NODE_DISABLE_COMPILE_CACHE) {
-                    if ((process.env.NODE_DEBUG_NATIVE || '').includes('COMPILE_CACHE')) {
-                      process.stderr.write('Disabled by NODE_DISABLE_COMPILE_CACHE\n');
-                    }
-                    return { status: constants.compileCacheStatus.DISABLED };
-                  }
-                  // The API remains available in builds without the native
-                  // cache backend. Report the documented failure result rather
-                  // than trying to call an absent native binding or claiming
-                  // that an on-disk cache was enabled.
-                  if (typeof nativeEnableCompileCache !== 'function') {
-                    return {
-                      status: constants.compileCacheStatus.FAILED,
-                      message: 'Compile cache is not supported by this runtime.',
-                    };
-                  }
-                  return nativeEnableCompileCache(options);
-                }"#,
-                "node:module/compile-cache-validation.js",
-            )?;
-            let this_value = context.undefined();
-            let constants = get(context, helpers, "constants")?;
-            value = context.call_rooted(wrap, this_value, &[value, constants, process])?;
-        } else if name == "flushCompileCache" {
-            // With no native cache backend there is nothing to flush. Preserve
-            // the public API's void return and avoid exposing an internal
-            // missing-binding TypeError.
-            let wrap = context.evaluate_script_rooted(
-                r#"(nativeFlushCompileCache) => function flushCompileCache() {
-                  if (typeof nativeFlushCompileCache === 'function') {
-                    return nativeFlushCompileCache();
-                  }
-                }"#,
-                "node:module/compile-cache-flush.js",
-            )?;
-            let this_value = context.undefined();
-            value = context.call_rooted(wrap, this_value, &[value])?;
-        } else if name == "getCompileCacheDir" {
-            // The modules binding reports an active directory only when a
-            // cache backend actually enabled one. NODE_COMPILE_CACHE alone
-            // cannot make this runtime claim that a bytecode cache is active.
-            let wrap = context.evaluate_script_rooted(
-                r#"(nativeGetCompileCacheDir, process) => function getCompileCacheDir() {
-                  if (process.env.NODE_DISABLE_COMPILE_CACHE) return undefined;
-                  return typeof nativeGetCompileCacheDir === 'function'
-                    ? nativeGetCompileCacheDir()
-                    : undefined;
-                }"#,
-                "node:module/compile-cache-env.js",
-            )?;
-            let this_value = context.undefined();
-            value = context.call_rooted(wrap, this_value, &[value, process])?;
-        }
-        set(context, module, name, value)?;
-    }
+    context.define_lazy_data_properties_rooted(module, &COMPILE_CACHE_MEMBERS, true, initializer)?;
     let initialize_paths = context.evaluate_script_rooted(
         "(Module, process, delimiter, path) => {\n\
           Module._initPaths = function _initPaths() {\n\
@@ -923,6 +839,109 @@ pub(crate) fn is_builtin(
             }
         });
     Ok(context.boolean(result))
+}
+
+/// The `node:module` members that forward to `internal/modules/helpers.js`'s compile cache.
+const COMPILE_CACHE_MEMBERS: [&str; 4] = ["constants", "enableCompileCache", "flushCompileCache", "getCompileCacheDir"];
+
+/// The lazy initializer of `COMPILE_CACHE_MEMBERS` on the `node:module` builtin (its data):
+/// loads the helpers and defines the members, each wrapped as the public API exposes it.
+pub(crate) fn initialize_compile_cache(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    // The public `node:module` builtin is constructed here rather than from
+    // lib/module.js, so its compile-cache methods must explicitly forward to
+    // the same internal helpers used by the Node library and module loaders.
+    // Keeping a second native stub here shadowed those helpers with an
+    // always-failed API and bypassed their diagnostics and directory state.
+    let helpers = crate::host::shared_vm::commonjs::node_library_module(
+        context,
+        "internal/modules/helpers.js",
+        "internal/modules/helpers.js",
+    )?;
+    for name in COMPILE_CACHE_MEMBERS {
+        let key = context.string_rooted(name);
+        let mut value = context.get_property_rooted(helpers, key)?;
+        if name == "enableCompileCache" {
+            // Node's native modules binding validates the cache directory
+            // type. Quench does not yet implement native compile-cache entry
+            // points, so preserve this observable validation at the public
+            // API boundary rather than leaking a generic call error.
+            let wrap = context.evaluate_script_rooted(
+                r#"(nativeEnableCompileCache, constants, process) => function enableCompileCache(options) {
+                  if (options === null ||
+                      (options !== undefined && typeof options !== 'string' && typeof options !== 'object')) {
+                    const error = new TypeError('The "directory" argument must be of type string.');
+                    error.code = 'ERR_INVALID_ARG_TYPE';
+                    throw error;
+                  }
+                  const directory = typeof options === 'object' ? options.directory : options;
+                  if (directory !== undefined && typeof directory !== 'string') {
+                    const error = new TypeError('The "directory" argument must be of type string.');
+                    error.code = 'ERR_INVALID_ARG_TYPE';
+                    throw error;
+                  }
+                  if (process.env.NODE_DISABLE_COMPILE_CACHE) {
+                    if ((process.env.NODE_DEBUG_NATIVE || '').includes('COMPILE_CACHE')) {
+                      process.stderr.write('Disabled by NODE_DISABLE_COMPILE_CACHE\n');
+                    }
+                    return { status: constants.compileCacheStatus.DISABLED };
+                  }
+                  // The API remains available in builds without the native
+                  // cache backend. Report the documented failure result rather
+                  // than trying to call an absent native binding or claiming
+                  // that an on-disk cache was enabled.
+                  if (typeof nativeEnableCompileCache !== 'function') {
+                    return {
+                      status: constants.compileCacheStatus.FAILED,
+                      message: 'Compile cache is not supported by this runtime.',
+                    };
+                  }
+                  return nativeEnableCompileCache(options);
+                }"#,
+                "node:module/compile-cache-validation.js",
+            )?;
+            let this_value = context.undefined();
+            let constants = get(context, helpers, "constants")?;
+            value = context.call_rooted(wrap, this_value, &[value, constants, process])?;
+        } else if name == "flushCompileCache" {
+            // With no native cache backend there is nothing to flush. Preserve
+            // the public API's void return and avoid exposing an internal
+            // missing-binding TypeError.
+            let wrap = context.evaluate_script_rooted(
+                r#"(nativeFlushCompileCache) => function flushCompileCache() {
+                  if (typeof nativeFlushCompileCache === 'function') {
+                    return nativeFlushCompileCache();
+                  }
+                }"#,
+                "node:module/compile-cache-flush.js",
+            )?;
+            let this_value = context.undefined();
+            value = context.call_rooted(wrap, this_value, &[value])?;
+        } else if name == "getCompileCacheDir" {
+            // The modules binding reports an active directory only when a
+            // cache backend actually enabled one. NODE_COMPILE_CACHE alone
+            // cannot make this runtime claim that a bytecode cache is active.
+            let wrap = context.evaluate_script_rooted(
+                r#"(nativeGetCompileCacheDir, process) => function getCompileCacheDir() {
+                  if (process.env.NODE_DISABLE_COMPILE_CACHE) return undefined;
+                  return typeof nativeGetCompileCacheDir === 'function'
+                    ? nativeGetCompileCacheDir()
+                    : undefined;
+                }"#,
+                "node:module/compile-cache-env.js",
+            )?;
+            let this_value = context.undefined();
+            value = context.call_rooted(wrap, this_value, &[value, process])?;
+        }
+        set(context, module, name, value)?;
+    }
+    Ok(context.undefined())
 }
 
 fn set(

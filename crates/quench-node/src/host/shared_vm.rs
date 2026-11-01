@@ -362,6 +362,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "moduleRequire" (1) => crate::modules::module_shared_vm::require,
         method "moduleCompile" (3) => crate::modules::module_shared_vm::compile,
         method "moduleRunMain" (1) => commonjs::module_run_main,
+        method "moduleCompileCacheInitialize" (0) => crate::modules::module_shared_vm::initialize_compile_cache,
         method "netLookupResult" (3) => crate::modules::net_lookup_shared_vm::result,
         method "netLookupError" (2) => crate::modules::net_lookup_shared_vm::error,
         method "netGetAutoSelectFamily" (0) => crate::modules::net_lookup_shared_vm::get_default,
