@@ -206,7 +206,6 @@ pub(crate) mod stream_binding;
 pub(crate) mod deep_equal_shared_vm;
 pub(crate) mod dom_exception_shared_vm;
 
-pub(crate) mod util_aborted_source_shared_vm;
 
 #[cfg(quench_openssl_provider)]
 pub(crate) mod crypto_digest_cache;

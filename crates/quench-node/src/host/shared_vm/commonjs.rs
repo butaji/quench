@@ -2787,7 +2787,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
             let operation = get(context, data, "abortSignal")?;
             set(context, module, "abortSignal", operation)?;
-            let aborted = crate::modules::util_aborted_source_shared_vm::original_aborted(context)?;
+            let util = util_module(context)?;
+            let aborted = get(context, util, "aborted")?;
             set(context, module, "aborted", aborted)?;
             Ok(module)
         }
