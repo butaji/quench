@@ -5800,7 +5800,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let heap_base = self.region.native_heap_word();
         let object_base = self.word(heap_base);
         let exit = self.exit_block(pc);
-        let header = ObjectHeader::prove(&mut self.body.builder, receiver, object_base, exit);
+        let header = ObjectHeader::prove(&mut self.body.builder, receiver, object_base, None, exit);
         self.chains.insert(self.body.builder.current_block().expect("object header"), chain);
         let wrong_shape = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, header.shape, i64::from(load.shape));
         self.guard(pc, wrong_shape);
@@ -5836,7 +5836,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let heap_base = self.region.native_heap_word();
             let records = self.word(heap_base);
             let exit = self.exit_block(pc);
-            let header = ObjectHeader::prove(&mut self.body.builder, receiver, records, exit);
+            let header = ObjectHeader::prove(&mut self.body.builder, receiver, records, None, exit);
             let base = self.word(heap_base + 1);
             let length = self.word(heap_base + 2);
             let join = self.body.builder.create_block();

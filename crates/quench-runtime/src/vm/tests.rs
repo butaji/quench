@@ -21615,6 +21615,107 @@ fn typed_lane_recovery_preserves_observable_parameter_updates() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn typed_shape_edges_preserve_joins_reassignment_and_layout_fallback() {
+    use crate::bytecode::Op;
+    let source = r#"
+        var packed={left:3,right:5}, arena={left:3.5,right:5.5};
+        var other={right:11,padding:99,left:4}, root={left:3,right:5,next:null};
+        root.next=root;
+        function read(o, flag) { let n=o.left; if(flag) n+=1; return n+o.right; }
+        function joined(o, other, flag) { let n=o.left; if(flag) o=other; return n+o.right; }
+        function reload(o, flag) { let n=o.left; if(flag) o=o.next; return n+o.right; }
+        function update(o, flag, value) { let n=o.left; if(flag) o.right=value; return n+o.right; }
+        function setNext(value) { root.next=value; }
+        read(packed,false); read(arena,true);
+        joined(packed,packed,false); joined(packed,packed,true);
+        reload(root,false); reload(root,true);
+        update(packed,false,6); update(packed,true,6);
+    "#;
+    let typescript = source.replace("function read(o, flag)",
+        "function read(o: {left:number,right:number}, flag:boolean): number");
+    for program in [Engine::specialize(source, "typed-shape-edges.js"),
+        Engine::specialize_typescript(&typescript, "typed-shape-edges.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let packed = global(&mut vm, "packed");
+        let arena = global(&mut vm, "arena");
+        let other = global(&mut vm, "other");
+        let root = global(&mut vm, "root");
+        for name in ["read", "joined", "reload", "update"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("typed shape artifact");
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, arguments: &[Value]| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in arguments.iter().copied().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).unwrap();
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null())
+                    .caller_pc().expect("caller exit");
+                (pc, registers)
+            };
+            if name == "update" {
+                let right = vm.intern_atom("right");
+                for value in [Value::integer(7), Value::number(7.5)] {
+                    let before = vm.own_property(packed, right).unwrap();
+                    let (pc, registers) = run(&mut vm, &[packed, Value::TRUE, value]);
+                    if value.as_int().is_some() {
+                        assert_eq!(instructions[pc].op(), Op::Return);
+                        assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::integer(10));
+                        assert_eq!(vm.own_property(packed, right), Some(value));
+                    } else {
+                        assert_eq!(instructions[pc].op(), Op::SetField);
+                        assert_eq!(vm.own_property(packed, right), Some(before), "exit before storage migration");
+                    }
+                }
+                continue;
+            }
+            let cases = match name {
+                "read" => vec![(vec![packed, Value::FALSE], true), (vec![arena, Value::TRUE], true),
+                    (vec![Value::integer(5), Value::FALSE], false)],
+                "joined" => vec![(vec![packed, packed, Value::TRUE], true),
+                    (vec![packed, other, Value::FALSE], true), (vec![packed, other, Value::TRUE], false)],
+                "reload" => {
+                    let (pc, registers) = run(&mut vm, &[root, Value::TRUE]);
+                    assert_eq!(instructions[pc].op(), Op::Return);
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::integer(8));
+                    let setter = global(&mut vm, "setNext");
+                    vm.call_value(&program, setter, Value::UNDEFINED, &[other]).unwrap();
+                    vec![(vec![root, Value::FALSE], true), (vec![root, Value::TRUE], false)]
+                }
+                _ => unreachable!(),
+            };
+            for (arguments, completes) in cases {
+                let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                let (pc, registers) = run(&mut vm, &arguments);
+                if completes {
+                    assert_eq!(instructions[pc].op(), Op::Return, "{name} at {pc}");
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+                } else {
+                    assert_eq!(instructions[pc].op(), Op::GetField, "{name} at {pc}");
+                    let Some(crate::bytecode::FieldLookup::Atom { base, .. }) = instructions[pc].field_lookup()
+                        else { panic!("own-field recovery") };
+                    let receiver = registers[usize::from(base.register_index().unwrap())];
+                    assert_eq!(receiver, if name == "read" { Value::integer(5) } else { other });
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
     use crate::bytecode::Op;
     let source = include_str!("../../tests/fixtures/own-slot-proofs.js");

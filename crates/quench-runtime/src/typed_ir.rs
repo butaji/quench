@@ -18,35 +18,52 @@ pub(crate) enum BindingTime {
     Dynamic,
 }
 
-/// A set of language types, with an independent exact signed-int32 refinement.
-/// Reserved bits in ANY also cover internal markers: a TDZ/hole is not Number.
+/// One authority for a semantic type. Refined cases determine their language
+/// bits; storing those bits alongside the payload would duplicate the fact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Type {
-    kinds: u16,
-    int32: bool,
+enum TypeKind {
+    Language(u16),
+    Int32,
+    DirectObjectShape(u32),
 }
 
+/// A set of language types, with an optional semantic refinement.
+/// Reserved bits in ANY also cover internal markers: a TDZ/hole is not Number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Type(TypeKind);
+
 impl Type {
-    pub(crate) const NEVER: Self = Self {
-        kinds: 0,
-        int32: false,
-    };
-    pub(crate) const ANY: Self = Self {
-        kinds: u16::MAX,
-        int32: false,
-    };
+    pub(crate) const NEVER: Self = Self(TypeKind::Language(0));
+    pub(crate) const ANY: Self = Self(TypeKind::Language(u16::MAX));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
-    pub(crate) const INT32: Self = Self {
-        kinds: Self::NUMBER.kinds,
-        int32: true,
-    };
+    pub(crate) const INT32: Self = Self(TypeKind::Int32);
     /// Internal control discriminant emitted by the typeof-test rewrite.
-    pub(crate) const TYPEOF_INDEX: Self = Self { kinds: 1 << (u16::BITS - 1), int32: false };
+    pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));
 
     pub(crate) const fn language(kind: ValueType) -> Self {
-        Self {
-            kinds: 1 << kind as u16,
-            int32: false,
+        Self(TypeKind::Language(1 << kind as u16))
+    }
+
+    const fn kinds(self) -> u16 {
+        match self.0 {
+            TypeKind::Language(kinds) => kinds,
+            TypeKind::Int32 => 1 << ValueType::Number as u16,
+            TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
+        }
+    }
+
+    /// A direct native object record whose family, range and exact shape were
+    /// proved on every incoming edge.
+    /// This fact lasts only within a layout-preserving, no-safepoint region;
+    /// feedback alone and canonical tagged bits cannot establish it.
+    pub(crate) const fn direct_object(shape: u32) -> Self {
+        Self(TypeKind::DirectObjectShape(shape))
+    }
+
+    pub(crate) fn object_shape(self) -> Option<u32> {
+        match self.0 {
+            TypeKind::DirectObjectShape(shape) => Some(shape),
+            _ => None,
         }
     }
 
@@ -71,22 +88,18 @@ impl Type {
     }
 
     pub(crate) fn join(self, other: Self) -> Self {
+        if self == other || other == Self::NEVER {
+            return self;
+        }
         if self == Self::NEVER {
             return other;
         }
-        if other == Self::NEVER {
-            return self;
-        }
-        let kinds = self.kinds | other.kinds;
-        Self {
-            kinds,
-            int32: kinds == Self::NUMBER.kinds && self.int32 && other.int32,
-        }
+        Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
-        self == Self::NEVER
-            || (self.kinds & !expected.kinds == 0 && (!expected.int32 || self.int32))
+        self == Self::NEVER || self == expected
+            || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
     }
 }
 
@@ -164,7 +177,7 @@ impl Fact {
             }
         })
             && match self.binding {
-                BindingTime::Static => self.proof == Proof::Static,
+                BindingTime::Static => self.proof == Proof::Static && self.ty.object_shape().is_none(),
                 BindingTime::Location | BindingTime::Site => {
                     self.proof == Proof::EntryGuard
                         || (self.proof == Proof::CanonicalValue
@@ -217,6 +230,28 @@ mod tests {
         assert!(!Type::NUMBER.join(Type::ANY).is_subtype(Type::NUMBER));
         assert_eq!(Type::INT32.join(Type::NUMBER), Type::NUMBER);
         assert_eq!(Type::NEVER.join(Type::INT32), Type::INT32);
+    }
+
+    #[test]
+    fn object_shapes_survive_only_compatible_joins_and_proof_lifetimes() {
+        let object = Type::language(ValueType::Object);
+        let shape = Type::direct_object(3);
+        assert_eq!(shape.join(shape), shape);
+        assert_eq!(shape.join(Type::NEVER), shape);
+        assert_eq!(shape.join(Type::direct_object(4)), object);
+        assert_eq!(shape.join(object), object);
+        assert!(shape.is_subtype(object));
+        assert!(!object.is_subtype(shape));
+        assert!(!Type::direct_object(4).is_subtype(shape));
+        assert_eq!(shape.join(Type::language(ValueType::Null)).object_shape(), None);
+        let fact = Fact { ty: shape, representation: Representation::Tagged,
+            binding: BindingTime::Dynamic, proof: Proof::Definition, projection: Projection::Exact };
+        assert!(fact.verified().is_some());
+        assert!(Fact { binding: BindingTime::Location, proof: Proof::EntryGuard, ..fact }.verified().is_some());
+        for (binding, proof) in [(BindingTime::Static, Proof::Static),
+            (BindingTime::Location, Proof::CanonicalValue)] {
+            assert!(Fact { binding, proof, ..fact }.verified().is_none());
+        }
     }
 
     #[test]
@@ -283,6 +318,7 @@ mod tests {
     #[test]
     fn joins_preserve_each_semantic_input_and_never_invent_a_numeric_proof() {
         let types = [Type::NEVER, Type::INT32, Type::NUMBER, Type::ANY, Type::TYPEOF_INDEX,
+            Type::direct_object(3), Type::direct_object(4),
             Type::language(ValueType::Undefined), Type::language(ValueType::Null),
             Type::language(ValueType::Boolean), Type::language(ValueType::String),
             Type::language(ValueType::Symbol), Type::language(ValueType::BigInt),
@@ -292,7 +328,7 @@ mod tests {
                 let joined = left.join(right);
                 assert_eq!(joined, right.join(left));
                 assert!(left.is_subtype(joined) && right.is_subtype(joined));
-                for expected in [Type::INT32, Type::NUMBER] {
+                for expected in [Type::INT32, Type::NUMBER, Type::language(ValueType::Object), Type::direct_object(3)] {
                     assert_eq!(joined.is_subtype(expected),
                         left.is_subtype(expected) && right.is_subtype(expected));
                 }

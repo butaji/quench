@@ -16,20 +16,28 @@ pub(super) struct ObjectHeader {
 
 impl ObjectHeader {
     pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
-        records: ir::Value, miss: ir::Block) -> Self {
+        records: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-        emit_js_guard(builder, object, miss);
+        // Only a dominating verified definition/edge can supply this fact. The
+        // caller's no-safepoint, layout-preserving contract keeps it alive.
+        let shape = known.and_then(|fact| fact.ty.object_shape());
         let id = builder.ins().ireduce(types::I32, bits);
-        let inside = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, id, layout.record_capacity as i64);
-        emit_js_guard(builder, inside, miss);
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-        emit_js_guard(builder, present, miss);
+        if shape.is_none() {
+            let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            emit_js_guard(builder, object, miss);
+            let inside = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, id, layout.record_capacity as i64);
+            emit_js_guard(builder, inside, miss);
+            let present = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
+            emit_js_guard(builder, present, miss);
+        }
         let id = builder.ins().uextend(types::I64, id);
         let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
         let record = builder.ins().iadd(records, offset);
-        let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
+        let shape = match shape {
+            Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
+            None => builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32),
+        };
         let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
         let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
         Self { record, shape, inline }
@@ -46,9 +54,25 @@ pub(crate) struct NativeFieldLoad {
 
 impl NativeFieldLoad {
     pub(super) fn valid(self) -> bool {
-        usize::from(self.slot) < self.storage_len
+        self.shape & crate::value_vec::DICTIONARY_STORAGE == 0
+            && usize::from(self.slot) < self.storage_len
             && (self.storage != Some(PlainPropertyStorage::PackedInline)
                 || self.storage_len <= crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
+        let field = NativeFieldLoad { shape: 0, slot: 0, storage_len: 1, storage: None };
+        assert!(field.valid());
+        for shape in [super::super::super::NO_FIELD_RECEIVER,
+            crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {
+            assert!(!NativeFieldLoad { shape, ..field }.valid());
+        }
     }
 }
 

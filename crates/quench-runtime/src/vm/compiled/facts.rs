@@ -178,6 +178,7 @@ pub(super) fn analyze(
     leaders: &[bool],
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
 ) -> Facts {
     let mut entry: Vec<Option<Vec<Type>>> = vec![None; instructions.len()];
     let mut pending = Vec::new();
@@ -209,6 +210,11 @@ pub(super) fn analyze(
         let mut pc = leader;
         loop {
             let instruction = instructions[pc];
+            // A direct own read proves its receiver before defining its result.
+            // If result and receiver alias, transfer kills that refinement.
+            if let Some((register, shape)) = own_shape(pc) {
+                set(&mut types, register, Type::direct_object(shape));
+            }
             let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
             match transfer(&mut types, instruction, constants, written) {
                 Flow::Leaves => break,

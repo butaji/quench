@@ -540,7 +540,13 @@ fn lower(
             if *current != Type::INT32 { *current = required; }
         }
     }
-    lowering.facts = super::facts::analyze(&initial, &instructions, &leaders, &program.constants, &writes);
+    lowering.facts = super::facts::analyze(&initial, &instructions, &leaders, &program.constants, &writes, &|pc| {
+        let instruction = instructions[pc];
+        if instruction.op() != Op::GetField || instruction.result_flags() != 0 { return None; }
+        let [field] = fields.get(pc)?.as_slice() else { return None };
+        let FieldLookup::Atom { base, .. } = instruction.field_lookup()? else { return None };
+        Some((base.register_index()?, field.shape))
+    });
     lowering.entry = Some(lowering.entry_facts(&instructions));
     let first = lowering.blocks[0].expect("pc 0 leads");
     let mut state = State::canonical(count);
@@ -989,6 +995,10 @@ impl Lowering<'_, '_> {
             };
             let owner = if receiver { None } else { register };
             let value = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit)?;
+            if let [field] = shapes.as_slice() && let Some(register) = register {
+                state.values[usize::from(register)] = RegisterFact::definition(
+                    Type::direct_object(field.shape), Representation::Tagged);
+            }
             self.set_tagged(state, destination, value);
             return Some(true);
         }
@@ -1057,11 +1067,14 @@ impl Lowering<'_, '_> {
         if let Some(known) = state.shapes.get(&register).copied() { return known; }
         let bits = self.tagged(state, register);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
+        let fact = state.values[usize::from(register)].value;
+        let ty = fact.ty;
+        let header = ObjectHeader::prove(&mut self.builder, bits, records, Some(fact), exit);
         let projection = (header.record, header.shape, header.inline);
         state.shapes.insert(register, projection);
         state.values[usize::from(register)] = RegisterFact::definition(
-            Type::language(crate::ValueType::Object), Representation::Tagged);
+            if ty.object_shape().is_some() { ty } else { Type::language(crate::ValueType::Object) },
+            Representation::Tagged);
         projection
     }
 
@@ -1275,6 +1288,34 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_shape_proofs_survive_verified_control_flow_edges() {
+        let program = crate::Engine::specialize(
+            "function subject(o, flag) { let value=o.left; if(flag) value+=1; return value+o.right; }",
+            "shape-edges.js",
+        ).unwrap();
+        let function = program.function(1);
+        let fields: Vec<_> = function.instructions().map(|instruction| {
+            if instruction.op() == Op::GetField
+                && let Some(FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+                && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
+                vec![NativeFieldLoad { shape: 0, slot: slot as u16, storage_len: 2, storage: None }]
+            } else { Vec::new() }
+        }).collect();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let unit = super::super::lane_unit::unit(function, &[], &|_| None).unwrap();
+        let (native, _) = lower(&program, 1, &unit,
+            LaneHelpers { function_capture: 0, field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+        let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
+                if i32::from(offset) == crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
+                    && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32))
+            .count();
+        // The implicit receiver has its entry projection; o needs one shape
+        // proof, shared by both paths to its second field read.
+        assert_eq!(shapes, 2, "the CFG must carry the proven shape:\n{native}");
+    }
 
     #[test]
     fn aliased_own_fields_share_the_complete_storage_bound() {
