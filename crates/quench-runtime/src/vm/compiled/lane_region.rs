@@ -1301,7 +1301,7 @@ mod tests {
                 let ir::ValueDef::Result(length, _) = native.dfg.value_def(native.dfg.resolve_aliases(args[1]))
                     else { return false };
                 matches!(native.dfg.insts[length], ir::InstructionData::Load { offset, .. }
-                    if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, property_len) as i32)
+                    if i32::from(offset) == crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.length as i32)
             }).count();
         assert_eq!(bounds, 1, "two aliased own fields share one complete arena bound:\n{native}");
     }

@@ -1558,8 +1558,7 @@ fn emit_js_cached_field_slot(
 
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-    let values = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
-    let values_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+    let (values, values_len) = emit_js_property_values(builder, payload);
     for base in [entries, records, values] {
         let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
         emit_js_guard(builder, present, fallback);
@@ -1694,6 +1693,15 @@ fn emit_js_cached_field_slot(
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
     builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+}
+
+fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
+    let header = builder.ins().load(types::I64, invariant(), payload,
+        std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
+    let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
+    let values = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.base as i32);
+    let length = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.length as i32);
+    (values, length)
 }
 
 /// The VM step that resumes at this PC on any failed proof (`emit_js_step_fallback`), in
@@ -1989,8 +1997,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, rec
     };
     let this = builder.ins().load(types::I64, MemFlagsData::trusted(), payload, receiver_offset);
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-    let properties = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
-    let properties_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+    let (properties, properties_len) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
     builder.def_var(receiver.properties_len, properties_len);
     let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
@@ -6687,8 +6694,9 @@ struct JsStepDispatch {
     object_record_base: usize,
     object_mark_blocks: usize,
     object_mark_block_count: usize,
-    property_values: usize,
-    property_len: usize,
+    /// Canonical allocator header in this entry's live VM. Its address is fixed
+    /// through callouts; growth/compaction update its base/length in place.
+    property_buffer: usize,
     field_entries: usize,
     /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
     /// length in words; and whether the VM and program run specialized, which a cached store
@@ -6933,13 +6941,15 @@ impl<H: Host> Vm<H> {
             dispatch.native_registers = registers;
             dispatch.receiver = receiver.to_bits();
             dispatch.captures = captures as usize;
-            dispatch.vm = (self as *mut Self).addr();
             dispatch.residual = residual as *const ResidualProgram as usize;
             dispatch.refresh_object_bases(self);
             dispatch.stores_specialized = usize::from(self.specialized && residual.specialized);
             let context = &mut frame.context;
             context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
             context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            let vm = self as *mut Self;
+            dispatch.vm = vm as usize;
+            dispatch.bind_property_buffer(vm);
             let mut word = 0_u64;
             // SAFETY: the body was compiled for this function, never allocates or
             // collects, and reads only the registers and heap bases set above.
@@ -6997,8 +7007,7 @@ impl LaneFrame {
                 object_record_base: 0,
                 object_mark_blocks: 0,
                 object_mark_block_count: 0,
-                property_values: 0,
-                property_len: 0,
+                property_buffer: 0,
                 field_entries: 0,
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
@@ -7062,6 +7071,7 @@ fn run_js_native_entry<H: Host>(
         let dispatch = &mut *payload.cast::<JsStepDispatch>();
         dispatch.native_pcs = native_pcs.as_ptr();
         dispatch.native_pc_count = native_pcs.len();
+        dispatch.bind_property_buffer(vm);
         (dispatch.native_registers, dispatch.native_locals, dispatch.local_count)
     };
     // Frame registers and locals are the canonical tagged homes and remain
@@ -7122,7 +7132,7 @@ impl JsNativeActivation {
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, object_mark_blocks: 0,
-            object_mark_block_count: 0, property_values: 0, property_len: 0,
+            object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
@@ -7143,14 +7153,21 @@ impl JsNativeActivation {
 }
 
 impl JsStepDispatch {
+    /// The VM stays in place throughout this entry. Derive the owner address
+    /// from the same full-VM pointer as semantic callouts, without creating a
+    /// shared borrow that later mutable callouts would invalidate. Rebind on
+    /// every entry, including reuse of the thread-local lane frame by another VM.
+    fn bind_property_buffer<H: Host>(&mut self, vm: *mut Vm<H>) {
+        let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
+        self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
+    }
+
     /// Object loads, stores and barriers share these bases in lane and general code.
     /// Allocation or collection between native entries may move any of them.
     fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
-        let (values, len) = vm.heap.native_property_values();
-        (self.property_values, self.property_len) = (values as usize, len);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
@@ -16457,7 +16474,9 @@ mod tests {
             (dispatch as *mut JsStepDispatch).cast(),
             vm.execution_interrupt.atomic_flag(), None,
         );
-        context.vm = (vm as *mut Vm<crate::test_host::TestHost>).cast();
+        let vm = vm as *mut Vm<crate::test_host::TestHost>;
+        context.vm = vm.cast();
+        dispatch.bind_property_buffer(vm);
         context.program = ProgramId::MAIN;
         let mut result = 0;
         let status = run(&mut context, &mut result);

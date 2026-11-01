@@ -25,12 +25,25 @@ enum Allocation {
 /// address range once and exposes pages as needed. Unsupported targets or a failed
 /// initial reservation retain ordinary Vec allocation. Access never branches on
 /// allocation kind; only growth, compaction and destruction inspect it.
+#[repr(C)]
 pub(super) struct PropertyBuffer {
     base: NonNull<Value>,
     length: usize,
     capacity: usize,
     allocation: Allocation,
 }
+
+/// Native code reads the allocator's authoritative header, never a copied view.
+#[derive(Clone, Copy)]
+pub(crate) struct NativePropertyBufferLayout {
+    pub(crate) base: usize,
+    pub(crate) length: usize,
+}
+
+pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {
+    base: std::mem::offset_of!(PropertyBuffer, base),
+    length: std::mem::offset_of!(PropertyBuffer, length),
+};
 
 // SAFETY: like Vec<Value>, the buffer owns its allocation, mutation requires
 // exclusive access, and shared access exposes only initialized, immutable Values.
@@ -291,6 +304,40 @@ impl From<Vec<Value>> for PropertyBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exercise_native_header(mut buffer: PropertyBuffer) {
+        let root = &mut buffer as *mut PropertyBuffer;
+        let header = root.cast::<u8>();
+        for length in [0, 4, DENSE_GROWTH_THRESHOLD + 1, 2, 0, 8] {
+            // All mutation and native-style reads descend from one owner pointer,
+            // as VM callouts and compiled code do. No shared header borrow survives.
+            unsafe {
+                assert!((*root).resize(length));
+                (*root).shrink_to(length);
+                let base = header.add(NATIVE_PROPERTY_BUFFER_LAYOUT.base).cast::<*const Value>().read();
+                let initialized = header.add(NATIVE_PROPERTY_BUFFER_LAYOUT.length).cast::<usize>().read();
+                assert_eq!(base, (*root).as_ptr());
+                assert_eq!(initialized, length);
+                if length != 0 {
+                    (&mut *root)[length - 1] = Value::number(length as f64);
+                    assert_eq!(base.add(length - 1).read(), Value::number(length as f64));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_header_tracks_heap_relocation_and_compaction() {
+        exercise_native_header(PropertyBuffer { allocation: Allocation::Heap, ..PropertyBuffer::default() });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_header_tracks_reserved_growth_and_compaction() {
+        let mut buffer = PropertyBuffer::default();
+        assert!(buffer.reserve_address_space(DENSE_GROWTH_THRESHOLD * 2));
+        exercise_native_header(buffer);
+    }
 
     #[test]
     fn heap_fallback_preserves_values_and_rejects_capacity_overflow() {

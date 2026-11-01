@@ -679,6 +679,12 @@ impl Heap {
         self.properties.native_values()
     }
 
+    /// Offset of the property allocator header within this heap. Bind native
+    /// readers from the live VM's raw pointer, so later mutable VM callouts
+    /// reborrow the same allocation provenance rather than a shared header view.
+    pub(crate) const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
+        + crate::value_vec::ValueArena::BUFFER_OFFSET;
+
     /// The object of an object, array or promise record, whose field reads the field cache
     /// answers by shape alone (a promise's internal slots change no object operation). A
     /// function's restricted properties (`AtomClass`) need its kind, so a function record,

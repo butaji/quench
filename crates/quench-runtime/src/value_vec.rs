@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap;
 
 mod buffer;
 use buffer::PropertyBuffer;
+pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
 pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
@@ -207,6 +208,7 @@ impl Default for ValueArena {
 }
 
 impl ValueArena {
+    pub(crate) const BUFFER_OFFSET: usize = std::mem::offset_of!(Self, values);
     /// The current storage for out-of-line object properties.
     ///
     /// Native readers remain confined to no-safepoint execution: reserved storage
