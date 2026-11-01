@@ -43,6 +43,7 @@ pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod crypto_strings;
 pub(crate) mod diagnostics_channel_shared_vm;
+pub(crate) mod dgram_shared_vm;
 pub(crate) mod dns_module_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod domain_shared_vm;

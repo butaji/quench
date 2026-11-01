@@ -1289,7 +1289,7 @@ fn require_for_module_inner(
             return load(context, &filename, Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::Dgram) => {
-            return node_library_module(context, "dgram.js", "dgram.js");
+            return cached_builtin(context, BuiltinModule::Dgram);
         }
         Some(BuiltinModule::InternalDgram) => {
             return node_library_module(context, "internal/dgram.js", "internal/dgram.js");
@@ -2942,7 +2942,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
         BuiltinModule::Dns => crate::modules::dns_module_shared_vm::module(context),
-        BuiltinModule::Dgram => crate::host::removed_javascript("node:dgram"),
+        BuiltinModule::Dgram => crate::modules::dgram_shared_vm::module(context),
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
         BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),
