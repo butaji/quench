@@ -33,8 +33,10 @@ mod field {
 }
 use field::*;
 
+/// What an iterator yields.
 const KEYS: f64 = 0.0;
 const VALUES: f64 = 1.0;
+const ENTRY_PAIRS: f64 = 2.0;
 /// The multipart boundary's prefix and the digits of its random suffix.
 const BOUNDARY_PREFIX: &str = "----formdata-undici-0";
 const BOUNDARY_DIGITS: usize = 11;
@@ -339,7 +341,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         }
         Member::Keys => iterator(c, this, KEYS),
         Member::Values => iterator(c, this, VALUES),
-        Member::Entries => iterator(c, this, 2.0),
+        Member::Entries => iterator(c, this, ENTRY_PAIRS),
         Member::ForEach => {
             let state = slots(c, this)?;
             let callback = arg(c, args, 0);

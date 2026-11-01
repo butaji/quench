@@ -126,13 +126,13 @@ fn serialize_options_transfer(context: &mut NativeContext<'_, NodeHost>, options
     if !context.is_object_rooted(transfer)? {
         return Err(conversion_error(context, NOT_SEQUENCE));
     }
-    let mut iterator = match context.iterator_rooted(transfer) {
+    let iterator = match context.iterator_rooted(transfer) {
         Ok(iterator) => iterator,
         Err(RootedError { exception: Some(_), .. }) => return Err(conversion_error(context, NOT_SEQUENCE)),
         Err(error) => return Err(error),
     };
     let mut transfers = Vec::new();
-    while let Some(item) = context.iterator_step_rooted(&mut iterator)? {
+    while let Some(item) = context.iterator_step_rooted(&iterator)? {
         if !context.is_object_rooted(item)? && !context.is_callable_rooted(item)? {
             return Err(conversion_error(context, NOT_OBJECT));
         }

@@ -563,8 +563,8 @@ pub(crate) fn read_with(c: &mut Context<'_>, reader: RootId, chunk: RootId, clos
 
 // ---- The default controller
 
-/// `setupReadableStreamDefaultController`: `start` is the start algorithm's result.
-#[allow(clippy::too_many_arguments)]
+/// `setupReadableStreamDefaultController`: `start` runs the start algorithm on the
+/// controller.
 fn setup_default_controller(
     c: &mut Context<'_>,
     stream: RootId,

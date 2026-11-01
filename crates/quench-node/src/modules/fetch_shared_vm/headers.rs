@@ -3,7 +3,7 @@
 //! `set-cookie` values also kept apart; iteration is sorted and lowercase.
 
 use super::{iterator_class, private_slot, required, type_error, usv_or_byte_string, Context, Outcome, Slot};
-use crate::modules::host_members::{captured, current, function, members};
+use crate::modules::host_members::{current, members};
 use crate::modules::webstreams_shared_vm::{
     arg, custom_inspect, get, install, is_nullish, is_undefined, num, put, put_num, record, ClassMember,
 };
@@ -53,6 +53,8 @@ use field::*;
 /// array index (which property order would sort first).
 const KEY_PREFIX: &str = "h:";
 const SET_COOKIE: &str = "set-cookie";
+/// What joins the values of a repeated header.
+const VALUE_SEPARATOR: &str = ", ";
 /// What an iterator yields.
 const KEYS: f64 = 0.0;
 const VALUES: f64 = 1.0;
@@ -181,8 +183,7 @@ pub(crate) fn append_raw(c: &mut Context<'_>, state: RootId, name: &str, value: 
     if let Some(existing) = entry(c, state, &lower)? {
         let previous = get(c, existing, VALUE)?;
         let previous = c.to_string(previous)?;
-        let separator = if lower == SET_COOKIE { ", " } else { ", " };
-        let combined = c.string_rooted(&format!("{previous}{separator}{value}"));
+        let combined = c.string_rooted(&format!("{previous}{VALUE_SEPARATOR}{value}"));
         put(c, existing, VALUE, combined)?;
     } else {
         let name_value = c.string_rooted(name);
@@ -305,16 +306,16 @@ pub(crate) fn fill(c: &mut Context<'_>, state: RootId, init: RootId) -> Result<(
     let iterator_key = get(c, symbol, "iterator")?;
     let method = c.get_property_rooted(init, iterator_key)?;
     if !is_nullish(c, method) {
-        let mut iterator = c.iterator_rooted(init)?;
+        let iterator = c.iterator_rooted(init)?;
         let mut index = 0;
-        while let Some(pair) = c.iterator_step_rooted(&mut iterator)? {
+        while let Some(pair) = c.iterator_step_rooted(&iterator)? {
             if !c.is_object_rooted(pair)? {
                 let shown = crate::modules::console_format_shared_vm::inspect(c, pair, Default::default())?;
                 return Err(type_error(c, &format!("Headers contructor: init[{index}] ({shown}) is not iterable.")));
             }
-            let mut inner = c.iterator_rooted(pair)?;
+            let inner = c.iterator_rooted(pair)?;
             let mut values = Vec::new();
-            while let Some(value) = c.iterator_step_rooted(&mut inner)? {
+            while let Some(value) = c.iterator_step_rooted(&inner)? {
                 values.push(value);
             }
             if values.len() != 2 {
@@ -467,6 +468,3 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         }
     }
 }
-
-#[allow(unused_imports)]
-use {captured as _, function as _, ENTRIES as _};

@@ -113,9 +113,9 @@ fn fields(c: &mut Context<'_>, init: RootId) -> Outcome {
             let shown = crate::modules::console_format_shared_vm::inspect(c, ports, Default::default())?;
             return Err(type_error(c, &format!("MessageEvent constructor: eventInitDict.ports ({shown}) is not iterable.")));
         }
-        let mut iterator = c.iterator_rooted(ports)?;
+        let iterator = c.iterator_rooted(ports)?;
         let mut values = Vec::new();
-        while let Some(port) = c.iterator_step_rooted(&mut iterator)? {
+        while let Some(port) = c.iterator_step_rooted(&iterator)? {
             values.push(port);
         }
         values

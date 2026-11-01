@@ -273,8 +273,8 @@ fn construct_blob(c: &mut Context<'_>, this: RootId, sources: RootId, options: R
     }
     let mut total = 0.0;
     let mut parts = Vec::new();
-    let mut iterator = c.iterator_rooted(sources)?;
-    while let Some(item) = c.iterator_step_rooted(&mut iterator)? {
+    let iterator = c.iterator_rooted(sources)?;
+    while let Some(item) = c.iterator_step_rooted(&iterator)? {
         let (length, part) = source(c, item, endings_text == NATIVE)?;
         total += length;
         parts.push(part);
