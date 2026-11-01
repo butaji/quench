@@ -154,10 +154,13 @@ impl Fact {
         self.verify().then_some(VerifiedFact(self))
     }
     pub(crate) fn verify(self) -> bool {
-        (self.representation.accepts(self.ty)
-            || (self.projection == Projection::CheckedDefinitions
-                && self.representation == Representation::Int32
-                && self.ty.is_subtype(Type::NUMBER) && self.ty != Type::NEVER))
+        (match self.projection {
+            Projection::Exact => self.representation.accepts(self.ty),
+            Projection::CheckedDefinitions => {
+                self.representation == Representation::Int32
+                    && self.ty.is_subtype(Type::NUMBER) && self.ty != Type::NEVER
+            }
+        })
             && match self.binding {
                 BindingTime::Static => self.proof == Proof::Static,
                 BindingTime::Location | BindingTime::Site => {
@@ -243,6 +246,40 @@ mod tests {
         assert!(!Representation::Int32.can_receive(Representation::Float64));
         assert!(!Representation::Float64.can_receive(Representation::Tagged));
         assert!(Representation::Float64.can_receive(Representation::Int32));
+    }
+
+    #[test]
+    fn checked_projection_admission_requires_a_numeric_int32_destination() {
+        let definition = Fact::number(Representation::Int32, BindingTime::Dynamic, Proof::Definition);
+        assert!(definition.verified().is_some());
+        for representation in [Representation::Float64, Representation::Tagged] {
+            assert!(Fact { representation, ..definition }.verified().is_none());
+        }
+        for ty in [Type::NEVER, Type::ANY, Type::language(ValueType::Boolean),
+            Type::NUMBER.join(Type::language(ValueType::BigInt))] {
+            assert!(Fact { ty, ..definition }.verified().is_none());
+        }
+        assert!(Fact { ty: Type::INT32, ..definition }.verified().is_some());
+    }
+
+    #[test]
+    fn joins_preserve_each_semantic_input_and_never_invent_a_numeric_proof() {
+        let types = [Type::NEVER, Type::INT32, Type::NUMBER, Type::ANY, Type::TYPEOF_INDEX,
+            Type::language(ValueType::Undefined), Type::language(ValueType::Null),
+            Type::language(ValueType::Boolean), Type::language(ValueType::String),
+            Type::language(ValueType::Symbol), Type::language(ValueType::BigInt),
+            Type::language(ValueType::Object), Type::language(ValueType::Function)];
+        for left in types {
+            for right in types {
+                let joined = left.join(right);
+                assert_eq!(joined, right.join(left));
+                assert!(left.is_subtype(joined) && right.is_subtype(joined));
+                for expected in [Type::INT32, Type::NUMBER] {
+                    assert_eq!(joined.is_subtype(expected),
+                        left.is_subtype(expected) && right.is_subtype(expected));
+                }
+            }
+        }
     }
 
     #[test]
