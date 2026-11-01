@@ -922,10 +922,12 @@ fn write(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> Call {
                 (get(c, options, "offset")?, get(c, options, "length")?, get(c, options, "position")?)
             };
         }
+        // `writeSync` ignores an offset that is not a number; the asynchronous writes
+        // validate any offset given.
         let offset = match number_or(c, offset) {
-            Some(_) if flavor != Flavor::Sync => args::integer(c, offset, "offset", 0.0, args::MAX_SAFE_INTEGER)?,
-            Some(number) => number,
-            None => 0.0,
+            _ if flavor != Flavor::Sync && !is_nullish(c, offset) => args::integer(c, offset, "offset", 0.0, args::MAX_SAFE_INTEGER)?,
+            Some(number) if flavor == Flavor::Sync => number,
+            _ => 0.0,
         };
         let length = number_or(c, length).unwrap_or(capacity as f64 - offset);
         offset_length_write(c, offset, length, capacity)?;

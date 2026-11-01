@@ -138,13 +138,13 @@ impl Copy {
         let undefined = c.undefined();
         let verdict = c.call_rooted(filter, undefined, &[source, destination])?;
         if c.is_promise_rooted(verdict)? {
-            if let Some(PromiseSnapshot::Fulfilled(value)) = c.promise_snapshot_rooted(verdict)? {
-                return c.truthy_rooted(value);
-            }
             if self.options.sync {
                 let error = c.type_error_rooted("Expected a boolean to be returned from the \"filter\" function but got an instance of Promise.")?;
                 crate::modules::node_errors_shared_vm::decorate_type_error(c, error, "ERR_INVALID_RETURN_VALUE")?;
                 return Err(c.throw(error));
+            }
+            if let Some(PromiseSnapshot::Fulfilled(value)) = c.promise_snapshot_rooted(verdict)? {
+                return c.truthy_rooted(value);
             }
         }
         c.truthy_rooted(verdict)
@@ -282,13 +282,13 @@ impl Copy {
         if !self.options.verbatim_symlinks && target.is_relative() {
             target = resolve(&source.shown, &target, &cwd);
         }
-        if std::fs::symlink_metadata(&destination.io).is_ok() {
-            if let Ok(existing) = std::fs::read_link(&destination.io) {
-                let existing = if existing.is_relative() { resolve(&destination.shown, &existing, &cwd) } else { existing };
-                if is_subdirectory(&target, &existing) {
-                    let (target, existing) = (target.to_string_lossy().into_owned(), existing.to_string_lossy().into_owned());
-                    return Err(self.refuse(c, Refusal::Subdirectory, &target, &existing));
-                }
+        // An existing link is replaced; over any other file the link fails as `symlink`
+        // fails there (`readlink` of it reports `EINVAL`).
+        if let Ok(existing) = std::fs::read_link(&destination.io) {
+            let existing = if existing.is_relative() { resolve(&destination.shown, &existing, &cwd) } else { existing };
+            if is_subdirectory(&target, &existing) {
+                let (target, existing) = (target.to_string_lossy().into_owned(), existing.to_string_lossy().into_owned());
+                return Err(self.refuse(c, Refusal::Subdirectory, &target, &existing));
             }
             let removed = std::fs::remove_file(&destination.io);
             failure::check(c, removed, Syscall::at("unlink", &destination.shown))?;
