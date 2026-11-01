@@ -571,16 +571,26 @@ fn finish(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedError> {
         let plural = if failed > 1 { "s" } else { "" };
         fail(c, id, FailureType::SubtestsFailed, Cause::Message(format!("{failed} subtest{plural} failed")))?;
     }
-    let (parent, completion, mock) = with_state(c, |state| {
+    let (parent, completion, mock, held) = with_state(c, |state| {
         let node = &mut state.tree[id];
         node.finished = true;
         node.step = Step::Finished;
         node.duration_ms = node.started.map_or(0.0, |started| started.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND);
-        (node.parent, node.completion.take(), node.mock)
+        let hooks = std::mem::take(&mut node.hooks);
+        let held = [node.body.take(), node.context.take(), node.signal.take(), node.assert.take(), node.build.take(), node.before_pending.take()]
+            .into_iter()
+            .flatten()
+            .chain([hooks.before, hooks.after, hooks.before_each, hooks.after_each].into_iter().flatten())
+            .collect::<Vec<_>>();
+        (node.parent, node.completion.take(), node.mock.take(), held)
     });
     if let Some(mock) = mock {
         let reset = get(c, mock, "reset")?;
         c.call_rooted(reset, mock, &[])?;
+        c.release_root(mock);
+    }
+    for root in held {
+        c.release_root(root);
     }
     if let Some(completion) = completion {
         let undefined = c.undefined();
