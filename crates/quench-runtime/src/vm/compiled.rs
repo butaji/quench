@@ -6709,6 +6709,13 @@ struct JsStepDispatch {
     lane_context: usize,
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
     returned_pc: usize,
+    /// A lane run's free lane-stack values, where a direct call places its callee's
+    /// registers (`DirectCallee`): the next and the end of the stack's capacity.
+    native_top: usize,
+    native_end: usize,
+    /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
+    shadow_top: usize,
+    shadow_end: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -6737,9 +6744,16 @@ pub(super) struct LaneMethod {
     pub(super) loop_header: Option<u32>,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
+    /// The callees it calls by their compiled entries, which its code names.
+    _direct: Vec<Box<DirectCallee>>,
 }
 
 impl LaneMethod {
+    /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
+    pub(super) fn entry_address(&self) -> usize {
+        self.entry as usize
+    }
+
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
     /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
@@ -6895,6 +6909,7 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         function: u32,
         targets: &[Option<CallTarget>],
+        direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
     ) -> Option<LaneMethod> {
         self.host.before_native_compilation();
@@ -6915,7 +6930,18 @@ impl<H: Host> Vm<H> {
             None => None,
         };
         let fields = self.lane_unit_fields(program, &unit);
-        let region = lane_region::compile(program, function, &unit, helpers, &fields, loop_entry);
+        // The calls the unit still makes (none it inlines) whose callees have bodies.
+        let mut direct = direct;
+        let direct: Vec<(usize, Box<DirectCallee>)> = unit.instructions.iter().enumerate()
+            .filter(|(_, instruction)| instruction.op() == Op::Call)
+            .filter_map(|(pc, _)| match unit.origins[pc] {
+                lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take().map(|callee| (pc, Box::new(callee))),
+                lane_unit::Origin::Inlined { .. } => None,
+            })
+            .collect();
+        let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
+            direct.iter().map(|(pc, callee)| (*pc, &**callee as *const DirectCallee)).collect();
+        let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites, loop_entry);
         self.host.after_native_compilation();
         let region = region?;
         if region.native == 0 {
@@ -6931,17 +6957,21 @@ impl<H: Host> Vm<H> {
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
-        let names_shapes = !fields.is_empty();
+        // A body that names a callee's body retires with it (`DirectCallee::method`).
+        let names_shapes = !fields.is_empty() || !direct.is_empty();
         let scratch_width = unit.frames.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes })
+        let _direct = direct.into_iter().map(|(_, callee)| callee).collect();
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, loop_header, amortizes, _direct })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
     /// native `Return` leaves at its own record, whose register already holds the result.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn run_lane_method(
         &mut self,
         method: &LaneMethod,
         start: LaneStart,
+        direct_calls: bool,
         program: ProgramId,
         residual: &ResidualProgram,
         registers: *mut Value,
@@ -6974,6 +7004,14 @@ impl<H: Host> Vm<H> {
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
             (*dispatch).vm = (self as *mut Self).addr();
             (*dispatch).refresh_lane_bases(self, program, &mut (*frame).program);
+            // A run starts with no native frames; its direct calls place their callees past
+            // the stack's values.
+            let (top, end, activations) = self.lane_stack_spare();
+            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
+            let shadow = (*frame).shadow.as_mut_ptr();
+            // A run whose lane may not make the frames' activations makes no direct call.
+            let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
+            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
             let context = &raw mut (*frame).context;
             (*context).adapter_payload = dispatch.cast();
             (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
@@ -6998,6 +7036,29 @@ impl<H: Host> Vm<H> {
         Self::lane_method_exit(status, word)
     }
 
+    /// The native frames the last run left inside, outermost first, which the lane now
+    /// materializes (`ShadowFrame`); none once taken.
+    pub(super) fn take_shadow_frames() -> smallvec::SmallVec<[ShadowFrame; 4]> {
+        let frame = lane_frame();
+        // SAFETY: no lane body runs while the lane reads the frame.
+        unsafe {
+            let base = (*frame).shadow.as_mut_ptr();
+            let top = (*frame).dispatch.shadow_top as *mut ShadowFrame;
+            let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
+            (*frame).dispatch.shadow_top = base.addr();
+            (&(*frame).shadow)[..count].iter().copied().collect()
+        }
+    }
+
+    /// Whether a running body has native frames below the innermost: a helper's activation
+    /// would sit under them, so a call from one takes the body's exit instead
+    /// (`dispatch_fast::lane_body_call`).
+    pub(super) fn lane_shadow_active() -> bool {
+        let frame = lane_frame();
+        // SAFETY: as `take_shadow_frames`; the running body wrote the top before its call.
+        unsafe { (*frame).dispatch.shadow_top != (*frame).shadow.as_mut_ptr().addr() }
+    }
+
     /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
     /// caller's body continues with the per-entry words it entered with. Its callee runs in
     /// the same program (`lane_crosses`) and allocates nothing, so the program's bases stand.
@@ -7015,7 +7076,7 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
-        let exit = self.run_lane_method(method, LaneStart::First, program, residual, registers, receiver, captures, lane_context);
+        let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above; the callee's run may have grown the scratch window.
         unsafe {
             saved.install(&mut (*frame).dispatch);
@@ -7036,6 +7097,49 @@ impl<H: Host> Vm<H> {
         });
     }
 }
+
+/// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
+/// target the lane would activate, fixed by the callee's identity, which the call guards,
+/// and its specialized body. The caller's body owns it.
+pub(super) struct DirectCallee {
+    pub(super) target: super::dispatch_fast::ScriptCallTarget,
+    /// The callee's specialized body (`LaneBody::Specialized`), which retires with the caller's
+    /// at a shape compaction (`LaneMethod::names_shapes`).
+    pub(super) method: *const LaneMethod,
+    /// The caller's call record, which the callee's activation returns to.
+    pub(super) call: usize,
+    pub(super) callee: Value,
+    pub(super) registers: u16,
+    /// The values past its registers a leave inside a call it inlines takes
+    /// (`LaneView::lane_body_room`), which the call proves free with its own.
+    pub(super) reserve: u16,
+    /// The callee binds a sloppy receiver: the call takes only a direct object one directly.
+    pub(super) sloppy: bool,
+    /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
+    pub(super) capture_values: *const Value,
+    pub(super) capture_len: usize,
+}
+
+/// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
+/// activation only if a run leaves inside it (`Vm::take_shadow_frames`).
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(super) struct ShadowFrame {
+    /// The caller's call record.
+    pub(super) call: usize,
+    pub(super) callee: *const DirectCallee,
+    /// The callee's registers, in the lane stack's capacity past the caller's.
+    pub(super) window: *mut Value,
+    pub(super) this: u64,
+}
+
+impl ShadowFrame {
+    const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
+}
+
+/// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
+/// machine stack each costs a frame; the bound keeps a native recursion within it.
+const SHADOW_FRAMES: usize = 64;
 
 /// The words of `JsStepDispatch` one lane body entry owns (`Vm::run_lane_method`).
 #[derive(Clone, Copy)]
@@ -7077,6 +7181,9 @@ struct LaneFrame {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
+    /// The native frames of the bodies a run calls directly, outermost first, from
+    /// `dispatch.shadow_top` down (`ShadowFrame`).
+    shadow: Box<[ShadowFrame; SHADOW_FRAMES]>,
     /// The program whose own facts the dispatch holds (`JsStepDispatch::refresh_lane_bases`).
     program: Option<ProgramId>,
 }
@@ -7119,6 +7226,10 @@ impl LaneFrame {
                 inlined: 0,
                 lane_context: 0,
                 returned_pc: 0,
+                native_top: 0,
+                native_end: 0,
+                shadow_top: 0,
+                shadow_end: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7126,6 +7237,7 @@ impl LaneFrame {
                 outcome: None,
             },
             scratch: Vec::new(),
+            shadow: Box::new([ShadowFrame::EMPTY; SHADOW_FRAMES]),
             program: None,
         }
     }
@@ -7240,6 +7352,10 @@ impl JsStepDispatch {
             inlined: 0,
             lane_context: 0,
             returned_pc: 0,
+            native_top: 0,
+            native_end: 0,
+            shadow_top: 0,
+            shadow_end: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

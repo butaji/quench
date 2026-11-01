@@ -97,6 +97,8 @@ struct Lowering<'a, 'f> {
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
+    direct: &'a BTreeMap<usize, *const DirectCallee>,
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -420,10 +422,11 @@ pub(super) fn compile(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    direct: &BTreeMap<usize, *const DirectCallee>,
     loop_entry: Option<usize>,
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, loop_entry, &*isa)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, direct, loop_entry, &*isa)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
@@ -436,6 +439,7 @@ fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    direct: &BTreeMap<usize, *const DirectCallee>,
     loop_entry: Option<usize>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<(ir::Function, usize)> {
@@ -482,6 +486,7 @@ fn lower(
         unit,
         helpers,
         fields,
+        direct,
         context,
         payload,
         registers_base,
@@ -955,10 +960,17 @@ impl Lowering<'_, '_> {
             let base = self.registers_base;
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
+        let completed = self.builder.create_block();
+        let helper = self.builder.create_block();
+        match self.direct.get(&pc).copied() {
+            // SAFETY: the body owns the callee for as long as its code runs.
+            Some(callee) => self.direct_call(instruction, unsafe { &*callee }, helper, completed),
+            None => { self.ins().jump(helper, &[]); }
+        }
+        self.builder.switch_to_block(helper);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
         let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
         let status = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.call, &[context, call_word]);
-        let completed = self.builder.create_block();
         let other = self.builder.create_block();
         let left = self.builder.create_block();
         self.builder.set_cold_block(left);
@@ -990,6 +1002,104 @@ impl Lowering<'_, '_> {
         let bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(destination));
         self.set_tagged(state, destination, bits);
         true
+    }
+
+    /// The call of `callee` by its compiled entry: the callee's registers in the lane stack's
+    /// free values, a native frame the lane makes an activation of only should the callee
+    /// leave (`compiled::ShadowFrame`), and the per-entry words the callee runs with. A
+    /// completion stores its value to the call's register and continues at `completed`; a
+    /// leave stops the caller too, its frames kept; any other callee, receiver, or a full
+    /// stack takes `helper`. The caller wrote back its registers.
+    fn direct_call(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
+        use crate::value::ValueLayout;
+        let word = std::mem::size_of::<Value>() as i64;
+        let frame_size = std::mem::size_of::<ShadowFrame>() as i64;
+        let offset = |field: usize| i32::try_from(field).expect("dispatch offset fits i32");
+        let (base, payload, result) = (self.registers_base, self.payload, self.result);
+        let callee_bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_b()));
+        let same = self.ins().icmp_imm_u(IntCC::Equal, callee_bits, callee.callee.to_bits() as i64);
+        let this = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_c()));
+        let admitted = if callee.sloppy {
+            // A sloppy callee binds an object receiver itself (`lane_receiver_this`).
+            let family = self.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+            self.ins().band(same, object)
+        } else { same };
+        let top = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
+        let end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_end)));
+        let next = self.ins().iadd_imm_u(top, i64::from(callee.registers) * word);
+        let reserved = self.ins().iadd_imm_u(next, i64::from(callee.reserve) * word);
+        let fits = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
+        let shadow = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        let shadow_end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_end)));
+        let room = self.ins().icmp(IntCC::UnsignedLessThan, shadow, shadow_end);
+        let admitted = self.ins().band(admitted, fits);
+        let admitted = self.ins().band(admitted, room);
+        let enter = self.builder.create_block();
+        self.ins().brif(admitted, enter, &[], helper, &[]);
+        self.builder.switch_to_block(enter);
+        // Parameter `k` lives in register `k` of a plain activation; the rest start undefined.
+        let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+        let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+        let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
+        for register in 0..callee.registers {
+            let value = if register < argc {
+                self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(window + register))
+            } else { undefined };
+            self.ins().store(MemFlagsData::trusted(), value, top, register_offset(register));
+        }
+        let call = self.ins().iconst(types::I64, callee.call as i64);
+        let descriptor = self.ins().iconst(types::I64, callee as *const DirectCallee as i64);
+        for (field, value) in [
+            (std::mem::offset_of!(ShadowFrame, call), call),
+            (std::mem::offset_of!(ShadowFrame, callee), descriptor),
+            (std::mem::offset_of!(ShadowFrame, window), top),
+            (std::mem::offset_of!(ShadowFrame, this), this),
+        ] {
+            self.ins().store(MemFlagsData::trusted(), value, shadow, offset(field));
+        }
+        let pushed = self.ins().iadd_imm_u(shadow, frame_size);
+        let words = [
+            std::mem::offset_of!(JsStepDispatch, receiver),
+            std::mem::offset_of!(JsStepDispatch, capture_values),
+            std::mem::offset_of!(JsStepDispatch, capture_len),
+        ];
+        let saved: Vec<ir::Value> = words.iter()
+            .map(|field| self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(*field)))
+            .collect();
+        let capture_values = self.ins().iconst(types::I64, callee.capture_values as i64);
+        let capture_len = self.ins().iconst(types::I64, callee.capture_len as i64);
+        for (field, value) in words.iter().zip([this, capture_values, capture_len]) {
+            self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
+        }
+        self.ins().store(MemFlagsData::trusted(), pushed, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        self.ins().store(MemFlagsData::trusted(), next, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
+        let signature = native_entry_signature(types::I64, self.builder.func.signature.call_conv);
+        let signature = self.builder.import_signature(signature);
+        // SAFETY: the callee's body lives while the caller's does (`DirectCallee::method`).
+        let entry = self.ins().iconst(types::I64, unsafe { &*callee.method }.entry_address() as i64);
+        let zero = self.ins().iconst(types::I64, 0);
+        let context = self.context;
+        let status = self.ins().call_indirect(signature, entry, &[context, zero, zero, top, result]);
+        let status = self.builder.inst_results(status)[0];
+        for (field, value) in words.iter().zip(saved) {
+            self.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
+        }
+        self.ins().store(MemFlagsData::trusted(), top, payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
+        let returned = self.ins().icmp_imm_u(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
+        let back = self.builder.create_block();
+        let left = self.builder.create_block();
+        self.builder.set_cold_block(left);
+        self.ins().brif(returned, back, &[], left, &[]);
+        // A leave inside the callee stops the caller with it: the lane makes the frames'
+        // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
+        self.builder.switch_to_block(left);
+        self.ins().return_(&[status]);
+        self.builder.switch_to_block(back);
+        self.ins().store(MemFlagsData::trusted(), shadow, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        let value = self.ins().load(types::I64, MemFlagsData::trusted(), result, 0);
+        self.ins().store(MemFlagsData::trusted(), value, base, register_offset(instruction.result_register()));
+        self.ins().jump(completed, &[]);
     }
 
     /// The activation completes with `register`, which the record at `pc` names
@@ -1440,7 +1550,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, None, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &BTreeMap::new(), None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1463,7 +1573,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), &BTreeMap::new(), None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
