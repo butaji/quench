@@ -1635,6 +1635,8 @@ impl ArrayObject {
     }
 
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
+        // A prototype's elements answer index reads of the objects it is the prototype of.
+        self.object.note_prototype_elements_change();
         &mut self.elements
     }
 }
@@ -1755,6 +1757,9 @@ struct ObjectExtras {
     /// Any property descriptor beside the shape has been recorded for this object
     /// (`Vm::insert_descriptor`); never cleared.
     side_descriptors: bool,
+    /// A prototype's subject in its heap's dependency table, which its layout and element
+    /// changes retire (`Object::note_prototype_layout_change`).
+    watch: super::dependencies::Watch,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -1896,7 +1901,32 @@ impl Object {
     fn note_prototype_layout_change(&self) {
         if self.was_used_as_prototype() {
             advance_prototype_layout_epoch();
+            self.retire_watch();
         }
+    }
+
+    /// Retires the proofs that read this prototype's elements (`Heap::note_prototype_elements`).
+    #[inline(always)]
+    pub(crate) fn note_prototype_elements_change(&self) {
+        if self.was_used_as_prototype() {
+            self.retire_watch();
+        }
+    }
+
+    fn retire_watch(&self) {
+        if let Some(extras) = self.extras() {
+            extras.watch.retire();
+        }
+    }
+
+    /// This prototype's subject in its heap's dependency table (`Heap::mark_prototype`).
+    pub(crate) fn watch_as(&mut self, watch: super::dependencies::Watch) {
+        self.extras_mut().watch = watch;
+    }
+
+    /// This watched prototype's subject, if a heap's dependency table gave it one.
+    pub(crate) fn watched_subject(&self) -> Option<u32> {
+        self.extras().and_then(|extras| extras.watch.subject())
     }
 
     /// Whether this object is an array's, which keeps named properties in the arena.
