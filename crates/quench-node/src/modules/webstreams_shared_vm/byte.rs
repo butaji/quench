@@ -207,6 +207,12 @@ fn first_pending(c: &mut Context<'_>, controller: RootId) -> Outcome {
     list::peek(c, pending)
 }
 
+/// Whether a close or enqueue may still happen: no close requested and the stream readable.
+pub(crate) fn can_close(c: &mut Context<'_>, controller: RootId) -> Result<bool, RootedError> {
+    let stream = stream_of(c, controller)?;
+    Ok(!flag(c, controller, CLOSE_REQUESTED)? && state(c, stream)? == State::Readable)
+}
+
 /// `readableByteStreamControllerClose(controller)`.
 pub(crate) fn close(c: &mut Context<'_>, controller: RootId) -> Done {
     let stream = stream_of(c, controller)?;

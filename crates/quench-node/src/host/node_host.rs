@@ -181,7 +181,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
     initial_pending_deprecation: bool,
-    pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
@@ -420,7 +419,6 @@ impl SharedNodeState {
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
                 == Ok("1"),
-            fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),

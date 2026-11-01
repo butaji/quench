@@ -803,15 +803,13 @@ pub(crate) const WEB_STREAM_GLOBALS: &[&str] = &crate::modules::webstreams_share
 // Blob/File are independent of Fetch. Importing buffer must not recursively
 // load undici while the public Buffer binding is still being initialized.
 pub(crate) const WEB_API_GLOBALS: &[&str] = &crate::modules::blob_shared_vm::GLOBALS;
+/// The Fetch globals, and `MessageEvent`, which the same initializer defines.
 pub(crate) const FETCH_API_GLOBALS: &[&str] = &[
-    "FormData",
-    "Headers",
-    "Request",
-    "Response",
+    crate::modules::fetch_shared_vm::GLOBALS[0],
+    crate::modules::fetch_shared_vm::GLOBALS[1],
+    crate::modules::fetch_shared_vm::GLOBALS[2],
+    crate::modules::fetch_shared_vm::GLOBALS[3],
     "MessageEvent",
-    "CloseEvent",
-    "ErrorEvent",
-    "WebSocket",
 ];
 
 fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -877,43 +875,6 @@ pub(super) fn initialize_process_surface(
     Ok(context.undefined())
 }
 
-pub(super) fn initialize_fetch_apis(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    // Execute Node's pinned implementation in this VM, sharing its WebIDL and
-    // Fetch algorithms rather than maintaining a second partial implementation.
-    let global = context.global_root()?;
-    let root = context.host_mut().node_library_root.clone();
-    let path = root.join("deps/undici/undici.js");
-    let parent = module_record(context, &root.join("lib/internal/fetch.js"), None, false)?;
-    let undici = load(context, &path, Some(parent), EntryGoal::CommonJs)?;
-    for name in [
-        "Headers",
-        "Request",
-        "Response",
-        "FormData",
-        "MessageEvent",
-        "CloseEvent",
-        "ErrorEvent",
-        "WebSocket",
-    ] {
-        if !web_global_enabled(context, name) {
-            continue;
-        }
-        let constructor = get(context, undici, name)?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, constructor, true, false, true)?;
-    }
-    // The bootstrap fetch wrapper issues requests through Node's HTTP client.
-    // ESM fixtures have no global `require`, so provide the same builtin client
-    // explicitly instead of letting the wrapper fail before making a request.
-    let http = cached_builtin(context, BuiltinModule::Http)?;
-    let key = context.string_rooted("__nodeHttp");
-    context.define_data_property_rooted(global, key, http, false, false, true)?;
-    Ok(context.undefined())
-}
 
 pub(crate) fn perf_hooks_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::PerfHooks)

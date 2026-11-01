@@ -556,7 +556,6 @@ pub(crate) fn default_reader_read(c: &mut Context<'_>, reader: RootId, request: 
 
 /// A host consumer's read on `reader` (a default reader's internal slots): `chunk`,
 /// `close` and `error` are called with the outcome.
-#[allow(dead_code)]
 pub(crate) fn read_with(c: &mut Context<'_>, reader: RootId, chunk: RootId, close: RootId, error: RootId) -> Done {
     let request = new_request(c, ReadSteps::Hook, &[(request::CHUNK, chunk), (request::CLOSE, close), (request::ERROR, error)])?;
     default_reader_read(c, reader, request)
@@ -1030,6 +1029,21 @@ pub(crate) fn branch_controller(c: &mut Context<'_>, tee: RootId, branch: &str) 
     get(c, stream, CONTROLLER)
 }
 
+/// `readableStreamTee(stream, false)`: the two branches, as an array.
+pub(crate) fn tee_stream(c: &mut Context<'_>, stream: RootId) -> Outcome {
+    let controller = get(c, stream, CONTROLLER)?;
+    if flag(c, controller, super::byte::field::BYTE)? {
+        super::byte::tee(c, stream)
+    } else {
+        default_tee(c, stream)
+    }
+}
+
+/// Whether the stream was read from or canceled.
+pub(crate) fn is_disturbed(c: &mut Context<'_>, stream: RootId) -> Result<bool, RootedError> {
+    flag(c, stream, DISTURBED)
+}
+
 fn default_tee(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let reader = default_reader(c, stream)?;
     let reader = slots(c, reader)?;
@@ -1363,12 +1377,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         Member::PipeTo => super::pipe::pipe_to(c, this, args),
         Member::Tee => {
             let stream = stream_of(c, this)?;
-            let controller = get(c, stream, CONTROLLER)?;
-            if flag(c, controller, super::byte::field::BYTE)? {
-                super::byte::tee(c, stream)
-            } else {
-                default_tee(c, stream)
-            }
+            tee_stream(c, stream)
         }
         Member::Values => values(c, this, args),
         Member::From => {

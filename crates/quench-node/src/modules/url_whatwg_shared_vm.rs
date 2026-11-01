@@ -535,6 +535,11 @@ fn invalid_tuple(c: &mut Context<'_>) -> Result<RootedError, RootedError> {
     coded_type_error(c, "Each query pair must be an iterable [name, value] tuple", "ERR_INVALID_TUPLE")
 }
 
+/// Whether `value` is a URLSearchParams.
+pub(crate) fn is_search_params(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedError> {
+    Ok(slots::read(c, value, LIST_SLOT)?.is_some())
+}
+
 /// `new URLSearchParams(init)`.
 pub(crate) fn construct_params(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     if c.new_target_rooted().is_none() {

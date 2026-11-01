@@ -152,7 +152,6 @@ fn slot(c: &mut Context<'_>, value: RootId) -> Result<Option<RootId>, RootedErro
     crate::modules::private_slots::read(c, value, SLOT)
 }
 
-#[allow(dead_code)]
 pub(crate) fn is_blob(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedError> {
     Ok(slot(c, value)?.is_some())
 }
@@ -191,7 +190,6 @@ pub(crate) fn from_handle(c: &mut Context<'_>, handle: RootId, length: f64, kind
 }
 
 /// A Blob of `bytes` with `type`.
-#[allow(dead_code)]
 pub(crate) fn from_bytes(c: &mut Context<'_>, bytes: Vec<u8>, kind: &str) -> Outcome {
     let length = bytes.len() as f64;
     let view = c.uint8_array_from_rooted(bytes)?;
@@ -201,7 +199,6 @@ pub(crate) fn from_bytes(c: &mut Context<'_>, bytes: Vec<u8>, kind: &str) -> Out
 }
 
 /// The bytes of a Blob's parts, in order.
-#[allow(dead_code)]
 pub(crate) fn chunks(c: &mut Context<'_>, blob: RootId) -> Result<Vec<Vec<u8>>, RootedError> {
     let state = slot(c, blob)?.ok_or_else(|| RootedError::host("Blob expected"))?;
     let handle = get(c, state, HANDLE)?;
@@ -209,7 +206,6 @@ pub(crate) fn chunks(c: &mut Context<'_>, blob: RootId) -> Result<Vec<Vec<u8>>, 
 }
 
 /// A Blob's `type`.
-#[allow(dead_code)]
 pub(crate) fn type_of(c: &mut Context<'_>, blob: RootId) -> Result<String, RootedError> {
     let state = slot(c, blob)?.ok_or_else(|| RootedError::host("Blob expected"))?;
     let kind = get(c, state, TYPE)?;
@@ -465,6 +461,41 @@ fn random_uuid() -> String {
     text
 }
 
+/// A FormData entry's File for the Blob `value`: the File itself when no `filename` is
+/// given, else a File over the same bytes named `filename` (or `blob` for a plain Blob).
+pub(crate) fn as_file(c: &mut Context<'_>, value: RootId, filename: Option<RootId>) -> Outcome {
+    let state = slot(c, value)?.ok_or_else(|| RootedError::host("Blob expected"))?;
+    let is_file = web::flag(c, state, field::FILE)?;
+    if is_file && filename.is_none() {
+        return Ok(value);
+    }
+    let name = match filename {
+        Some(name) => {
+            let units = c.to_string_code_units(name)?;
+            c.string_rooted(&String::from_utf16_lossy(&units))
+        }
+        None => c.string_rooted("blob"),
+    };
+    let modified = if is_file { get(c, state, LAST_MODIFIED)? } else { c.number(now()) };
+    let handle = get(c, state, HANDLE)?;
+    let length = web::num(c, state, LENGTH)?;
+    let kind = get(c, state, TYPE)?;
+    let file = from_handle(c, handle, length, kind)?;
+    let (_, file_class) = classes(c)?;
+    let prototype = get(c, file_class, "prototype")?;
+    c.set_prototype_rooted(file, prototype)?;
+    let copy = slot(c, file)?.ok_or_else(|| RootedError::host("File lost its slots"))?;
+    put(c, copy, NAME, name)?;
+    put(c, copy, LAST_MODIFIED, modified)?;
+    web::put_flag(c, copy, field::FILE, true)?;
+    Ok(file)
+}
+
+/// `Date.now()`.
+fn now() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|time| time.as_millis() as f64).unwrap_or(0.0)
+}
+
 /// `structuredClone(blob)`: a Blob over the same immutable handle, or `None` for any
 /// other value.
 pub(crate) fn clone(c: &mut Context<'_>, value: RootId) -> Result<Option<RootId>, RootedError> {
@@ -552,8 +583,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let state = construct_blob(c, this, bits, options)?;
             let modified = if is_nullish(c, options) { c.undefined() } else { get(c, options, LAST_MODIFIED)? };
             let modified = if is_undefined(c, modified) {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|time| time.as_millis() as f64).unwrap_or(0.0);
-                c.number(now)
+                c.number(now())
             } else {
                 let value = c.to_number(modified)?;
                 c.number(if value.is_nan() { 0.0 } else { value })

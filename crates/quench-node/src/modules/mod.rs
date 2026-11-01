@@ -63,6 +63,7 @@ pub(crate) mod event_target_shared_vm;
 pub(crate) mod events_once_shared_vm;
 pub(crate) mod events_shared_vm;
 pub(crate) mod fetch_shared_vm;
+pub(crate) mod message_event_shared_vm;
 pub(crate) mod fs_directory_shared_vm;
 pub(crate) mod fs_error_codes;
 pub(crate) mod fs_error_details;
