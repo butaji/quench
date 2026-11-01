@@ -189,27 +189,135 @@ a different residual:
 
 That is the optimizing tier the critical path below describes.
 
-### Critical path for V8-v7
+## JIT redesign plan: an optimizing online specializer
 
-The plan steps keep their order for AOT and startup. For V8-v7 score, the critical path is
-step 5, widened:
+This section replaces the earlier critical path. It comes from a review of the Linear
+backlog (TOD-1216 to TOD-1239, TOD-110, TOD-138, TOD-186, TOD-187, TOD-191, TOD-97, TOD-919),
+of production engines, and of the measurements above. The target is at least 1.20x the
+best of Node and Bun on every V8-v7 fixture in JIT mode, at no more than 0.80x their peak
+RSS.
 
-1. **An online method specializer** whose division folds Site contents behind guards.
-   - Guarded own and prototype field reads and writes.
-   - Monomorphic method calls that enter the callee's native code directly.
-   - Branches on tagged values.
-   - Every other instruction residualized through its semantic entry, so coverage is total.
-2. **A native-to-native call continuation** that keeps the activation frameless. A call no
-   longer exits to the VM; this is the rooted VM continuation that `jit-design.md` already
-   lists.
-3. **Inlining of small monomorphic callees** inside the specializer, with exact-PC frames for
-   recovery.
+### Why the current tiers cannot reach the target
 
-This is the method-JIT foundation tracked by TOD-1219 (Richards), and DeltaBlue, RayTrace
-and EarleyBoyer depend on it too. Crypto and NavierStokes depend on the numeric OSR tier,
-which `v2-jit` is extending.
+- **The lane already beats Ignition and LLInt** by 1.2x to 2.8x. The JIT-mode gap is the
+  30x to 58x that optimizing tiers add over their interpreters, and removing dispatch alone
+  cannot close it.
+- **Residuals that keep values tagged in memory lose to the lane.** That includes the
+  call-threaded and stencil residuals, the general-dispatch bodies, and frame-entered or
+  frameless lane bodies. A call-free 30-record method is about 20% slower. Every guard is
+  re-proved on every instruction.
+- **Calls dominate object-heavy code.** In DeltaBlue, lane script calls take about 25% of
+  time: about 78 instructions and an 88-byte Activation per call. Native code has no
+  native-to-native continuation, and OSR regions exit before every call.
+- **The representation limits speed:**
+  - two inline properties per object;
+  - one process-wide prototype epoch that retires every proof at once;
+  - Number canonicalization on every float result.
+- **RegExp and Splay have separate causes.** RegExp runs on a backtracking interpreter.
+  Splay is bound by allocation and collection.
 
-## Plan
+### Target architecture
+
+The division stays the contract above: static facts fold, sites fold behind guards or code
+dependencies, and register and heap contents stay dynamic. The optimizer is a *transpiler
+of inline-cache state*, as in SpiderMonkey's Warp and CacheIR. Each lane IC record kind
+gets one transpile rule into IR guards and operations, written next to the handler that
+fills it, so the interpreter's semantics stay the single authority. That is the second
+projection applied to feedback.
+
+- **IR.** One speculative SSA graph per unit (a function and its inlined callees, or an OSR
+  loop), built in one pass from bytecode and an IC snapshot, as Maglev does:
+  - a frame state at every exit;
+  - representation selection over tagged, int32, f64 and boolean, with untagged phis;
+  - a fixed pass list: check elimination by abstract interpretation, guard hoisting,
+    inlining and scalar replacement;
+  - lowering through Cranelift;
+  - the IR is dropped after compilation.
+
+  `lane_region.rs` becomes its function entry and the OSR webs become its loop passes, so
+  the native tiers converge instead of diverging.
+- **Exits.**
+  - The lane resumes at the exact PC with the window written back.
+  - Inlined frames rebuild N lane Activations from a compact varint frame-state table.
+  - Scalar-replaced objects are materialized at exit.
+  - Per-shape and per-holder code dependencies replace the global epoch for compiled code.
+  - Exit counters trigger recompilation with the failing guard made generic.
+- **Calls.**
+  - A call IC on callee identity.
+  - Arguments are written straight into the callee's lane window.
+  - A return-site word instead of an eager Activation; the Activation is rebuilt only when
+    an exit, a throw or the stack walker needs it.
+  - A lane trampoline for callees that are not compiled.
+  - Records do not move, so live tagged values are spilled to windows at safepoints and no
+    stack maps are needed.
+- **Allocation.**
+  - Inline allocation from per-space free-record buffers.
+  - Inline capacity per construction site, tracking slack as V8 does.
+  - Partial escape analysis and scalar replacement across inlined frames.
+- **Memory.**
+  - Compilation is lazy and priced by payback.
+  - A process code budget with eviction.
+  - Only exit tables are retained.
+  - IC memory is allocated lazily.
+  - Cranelift scratch is reused and counted in RSS reports.
+  - Copy-and-patch stays the AOT and eager publisher, off the V8-v7 critical path.
+
+### Milestones
+
+Every milestone needs:
+- parity across interpreter, `--jit` and forced-JIT modes, and the recovery matrix of
+  TOD-191;
+- a paired five-round V8-v7 screen, with eleven rounds only at qualification;
+- no no-JIT regression;
+- peak RSS at or below 0.80x of the JIT peers on all eight fixtures.
+
+Factors are estimates.
+
+| # | Milestone | Main fixtures | Estimated effect | Linear |
+| --- | --- | --- | --- | --- |
+| M0 | Register-resident region specializer (`lane_region.rs`), exit counters, native/lane attribution. **Gate:** the call-free 30-record method at least 1.5x faster than the lane. | All | Go/no-go for the representation thesis | TOD-1237 |
+| M1 | Speculative SSA IR and IC transpiler: own and prototype fields, stores without transitions, this, captures, int32/f64 arithmetic, branches; lane-activation and OSR entry | Richards | about 1.3x; 80% or more of hot records native | new, under TOD-138 |
+| M2 | Check elimination, hoisting, per-shape code dependencies, exit-driven recompilation | DeltaBlue, RayTrace | about 1.3x more | new |
+| M3 | Native-to-native calls, call IC, window arguments, lazy Activation, lane trampolines, unwinding through native frames | Richards, DeltaBlue, EarleyBoyer | 2x to 3x with M1 and M2 | TOD-1219, TOD-186, TOD-97 |
+| M4 | Inlining with per-call-site guards, polymorphic (up to 4) and nested, multi-frame exits | Richards, DeltaBlue, RayTrace | Richards 8x to 15x, DeltaBlue 10x to 20x cumulative | TOD-1219, TOD-1220 |
+| M5 | Polymorphic and transitioning property access, inline barrier, element kinds | DeltaBlue, RayTrace, EarleyBoyer | about 1.3x each | TOD-919 |
+| M6 | Object representation: per-site in-object capacity, deferred float canonicalization | RayTrace, NavierStokes | about 1.5x | new (heap) |
+| M7 | Inline allocation, partial escape analysis, materialization at exit | RayTrace, EarleyBoyer, Splay | 1.3x to 3x | TOD-1221, TOD-1223 (new issue) |
+| M8 | Closures: native captures, inline closure creation, code-identity call ICs | EarleyBoyer, NavierStokes | 1.5x to 2x | TOD-1222, TOD-1217 |
+| M9 | Int32 kernels: `am3` inlined into loops, checked multiply, bounds-check hoisting | Crypto | 3.3x to 4x | TOD-1218 |
+| M10 | Native RegExp tier in the irregexp style, prefilters, cheaper slicing (parallel) | RegExp | 3.5x to 4x | TOD-1224 |
+| M11 | Collection throughput: lazy sweeping, nursery rule, Splay all-modes RSS (parallel) | Splay, EarleyBoyer | 2x to 3x with M3, M4 and M7 | TOD-1223 |
+| M12 | Code memory discipline: budget eviction, compact exit tables, lazy ICs, scratch accounting (continuous gate) | All | JIT RSS at most 10% above no-JIT | TOD-123 |
+| M13 | Qualification: eleven interleaved rounds on Linux and M4, Test262 under forced JIT | All | Acceptance | TOD-1239 |
+
+### What is realistic
+
+- **NavierStokes** already clears the bar.
+- **Crypto** is realistic after M1, M4 and M9. **RegExp** is realistic after M10.
+- **Splay and EarleyBoyer** are plausible after M3 to M8 and M11.
+- **Richards, DeltaBlue and RayTrace** are where TurboFan and FTL are strongest. A
+  Maglev-class tier with inlining should reach about 0.4x to 0.8x of the peers. Beating them
+  by 20% needs FTL-class polymorphic inlining, allocation sinking and check elimination.
+- **Effort.** M0 to M9, a Maglev- or Warp-class tier, is about 9 to 14 engineer-months.
+  M10 and M11 take 2 to 3 more, in parallel. All eight fixtures at 1.20x likely take 1.5 to
+  3 engineer-years, and the outcome on Richards and DeltaBlue is uncertain.
+- **The RSS bar** holds if M12 remains a gate.
+
+Sources:
+- [Maglev](https://v8.dev/blog/maglev) and [V8 Lite](https://v8.dev/blog/v8-lite)
+- [irregexp tier-up](https://v8.dev/blog/regexp-tier-up)
+- [Warp](https://hacks.mozilla.org/2020/11/warp-improved-js-performance-in-firefox-83/) and
+  [CacheIR](https://doi.org/10.1145/3617651.3622979)
+- [JSC speculation and OSR exit](https://webkit.org/blog/10308/speculation-in-javascriptcore/)
+- [LuaJIT allocation sinking](https://ujit.readthedocs.io/en/latest/public/tut-allocation-sinking.html)
+- [Truffle partial evaluation](https://doi.org/10.1145/3062341.3062381)
+- [PyPy meta-tracing](https://doi.org/10.1145/1565824.1565827)
+
+## Earlier plan: specialization structure
+
+These steps built the specializer structure and the copy-and-patch publication. For V8-v7 they are
+superseded by the redesign plan above; the AOT and eager items (TOD-1234, TOD-1236, TOD-1238) stay
+off its critical path.
 
 The plan is ordered by dependency, then by expected speed. Each step is a Linear sub-issue of
 TOD-1232 and lands with tests in interpreter, `--jit` and native modes.
