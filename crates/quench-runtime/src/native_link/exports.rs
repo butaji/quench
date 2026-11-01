@@ -114,11 +114,11 @@ pub(super) fn dynamic_exports(bytes: &[u8]) -> Result<BTreeSet<String>, String> 
     }
 }
 
-#[cfg(test)]
+// The audit's test reads a Mach-O executable.
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn dynamic_interface_rejects_missing_and_unexpected_exports() {
         let executable = std::env::current_exe().unwrap();

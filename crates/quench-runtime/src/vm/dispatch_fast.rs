@@ -135,6 +135,9 @@ pub(super) struct LoopSite {
     /// The admitted region; a loop whose calls run inlined makes its region once it is hot
     /// (`lane_inlining_region`), when its callees are known.
     region: std::cell::OnceCell<super::compiled::LoopRegion>,
+    /// One guarded-inline attempt for an admitted call-boundary region, before compiling.
+    /// Failure retains the original exact-PC effect boundary.
+    inline_region: std::cell::OnceCell<Option<Box<super::compiled::LoopRegion>>>,
     /// The loop's header and backward jump PCs.
     header: u32,
     backedge: u32,
@@ -167,6 +170,10 @@ pub(super) struct LoopSite {
 }
 
 impl LoopSite {
+    fn active_region(&self) -> Option<&super::compiled::LoopRegion> {
+        self.inline_region.get().and_then(|region| region.as_deref()).or_else(|| self.region.get())
+    }
+
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| {
@@ -308,37 +315,41 @@ pub(super) struct OsrSiteDiagnostics {
 impl LaneView {
     /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
     pub(super) fn osr_diagnostics(&self) -> OsrDiagnostics {
-        let mut sites = self.loops.iter().map(|site| OsrSiteDiagnostics {
-            header_pc: site.header,
-            backedge_pc: site.backedge,
-            status: if site.promotion_only {
-                OsrSiteStatus::PromotionOnly
-            } else if site.analysis_failure.is_some_and(|failure| {
-                failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-            }) {
-                OsrSiteStatus::CallBoundary
-            } else if site.analysis_failure.is_some() {
-                OsrSiteStatus::Rejected
-            } else {
-                OsrSiteStatus::Admitted
-            },
-            failure: site.analysis_failure,
-            call_boundary_pcs: site.call_boundary_pcs.as_deref().unwrap_or_default().to_vec(),
-            admitted: site.is_admitted(),
-            deferred_call: site.call_boundary_pcs.as_deref().is_some_and(|pcs| !pcs.is_empty())
-                || site.analysis_failure.is_some_and(|failure| {
+        let mut sites = self.loops.iter().map(|site| {
+            let call_boundary_pcs = site.active_region().map_or_else(
+                || site.call_boundary_pcs.as_deref().unwrap_or_default().to_vec(),
+                super::compiled::LoopRegion::call_boundary_pcs,
+            );
+            let deferred_call = !call_boundary_pcs.is_empty();
+            OsrSiteDiagnostics {
+                header_pc: site.header,
+                backedge_pc: site.backedge,
+                status: if site.promotion_only {
+                    OsrSiteStatus::PromotionOnly
+                } else if site.analysis_failure.is_some_and(|failure| {
                     failure.reason == super::compiled::RegionRejection::UnsupportedInstruction(Op::Call)
-                }),
-            tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
-            lane_backedge_count: site.lane_backedge_count.get(),
-            analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
-            compile_attempts: u64::from(site.compile_attempts.get()),
-            compile_successes: u64::from(site.compile_successes.get()),
-            native_entry_attempts: site.native_entry_attempts.get(),
-            native_region_runs: site.native_region_runs.get(),
-            entry_guard_misses: site.entry_guard_misses.get(),
-            exits: u64::from(site.native_exits.get()),
-            widenings: u64::from(site.widenings.get()),
+                }) {
+                    OsrSiteStatus::CallBoundary
+                } else if site.analysis_failure.is_some() {
+                    OsrSiteStatus::Rejected
+                } else {
+                    OsrSiteStatus::Admitted
+                },
+                failure: site.analysis_failure,
+                call_boundary_pcs,
+                admitted: site.is_admitted(),
+                deferred_call,
+                tier_threshold_reached: site.taken.get() >= LOOP_TIER_THRESHOLD,
+                lane_backedge_count: site.lane_backedge_count.get(),
+                analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
+                compile_attempts: u64::from(site.compile_attempts.get()),
+                compile_successes: u64::from(site.compile_successes.get()),
+                native_entry_attempts: site.native_entry_attempts.get(),
+                native_region_runs: site.native_region_runs.get(),
+                entry_guard_misses: site.entry_guard_misses.get(),
+                exits: u64::from(site.native_exits.get()),
+                widenings: u64::from(site.widenings.get()),
+            }
         }).collect::<Vec<_>>();
         sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
         OsrDiagnostics {
@@ -4063,29 +4074,26 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::
     Some(dense)
 }
 
-script_handler! {
-    /// `lane_load_capture` before the running function's slots are known: the walk from
-    /// the frame's cache, or from the activation's environment, which keeps them.
-    #[inline(never)]
-    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let depth = ImmediateLayout::capture_depth(imm);
-        let slot = ImmediateLayout::capture_slot(imm);
-        let vm = unsafe { vm(cx) };
-        let env = unsafe { (*cx).env };
-        let value = if env.is_deleted() {
-            let frame = unsafe { (*cx).frame };
-            let value = vm.cached_direct_capture(frame, depth, slot);
-            if depth == 0
-                && let Some((slots, None)) = vm.current_capture_slots(frame)
-                && let Some(slots) = unsafe { &*slots }.dense()
-            {
-                unsafe { (*cx).capture = slots };
-            }
-            value
-        } else {
-            // A frameless activation's function has no environment of its own.
-            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| {
+/// Resolve an owned or shared lane capture without guest code, refreshing the dense cache.
+/// OSR entry and the LoadCapture slow lane use the same binding and TDZ guards.
+#[inline(never)]
+fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let env = unsafe { (*cx).env };
+    let value = if env.is_deleted() {
+        let frame = unsafe { (*cx).frame };
+        let value = vm.cached_direct_capture(frame, depth, slot);
+        if depth == 0
+            && let Some((slots, None)) = vm.current_capture_slots(frame)
+            && let Some(slots) = unsafe { &*slots }.dense()
+        {
+            unsafe { (*cx).capture = slots };
+        }
+        value
+    } else {
+        // A frameless activation's function has no environment of its own.
+        vm.walked_capture_slots(env, false, depth)
+            .and_then(|(slots, root)| {
                 // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
                 let slots = unsafe { &*slots };
                 if depth == 0
@@ -4096,9 +4104,23 @@ script_handler! {
                 }
                 vm.owned_capture(slots, root, slot)
             })
-        };
+    };
+    value
+}
+
+script_handler! {
+    /// `lane_load_capture` before the running function's slots are known: the walk from
+    /// the frame's cache, or from the activation's environment, which keeps them.
+    #[inline(never)]
+    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let depth = ImmediateLayout::capture_depth(imm);
+        let slot = ImmediateLayout::capture_slot(imm);
+        let value = lane_capture_value(cx, depth, slot);
         #[cfg(feature = "profile-lane-exits")]
         {
+            let vm = unsafe { vm(cx) };
+            let env = unsafe { (*cx).env };
             let code = unsafe { &*(*cx).code };
             let function = vm
                 .lane_stack
@@ -5711,36 +5733,6 @@ fn lane_raise<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError) -> Ip {
 }
 
 script_handler! {
-    /// `DefinePropertyRecord` (`Vm::define_property_or_throw`): it can run a Proxy trap, so
-    /// publish the current PC and materialize frameless activations around the general semantic
-    /// operation. Ordinary definitions stay in the lane; abrupt completion resumes at this
-    /// exact instruction through `lane_in_place`.
-    #[inline(never)]
-    fn lane_define_property_record<>(cx, r, ip, i, view) {
-        let Some(mode) = crate::bytecode::PropertyDefinitionMode::from_word(i.imm()) else {
-            return lane_raise(
-                cx,
-                ip,
-                JsError::validation("invalid property definition mode".into()),
-            );
-        };
-        let target = r.get(i.b);
-        let key = r.get(i.c);
-        let descriptor = super::object_descriptors::PropertyDescriptorRecord::for_definition(
-            mode,
-            r.get(i.a),
-        );
-        let result = lane_in_place(cx, ip, |vm, code| {
-            vm.define_property_or_throw(code, target, key, descriptor)
-        });
-        if result.is_none() {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
     /// `DefineField` (`Vm::define_field_cached`), as the general step defines it. A Proxy
     /// receiver's define runs its trap, which a frameless activation leaves to the general path.
     #[inline(never)]
@@ -6669,6 +6661,9 @@ script_handler! {
                 }
             },
         };
+        let region = if region.has_captured_call() && region.inlining.is_none() {
+            site.inline_region.get_or_init(|| lane_inlining_region(cx, r, site).map(Box::new)).as_deref().unwrap_or(region)
+        } else { region };
         match lane_loop_native::<H>(cx, r, ip, header, site, region) {
             LoopAttempt::Declined => lane_at_header!(cx, r, header, site),
             LoopAttempt::At(next) => next!(cx, r, next, Carried::script(cx)),
@@ -6787,7 +6782,7 @@ script_handler! {
         if !below_floor()
             && site.exits.get() < LOOP_TIER_MAX_EXITS
             && site.declines.get() < LOOP_TIER_MAX_DECLINES
-            && let Some(region) = site.region.get()
+            && let Some(region) = site.active_region()
         {
             match lane_loop_native::<H>(cx, r, ip, ip, site, region) {
                 LoopAttempt::Declined => {}
@@ -6943,7 +6938,7 @@ fn lane_loop_run<H: Host>(
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
     let outcome = unsafe {
-        code.run::<H>(r.0, entry, machine, program, site.function, (*cx).frame, interrupt)
+        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt)
     };
     if site.diagnostics {
         site.native_entry_attempts
@@ -6964,10 +6959,43 @@ fn lane_loop_run<H: Host>(
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
-            LoopOutcome::Exit(_) => {
+            LoopOutcome::Exit(pc) => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
+                // Attribute a guard exit to its recovery PC before the lane resumes.
+                // Reuse the opt-in OSR trace; ordinary execution keeps no extra table
+                // or per-site allocation, and the exit budget is unchanged.
+                if std::env::var_os("QUENCH_JS_JIT_TRACE_OSR_REJECT").is_some() {
+                    eprintln!(
+                        "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
+                        program.raw(), site.function, site.header,
+                    );
+                    // Read recovered operands only for a non-inlined activation. These
+                    // getters neither coerce a guest value nor allocate guest storage.
+                    // Raw state distinguishes index/append/capacity guards without
+                    // changing native exits or inventing a second guard policy.
+                    if region.inlining.is_none() {
+                        // SAFETY: the lane's program and VM outlive this synchronous trace;
+                        // native execution has returned and restored the canonical registers.
+                        let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
+                        if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
+                            let instruction = decoded_instruction(body, packed);
+                            if instruction.op() == Op::SetIndex {
+                                let key = r.get(instruction.register_c());
+                                let base = r.get(instruction.register_b());
+                                if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
+                                    eprintln!(
+                                        "QUENCH_JS_JIT_OSR_SET_INDEX_EXIT program={} function={} header={} pc={pc} key_bits={:016x} key_number={:?} length={} capacity={}",
+                                        program.raw(), site.function, site.header,
+                                        key.to_bits(), key.as_number(),
+                                        array.elements().len(), array.elements().capacity(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
             LoopOutcome::Grow(_) => {
                 site.native_region_runs
@@ -7053,8 +7081,8 @@ fn lane_loop_run<H: Host>(
 /// The entry record of `site`'s native code from the running activation, when its arrays
 /// and captures pass the region's guards: each written array a plain record array whose
 /// elements a write replaces in place (`Vm::try_replace_record_element`), each read one a
-/// record array (`Vm::direct_dense_element`), each capture a plain value of the running
-/// function's dense capture slots (`lane_load_capture`).
+/// record array (`Vm::direct_dense_element`), each capture an initialized binding resolved
+/// without guest code by the same lookup as LoadCapture (`lane_capture_value`).
 #[inline(never)]
 fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
@@ -7062,19 +7090,28 @@ fn lane_loop_entry<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
-    let vm = unsafe { vm(cx) };
     // SAFETY: the running program outlives this lane's OSR entry setup.
     let code = unsafe { &*(*cx).code };
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).capture });
-        if slots.is_null() {
-            return None;
-        }
         for slot in &region.captures {
-            // SAFETY: the running function's dense capture slots (`LaneContext::capture`).
-            entry.push_capture((unsafe { &*slots }).dense_plain(usize::from(*slot))?);
+            // SAFETY: the context's dense slots remain live until the next collection.
+            // A cache miss follows the same non-effectful lookup as LoadCapture.
+            let value = (!slots.is_null())
+                .then(|| unsafe { &*slots }.dense_plain(usize::from(*slot)))
+                .flatten()
+                .or_else(|| lane_capture_value(cx, 0, *slot))
+                .or_else(|| {
+                    // A projected global var aliases its global object's property. Native
+                    // field stores could change it after entry, invalidating this snapshot.
+                    region.field_store_sites.is_empty()
+                        .then(|| lane_projected_capture(cx, 0, *slot))
+                        .flatten()
+                })?;
+            entry.push_capture(value);
         }
     }
+    let vm = unsafe { vm(cx) };
     // These regions cannot run calls or field writes, and their element stores define or
     // replace own data elements, which changes no shape slot. Thus a hit on an ordinary
     // data field stays valid for the whole native run. Any miss, accessor, private name, or
@@ -7177,6 +7214,9 @@ fn lane_inlined_target<H: Host>(
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
+    if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
+        (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?;
+    }
     let vm = unsafe { vm(cx) };
     let target_pointer = vm.script_call_entry(frame.callee)?;
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
@@ -7186,7 +7226,9 @@ fn lane_inlined_target<H: Host>(
         && unsafe { (*cx).script_calls }
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
-        && lane_call_this(vm, target, receiver) == Some(receiver))
+        && lane_call_this(vm, target, receiver).is_some_and(|bound| {
+            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_))
+        }))
     .then_some(target_pointer)
 }
 
@@ -7227,13 +7269,16 @@ fn lane_inlining_region<H: Host>(
     let constants = machine.programs.constants(program).to_vec();
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
-    let mut resolve = |chain: &[super::compiled::FieldUse]| -> Option<super::compiled::InlineCallee<'_>> {
+    let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
         let mut values = Vec::with_capacity(chain.len());
         for field in chain {
             let value = lane_region_field(cx, r, field, |index| values[index])?;
             values.push(value);
         }
-        let callee = *values.last()?;
+        let callee = match capture {
+            Some(slot) => lane_capture_value(cx, 0, slot)?,
+            None => *values.last()?,
+        };
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
         let target = unsafe { &*vm.script_call_entry(callee)? };
@@ -7281,6 +7326,8 @@ fn lane_inlined_activation<H: Host>(
     // SAFETY: as `Vm::script_call_entry`; `call` is the call's record in the running view.
     let (target, arguments) =
         unsafe { (&*target, ImmediateLayout::call_window_base((*call).imm())) };
+    let receiver = lane_call_this(unsafe { vm(cx) }, target, receiver)
+        .expect("entry checked the receiver's effect-free binding");
     let (registers, _) =
         lane_push_activation::<H, false, false>(cx, r, call, target, arguments, receiver, false);
     let inlining = region.inlining.as_ref().expect("an inlining region");
@@ -13590,6 +13637,9 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     if cross {
         lane_enter_program(cx, target.program);
     }
+    if vm.programs.js_jit_diagnostics_enabled() {
+        vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
@@ -17789,6 +17839,7 @@ fn install_loop_sites<'live, H: Host>(
                     analysis_failure,
                     call_boundary_pcs: diagnostics.then(|| call_boundary_pcs.into_boxed_slice()),
                     region,
+                    inline_region: std::cell::OnceCell::new(),
                     header,
                     backedge: pc as u32,
                     jump: records[pc].jump(),

@@ -1860,6 +1860,12 @@ impl Heap {
     pub(crate) fn make_collection_due_for_test(&mut self) {
         self.collect_at = self.allocated;
     }
+    /// Leave room until the next charged payload growth, for native recovery tests.
+    #[cfg(test)]
+    pub(crate) fn make_collection_due_after_growth_for_test(&mut self) {
+        self.collect_at = self.allocated.saturating_add(1);
+        self.uncharged_payload_bytes = 0;
+    }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
     }
