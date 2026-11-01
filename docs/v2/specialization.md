@@ -160,6 +160,35 @@ leaving the region. Folding dispatch alone cannot reach peer scores. The lane al
 removes decoding, and a residual of semantic calls is slower than the lane (see the screen
 above).
 
+### Frameless lane bodies: measured and set aside
+
+The opt-in lane-body tier (`QUENCH_JS_JIT_LANE_METHODS=1`, `GeneralDispatchMode::Lane`)
+runs a declined method's general-dispatch body on its lane activation's registers. It
+leaves at exact PCs and resumes accumulator-reading records with their proved register.
+It covers:
+
+- receiver reads and receiver field reads and writes;
+- capture reads;
+- `IncDec`;
+- field-cache reads, prototype holders included;
+- logged stores.
+
+Paired V8-v7 screens show it slower: Richards -15%, DeltaBlue -8%, RayTrace -12%. A
+call-free, fully native 30-record method also runs about 20% slower than the lane (775 to
+830 ms against 620 to 675 ms over three runs). The general-dispatch residual keeps every
+value tagged in memory and re-proves each guard per instruction, which costs more than the
+lane's threaded, record-hinted handlers.
+
+So native calls built on these bodies cannot change the sign. The online specializer needs
+a different residual:
+
+- SSA values in machine registers;
+- unboxed numbers;
+- guards proved once per region and hoisted;
+- inline-cached shapes folded as constants.
+
+That is the optimizing tier the critical path below describes.
+
 ### Critical path for V8-v7
 
 The plan steps keep their order for AOT and startup. For V8-v7 score, the critical path is
