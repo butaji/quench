@@ -103,14 +103,12 @@ pub(crate) fn install(
     constructor: RootId,
 ) -> Result<(), RootedError> {
     let prototype = get(context, constructor, "prototype")?;
-    let undefined = context.undefined();
-    let factory = crate::host::removed_javascript("node:net/endpoint-method.js")?;
     for (name, operation) in [
         ("_getpeername", "netSocketPeerName"),
         ("_getsockname", "netSocketLocalName"),
     ] {
         let native = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let method = context.call_rooted(factory, undefined, &[native])?;
+        let method = super::net_internal_shared_vm::method(context, native, name)?;
         set(context, prototype, name, method)?;
     }
     for (prefix, method) in [("remote", "_getpeername"), ("local", "_getsockname")] {
@@ -129,10 +127,7 @@ pub(crate) fn install(
                 crate::host::shared_vm::operation("netSocketEndpointView"),
                 data,
             )?;
-            let getter = context.call_rooted(factory, undefined, &[operation])?;
-            let key = context.string_rooted("name");
-            let value = context.string_rooted(&name);
-            context.define_data_property_rooted(getter, key, value, false, false, true)?;
+            let getter = super::net_internal_shared_vm::method(context, operation, &name)?;
             let descriptor = context.null_object_rooted()?;
             set(context, descriptor, "get", getter)?;
             let yes = context.boolean(true);

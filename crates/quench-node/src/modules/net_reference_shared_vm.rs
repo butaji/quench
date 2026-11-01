@@ -605,9 +605,7 @@ fn on_connection(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     }
     let operation =
         context.host_function(crate::host::shared_vm::operation("netServerOnConnection"))?;
-    let factory = crate::host::removed_javascript("node:net/onconnection.js")?;
-    let undefined = context.undefined();
-    let callback = context.call_rooted(factory, undefined, &[operation])?;
+    let callback = super::net_internal_shared_vm::method(context, operation, "onconnection")?;
     let retained = context.retain(callback)?;
     shared.borrow_mut().net_server_on_connection = Some(retained);
     Ok(callback)

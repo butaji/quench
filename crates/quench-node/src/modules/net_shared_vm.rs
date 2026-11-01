@@ -1446,73 +1446,9 @@ fn connect_resolved_address(
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let initialize = context.host_function_with_data(
-        crate::host::shared_vm::operation("netBoundSocketProjection"),
-        module,
-    )?;
-    context.define_lazy_data_properties_rooted(
-        module,
-        &["BoundSocket", "_TransferredBoundSocket"],
-        true,
-        initialize,
-    )?;
-
-    for (name, operation) in [
-        ("isIP", "netIsIP"),
-        ("isIPv4", "netIsIPv4"),
-        ("isIPv6", "netIsIPv6"),
-    ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let key = context.string_rooted(name);
-        if !context.set_property_rooted(module, key, function, module)? {
-            return Err(RootedError::host(format!("cannot install net.{name}")));
-        }
-    }
-    for (name, operation) in [
-        ("getDefaultAutoSelectFamily", "netGetAutoSelectFamily"),
-        ("setDefaultAutoSelectFamily", "netSetAutoSelectFamily"),
-        (
-            "getDefaultAutoSelectFamilyAttemptTimeout",
-            "netGetAutoSelectFamilyAttemptTimeout",
-        ),
-        (
-            "setDefaultAutoSelectFamilyAttemptTimeout",
-            "netSetAutoSelectFamilyAttemptTimeout",
-        ),
-    ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let key = context.string_rooted(name);
-        if !context.set_property_rooted(module, key, function, module)? {
-            return Err(RootedError::host("cannot install shared net binding"));
-        }
-    }
-    // Ordinary function facades preserve Node's public constructibility and metadata.
-    let callable_names = [
-        "isIP",
-        "isIPv4",
-        "isIPv6",
-        "getDefaultAutoSelectFamily",
-        "setDefaultAutoSelectFamily",
-        "getDefaultAutoSelectFamilyAttemptTimeout",
-        "setDefaultAutoSelectFamilyAttemptTimeout",
-    ];
-    let mut callables = Vec::new();
-    for name in callable_names {
-        let key = context.string_rooted(name);
-        callables.push(context.get_property_rooted(module, key)?);
-    }
-    let facade_factory =
-        crate::host::removed_javascript("node:net/callable-facade.js")?;
-    let undefined = context.undefined();
-    let facade = context.call_rooted(facade_factory, undefined, &callables)?;
-    for name in callable_names {
-        let key = context.string_rooted(name);
-        let function = context.get_property_rooted(facade, key)?;
-        context.set_property_rooted(module, key, function, module)?;
-    }
-    let connect = context.host_function(crate::host::shared_vm::operation("netConnect"))?;
-    let write = context.host_function(crate::host::shared_vm::operation("netSocketWrite"))?;
-    let end = context.host_function(crate::host::shared_vm::operation("netSocketEnd"))?;
+    let operation = |context: &mut NativeContext<'_, NodeHost>, name: &str| {
+        context.host_function(crate::host::shared_vm::operation(name))
+    };
     // Destruction latches its outcome before guest error handlers run.
     let close_outcome = context.symbol_rooted(Some("kSocketCloseHadError"));
     let destroy = context.host_function_with_data(
@@ -1529,8 +1465,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .shared_state()
         .borrow_mut()
         .net_socket_close_completed = Some(close_completed);
-    let encoding =
-        context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
     let listen =
         context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
     let close =
@@ -1538,132 +1472,136 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let address = context
         .host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let duplex_key = context.string_rooted("Duplex");
-    let duplex = context.get_property_rooted(stream, duplex_key)?;
-    let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
-    let key = context.string_rooted("Buffer");
-    let buffer = context.get_property_rooted(buffer_module, key)?;
-    let key = context.string_rooted("byteLength");
-    let byte_length = context.get_property_rooted(buffer, key)?;
+    let duplex = context.get_named_property_rooted(stream, "Duplex")?;
+    let global = context.global_root()?;
+    let buffer = context.get_named_property_rooted(global, "Buffer")?;
+    let byte_length = context.get_named_property_rooted(buffer, "byteLength")?;
     let account = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketAccountWrite"),
         byte_length,
     )?;
-    let endpoint =
-        context.host_function(crate::host::shared_vm::operation("netNormalizeEndpoint"))?;
-    let reference =
-        context.host_function(crate::host::shared_vm::operation("netServerReference"))?;
-    let socket_reference =
-        context.host_function(crate::host::shared_vm::operation("netSocketReference"))?;
-    let unref_timeout =
-        context.host_function(crate::host::shared_vm::operation("netSocketUnrefTimeout"))?;
-    let socket_options =
-        context.host_function(crate::host::shared_vm::operation("netSocketOptions"))?;
-    let server_options =
-        context.host_function(crate::host::shared_vm::operation("netServerOptions"))?;
     let fin = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketWriteAfterFin"),
         duplex,
     )?;
-    let facade = crate::host::removed_javascript("node:net/write-after-fin.js")?;
-    let undefined = context.undefined();
-    let fin = context.call_rooted(facade, undefined, &[fin])?;
+    let fin = super::net_internal_shared_vm::method(context, fin, "writeAfterFIN")?;
     let readable_end = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketReadableEnd"),
         fin,
     )?;
-    let facade = crate::host::removed_javascript("node:net/readable-end.js")?;
-    let readable_end = context.call_rooted(facade, undefined, &[readable_end])?;
-    let init_end = context.host_function(crate::host::shared_vm::operation("netSocketInitEnd"))?;
+    let readable_end =
+        super::net_internal_shared_vm::method(context, readable_end, "onReadableStreamEnd")?;
     let emitter_api = context
         .host_mut()
         .shared_state()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
-    let key = context.string_rooted("emitterCtor");
-    let emitter = context.get_property_rooted(emitter_api, key)?;
+    let emitter = context.get_named_property_rooted(emitter_api, "emitterCtor")?;
     let init_server_emitter = context.host_function_with_data(
         crate::host::shared_vm::operation("netServerInitEmitter"),
         emitter,
     )?;
-    let internal_net = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "net.js",
-        "internal/net.js",
-    )?;
+    let internal_net = super::net_internal_shared_vm::module(context)?;
     let [init_socket_options, set_no_delay, set_keep_alive, init_server_options] =
         super::net_socket_options::install(context, internal_net)?;
-    let connections =
-        context.host_function(crate::host::shared_vm::operation("netServerGetConnections"))?;
-    let connections_factory = crate::host::removed_javascript("node:net/get-connections.js")?;
-    let get_connections = context.call_rooted(connections_factory, undefined, &[connections])?;
-    let initialize_read =
-        context.host_function(crate::host::shared_vm::operation("netSocketInitializeRead"))?;
-    let read_operation =
-        context.host_function(crate::host::shared_vm::operation("netSocketRead"))?;
-    let read_factory = crate::host::removed_javascript("node:net/read.js")?;
-    let read_socket = context.call_rooted(read_factory, undefined, &[read_operation])?;
-    let end_key = context.string_rooted("end");
-    let prototype_key = context.string_rooted("prototype");
-    let prototype = context.get_property_rooted(duplex, prototype_key)?;
-    let original_end = context.get_property_rooted(prototype, end_key)?;
+    let duplex_prototype = context.get_named_property_rooted(duplex, "prototype")?;
+    let original_end = context.get_named_property_rooted(duplex_prototype, "end")?;
     let end_data = context.array_rooted(&[original_end, byte_length])?;
     let end_stream = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketEndStream"),
         end_data,
     )?;
-    let normalized_args_key = context.string_rooted("normalizedArgsSymbol");
-    let normalized_args_symbol = context.get_property_rooted(internal_net, normalized_args_key)?;
-    let async_hooks = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "async_hooks.js",
-        "internal/async_hooks.js",
+    let normalized_args =
+        context.get_named_property_rooted(internal_net, "normalizedArgsSymbol")?;
+    let symbols = crate::modules::util_shared_vm::symbols_binding(context)?;
+    let async_id = context.get_named_property_rooted(symbols, "async_id_symbol")?;
+    let operations = super::net_class_shared_vm::Operations {
+        connect: operation(context, "netConnect")?,
+        write: operation(context, "netSocketWrite")?,
+        end: operation(context, "netSocketEnd")?,
+        destroy,
+        encoding: operation(context, "netSocketSetEncoding")?,
+        listen,
+        close,
+        address,
+        account,
+        endpoint: operation(context, "netNormalizeEndpoint")?,
+        server_reference: operation(context, "netServerReference")?,
+        socket_reference: operation(context, "netSocketReference")?,
+        unref_timeout: operation(context, "netSocketUnrefTimeout")?,
+        socket_options: operation(context, "netSocketOptions")?,
+        server_options: operation(context, "netServerOptions")?,
+        init_end: operation(context, "netSocketInitEnd")?,
+        readable_end,
+        init_server_emitter,
+        init_socket_options,
+        set_no_delay,
+        set_keep_alive,
+        init_server_options,
+        get_connections: operation(context, "netServerGetConnections")?,
+        initialize_read: operation(context, "netSocketInitializeRead")?,
+        read: {
+            let read = operation(context, "netSocketRead")?;
+            super::net_internal_shared_vm::method(context, read, "_read")?
+        },
+        end_stream,
+        duplex,
+        emitter,
+        normalized_args,
+        async_id,
+    };
+    let surface = super::net_class_shared_vm::build(context, &operations)?;
+    let export = |context: &mut NativeContext<'_, NodeHost>, name: &str, value: RootId| {
+        context.assign_named_property_rooted(module, name, value).map(drop)
+    };
+    let find = |name: &str| {
+        surface
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| *value)
+            .expect("built net export")
+    };
+    let simultaneous_accepts = context.host_function_named(
+        crate::host::shared_vm::operation("streamNop"),
+        "_setSimultaneousAccepts",
     )?;
-    let symbols_key = context.string_rooted("symbols");
-    let symbols = context.get_property_rooted(async_hooks, symbols_key)?;
-    let owner_symbol_key = context.string_rooted("owner_symbol");
-    let owner_symbol = context.get_property_rooted(symbols, owner_symbol_key)?;
-    let async_id_symbol_key = context.string_rooted("async_id_symbol");
-    let async_id_symbol = context.get_property_rooted(symbols, async_id_symbol_key)?;
-    let factory = crate::host::removed_javascript("node:net/module.js")?;
-    let undefined = context.undefined();
-    let surface = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            duplex,
-            connect,
-            write,
-            end,
-            destroy,
-            encoding,
-            listen,
-            close,
-            address,
-            account,
-            endpoint,
-            reference,
-            socket_reference,
-            unref_timeout,
-            socket_options,
-            server_options,
-            init_end,
-            readable_end,
-            init_server_emitter,
-            init_socket_options,
-            set_no_delay,
-            set_keep_alive,
-            init_server_options,
-            get_connections,
-            initialize_read,
-            read_socket,
-            end_stream,
-            normalized_args_symbol,
-            owner_symbol,
-            async_id_symbol,
-        ],
-    )?;
+    let (block_list, socket_address) = super::net_block_list::classes(context)?;
+    export(context, "_normalizeArgs", find("_normalizeArgs"))?;
+    export(context, "_setSimultaneousAccepts", simultaneous_accepts)?;
+    export(context, "BlockList", block_list)?;
+    export(context, "SocketAddress", socket_address)?;
+    for name in ["connect", "createConnection", "createServer"] {
+        export(context, name, find(name))?;
+    }
+    for (name, operation) in [
+        ("isIP", "netIsIP"),
+        ("isIPv4", "netIsIPv4"),
+        ("isIPv6", "netIsIPv6"),
+    ] {
+        let function =
+            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        export(context, name, function)?;
+    }
+    for name in ["Server", "Socket", "Stream"] {
+        export(context, name, find(name))?;
+    }
+    for (name, operation) in [
+        ("getDefaultAutoSelectFamily", "netGetAutoSelectFamily"),
+        ("setDefaultAutoSelectFamily", "netSetAutoSelectFamily"),
+        (
+            "getDefaultAutoSelectFamilyAttemptTimeout",
+            "netGetAutoSelectFamilyAttemptTimeout",
+        ),
+        (
+            "setDefaultAutoSelectFamilyAttemptTimeout",
+            "netSetAutoSelectFamilyAttemptTimeout",
+        ),
+    ] {
+        let function =
+            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        export(context, name, function)?;
+    }
     let options_data = context
         .host_mut()
         .shared_state()
@@ -1671,36 +1609,18 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .net_socket_option_keys
         .ok_or_else(|| RootedError::host("socket option metadata missing"))?;
     let key = context.string_rooted("module");
-    context.define_data_property_rooted(options_data, key, surface, false, false, false)?;
-    let key = context.string_rooted("Server");
-    let server = context.get_property_rooted(surface, key)?;
-    let key = context.string_rooted("prototype");
-    let server_prototype = context.get_property_rooted(server, key)?;
-    let emitter_prototype = context.get_property_rooted(emitter, key)?;
-    context.set_prototype_rooted(server_prototype, emitter_prototype)?;
-    context.set_prototype_rooted(server, emitter)?;
-    super::net_server_listen::install(context, server_prototype)?;
-    for name in [
-        "Socket",
-        "Stream",
-        "Server",
-        "BlockList",
-        "SocketAddress",
-        "connect",
-        "createConnection",
-        "createServer",
-        "_normalizeArgs",
-    ] {
-        let key = context.string_rooted(name);
-        let value = context.get_property_rooted(surface, key)?;
-        if !context.set_property_rooted(module, key, value, module)? {
-            return Err(RootedError::host(format!("cannot install net.{name}")));
-        }
-    }
-    let socket_key = context.string_rooted("Socket");
-    let socket_constructor = context.get_property_rooted(surface, socket_key)?;
-    super::net_socket_address::install(context, socket_constructor)?;
-    let retained = context.retain(socket_constructor)?;
+    context.define_data_property_rooted(options_data, key, module, false, false, false)?;
+    let initialize = context.host_function_with_data(
+        crate::host::shared_vm::operation("netBoundSocketProjection"),
+        module,
+    )?;
+    context.define_lazy_data_properties_rooted(
+        module,
+        &["BoundSocket", "_TransferredBoundSocket"],
+        true,
+        initialize,
+    )?;
+    let retained = context.retain(find("Socket"))?;
     context
         .host_mut()
         .shared_state()

@@ -1288,7 +1288,7 @@ fn require_for_module_inner(
             return load(context, &filename, Some(parent), EntryGoal::CommonJs);
         }
         Some(BuiltinModule::Dgram) => {
-            return node_library_module(context, "dgram.js", "dgram.js");
+            return cached_builtin(context, BuiltinModule::Dgram);
         }
         Some(BuiltinModule::InternalDgram) => {
             return node_library_module(context, "internal/dgram.js", "internal/dgram.js");
@@ -1306,18 +1306,14 @@ fn require_for_module_inner(
             );
         }
         Some(BuiltinModule::InternalBlockList) => {
-            let module = crate::host::removed_javascript("internal/blocklist.js")?;
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let constructor = get(context, net, "BlockList")?;
+            let module = context.object_rooted()?;
+            let (constructor, _) = crate::modules::net_block_list::classes(context)?;
             set(context, module, "BlockList", constructor)?;
             return Ok(module);
         }
         Some(BuiltinModule::InternalSocketAddress) => {
-            let module = crate::host::removed_javascript("internal/socketaddress.js")?;
-            let net = cached_builtin(context, BuiltinModule::Net)?;
-            let constructor = get(context, net, "SocketAddress")?;
-            // cached_builtin may return the cache's retained root: ownership
-            // remains with builtin_cache, not this projection's call frame.
+            let module = context.object_rooted()?;
+            let (_, constructor) = crate::modules::net_block_list::classes(context)?;
             set(context, module, "SocketAddress", constructor)?;
             return Ok(module);
         }
@@ -2365,6 +2361,9 @@ pub(crate) fn node_library_module(
     if let Some(module) = crate::modules::stream_shared_vm::library_module(context, relative)? {
         return Ok(module);
     }
+    if relative == "internal/net.js" {
+        return crate::modules::net_internal_shared_vm::module(context);
+    }
     crate::host::removed_javascript(format!("node:{}", relative.trim_end_matches(".js")))
 }
 
@@ -2841,7 +2840,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             set(context, module, "kConnectionsCheckingInterval", interval)?;
             Ok(module)
         }
-        BuiltinModule::Internal("dns/promises") => node_library_module(context, "dns.js", "dns/promises.js"),
+        BuiltinModule::Internal("dns/promises") => crate::modules::dns_module_shared_vm::promises(context),
         // Node's `_http_client` builds on its `http_parser` binding, which the native `http`
         // module does not use; until it is projected from it, it stays empty.
         BuiltinModule::Internal("_http_client") => context.object_rooted(),
@@ -2903,14 +2902,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
-        BuiltinModule::Dns => {
-            let utils = node_library_module(context, "dns.js", "internal/dns/utils.js")?;
-            let initialize = get(context, utils, "initializeDns")?;
-            let undefined = context.undefined();
-            context.call_rooted(initialize, undefined, &[])?;
-            node_library_module(context, "dns.js", "dns.js")
-        }
-        BuiltinModule::Dgram => crate::host::removed_javascript("node:dgram"),
+        BuiltinModule::Dns => crate::modules::dns_module_shared_vm::module(context),
+        BuiltinModule::Dgram => crate::modules::dgram_shared_vm::module(context),
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
         BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),

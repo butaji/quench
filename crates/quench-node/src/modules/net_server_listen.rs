@@ -162,6 +162,14 @@ fn check_net_permission(
     context: &mut Context<'_>,
     resource: Option<&str>,
 ) -> Result<(), RootedError> {
+    let model = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        state.cli_options.enabled("--permission") || state.cli_options.enabled("--permission-audit")
+    };
+    if !model {
+        return Ok(());
+    }
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let permission = get(context, process, "permission")?;
