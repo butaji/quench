@@ -2113,6 +2113,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processResourceUsage" (0) => crate::modules::process_metrics_shared_vm::public_resource_usage,
         #[cfg(unix)]
         method "processExecvePublic" (1) => crate::modules::process_metrics_shared_vm::public_execve,
+        method "permissionHas" (2) => crate::modules::process_permission_shared_vm::has,
+        method "permissionDrop" (2) => crate::modules::process_permission_shared_vm::drop_permission,
         method "domainConstruct" (0) => crate::modules::domain_shared_vm::construct,
         method "domainCreate" (0) => crate::modules::domain_shared_vm::create,
         method "domainErrorHandler" (1) => crate::modules::domain_shared_vm::error_handler_method,

@@ -63,16 +63,11 @@ pub(crate) fn info(
     context.assign_named_property_rooted(result, "aliases", aliases)?;
     Ok(result)
 }
-pub(crate) fn flags(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let (mut flags, exec_argv) = {
-        let shared = context.host_mut().shared_state();
-        let shared = shared.borrow();
-        (Vec::new(), shared.exec_argv.clone())
-    };
+/// Node's normalized startup options as flags (`getOptionsAsFlags`): `NODE_OPTIONS`, then
+/// options from `--env-file` and `--config-file`, then the command line's.
+pub(crate) fn option_flags(context: &mut NativeContext<'_, NodeHost>) -> Vec<String> {
+    let exec_argv = context.host_mut().shared_state().borrow().exec_argv.clone();
+    let mut flags = Vec::new();
     if let Ok(node_options) = std::env::var("NODE_OPTIONS") {
         if let Ok(arguments) = crate::modules::cli_options::parse_node_options(&node_options) {
             flags.extend(arguments);
@@ -81,7 +76,15 @@ pub(crate) fn flags(
     append_env_file_options(&exec_argv, &mut flags);
     append_config_file_options(&exec_argv, &mut flags);
     flags.extend(exec_argv);
-    let values = flags
+    flags
+}
+
+pub(crate) fn flags(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let values = option_flags(context)
         .iter()
         .map(|flag| context.string_rooted(flag))
         .collect::<Vec<_>>();
