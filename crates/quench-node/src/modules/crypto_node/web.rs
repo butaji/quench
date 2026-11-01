@@ -133,8 +133,7 @@ impl Algorithm {
     /// The OpenSSL key type of an asymmetric algorithm.
     fn key_type(self) -> &'static str {
         match self {
-            Self::RsassaPkcs1 | Self::RsaOaep => "rsa",
-            Self::RsaPss => "rsa",
+            Self::RsassaPkcs1 | Self::RsaOaep | Self::RsaPss => "rsa",
             Self::Ecdsa | Self::Ecdh => "ec",
             Self::Ed25519 => "ed25519",
             Self::Ed448 => "ed448",

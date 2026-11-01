@@ -313,12 +313,11 @@ pub(crate) fn diffie_hellman_constructor(c: &mut Context<'_>, this: RootId, args
     };
     let prime = match size {
         Some(bits) => {
-            let generated = openssl::dh::Dh::generate_params(bits as u32, generator.to_dec_str().ok().and_then(|text| text.parse().ok()).unwrap_or(DEFAULT_GENERATOR));
-            let generated = if bits < 0.0 { Err(openssl::error::ErrorStack::get()) } else { generated };
-            match generated {
-                Ok(parameters) => parameters.prime_p().to_owned().map_err(|stack| errors::openssl(c, stack))?,
-                Err(_) => return Err(dh_modulus_error(c)),
-            }
+            // A negative size reaches OpenSSL as no bits, which it rejects as too small.
+            let bits = if bits < 0.0 { 0 } else { bits as u32 };
+            let generator_word = generator.to_dec_str().ok().and_then(|text| text.parse().ok()).unwrap_or(DEFAULT_GENERATOR);
+            let parameters = openssl::dh::Dh::generate_params(bits, generator_word).map_err(|stack| errors::openssl(c, stack))?;
+            parameters.prime_p().to_owned().map_err(|stack| errors::openssl(c, stack))?
         }
         None => {
             let bytes = group_bytes(c, size_or_key, key_encoding)?;
@@ -327,15 +326,6 @@ pub(crate) fn diffie_hellman_constructor(c: &mut Context<'_>, this: RootId, args
     };
     let state = DiffieHellman::new(prime, generator).map_err(|stack| errors::openssl(c, stack))?;
     install_diffie_hellman(c, this, state)
-}
-
-/// The error OpenSSL raises for a prime size it cannot generate.
-fn dh_modulus_error(c: &mut Context<'_>) -> RootedError {
-    let stack = openssl::error::ErrorStack::get();
-    if !stack.errors().is_empty() {
-        return errors::openssl(c, stack);
-    }
-    errors::throw(c, CryptoError::Plain("modulus too small"))
 }
 
 fn install_diffie_hellman(c: &mut Context<'_>, this: RootId, state: DiffieHellman) -> Outcome {
