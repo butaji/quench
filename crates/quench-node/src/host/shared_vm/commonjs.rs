@@ -472,12 +472,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_console_global");
-    if context.host_mut().vfs_enabled() {
-        // Feature bootstrap loads real builtins that capture these originals.
-        // Seal its added globals only after the guarded initialization leaves.
-        context.with_startup_intrinsics(install_vfs_globals)?;
-        context.seal_startup_intrinsics();
-    }
     crate::host::resident_pages::release_read_only_pages();
     if node_primordials_source(context).is_some() {
         context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
@@ -576,204 +570,6 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.call_rooted(require, undefined, &[specifier])?;
     }
     Ok(())
-}
-
-fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
-    // The configured SDK owns public VFS policy; retain only native descriptor
-    // and stream bridges here, without evaluating the superseded JS facade.
-    cached_builtin(context, BuiltinModule::Fs)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_fs_module");
-    let path = crate::modules::path_shared_vm::module(context)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_path_module");
-    let stream = cached_builtin(context, BuiltinModule::Stream)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_stream_module");
-    let install = crate::host::removed_javascript("node:bootstrap/vfs-globals.js")?;
-    let undefined = context.undefined();
-    context.call_rooted(install, undefined, &[path, stream])?;
-    let vfs_constructor = node_library_export(
-        context,
-        "vfs.js",
-        "internal/vfs/file_system.js",
-        "VirtualFileSystem",
-    )?;
-    let install_loader_projection = crate::host::removed_javascript("node:bootstrap/vfs-module-loader-projection.js")?;
-    context.call_rooted(
-        install_loader_projection,
-        undefined,
-        &[vfs_constructor],
-    )?;
-    let global = context.global_root()?;
-    for (name, export) in [
-        ("__quenchVfsReadStream", "VirtualReadStream"),
-        ("__quenchVfsWriteStream", "VirtualWriteStream"),
-    ] {
-        let constructor = node_library_export(
-            context,
-            "internal/vfs/file_system.js",
-            "internal/vfs/streams.js",
-            export,
-        )?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, constructor, false, false, true)?;
-    }
-    let registry = get(context, global, "__quenchVfsFdHandles")?;
-    let map_get = get(context, registry, "get")?;
-    let map_set = get(context, registry, "set")?;
-    let map_methods = context.array_rooted(&[map_get, map_set])?;
-    let bind_position =
-        context.host_function_with_data(super::operation("vfsBindPosition"), map_methods)?;
-    let key = context.string_rooted("__quenchVfsBindPosition");
-    context.define_data_property_rooted(global, key, bind_position, false, false, true)?;
-    let path_projection = context.host_function(super::operation("vfsStreamPath"))?;
-    let key = context.string_rooted("__quenchVfsStreamPath");
-    context.define_data_property_rooted(global, key, path_projection, false, false, true)?;
-    for (name, operation) in [
-        ("__quenchVfsOpenDescriptor", "vfsDescriptorOpen"),
-        ("__quenchVfsCloseDescriptor", "vfsDescriptorRelease"),
-    ] {
-        let function = context.host_function(super::operation(operation))?;
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(global, key, function, false, false, true)?;
-    }
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_globals");
-
-    Ok(())
-}
-
-/// Source owns virtual descriptor allocation; legacy real-provider records
-/// remain actual OS descriptors in the disjoint, unmasked descriptor range.
-pub(crate) fn vfs_descriptor_get(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    vfs_descriptor_lookup(context, args, false)
-}
-pub(crate) fn vfs_descriptor_close(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    vfs_descriptor_lookup(context, args, true)
-}
-fn vfs_descriptor_lookup(
-    context: &mut Context<'_>,
-    args: &[RootId],
-    closing: bool,
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let source = get(context, data, "0")?;
-    let missing = context.undefined();
-    let value = context.call_rooted(source, missing, args)?;
-    let found = if closing {
-        context.truthy_rooted(value)?
-    } else {
-        !context
-            .rooted_value(value)
-            .is_some_and(|value| value.is_undefined())
-    };
-    if found {
-        return Ok(value);
-    }
-    let legacy = get(context, data, "1")?;
-    let method = get(context, data, "2")?;
-    context.call_rooted(method, legacy, args)
-}
-pub(crate) fn vfs_descriptor_open(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let module = cached_builtin(context, BuiltinModule::InternalVfsFd)?;
-    let open = get(context, module, "openVirtualFd")?;
-    let missing = context.undefined();
-    context.call_rooted(open, missing, args)
-}
-pub(crate) fn vfs_descriptor_release(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let module = cached_builtin(context, BuiltinModule::InternalVfsFd)?;
-    let get_fd = get(context, module, "getVirtualFd")?;
-    let missing = context.undefined();
-    let record = context.call_rooted(get_fd, missing, args)?;
-    if context.is_object_rooted(record)? {
-        let entry = get(context, record, "entry")?;
-        let close = get(context, entry, "closeSync")?;
-        context.call_rooted(close, entry, &[])?;
-    }
-    let close = get(context, module, "closeVirtualFd")?;
-    context.call_rooted(close, missing, args)
-}
-
-/// Public fs streams retain the caller's path while provider I/O uses its mount-relative path.
-pub(crate) fn vfs_stream_path(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let missing = context.undefined();
-    let stream = args.first().copied().unwrap_or(missing);
-    let path = args.get(1).copied().unwrap_or(missing);
-    let key = context.string_rooted("path");
-    context.define_data_property_rooted(stream, key, path, true, true, true)?;
-    Ok(stream)
-}
-
-/// Project the descriptor position onto the provider's existing offset authority.
-pub(crate) fn vfs_bind_position(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let missing = context.undefined();
-    let map = args.first().copied().unwrap_or(missing);
-    let fd = args.get(1).copied().unwrap_or(missing);
-    let entry = args.get(2).copied().unwrap_or(missing);
-    let methods = context.host_function_data()?;
-    let getter = get(context, methods, "0")?;
-    let setter = get(context, methods, "1")?;
-    let data = context.array_rooted(&[map, fd, getter, setter])?;
-    let getter = context.host_function_with_data(super::operation("vfsPositionGet"), data)?;
-    let setter = context.host_function_with_data(super::operation("vfsPositionSet"), data)?;
-    let descriptor = context.object_rooted()?;
-    for (name, value) in [("get", getter), ("set", setter)] {
-        self::set(context, descriptor, name, value)?;
-    }
-    let key = context.string_rooted("position");
-    context.define_property_descriptor_rooted(entry, key, descriptor)?;
-    Ok(entry)
-}
-
-pub(crate) fn vfs_position_get(
-    context: &mut Context<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let map = get(context, data, "0")?;
-    let fd = get(context, data, "1")?;
-    let getter = get(context, data, "2")?;
-    context.call_rooted(getter, map, &[fd])
-}
-
-pub(crate) fn vfs_position_set(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let map = get(context, data, "0")?;
-    let fd = get(context, data, "1")?;
-    let setter = get(context, data, "3")?;
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    context.call_rooted(setter, map, &[fd, value])?;
-    Ok(context.undefined())
 }
 
 /// The timeline classes Node exposes as globals, from `perf_hooks`.
@@ -1216,47 +1012,6 @@ fn require_for_module_inner(
             return get(context, cached, "exports");
         }
     }
-    if specifier == "vfs" {
-        let error = context.error_rooted("Cannot find module 'vfs'")?;
-        let code = context.string_rooted("MODULE_NOT_FOUND");
-        set(context, error, "code", code)?;
-        return Err(context.throw(error));
-    }
-    if matches!(specifier.as_str(), "node:stream/iter" | "node:zlib/iter")
-        && !context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .cli_options
-            .enabled("--experimental-stream-iter")
-    {
-        let message = format!("No such built-in module: {specifier}");
-        let error = context.error_rooted(&message)?;
-        let code = context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");
-        set(context, error, "code", code)?;
-        return Err(context.throw(error));
-    }
-    if matches!(specifier.as_str(), "node:bench" | "node:bench/reporters")
-        && !context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .cli_options
-            .enabled("--experimental-bench")
-    {
-        let message = format!("ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: {specifier}");
-        let error = context.error_rooted(&message)?;
-        let code = context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");
-        set(context, error, "code", code)?;
-        return Err(context.throw(error));
-    }
-    if specifier == "node:vfs" && !context.host_mut().vfs_enabled() {
-        let error = context
-            .error_rooted("ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:vfs")?;
-        let code = context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");
-        set(context, error, "code", code)?;
-        return Err(context.throw(error));
-    }
     // The `node:` scheme is reserved for built-ins. Do not fall through to
     // package/file resolution for an unknown `node:` specifier; Node reports
     // ERR_UNKNOWN_BUILTIN_MODULE for these (including node:internal/*).
@@ -1291,9 +1046,6 @@ fn require_for_module_inner(
             ),
         ) => {
             return cached_builtin(context, module);
-        }
-        Some(BuiltinModule::InternalVfsFd) => {
-            return cached_builtin(context, BuiltinModule::InternalVfsFd);
         }
         Some(BuiltinModule::Vm) => {
             return cached_builtin(context, BuiltinModule::Vm);
@@ -1404,12 +1156,6 @@ fn require_for_module_inner(
         Some(BuiltinModule::PerfHooks) => {
             return cached_builtin(context, BuiltinModule::PerfHooks);
         }
-        Some(BuiltinModule::Bench) => {
-            return cached_builtin(context, BuiltinModule::Bench);
-        }
-        Some(BuiltinModule::BenchReporters) => {
-            return cached_builtin(context, BuiltinModule::BenchReporters);
-        }
         Some(BuiltinModule::Zlib) => {
             return cached_builtin(context, BuiltinModule::Zlib);
         }
@@ -1419,15 +1165,12 @@ fn require_for_module_inner(
         Some(
             module @ (BuiltinModule::Fs
             | BuiltinModule::FsPromises
-            | BuiltinModule::Vfs
             | BuiltinModule::Net
             | BuiltinModule::Http
             | BuiltinModule::Os
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
             | BuiltinModule::StreamPromises
-            | BuiltinModule::StreamIter
-            | BuiltinModule::ZlibIter
             | BuiltinModule::Timers
             | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
@@ -1740,17 +1483,12 @@ enum BuiltinModule {
     PathWin32,
     Fs,
     FsPromises,
-    Vfs,
     Net,
     Http,
     Os,
     Buffer,
-    Bench,
-    BenchReporters,
     Stream,
     StreamPromises,
-    StreamIter,
-    ZlibIter,
     WebStreams,
     StringDecoder,
     WorkerThreads,
@@ -1781,7 +1519,6 @@ enum BuiltinModule {
     Dgram,
     InternalDgram,
     InternalUrl,
-    InternalVfsFd,
     InternalUndici,
     InternalTestBinding,
     InternalTimers,
@@ -1815,17 +1552,12 @@ impl BuiltinModule {
             Self::Internal(name) => Some(name),
             Self::Fs => Some("fs"),
             Self::FsPromises => Some("fs/promises"),
-            Self::Vfs => Some("vfs"),
             Self::Net => Some("net"),
             Self::Http => Some("http"),
             Self::Os => Some("os"),
             Self::Buffer => Some("buffer"),
-            Self::Bench => Some("node:bench"),
-            Self::BenchReporters => Some("node:bench/reporters"),
             Self::Stream => Some("stream"),
             Self::StreamPromises => Some("stream/promises"),
-            Self::StreamIter => Some("stream/iter"),
-            Self::ZlibIter => Some("zlib/iter"),
             Self::WebStreams => Some("stream/web"),
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
@@ -1874,7 +1606,6 @@ impl BuiltinModule {
             | Self::PathPosix
             | Self::PathWin32 => None,
             Self::InternalUrl => Some("internal/url"),
-            Self::InternalVfsFd => Some("internal/vfs/fd"),
             Self::InternalUndici => None,
             Self::InternalDgram
             | Self::InternalTestBinding
@@ -1896,26 +1627,6 @@ fn internals_exposed(context: &mut Context<'_>) -> bool {
 
 fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
     let builtin = BuiltinModule::from_specifier(specifier)?;
-    if matches!(builtin, BuiltinModule::Bench | BuiltinModule::BenchReporters)
-        && !context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .cli_options
-            .enabled("--experimental-bench")
-    {
-        return None;
-    }
-    if matches!(builtin, BuiltinModule::StreamIter | BuiltinModule::ZlibIter)
-        && !context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .cli_options
-            .enabled("--experimental-stream-iter")
-    {
-        return None;
-    }
     if matches!(builtin, BuiltinModule::InternalTimers) && !internals_exposed(context) {
         None
     } else {
@@ -2070,8 +1781,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:fs", BuiltinModule::Fs),
     ("fs/promises", BuiltinModule::FsPromises),
     ("node:fs/promises", BuiltinModule::FsPromises),
-    ("vfs", BuiltinModule::Vfs),
-    ("node:vfs", BuiltinModule::Vfs),
     ("net", BuiltinModule::Net),
     ("node:net", BuiltinModule::Net),
     ("http", BuiltinModule::Http),
@@ -2080,14 +1789,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:os", BuiltinModule::Os),
     ("buffer", BuiltinModule::Buffer),
     ("node:buffer", BuiltinModule::Buffer),
-    ("node:bench", BuiltinModule::Bench),
-    ("node:bench/reporters", BuiltinModule::BenchReporters),
     ("stream", BuiltinModule::Stream),
     ("node:stream", BuiltinModule::Stream),
-    ("stream/iter", BuiltinModule::StreamIter),
-    ("node:stream/iter", BuiltinModule::StreamIter),
-    ("zlib/iter", BuiltinModule::ZlibIter),
-    ("node:zlib/iter", BuiltinModule::ZlibIter),
     ("stream/promises", BuiltinModule::StreamPromises),
     ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
@@ -2153,7 +1856,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/url", BuiltinModule::InternalUrl),
-    ("internal/vfs/fd", BuiltinModule::InternalVfsFd),
     ("internal/deps/undici/undici", BuiltinModule::InternalUndici),
     ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
@@ -2739,29 +2441,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("internal/zip/headers") => {
             node_library_module(context, "zlib.js", "internal/zip/headers.js")
         }
-        BuiltinModule::InternalVfsFd => {
-            let module = node_library_module(context, "vfs.js", "internal/vfs/fd.js")?;
-            let global = context.global_root()?;
-            let legacy = get(context, global, "__quenchVfsFdHandles")?;
-            if context.is_object_rooted(legacy)? {
-                for (name, method, operation) in [
-                    ("getVirtualFd", "get", "vfsDescriptorGet"),
-                    ("closeVirtualFd", "delete", "vfsDescriptorClose"),
-                ] {
-                    let source = get(context, module, name)?;
-                    let legacy_method = get(context, legacy, method)?;
-                    let data = context.array_rooted(&[source, legacy, legacy_method])?;
-                    let bridge =
-                        context.host_constructor_with_data(super::operation(operation), data)?;
-                    let key = context.string_rooted("name");
-                    let display = context.string_rooted(name);
-                    context
-                        .define_data_property_rooted(bridge, key, display, false, false, true)?;
-                    set(context, module, name, bridge)?;
-                }
-            }
-            Ok(module)
-        }
         BuiltinModule::Internal("internal/worker/io") => {
             let module = native_global_namespace(context, &["MessageChannel", "MessagePort"])?;
             // Node exposes this protocol enum to internal consumers. Keep the
@@ -2833,17 +2512,12 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
         }
-        // The pinned SDK owns VFS layer identity, reserved mount roots and lifecycle.
-        // Native descriptor and fs handler operations remain registered below.
-        BuiltinModule::Vfs => node_library_module(context, "vfs.js", "vfs.js"),
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::build_module(context),
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
         BuiltinModule::Stream => crate::modules::stream_shared_vm::module(context),
         BuiltinModule::StreamPromises => crate::modules::stream_shared_vm::promises(context),
-        BuiltinModule::StreamIter => node_library_module(context, "stream/iter.js", "stream/iter.js"),
-        BuiltinModule::ZlibIter => node_library_module(context, "zlib/iter.js", "zlib/iter.js"),
         BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
         BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
@@ -2867,8 +2541,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Dns => crate::modules::dns_module_shared_vm::module(context),
         BuiltinModule::Dgram => crate::modules::dgram_shared_vm::module(context),
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
-        BuiltinModule::Bench => node_library_module(context, "bench.js", "bench.js"),
-        BuiltinModule::BenchReporters => node_library_module(context, "bench/reporters.js", "bench/reporters.js"),
         BuiltinModule::Zlib => crate::modules::zlib_shared_vm::module(context),
         #[cfg(quench_openssl_provider)]
         BuiltinModule::Crypto => crate::modules::crypto_node::module(context),
@@ -3043,11 +2715,6 @@ fn resolve_filename_from_host(
         && (internal_specifier != "internal/timers" || internals_exposed(context)))
         || (internal_specifier.starts_with('_')
             && module_is_file(context, &node_lib.join(internal_specifier).with_extension("js")));
-    if !node_internal {
-        if let Some(path) = resolve_vfs_module_path(context, &directory, specifier)? {
-            return Ok(path);
-        }
-    }
     #[cfg(feature = "native-execution")]
     {
         let virtual_path = if node_internal {
@@ -3159,65 +2826,6 @@ fn resolve_filename_from_host(
             None => Err(RootedError::host(error.to_string())),
         },
     }
-}
-
-fn resolve_vfs_module_path(
-    context: &mut Context<'_>,
-    base: &Path,
-    specifier: &str,
-) -> Result<Option<PathBuf>, RootedError> {
-    // The loader projection exists only under `--experimental-vfs` (`install_vfs_globals`).
-    if !context.host_mut().vfs_enabled() {
-        return Ok(None);
-    }
-    let global = context.global_root()?;
-    let resolve = get(context, global, "__quenchVfsResolveModulePath")?;
-    if !context.is_callable_rooted(resolve)? {
-        return Ok(None);
-    }
-    let base = context.string_rooted(&base.to_string_lossy());
-    let specifier = context.string_rooted(specifier);
-    let receiver = context.undefined();
-    let resolved = context.call_rooted(resolve, receiver, &[base, specifier])?;
-    Ok(context.string_text(resolved)?.map(PathBuf::from))
-}
-
-fn read_vfs_module_source(
-    context: &mut Context<'_>,
-    filename: &Path,
-) -> Result<Option<String>, RootedError> {
-    // The loader projection exists only under `--experimental-vfs` (`install_vfs_globals`).
-    if !context.host_mut().vfs_enabled() {
-        return Ok(None);
-    }
-    let global = context.global_root()?;
-    let read_source = get(context, global, "__quenchVfsReadModuleSource")?;
-    if !context.is_callable_rooted(read_source)? {
-        return Ok(None);
-    }
-    let filename = context.string_rooted(&filename.to_string_lossy());
-    let receiver = context.undefined();
-    let source = context.call_rooted(read_source, receiver, &[filename])?;
-    context.string_text(source)
-}
-
-fn vfs_module_type(
-    context: &mut Context<'_>,
-    filename: &Path,
-) -> Result<Option<String>, RootedError> {
-    // The loader projection exists only under `--experimental-vfs` (`install_vfs_globals`).
-    if !context.host_mut().vfs_enabled() {
-        return Ok(None);
-    }
-    let global = context.global_root()?;
-    let module_type = get(context, global, "__quenchVfsModuleType")?;
-    if !context.is_callable_rooted(module_type)? {
-        return Ok(None);
-    }
-    let filename = context.string_rooted(&filename.to_string_lossy());
-    let receiver = context.undefined();
-    let result = context.call_rooted(module_type, receiver, &[filename])?;
-    context.string_text(result)
 }
 
 /// Captured once by bootstrap's first module, before preloads or guest code.
@@ -3562,24 +3170,11 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
         return Err(throw_module_load_error(context, error)?);
     }
     let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
-    let module = if let Some(source) = read_vfs_module_source(context, filename)? {
-        // VFS providers live in the guest realm, so the NodeHost's ordinary
-        // file resolver cannot read their source. A direct ESM module with no
-        // host-side graph lookup can still be evaluated from the projected
-        // bytes; static dependencies continue through the host resolver.
-        quench_runtime::ModuleSource {
-            name: filename.to_string_lossy().into_owned(),
-            typescript: false,
-            source: source.into(),
-            original_bytes: None,
-        }
-    } else {
-        match quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str()) {
-            Ok(module) => module,
-            Err(error) => return Err(throw_module_load_error(context, error)?),
-        }
-        .ok_or_else(|| RootedError::host("ES module source unavailable"))?
-    };
+    let module = match quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str()) {
+        Ok(module) => module,
+        Err(error) => return Err(throw_module_load_error(context, error)?),
+    }
+    .ok_or_else(|| RootedError::host("ES module source unavailable"))?;
     let namespace = match context.evaluate_module_sync_rooted(&module)? {
         quench_runtime::SynchronousModule::Namespace(namespace) => namespace,
         quench_runtime::SynchronousModule::AsyncGraph => {
@@ -3775,21 +3370,8 @@ fn load_with_resolution(
     let archived_kind = context.host_mut().embedded_module(filename).map(|file| file.kind);
     #[cfg(not(feature = "native-execution"))]
     let archived_kind: Option<quench_runtime::SourceKind> = None;
-    // A file of a mounted VFS layer has no host path: its text and package type are the
-    // layer's (`__quenchVfsReadModuleSource`, `__quenchVfsModuleType`).
-    let vfs_source = read_vfs_module_source(context, filename)?;
-    let vfs_kind = match vfs_source {
-        Some(_) => Some(match filename.extension().and_then(|extension| extension.to_str()) {
-            Some("mjs") => quench_runtime::SourceKind::Module,
-            Some("cjs") => quench_runtime::SourceKind::Script,
-            _ if vfs_module_type(context, filename)?.as_deref() == Some("module") => quench_runtime::SourceKind::Module,
-            _ => quench_runtime::SourceKind::Script,
-        }),
-        None => None,
-    };
     let declared = match goal {
         EntryGoal::Node if archived_kind.is_some() => archived_kind,
-        EntryGoal::Node if vfs_kind.is_some() => vfs_kind,
         EntryGoal::Node => declared_source_kind(&real_path_for_kind(filename).map_err(RootedError::host)?)
             .map_err(RootedError::host)?,
         _ => Some(quench_runtime::SourceKind::Script),
@@ -3824,15 +3406,13 @@ fn load_with_resolution(
             set(context, module, "loaded", loaded)?;
             return Ok(exports);
         }
-        let file_text: std::borrow::Cow<'static, str> = match vfs_source {
-            Some(source) => source.into(),
-            None => match module_file_bytes(context, filename, declared.unwrap_or(quench_runtime::SourceKind::Script)) {
+        let file_text: std::borrow::Cow<'static, str> =
+            match module_file_bytes(context, filename, declared.unwrap_or(quench_runtime::SourceKind::Script)) {
                 Ok(bytes) => String::from_utf8(bytes)
                     .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
                     .into(),
                 Err(error) => return Err(RootedError::host(error.to_string())),
-            },
-        };
+            };
         #[cfg(feature = "native-execution")]
         let prepared = context.host_mut().embedded_module(filename).and_then(|file| file.prepared);
         #[cfg(not(feature = "native-execution"))]
@@ -4056,14 +3636,6 @@ fn load_with_resolution(
     if library_relative == Some(Path::new("lib/internal/webidl.js")) {
         if let Ok(exports) = &result {
             crate::modules::events_shared_vm::adopt_abort_converter(context, *exports)?;
-        }
-    }
-    let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
-    if is_fs_utilities {
-        if let Ok(exports) = &result {
-            let state = get(context, *exports, "vfsState")?;
-            let global = context.global_root()?;
-            set(context, global, "\0quench:vfsState", state)?;
         }
     }
     result

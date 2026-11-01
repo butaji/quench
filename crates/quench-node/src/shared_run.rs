@@ -670,7 +670,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         return Ok(status);
     }
     if args.iter().any(|argument| argument == "--bench") {
-        return run_shared_bench_cli(&args);
+        // Node's benchmark runner has no Rust implementation.
+        return Ok(cli_usage_error("--bench is not supported"));
     }
     if args.iter().any(|argument| argument == "--test") {
         return run_shared_test_cli(&args);
@@ -1018,67 +1019,6 @@ fn print_bash_completion() {
 complete -o filenames -o nospace -o bashdefault -F _node_complete node node_g
 "#
     );
-}
-
-/// Enter Node's own benchmark coordinator with the normal shared host. The
-/// coordinator owns glob expansion, child isolation, reporters, and lifecycle;
-/// this boundary only separates startup flags from its file patterns.
-fn run_shared_bench_cli(args: &[String]) -> Result<ExitCode, String> {
-    let bench_index = args
-        .iter()
-        .position(|argument| argument == "--bench")
-        .expect("benchmark mode was checked by caller");
-    let mut exec_argv = Vec::new();
-    let mut patterns = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        let argument = &args[index];
-        if argument == "--" {
-            // Node's CLI treats arguments after `--` as entry files even in
-            // benchmark mode. runFile() uses this form to protect paths that
-            // start with a dash, so preserve those patterns for the runner.
-            patterns.extend(args[index + 1..].iter().cloned());
-            break;
-        }
-        if argument.starts_with('-') {
-            exec_argv.push(argument.clone());
-            if takes_cli_value(argument) {
-                if let Some(value) = args.get(index + 1) {
-                    exec_argv.push(value.clone());
-                    index += 1;
-                }
-            }
-        } else if index > bench_index {
-            patterns.push(argument.clone());
-        }
-        index += 1;
-    }
-
-    let node_library_root = std::env::var_os(NODE_LIBRARY_ROOT_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("node")))
-                .unwrap_or_else(|| PathBuf::from("node"))
-        });
-    let node_library_root = if node_library_root.is_absolute() {
-        node_library_root
-    } else {
-        std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .join(node_library_root)
-    };
-    let runner = node_library_root.join("lib/internal/main/bench_runner.js");
-    let executable = executable_path().map_err(|error| error.to_string())?;
-    let mut argv = vec![executable.to_string_lossy().into_owned()];
-    argv.extend(patterns);
-    let input = SharedInput::File {
-        path: runner,
-        exec_argv,
-        goal: EntryGoal::CommonJs,
-    };
-    execute_shared(input, argv).map(SharedCompletion::exit_code)
 }
 
 /// Enter Node's test coordinator with the normal shared host. The coordinator

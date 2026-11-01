@@ -126,26 +126,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         name_function(context, method, name)?;
         set(context, prototype, name, method)?;
     }
-    let stream_iter = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-stream-iter");
-    let experimental_bench = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-bench");
-    let mut names = BUILTIN_MODULES
+    let names = BUILTIN_MODULES
         .iter()
         .copied()
         .filter(|name| !name.starts_with("node:"))
-        .chain(stream_iter.then_some("stream/iter"))
-        .chain(stream_iter.then_some("zlib/iter"))
-        .chain(experimental_bench.then_some("node:bench"))
-        .chain(experimental_bench.then_some("node:bench/reporters"))
         .chain(
             BUILTIN_MODULES
                 .iter()
@@ -154,9 +138,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         )
         .map(|name| context.string_rooted(name))
         .collect::<Vec<_>>();
-    if context.host_mut().vfs_enabled() {
-        names.push(context.string_rooted("node:vfs"));
-    }
     let names = context.array_rooted(&names)?;
     set(context, module, "builtinModules", names)?;
     let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
@@ -748,38 +729,10 @@ pub(crate) fn is_builtin(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let vfs_enabled = context.host_mut().vfs_enabled();
-    let stream_iter = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-stream-iter");
-    let experimental_bench = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-bench");
     let result = args
         .first()
         .and_then(|argument| context.string_text(*argument).ok().flatten())
         .is_some_and(|specifier| {
-            // These experimental modules are intentionally only exposed with
-            // the `node:` prefix. `isBuiltin('bench')` must remain false even
-            // when `node:bench` is enabled, like Node's public builtin list.
-            if matches!(specifier.as_str(), "node:bench" | "node:bench/reporters") {
-                return experimental_bench;
-            }
-            if specifier == "node:vfs" {
-                return vfs_enabled;
-            }
-            if matches!(
-                specifier.as_str(),
-                "stream/iter" | "node:stream/iter" | "zlib/iter" | "node:zlib/iter"
-            ) {
-                return stream_iter;
-            }
             if let Some(name) = specifier.strip_prefix("node:") {
                 BUILTIN_MODULES.contains(&specifier.as_str())
                     || BUILTIN_MODULES.contains(&name)

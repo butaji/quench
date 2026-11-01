@@ -510,14 +510,6 @@ impl NodeHost {
         super::shared_vm::source_kind(path)
     }
 
-    /// The last VFS CLI switch owns feature availability for this logical process.
-    pub(crate) fn vfs_enabled(&self) -> bool {
-        self.shared_state
-            .borrow()
-            .cli_options
-            .enabled("--experimental-vfs")
-    }
-
     /// Execute a file through the CommonJS loader during shared-VM initialization.
     pub fn with_commonjs_entry(mut self, path: std::path::PathBuf) -> Self {
         self.commonjs_entry = Some(CommonJsEntry {
