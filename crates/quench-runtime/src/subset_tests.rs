@@ -578,11 +578,13 @@ print(out.join("|"));
 }
 
 #[test]
-fn try_finally_without_return_keeps_registers_only_activations() {
+fn try_finally_bodies_keep_registers_only_activations() {
     // A `try`/`finally` whose protected blocks never return emits no return path through
-    // the finalizer (`finally_return_path`), so its body reaches no local and runs as a
-    // registers-only activation; returns, nested finalizers, `catch`, loop exits and a
-    // generator's `return()` still run each finalizer once.
+    // the finalizer (`finally_return_path`); one that returns keeps the path but names it in
+    // no handler outside a generator, so its completion slot moves into a register. Either
+    // body reaches no local and runs as a registers-only activation; returns, nested
+    // finalizers, `catch`, loop exits and a generator's `return()` still run each finalizer
+    // once.
     let source = r#"
 const out = [];
 const desc = { value: undefined, configurable: true };
@@ -611,9 +613,12 @@ print(out.join(","));
 "#;
     let program = Engine::specialize(source, "finally-paths.js").unwrap();
     program.compile_released();
-    let install = &program.functions[1];
-    assert!(!install.handlers.is_empty());
-    assert!(install.call_plan(&program).registers_only);
+    // `install` never returns from its `try`; `early` does, through the finalizer's return
+    // path, which no handler names outside a generator (`resumed_return`).
+    for function in [&program.functions[1], &program.functions[2]] {
+        assert!(!function.handlers.is_empty());
+        assert!(function.call_plan(&program).registers_only);
+    }
     program.validate().unwrap();
     assert_eq!(
         output(source),

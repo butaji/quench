@@ -88,7 +88,7 @@ impl FunctionCompiler<'_, '_> {
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
         let error_slot = self.local_slot(error_atom);
-        let return_slot = return_target.and_then(|_| self.local_slot(return_atom));
+        let (return_target, return_slot) = self.resumed_return(return_target, return_atom);
         let with_depth = self.with_depth;
         self.push_handlers_excluding(start, end, &close_exclusions, |start, end| {
             crate::bytecode::Handler {
@@ -168,7 +168,7 @@ impl FunctionCompiler<'_, '_> {
         let error = self.load_atom(error_atom);
         self.emit(Op::Throw, error, 0, 0, 0);
         let return_target = self.finally_return_path(&context, finalizer, return_atom);
-        let return_slot = return_target.and_then(|_| self.local_slot(return_atom));
+        let (return_target, return_slot) = self.resumed_return(return_target, return_atom);
         for body_handler in &mut self.handlers[body_handler..body_handlers_end] {
             body_handler.return_target = return_target;
             body_handler.return_slot = return_slot;
@@ -213,6 +213,7 @@ impl FunctionCompiler<'_, '_> {
     /// does a generator's `return()` resumed inside them (`Handler::return_target`); any
     /// other body never takes it, so it is not emitted, and its unreachable read of the
     /// hidden local does not keep the body's locals in a frame (`CallPlan::addresses_locals`).
+    /// Only a generator's handlers name the path and its slot (`resumed_return`).
     fn finally_return_path(
         &mut self,
         context: &FinallyContext,
@@ -230,6 +231,16 @@ impl FunctionCompiler<'_, '_> {
             .push((return_target, self.code.len() as u32));
         self.patch_edges(&context.return_edges, return_target);
         Some(return_target)
+    }
+
+    /// The return path and completion slot a handler names: a generator resumed with
+    /// `return()` inside the protected blocks enters the path with its value in the slot
+    /// (`Handler::return_target`). Any other body reaches the path only through its own
+    /// returns' jumps, so its handlers name neither, and the slot stays a plain local that
+    /// may move into a register (`frame_registers::promote`, which keeps named slots).
+    fn resumed_return(&self, return_target: Option<u32>, return_atom: Atom) -> (Option<u32>, Option<u16>) {
+        let return_target = return_target.filter(|_| self.generator);
+        (return_target, return_target.and_then(|_| self.local_slot(return_atom)))
     }
 
     fn append_iterator_close_finalizer(
