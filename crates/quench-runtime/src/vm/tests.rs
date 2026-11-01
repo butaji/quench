@@ -14203,6 +14203,40 @@ print(total + " " + w.arr.slice(35, 50).join(","));
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_bounded_entries_prove_products_and_widen_beyond_their_bound() {
+    // `xh` is an `i32` the loop never writes, a factor of products with 14-bit values: a
+    // bound checked at entry proves them exact. A later call's `xh` beyond that bound must
+    // still give the exact (non-`i32`) products, through the widened recompilation.
+    let source = r#"
+(function () {
+function mix(x, a, n) {
+  var xh = x >> 4, s = 0;
+  for (var i = 0; i < n; i++) { var l = a[i] & 0x3fff; s = s + xh * l; }
+  return s;
+}
+var a = []; for (var k = 0; k < 64; k++) a.push((k * 2654435761) & 0xfffffff);
+var t = 0;
+for (var q = 0; q < 3000; q++) t = (t + mix(q & 0xfff, a, 64)) % 1000000007;
+var big = mix(0x7fffffff, a, 64);
+print(t + " " + big + " " + (big > 2147483647));
+})();
+"#;
+    let program = Engine::specialize(source, "osr-bounded-entries.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
+    }
+    assert!(interpreted_output.borrow()[0].ends_with(" true"), "{:?}", interpreted_output.borrow());
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_inlines_calls_on_a_receiver_a_field_read_gives() {
     // `reduce` calls `this.m.am(…)` and reads `this.m.t`, a nested field: its loop runs am3
     // in place, the receiver the value of `this.m` at entry.

@@ -99,6 +99,9 @@ pub(crate) enum Widening {
     /// A register the region never writes, held as exactly 1 so that multiplying or
     /// dividing by it is the identity (`Lowering::units`), held something else at entry.
     Unit(Register),
+    /// An `i32` register the region never writes, held within the bound that proves its
+    /// products exact (`entry_bounds`), held a value beyond it at entry.
+    Bounded(Register),
 }
 
 /// A not-entered outcome's low word: zero, or a widening's kind bit over its payload.
@@ -107,7 +110,8 @@ const WIDEN_CAPTURE: u64 = WIDEN_REGISTER << 1;
 const WIDEN_UNIT: u64 = WIDEN_CAPTURE << 1;
 const WIDEN_FIELD: u64 = WIDEN_UNIT << 1;
 const WIDEN_ELEMENTS: u64 = WIDEN_FIELD << 1;
-const _: () = assert!(WIDEN_ELEMENTS <= u32::MAX as u64);
+const WIDEN_BOUNDED: u64 = WIDEN_ELEMENTS << 1;
+const _: () = assert!(WIDEN_BOUNDED <= u32::MAX as u64);
 const WIDEN_PAYLOAD: u64 = WIDEN_REGISTER - 1;
 
 impl Widening {
@@ -120,6 +124,7 @@ impl Widening {
             Self::Unit(register) => (WIDEN_UNIT | u64::from(register)) as u32,
             Self::Field(index) => (WIDEN_FIELD | u64::from(index)) as u32,
             Self::Elements(register) => (WIDEN_ELEMENTS | u64::from(register)) as u32,
+            Self::Bounded(register) => (WIDEN_BOUNDED | u64::from(register)) as u32,
         }
     }
 
@@ -135,6 +140,8 @@ impl Widening {
             Some(Self::Field(payload))
         } else if word & WIDEN_ELEMENTS != 0 {
             Some(Self::Elements(payload))
+        } else if word & WIDEN_BOUNDED != 0 {
+            Some(Self::Bounded(payload))
         } else {
             None
         }
@@ -3293,6 +3300,11 @@ struct Int32Facts {
     /// needs no overflow guard. An exit's write-back gives the interpreter that `i32`, which
     /// its same reads observe alike.
     truncated: std::collections::BTreeSet<u32>,
+    /// Each web's range, which the facts above are drawn from (`entry_bounds` reads them).
+    ranges: Vec<Option<Range>>,
+    /// The entry registers whose bound the ranges assume, which the entry checks
+    /// (`entry_bounds`, `Lowering::enter`).
+    bounds: std::collections::BTreeMap<Register, i64>,
 }
 
 /// The range of an operation's exact result from its operands' ranges; `None` while an
@@ -3362,30 +3374,117 @@ fn exact_range(instruction: WideInstruction, operand: &dyn Fn(Operand) -> Option
     })
 }
 
-/// Each `i32` web's range and the arithmetic that needs no guard (`Int32Facts`): the least
-/// fixpoint of each definition's `exact_range`, clamped to the `i32`s its web holds, from the
-/// entry values, which may be any. A web whose range keeps growing takes every `i32`.
-fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representation]) -> Int32Facts {
-    let int32 = |web: Definition| representations[web] == Representation::Int32;
-    let mut ranges: Vec<Option<Range>> = vec![None; webs.parent.len()];
-    let mut growth = vec![0u8; webs.parent.len()];
-    for entry in 0..region.entry_count() {
-        if webs.entry_read[entry] {
-            ranges[webs.find(entry)] = Some(INT32_RANGE);
-        }
-    }
-    // The range a read at `pc` sees: a non-`i32` web's ToInt32 may be any `i32`.
-    let register_range = |ranges: &[Option<Range>], pc: u32, register: Register| {
-        let web = webs.read(region, pc, register);
-        if int32(web) { ranges[web] } else { Some(INT32_RANGE) }
-    };
-    let operand_range = |ranges: &[Option<Range>], pc: u32, operand: Operand| match operand.kind()? {
-        OperandKind::Register => register_range(ranges, pc, operand.payload()),
+/// The range a read of `register` at `pc` sees: a non-`i32` web's ToInt32 may be any `i32`.
+fn register_range(
+    region: &LoopRegion,
+    webs: &Webs,
+    representations: &[Representation],
+    ranges: &[Option<Range>],
+    pc: u32,
+    register: Register,
+) -> Option<Range> {
+    let web = webs.read(region, pc, register);
+    if representations[web] == Representation::Int32 { ranges[web] } else { Some(INT32_RANGE) }
+}
+
+/// The range a read of `operand` at `pc` sees (`register_range`, or the constant's).
+fn operand_range(
+    region: &LoopRegion,
+    webs: &Webs,
+    representations: &[Representation],
+    ranges: &[Option<Range>],
+    pc: u32,
+    operand: Operand,
+) -> Option<Range> {
+    match operand.kind()? {
+        OperandKind::Register => register_range(region, webs, representations, ranges, pc, operand.payload()),
         OperandKind::Constant => match region.constants.get(&usize::from(operand.payload())) {
             Some(number) if int32_number(*number) => Some((*number as i64, *number as i64)),
             _ => Some(INT32_RANGE),
         },
         OperandKind::Field | OperandKind::Local => Some(INT32_RANGE),
+    }
+}
+
+/// The `i32` entry registers the region never writes that it checks once, at entry, within
+/// a bound: for each, the largest bound under which every product it is a factor of, with a
+/// factor of bounded range (`facts`, computed without bounds), is an `i32`, where the value
+/// it held when the region compiled lies within it and no earlier entry found it beyond. A
+/// product's range only narrows as its factors' do, so the facts drawn with the bounds hold.
+fn entry_bounds(
+    region: &LoopRegion,
+    webs: &Webs,
+    representations: &[Representation],
+    observation: &Observation<'_>,
+    facts: &Int32Facts,
+) -> std::collections::BTreeMap<Register, i64> {
+    let written: std::collections::BTreeSet<Register> =
+        region.instructions.iter().filter_map(|instruction| number_definition(*instruction)).collect();
+    let candidates: std::collections::BTreeMap<Register, Definition> = (0..region.entry_count())
+        .filter(|entry| webs.entry_read[*entry])
+        .filter_map(|entry| Some((region.entry_register(entry)?, webs.find(entry))))
+        .filter(|(register, web)| {
+            representations[*web] == Representation::Int32
+                && !written.contains(register)
+                && !observation.widened.contains(&Widening::Bounded(*register))
+        })
+        .collect();
+    let mut bounds: std::collections::BTreeMap<Register, i64> = std::collections::BTreeMap::new();
+    for (offset, instruction) in region.instructions.iter().copied().enumerate() {
+        let pc = region.header + offset as u32;
+        if !webs.reachable[offset]
+            || facts.exact.contains(&pc)
+            || !matches!(instruction.op(), Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+            || arithmetic(instruction.op(), instruction.binary_operator()) != Some(Arithmetic::Float(NumberArithmetic::Multiply))
+        {
+            continue;
+        }
+        let sides = [(instruction.operand_b(), instruction.operand_c()), (instruction.operand_c(), instruction.operand_b())];
+        for (factor, other) in sides {
+            let Some(register) = factor.register_index() else { continue };
+            if candidates.get(&register) != Some(&webs.read(region, pc, register)) {
+                continue;
+            }
+            let Some((low, high)) = operand_range(region, webs, representations, &facts.ranges, pc, other)
+                .filter(|range| *range != INT32_RANGE)
+            else {
+                continue;
+            };
+            let magnitude = low.abs().max(high.abs()).max(1);
+            let bound = i64::from(i32::MAX) / magnitude;
+            bounds.entry(register).and_modify(|existing| *existing = (*existing).min(bound)).or_insert(bound);
+        }
+    }
+    bounds.retain(|register, bound| {
+        (observation.register)(*register).as_int().is_some_and(|value| i64::from(value).abs() <= *bound)
+    });
+    bounds
+}
+
+/// Each `i32` web's range and the arithmetic that needs no guard (`Int32Facts`): the least
+/// fixpoint of each definition's `exact_range`, clamped to the `i32`s its web holds, from the
+/// entry values, which may be any. A web whose range keeps growing takes every `i32`.
+fn int32_facts(
+    region: &LoopRegion,
+    webs: &Webs,
+    representations: &[Representation],
+    bounds: &std::collections::BTreeMap<Register, i64>,
+) -> Int32Facts {
+    let int32 = |web: Definition| representations[web] == Representation::Int32;
+    let mut ranges: Vec<Option<Range>> = vec![None; webs.parent.len()];
+    let mut growth = vec![0u8; webs.parent.len()];
+    for entry in 0..region.entry_count() {
+        if webs.entry_read[entry] {
+            // An entry the region checks within its bound holds no other value (`entry_bounds`).
+            let bound = region.entry_register(entry).and_then(|register| bounds.get(&register));
+            ranges[webs.find(entry)] = Some(bound.map_or(INT32_RANGE, |bound| (-bound, *bound)));
+        }
+    }
+    let register_range = |ranges: &[Option<Range>], pc: u32, register: Register| {
+        register_range(region, webs, representations, ranges, pc, register)
+    };
+    let operand_range = |ranges: &[Option<Range>], pc: u32, operand: Operand| {
+        operand_range(region, webs, representations, ranges, pc, operand)
     };
     loop {
         let mut changed = false;
@@ -3505,7 +3604,7 @@ fn int32_facts(region: &LoopRegion, webs: &Webs, representations: &[Representati
             break;
         }
     }
-    let mut facts = Int32Facts::default();
+    let mut facts = Int32Facts { ranges: ranges.clone(), bounds: bounds.clone(), ..Int32Facts::default() };
     for (offset, instruction) in region.instructions.iter().copied().enumerate() {
         if !webs.reachable[offset] {
             continue;
@@ -3861,7 +3960,9 @@ pub(super) fn lower(
     let webs = webs(region);
     let (representations, entry) = representations(region, &webs, observation);
     let counted = counted_loops(region, &webs, &representations, &entry.captures);
-    let facts = int32_facts(region, &webs, &representations);
+    let unbounded = int32_facts(region, &webs, &representations, &std::collections::BTreeMap::new());
+    let bounds = entry_bounds(region, &webs, &representations, observation, &unbounded);
+    let facts = if bounds.is_empty() { unbounded } else { int32_facts(region, &webs, &representations, &bounds) };
     let mut context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
     let mut probe_signature = Signature::new(isa.default_call_conv());
@@ -4821,6 +4922,14 @@ impl<'a, 'b> Lowering<'a, 'b> {
             }
             let otherwise = self.not_entered(Some(Widening::Register(register)));
             let value = self.unbox(bits, representation, otherwise);
+            // A bounded entry (`entry_bounds`) lies in `-bound..=bound`: offset by the bound,
+            // it is at most twice the bound unsigned, where any other `i32` is beyond.
+            if let Some(&bound) = self.facts.bounds.get(&register) {
+                let offset = self.body.builder.ins().iadd_imm_s(value, bound);
+                let beyond = self.body.builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, 2 * bound);
+                let otherwise = self.not_entered(Some(Widening::Bounded(register)));
+                self.pass_unless(beyond, otherwise);
+            }
             self.body.write(register, view_type(representation), value);
         }
         let header = self.target_block(None, self.region.header)?;
