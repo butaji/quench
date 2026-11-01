@@ -1,0 +1,22 @@
+{
+  "kind": "quench-hmr-commonjs-callbackless-dependency-accept-restart",
+  "date": "2026-11-01",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "build": "passed: ./tools/build-quench-node-hmr.sh",
+  "fixture": {
+    "entry": "Requires consumer.cjs, prints boot once per generation and consumer.value every 100ms",
+    "consumer.cjs": "Captures shared.cjs exports and registers module.hot.accept('./shared.cjs') without a callback",
+    "shared.cjs": "Exports {value: old}, then changes to {value: new}"
+  },
+  "procedure": "Wait until value old is observed, then replace shared.cjs with the new export object.",
+  "observed_output": ["boot", "value old", "boot", "value new"],
+  "boot_count": 2,
+  "result": "A callbackless CommonJS dependency acceptance cannot refresh a captured export reference, so the update restarted the same CLI invocation and the new generation observed value new.",
+  "diff_check": "passed: git diff --check",
+  "scope": "Focused live runtime smoke for callbackless CommonJS dependency acceptance. This does not close the pinned TSRS checker compatibility gate or qualify all HMR acceptance cases."
+}

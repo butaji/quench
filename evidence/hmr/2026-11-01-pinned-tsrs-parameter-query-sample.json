@@ -1,0 +1,82 @@
+{
+  "objective": "Compare the pinned TSRS parameter-position query with the pinned TypeScript compiler using declaration emit as a limited cross-check",
+  "typescript_version": "7.1.0-beta",
+  "typescript_package": "/tmp/quench-ts-audit/package",
+  "typescript_git_head": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+  "typescript_surface": "native tsc CLI; package has no JavaScript Compiler API",
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "tsrs_worker": "tools/quench-tsrs-worker/target/debug/quench-tsrs-worker",
+  "method": {
+    "fixture": "Temporary case.ts with 12 exported functions covering inferred default, union, optional object member, generic, readonly rest array, optional object parameter, null/undefined, bigint, any, unknown, never, and literal union parameters.",
+    "query": "Sent UTF-16 positions at each parameter binding identifier to getTypesAtPositions, then typeToString.",
+    "cross_check": "Ran the pinned native tsc with --strict --declaration --emitDeclarationOnly --target ES2022 --module ESNext and compared the emitted function parameter and return declarations.",
+    "limitation": "Declaration emit preserves declaration syntax and is not equivalent to TypeChecker.getTypeAtLocation followed by typeToString. This sample does not establish full checker parity."
+  },
+  "tsrs_parameter_type_text": {
+    "a_default_number": "number",
+    "b_string_or_number": "string | number",
+    "c_optional_object_member": "{ a: number; b?: string | undefined; }",
+    "d_generic": "T",
+    "e_readonly_rest_array": "readonly string[]",
+    "f_optional_parameter": "{ x: number; } | undefined",
+    "g_null_or_undefined": "null | undefined",
+    "h_bigint": "bigint",
+    "i_any": "any",
+    "j_unknown": "unknown",
+    "k_never": "never",
+    "l_literal_union": "1 | 2"
+  },
+  "typescript_declaration_emit": [
+    "a(x?: number): number",
+    "b(x: string | number): string | number",
+    "c(x: { a: number; b?: string }): { a: number; b?: string }",
+    "d<T>(x: T): T",
+    "e(...x: readonly string[]): readonly string[]",
+    "f(x?: { x: number }): { x: number } | undefined",
+    "g(x: null | undefined): null | undefined",
+    "h(x: bigint): bigint",
+    "i(x: any): any",
+    "j(x: unknown): unknown",
+    "k(x: never): never",
+    "l(x: 1 | 2): 1 | 2"
+  ],
+  "observations": [
+    "The queried simple primitive, union, generic, rest, nullish, and literal forms are consistent with the declaration surface in this sample.",
+    "TSRS typeToString includes `| undefined` inside the optional object member, while declaration emit preserves `b?: string` syntax.",
+    "The optional parameter query includes `| undefined`, while declaration emit preserves `?` and omits the explicit union. These are different output surfaces and do not alone prove a semantic checker mismatch."
+  ],
+  "result": "The 12 parameter facts were semantically equivalent to the pinned TypeScript 7.1.0-beta compiler in strict mode with exactOptionalPropertyTypes both disabled and enabled. The full pinned-version API compatibility gate remains unverified.",
+  "semantic_type_equivalence_oracle": {
+    "method": "For every queried parameter binding, generated a TypeScript assertion `Expect<Equal<typeof x, <TSRS typeToString output>>>` inside that function, queried the same source positions again to confirm the assertions did not change the facts, and ran the pinned native tsc with --noEmit against the same tsconfig.",
+    "assertions": "12/12 parameter binding assertions passed in each configuration.",
+    "compiler_configurations": [
+      {
+        "strict": true,
+        "exactOptionalPropertyTypes": false,
+        "tsc_exit_code": 0,
+        "tsrs_optional_member_display": "{ a: number; b?: string | undefined; }"
+      },
+      {
+        "strict": true,
+        "exactOptionalPropertyTypes": true,
+        "tsc_exit_code": 0,
+        "tsrs_optional_member_display": "{ a: number; b?: string; }"
+      }
+    ],
+    "covered_forms": [
+      "inferred default number",
+      "string/number union",
+      "optional object member",
+      "generic parameter",
+      "readonly rest parameter",
+      "optional parameter",
+      "null/undefined union",
+      "bigint",
+      "any",
+      "unknown",
+      "never",
+      "literal union"
+    ],
+    "limitation": "This establishes semantic equality for the 12 queried parameter bindings under these two configurations; it does not establish full getTypesAtPositions/typeToString API compatibility across projects, syntax, libraries, diagnostics, or TypeScript compiler options."
+  }
+}

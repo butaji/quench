@@ -1102,18 +1102,33 @@ pub(crate) fn wait_ready(transport: &Transport, timeout: std::time::Duration) {
         std::thread::sleep(timeout);
         return;
     }
-    let timeout = libc::timespec {
-        tv_sec: timeout.as_secs() as libc::time_t,
-        tv_nsec: libc::c_long::from(timeout.subsec_nanos() as i32),
-    };
     // SAFETY: the descriptors are open for the duration of the call, which only writes
     // their `revents`.
+    #[cfg(target_os = "linux")]
     unsafe {
+        let timeout = libc::timespec {
+            tv_sec: timeout.as_secs() as libc::time_t,
+            tv_nsec: libc::c_long::from(timeout.subsec_nanos() as i32),
+        };
         libc::ppoll(
             descriptors.as_mut_ptr(),
             descriptors.len() as libc::nfds_t,
             &timeout,
             std::ptr::null(),
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    unsafe {
+        const NANOS_PER_MILLISECOND: u32 = 1_000_000;
+        let fractional_millisecond = timeout.subsec_nanos() % NANOS_PER_MILLISECOND != 0;
+        let timeout_ms = timeout
+            .as_millis()
+            .saturating_add(u128::from(fractional_millisecond));
+        let timeout_ms = libc::c_int::try_from(timeout_ms).unwrap_or(libc::c_int::MAX);
+        libc::poll(
+            descriptors.as_mut_ptr(),
+            descriptors.len() as libc::nfds_t,
+            timeout_ms,
         );
     }
     crate::modules::napi::drain_wake();

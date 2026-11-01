@@ -1,0 +1,22 @@
+{
+  "kind": "quench-hmr-typescript-inflight-call-generation",
+  "date": "2026-11-01",
+  "scenario": "A typed .ts ESM module starts an asynchronous call, then a self-accepted replacement arrives before that call finishes.",
+  "invocation": "target/debug/quench-node --hmr /tmp/quench-hmr-ts-inflight-jetlwoob/main.ts",
+  "observed": [
+    "Generation 1 evaluated and incremented persistent global state to 1.",
+    "The generation 1 call began before its source was replaced.",
+    "Generation 2 evaluated in the same HMR session and incremented persistent global state to 2.",
+    "The original call completed with generation 1 behavior.",
+    "The new call completed with generation 2 behavior."
+  ],
+  "output": [
+    "EVAL 1 1",
+    "START old 1",
+    "EVAL 2 2",
+    "START new 2",
+    "DONE old 1",
+    "DONE new 2"
+  ],
+  "scope": "One typed ESM async call/update path; not proof of every async scheduler or call-boundary behavior."
+}

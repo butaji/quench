@@ -25,15 +25,30 @@ impl NodeHost {
             bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
+            hmr_graph: _,
+            hmr_restart_on_change: _,
+            hmr_restart_only_paths: _,
+            hmr_worker_watch_registry: _,
+            hmr_publish_worker_paths: _,
+            hmr_hot_modules: _,
+            hmr_source_names: _,
+            hmr_hot_data: _,
+            hmr_pending_type_queries: _,
+            hmr_type_worker: _,
         } = self;
         require_quiescent(
-            net_pending_writes.is_empty() && net_pending_ends.is_empty() && net_pending_destroys.is_empty(),
+            net_pending_writes.is_empty()
+                && net_pending_ends.is_empty()
+                && net_pending_destroys.is_empty(),
             "socket writes",
         )?;
         shared_state.borrow().write_snapshot(writer)
     }
 
-    pub(crate) fn read_snapshot(&mut self, reader: &mut SnapshotReader<'_, '_>) -> Result<(), String> {
+    pub(crate) fn read_snapshot(
+        &mut self,
+        reader: &mut SnapshotReader<'_, '_>,
+    ) -> Result<(), String> {
         self.shared_state.borrow_mut().read_snapshot(reader)
     }
 }
@@ -303,6 +318,10 @@ impl HostSnap for CommonJsCache {
         writer.root(root)
     }
     fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
-        Ok(if reader.bool()? { Self::Module(reader.root()?) } else { Self::Bootstrap(reader.root()?) })
+        Ok(if reader.bool()? {
+            Self::Module(reader.root()?)
+        } else {
+            Self::Bootstrap(reader.root()?)
+        })
     }
 }

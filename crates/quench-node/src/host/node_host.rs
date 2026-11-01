@@ -56,13 +56,117 @@ pub struct NodeHost {
         Box<str>,
         rustc_hash::FxHashMap<Box<str>, Rc<crate::host::shared_vm::ImportLocation>>,
     >,
+    /// Allocated only for applications that opt into hot module reloading.
+    pub(crate) hmr_graph: Option<crate::host::hmr::ModuleGraph>,
+    /// CLI HMR uses process replacement when this runtime cannot apply an edit in place.
+    pub(crate) hmr_restart_on_change: bool,
+    /// Worker modules and loaded module metadata that require restarting the CLI process.
+    hmr_restart_only_paths: rustc_hash::FxHashSet<std::path::PathBuf>,
+    /// Shared from the main host to worker hosts, which publish loaded source stamps.
+    hmr_worker_watch_registry: Option<crate::host::hmr::WorkerWatchRegistry>,
+    /// Whether this host publishes its watched application paths to its parent process.
+    hmr_publish_worker_paths: bool,
+    /// The active `import.meta.hot` object by canonical source path.
+    pub(crate) hmr_hot_modules: rustc_hash::FxHashMap<std::path::PathBuf, quench_runtime::RootId>,
+    /// Compiler source identities for each watched file; multiple URLs require restart fallback.
+    pub(crate) hmr_source_names:
+        rustc_hash::FxHashMap<std::path::PathBuf, rustc_hash::FxHashSet<String>>,
+    /// `import.meta.hot.data` waiting for the replacement program's metadata setup.
+    pub(crate) hmr_hot_data: rustc_hash::FxHashMap<std::path::PathBuf, quench_runtime::RootId>,
+    /// Initial TypeScript programs waiting for background checker queries.
+    pub(crate) hmr_pending_type_queries:
+        Vec<crate::host::hmr::type_worker::TypeQueryRequest>,
+    /// Started on the first TypeScript HMR update; checker work stays off the event loop.
+    pub(crate) hmr_type_worker: Option<crate::host::hmr::type_worker::TypeWorker>,
 }
 
 impl NodeHost {
     /// `path`'s real path through the loaders' known-real paths (`real_path`); a path that
     /// cannot be resolved is returned as it is.
     pub(crate) fn real_path(&mut self, path: std::path::PathBuf) -> std::path::PathBuf {
-        crate::host::real_path::real_path(&path).unwrap_or(path)
+        let real = crate::host::real_path::real_path(&path).unwrap_or_else(|_| path.clone());
+        self.record_hmr_resolution_symlinks(&path, &real);
+        real
+    }
+
+    /// A loaded module keeps its canonical path for Node identity, but HMR also needs to
+    /// observe links used to reach it: swapping a workspace package link can change future
+    /// resolution while leaving the loaded target's bytes untouched. Link changes always
+    /// restart, since this process has already resolved the module through the old target.
+    pub(crate) fn record_hmr_resolution_symlinks(
+        &mut self,
+        requested: &std::path::Path,
+        resolved: &std::path::Path,
+    ) {
+        if self.hmr_graph.is_none() || !self.hmr_graph_path(requested) {
+            return;
+        }
+        let mut current = std::path::PathBuf::new();
+        let mut links = Vec::new();
+        for component in requested.components() {
+            current.push(component.as_os_str());
+            if !matches!(component, std::path::Component::Normal(_)) {
+                continue;
+            }
+            let is_symlink = std::fs::symlink_metadata(&current)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink());
+            let resolves_to_dependency = is_symlink
+                && crate::host::real_path::real_path(&current).is_ok_and(|real_link| {
+                    resolved.starts_with(&real_link) || real_link.starts_with(resolved)
+                });
+            if resolves_to_dependency && self.hmr_watch_path(&current) {
+                links.push(current.clone());
+            }
+        }
+        if links.is_empty() {
+            return;
+        }
+        if let Some(graph) = &mut self.hmr_graph {
+            for link in &links {
+                graph.record_module(link.clone());
+                graph.record_dependency(resolved.to_path_buf(), link.clone(), None);
+            }
+        }
+        if self.hmr_publish_worker_paths {
+            self.publish_worker_hmr_paths(links.iter().map(std::path::PathBuf::as_path));
+        }
+        self.hmr_restart_only_paths.extend(links);
+    }
+
+    fn record_hmr_package_symlinks(
+        &mut self,
+        importer: &std::path::Path,
+        dependency: &std::path::Path,
+        specifier: &str,
+    ) {
+        if specifier.starts_with('.')
+            || std::path::Path::new(specifier).is_absolute()
+            || specifier.starts_with("node:")
+            || specifier.starts_with("internal/")
+        {
+            return;
+        }
+        let mut components = std::path::Path::new(specifier).components();
+        let Some(first) = components.next() else {
+            return;
+        };
+        let mut package = std::path::PathBuf::from(first.as_os_str());
+        if first.as_os_str().to_string_lossy().starts_with('@') {
+            let Some(second) = components.next() else {
+                return;
+            };
+            package.push(second.as_os_str());
+        }
+        for directory in importer.ancestors().skip(1) {
+            let candidate = directory.join("node_modules").join(&package);
+            let Ok(real_candidate) = crate::host::real_path::real_path(&candidate) else {
+                continue;
+            };
+            if dependency.starts_with(&real_candidate) {
+                self.record_hmr_resolution_symlinks(&candidate, dependency);
+                return;
+            }
+        }
     }
 }
 
@@ -109,7 +213,8 @@ pub(crate) struct SharedNodeState {
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) realm_module_programs: std::collections::HashMap<
-        std::path::PathBuf, crate::host::shared_vm::commonjs::PreparedRealmModule,
+        std::path::PathBuf,
+        crate::host::shared_vm::commonjs::PreparedRealmModule,
     >,
     pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     /// Library methods as their modules defined them (`commonjs::LibraryOriginal`).
@@ -278,7 +383,9 @@ impl SharedNodeState {
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         #[cfg(quench_icu)]
-        { self.icu_converters = crate::modules::icu_binding_shared_vm::State::default(); }
+        {
+            self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
+        }
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
@@ -358,7 +465,8 @@ impl SharedNodeState {
             cli_options: Default::default(),
             report_config: Default::default(),
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
-            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref() == Ok("1"),
+            initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
+                == Ok("1"),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
@@ -435,8 +543,19 @@ impl NodeHost {
             inline_source: InlineSource::default(),
             eval_builtin_globals: false,
             eval_source_nonempty: false,
-            initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
+            initial_node_debug: std::env::var_os("NODE_DEBUG")
+                .map(|value| value.to_string_lossy().into_owned()),
             resolved_imports: Default::default(),
+            hmr_graph: None,
+            hmr_restart_on_change: false,
+            hmr_restart_only_paths: Default::default(),
+            hmr_worker_watch_registry: None,
+            hmr_publish_worker_paths: false,
+            hmr_hot_modules: Default::default(),
+            hmr_source_names: Default::default(),
+            hmr_hot_data: Default::default(),
+            hmr_pending_type_queries: Vec::new(),
+            hmr_type_worker: None,
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),
@@ -451,7 +570,10 @@ impl NodeHost {
 
     /// The last VFS CLI switch owns feature availability for this logical process.
     pub(crate) fn vfs_enabled(&self) -> bool {
-        self.shared_state.borrow().cli_options.enabled("--experimental-vfs")
+        self.shared_state
+            .borrow()
+            .cli_options
+            .enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.
@@ -468,6 +590,431 @@ impl NodeHost {
         self
     }
 
+    /// Enable the HMR module graph for one application entry.
+    pub fn with_hmr_entry(self, path: std::path::PathBuf) -> Self {
+        self.with_hmr_entry_stamp(path, None)
+    }
+
+    pub(crate) fn with_hmr_entry_file_stamp(
+        self,
+        path: std::path::PathBuf,
+        stamp: crate::host::hmr::FileStamp,
+    ) -> Self {
+        self.with_hmr_entry_stamp(path, Some(stamp))
+    }
+
+    fn with_hmr_entry_stamp(
+        mut self,
+        path: std::path::PathBuf,
+        stamp: Option<crate::host::hmr::FileStamp>,
+    ) -> Self {
+        let requested_path = path.clone();
+        let path = self.real_path(path);
+        let stamp = stamp.or_else(|| crate::host::hmr::file_stamp(&path));
+        self.hmr_graph = Some(crate::host::hmr::ModuleGraph::new_with_stamp(path.clone(), stamp));
+        self.hmr_worker_watch_registry.get_or_insert_with(Default::default);
+        self.record_hmr_resolution_symlinks(&requested_path, &path);
+        self.record_hmr_module(&path);
+        self
+    }
+
+    pub(crate) fn with_hmr_worker_watch_registry(
+        mut self,
+        registry: crate::host::hmr::WorkerWatchRegistry,
+    ) -> Self {
+        self.hmr_worker_watch_registry = Some(registry);
+        self.hmr_publish_worker_paths = true;
+        self
+    }
+
+    pub(crate) fn with_hmr_worker_graph(mut self) -> Self {
+        if self.hmr_graph.is_none() {
+            self.hmr_graph = Some(crate::host::hmr::ModuleGraph::new_worker());
+        }
+        self
+    }
+
+    pub(crate) fn hmr_worker_watch_registry(
+        &self,
+    ) -> Option<crate::host::hmr::WorkerWatchRegistry> {
+        self.hmr_graph
+            .as_ref()
+            .and(self.hmr_worker_watch_registry.clone())
+    }
+
+    pub(crate) fn hmr_restart_only(&self, path: &std::path::Path) -> bool {
+        self.hmr_restart_only_paths.contains(path)
+    }
+
+    pub(crate) fn with_hmr_restart_on_change(mut self) -> Self {
+        self.hmr_restart_on_change = true;
+        self
+    }
+
+    pub(crate) fn hmr_restart_on_change(&self) -> bool {
+        self.hmr_restart_on_change
+    }
+
+    pub(crate) fn record_hmr_source_name(
+        &mut self,
+        path: &std::path::Path,
+        source_name: &str,
+    ) {
+        if self.hmr_graph.is_none() || !self.hmr_path(path) {
+            return;
+        }
+        let path = self.real_path(path.to_path_buf());
+        if self.hmr_path(&path) {
+            self.hmr_source_names
+                .entry(path)
+                .or_default()
+                .insert(source_name.to_owned());
+        }
+    }
+
+    pub(crate) fn hmr_source_name(&self, path: &std::path::Path) -> Option<&str> {
+        let names = self.hmr_source_names.get(path)?;
+        if names.len() != 1 {
+            return None;
+        }
+        names.iter().next().map(String::as_str)
+    }
+
+    pub(crate) fn hmr_source_name_is_ambiguous(&self, path: &std::path::Path) -> bool {
+        self.hmr_source_names
+            .get(path)
+            .is_some_and(|names| names.len() > 1)
+    }
+
+    pub(crate) fn submit_hmr_type_queries(
+        &mut self,
+        path: &std::path::Path,
+        source_name: &str,
+        function_start_offset: u32,
+        positions: &[crate::host::shared_vm::source_transform::TypeQueryPosition],
+    ) -> Result<(), String> {
+        let path = path.to_path_buf();
+        self.hmr_pending_type_queries
+            .retain(|request| request.path != path);
+        if let Some(worker) = &mut self.hmr_type_worker {
+            worker.invalidate(&path);
+        }
+        if positions.is_empty() {
+            return Ok(());
+        }
+        if self
+            .hmr_type_worker
+            .as_ref()
+            .is_some_and(|worker| !worker.has_capacity())
+        {
+            self.queue_hmr_type_queries(&path, source_name, function_start_offset, positions);
+            return Ok(());
+        }
+        let worker = match &mut self.hmr_type_worker {
+            Some(worker) => worker,
+            None => {
+                self.hmr_type_worker = Some(crate::host::hmr::type_worker::TypeWorker::start()?);
+                self.hmr_type_worker.as_mut().expect("worker was just installed")
+            }
+        };
+        worker.submit(&path, source_name, function_start_offset, positions)
+    }
+
+    pub(crate) fn queue_hmr_type_queries(
+        &mut self,
+        path: &std::path::Path,
+        source_name: &str,
+        function_start_offset: u32,
+        positions: &[crate::host::shared_vm::source_transform::TypeQueryPosition],
+    ) {
+        if positions.is_empty() || !self.hmr_restart_on_change {
+            return;
+        }
+        let request = crate::host::hmr::type_worker::TypeQueryRequest {
+            path: path.to_path_buf(),
+            source_name: source_name.to_owned(),
+            function_start_offset,
+            positions: positions.to_vec(),
+        };
+        if let Some(previous) = self
+            .hmr_pending_type_queries
+            .iter_mut()
+            .find(|previous| previous.path == request.path)
+        {
+            *previous = request;
+        } else {
+            self.hmr_pending_type_queries.push(request);
+        }
+    }
+
+    pub(crate) fn take_hmr_type_queries(
+        &mut self,
+    ) -> Vec<crate::host::hmr::type_worker::TypeQueryRequest> {
+        std::mem::take(&mut self.hmr_pending_type_queries)
+    }
+
+    pub(crate) fn poll_hmr_type_queries(
+        &mut self,
+    ) -> Vec<Result<crate::host::hmr::type_worker::TypeWorkerUpdate, String>> {
+        let results = self.hmr_type_worker
+            .as_mut()
+            .map(crate::host::hmr::type_worker::TypeWorker::poll)
+            .unwrap_or_default();
+        if results.iter().any(Result::is_err) {
+            self.hmr_type_worker = None;
+        }
+        results
+    }
+
+    /// The normalized application entry when HMR graph tracking is enabled.
+    pub fn hmr_entry(&self) -> Option<&std::path::Path> {
+        self.hmr_graph
+            .as_ref()
+            .map(crate::host::hmr::ModuleGraph::entry)
+    }
+
+    pub(crate) fn hmr_hot_module(&self, path: &std::path::Path) -> Option<quench_runtime::RootId> {
+        self.hmr_hot_modules.get(path).copied()
+    }
+
+    pub(crate) fn take_hmr_hot_module(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Option<quench_runtime::RootId> {
+        self.hmr_hot_modules.remove(path)
+    }
+
+    pub(crate) fn replace_hmr_hot_module(
+        &mut self,
+        path: std::path::PathBuf,
+        hot: quench_runtime::RootId,
+    ) -> Option<quench_runtime::RootId> {
+        self.hmr_hot_modules.insert(path, hot)
+    }
+
+    pub(crate) fn replace_hmr_hot_data(
+        &mut self,
+        path: std::path::PathBuf,
+        data: quench_runtime::RootId,
+    ) -> Option<quench_runtime::RootId> {
+        self.hmr_hot_data.insert(path, data)
+    }
+
+    pub(crate) fn take_hmr_hot_data(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Option<quench_runtime::RootId> {
+        self.hmr_hot_data.remove(path)
+    }
+
+    /// Loaded application modules affected by `changed` paths, including their importers.
+    pub fn hmr_invalidated_by(
+        &self,
+        changed: impl IntoIterator<Item = std::path::PathBuf>,
+    ) -> Vec<std::path::PathBuf> {
+        self.hmr_graph
+            .as_ref()
+            .map(|graph| graph.invalidated_by(changed))
+            .unwrap_or_default()
+    }
+
+    /// Polls watched module files and returns both changed files and their importer closure.
+    pub fn poll_hmr_changes(&mut self) -> Option<crate::host::hmr::HmrChangeSet> {
+        let registry = self.hmr_worker_watch_registry.clone();
+        let worker_paths = registry
+            .map(|registry| {
+                let mut registry = registry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                std::mem::take(&mut *registry)
+            })
+            .unwrap_or_default();
+        for (path, stamp) in worker_paths {
+            if !self.hmr_watch_path(&path) {
+                continue;
+            }
+            let Some(graph) = &mut self.hmr_graph else {
+                continue;
+            };
+            graph.record_module_with_stamp(path.clone(), stamp);
+            self.hmr_restart_only_paths.insert(path);
+        }
+        let graph = self.hmr_graph.as_mut()?;
+        let changed = graph.changed_files(std::time::Instant::now());
+        let invalidated = graph.invalidated_by(changed.iter().cloned());
+        Some(crate::host::hmr::HmrChangeSet {
+            changed,
+            invalidated,
+        })
+    }
+
+    pub(crate) fn retry_hmr_changes(
+        &mut self,
+        paths: impl IntoIterator<Item = std::path::PathBuf>,
+    ) {
+        if let Some(graph) = &mut self.hmr_graph {
+            graph.retry_changes(paths);
+        }
+    }
+
+    pub(crate) fn hmr_change_matches_stamp(
+        &self,
+        path: &std::path::Path,
+        prepared_digest: Option<&crate::host::hmr::FileContentDigest>,
+    ) -> bool {
+        self.hmr_graph
+            .as_ref()
+            .is_some_and(|graph| graph.change_matches_stamp(path, prepared_digest))
+    }
+
+    pub(crate) fn record_hmr_module(&mut self, path: &std::path::Path) {
+        if self.hmr_graph.is_none() || !self.hmr_graph_path(path) {
+            return;
+        }
+        let path = self.real_path(path.to_path_buf());
+        if !self.hmr_graph_path(&path) {
+            return;
+        }
+        let watch_source = self.hmr_path(&path);
+        let mut metadata_paths = Vec::new();
+        for package in crate::host::shared_vm::commonjs::package_scope_watch_paths(&path) {
+            let package = self.real_path(package);
+            if self.hmr_watch_path(&package) {
+                metadata_paths.push(package);
+            }
+        }
+        if watch_source {
+            for config in crate::host::shared_vm::source_transform::tsconfig_watch_paths(&path) {
+                let config = self.real_path(config);
+                if self.hmr_watch_path(&config) {
+                    metadata_paths.push(config);
+                }
+            }
+        }
+        if let Some(graph) = &mut self.hmr_graph {
+            if watch_source {
+                graph.record_module(path.clone());
+            } else {
+                graph.record_graph_module(path.clone());
+            }
+            for metadata in &metadata_paths {
+                graph.record_dependency(path.clone(), metadata.clone(), None);
+                graph.record_module(metadata.clone());
+            }
+        }
+        self.hmr_restart_only_paths
+            .extend(metadata_paths.iter().cloned());
+        if self.hmr_publish_worker_paths {
+            let paths = std::iter::once(path.as_path())
+                .chain(metadata_paths.iter().map(std::path::PathBuf::as_path));
+            self.publish_worker_hmr_paths(paths);
+        }
+    }
+
+    pub(crate) fn hmr_tracks_path(&mut self, path: &std::path::Path) -> bool {
+        if self.hmr_graph.is_none() || !self.hmr_path(path) {
+            return false;
+        }
+        let path = self.real_path(path.to_path_buf());
+        self.hmr_path(&path)
+    }
+
+    pub(crate) fn record_hmr_dependency(
+        &mut self,
+        importer: &std::path::Path,
+        dependency: &std::path::Path,
+        specifier: Option<&str>,
+    ) {
+        if self.hmr_graph.is_none()
+            || !self.hmr_graph_path(importer)
+            || !self.hmr_graph_path(dependency)
+        {
+            return;
+        }
+        let dependency = self.real_path(dependency.to_path_buf());
+        if !self.hmr_graph_path(&dependency) {
+            return;
+        }
+        let importer = self.real_path(importer.to_path_buf());
+        if !self.hmr_graph_path(&importer) {
+            return;
+        }
+
+        self.record_hmr_module(&dependency);
+        self.record_hmr_module(&importer);
+        if let Some(specifier) = specifier {
+            self.record_hmr_package_symlinks(&importer, &dependency, specifier);
+        }
+        if let Some(graph) = &mut self.hmr_graph {
+            graph.record_dependency(importer, dependency, specifier);
+        }
+    }
+
+    fn publish_worker_hmr_paths<'a>(&mut self, paths: impl IntoIterator<Item = &'a std::path::Path>) {
+        let Some(registry) = &self.hmr_worker_watch_registry else {
+            return;
+        };
+        let Some(graph) = &self.hmr_graph else {
+            return;
+        };
+        let mut published = Vec::new();
+        for path in paths {
+            let Some(stamp) = graph.stamp(path) else {
+                continue;
+            };
+            published.push((path.to_path_buf(), stamp));
+        }
+        let mut registry = registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        registry.extend(published);
+    }
+
+    pub(crate) fn hmr_direct_importers(
+        &self,
+        dependency: &std::path::Path,
+    ) -> Vec<(std::path::PathBuf, Vec<String>)> {
+        self.hmr_graph
+            .as_ref()
+            .map(|graph| graph.direct_importers(dependency))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn begin_hmr_module_reload(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Vec<(std::path::PathBuf, Vec<String>)> {
+        let Some(graph) = &mut self.hmr_graph else {
+            return Vec::new();
+        };
+        graph.take_dependencies(path)
+    }
+
+    pub(crate) fn restore_hmr_module_dependencies(
+        &mut self,
+        path: &std::path::Path,
+        dependencies: Vec<(std::path::PathBuf, Vec<String>)>,
+    ) {
+        if let Some(graph) = &mut self.hmr_graph {
+            graph.restore_dependencies(path, dependencies);
+        }
+    }
+
+    fn hmr_path(&self, path: &std::path::Path) -> bool {
+        self.hmr_graph_path(path)
+            && !path
+                .components()
+                .any(|component| component.as_os_str() == "node_modules")
+    }
+
+    fn hmr_graph_path(&self, path: &std::path::Path) -> bool {
+        path.is_absolute() && !path.starts_with(&self.node_library_root)
+    }
+
+    fn hmr_watch_path(&self, path: &std::path::Path) -> bool {
+        path.is_absolute() && !path.starts_with(&self.node_library_root)
+    }
+
     /// Retain the Node invocation flags supplied by the fixture adapter.
     pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Result<Self, String> {
         let mode =
@@ -478,8 +1025,14 @@ impl NodeHost {
             );
         let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
-        shared.cli_options=crate::modules::cli_options::CliOptions::parse(shared.initial_node_options.as_deref(),&exec_argv,shared.initial_pending_deprecation)?;
-        shared.report_config=crate::modules::report_configuration_shared_vm::State::from_options(&shared.cli_options);
+        shared.cli_options = crate::modules::cli_options::CliOptions::parse(
+            shared.initial_node_options.as_deref(),
+            &exec_argv,
+            shared.initial_pending_deprecation,
+        )?;
+        shared.report_config = crate::modules::report_configuration_shared_vm::State::from_options(
+            &shared.cli_options,
+        );
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;

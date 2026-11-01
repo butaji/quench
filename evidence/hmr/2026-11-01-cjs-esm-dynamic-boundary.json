@@ -1,0 +1,23 @@
+{
+  "kind": "quench-hmr-commonjs-esm-dynamic-boundary-smoke",
+  "date_utc": "2026-11-01T04:40:06Z",
+  "commit": "56ae6d71e5",
+  "platform": {
+    "os": "macOS 25.5.0",
+    "architecture": "arm64",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "command": "target/debug/quench-node --hmr <entry.cjs>",
+  "fixture": {
+    "entry.cjs": "Dynamically imports `dep.mjs`, accepts `./dep.mjs` through `module.hot.accept`, and exits after 2.6 seconds.",
+    "dep_initial": "export const value = 'v1';",
+    "dep_updated": "export const value = 'v2';"
+  },
+  "observed_output": ["ENTRY v1", "ACCEPT v2"],
+  "result": "The CommonJS importer accepted an ESM dependency update in process; the entry was not rerun.",
+  "fixture_sha256": {
+    "entry.cjs": "d72ee99af5b1b0e75e6c404ab1284c8284f8e92fb979aac4402d34f3f4256dd5",
+    "dep.mjs": "c73d0f3fbf32e007f358109bb09ea399bd2360e14e3d79561cbdc2775dae2d4d"
+  }
+}

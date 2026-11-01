@@ -24,6 +24,9 @@ pub(super) struct JsJitArtifact {
     /// Direct compiled calls must apply this same predicate before using the
     /// artifact's checked conversion instructions.
     pub(super) requires_signed_int32_arguments: bool,
+    /// `Some(mask)` means only these formal arguments are required to be Numbers;
+    /// other argument slots are proven dead by the numeric bytecode analysis.
+    pub(super) number_argument_mask: Option<smallvec::SmallVec<[bool; MAX_PARAMETERS]>>,
     /// Numeric results retain the original ABI; string results return the selected Return PC.
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
@@ -142,7 +145,7 @@ pub(super) enum JsJitStringTransform {
 const MAX_INSTRUCTIONS: usize = 256;
 const MAX_REGISTERS: usize = 256;
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024;
-const MAX_PARAMETERS: usize = 8;
+pub(super) const MAX_PARAMETERS: usize = 8;
 const MAX_CAPTURE_ARGUMENTS: usize = 4;
 const MAX_NUMERIC_FIELD_INPUTS: usize = 4;
 
@@ -192,12 +195,33 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
                 ))
     }) {
         compile_numeric(program, function_id)
-            .or_else(|| compile_numeric_loop(program, function_id, function))
+            .or_else(|| compile_numeric_loop(program, function_id, function, None))
             .or_else(|| compile_number_domain_boolean_tree(program, function_id, function))
             .or_else(|| compile_string_branches(program, function_id, function))
     } else {
         compile_numeric(program, function_id)
     }
+}
+
+/// Compile a numeric loop using checker-proven Number parameters as its entry assumptions.
+/// The generated code still receives only runtime Number values at marked parameter slots;
+/// all other arguments are dead in the analyzed bytecode and use ABI placeholders.
+pub(super) fn compile_typescript_numeric_parameters(
+    program: &ResidualProgram,
+    function_id: u32,
+    number_parameters: &[bool],
+) -> Option<JsJitArtifact> {
+    if !number_parameters.iter().any(|is_number| *is_number) {
+        return None;
+    }
+    let function = program.function_get(function_id as usize)?;
+    if number_parameters.len() != usize::from(function.params) {
+        return None;
+    }
+    let mut artifact =
+        compile_numeric_loop(program, function_id, function, Some(number_parameters))?;
+    artifact.number_argument_mask = Some(number_parameters.iter().copied().collect());
+    Some(artifact)
 }
 
 /// Recognize a common integer fast arm without depending on source names or
@@ -487,6 +511,7 @@ fn compile_int32_identity(function_id: u32, return_pc: u32) -> Option<JsJitArtif
         code,
         params: 1,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::Int32Identity(return_pc),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -717,6 +742,7 @@ fn compile_capture_number(
         code,
         params: 0,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::CaptureNumber(capture),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -1742,6 +1768,7 @@ fn compile_string_hash_loop(
         code,
         params: 1,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::StringHashLoop,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -1857,6 +1884,7 @@ fn compile_string_transform(
         code,
         params: 1,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::StringTransform(transform),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -2696,6 +2724,7 @@ fn compile_number_domain_boolean_tree(
         code,
         params,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::Boolean,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.into_vec()),
@@ -2974,6 +3003,7 @@ fn compile_numeric_loop(
     program: &ResidualProgram,
     function_id: u32,
     function: &Function,
+    number_parameters: Option<&[bool]>,
 ) -> Option<JsJitArtifact> {
     if !function_candidate(function, program)
         || function
@@ -2991,8 +3021,12 @@ fn compile_numeric_loop(
     let mut states = vec![None::<Vec<NumericFlowKind>>; code_len];
     let mut pending = std::collections::VecDeque::new();
     let mut initial = vec![NumericFlowKind::Uninitialized; state_len];
-    for kind in initial.iter_mut().take(params) {
-        *kind = NumericFlowKind::Number;
+    for (index, kind) in initial.iter_mut().take(params).enumerate() {
+        *kind = if number_parameters.is_none_or(|parameters| parameters.get(index) == Some(&true)) {
+            NumericFlowKind::Number
+        } else {
+            NumericFlowKind::Conflict
+        };
     }
     states[0] = Some(initial);
     pending.push_back(0usize);
@@ -3536,6 +3570,7 @@ fn compile_numeric_loop(
         code,
         params,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::NumberInterruptible,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -3914,6 +3949,7 @@ fn compile_string_branches(
         code,
         params,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::StringReturnPc(return_sites),
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -4254,6 +4290,7 @@ fn compile_field_reject(
         code,
         params: 1,
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: JsJitResultKind::FieldReject {
             resume_pc,
             resume_register,

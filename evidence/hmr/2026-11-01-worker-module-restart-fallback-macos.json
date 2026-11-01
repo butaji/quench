@@ -1,0 +1,57 @@
+{
+  "objective": "Verify worker thread modules trigger same-process CLI restart when they change under --hmr, including eval workers that load an application module",
+  "method": "Built target/debug/quench-node, then ran two temporary CommonJS applications. The first spawned a file-backed worker, atomically replaced worker.cjs from generation 1 to 2, and observed the parent and worker restart. The second spawned an eval worker that required an absolute application dep.cjs path, edited the dependency from generation 1 to 2, and observed restart. Also compared process method API shapes against the local Node oracle.",
+  "file_worker": {
+    "initial_generation": 1,
+    "replacement_generation": 2,
+    "initial_pid": 60563,
+    "replacement_pid": 60563,
+    "stdout": [
+      "MAIN 60563",
+      "WORKER 60563 1",
+      "MAIN 60563",
+      "WORKER 60563 2"
+    ],
+    "stderr": ""
+  },
+  "eval_worker_dependency": {
+    "initial_generation": 1,
+    "replacement_generation": 2,
+    "initial_pid": 60825,
+    "replacement_pid": 60825,
+    "stdout": [
+      "MAIN 60825",
+      "EVALDEP 60825 1",
+      "MAIN 60825",
+      "EVALDEP 60825 2"
+    ],
+    "stderr": ""
+  },
+  "node_oracle": {
+    "version": "v26.12.1",
+    "comparison": "hrtime and hrtime.bigint types; cpuUsage and threadCpuUsage keys; memoryUsage keys and positive rss; resourceUsage keys and numeric maxRSS",
+    "api_shapes_match": true,
+    "node_resource_usage_max_rss_kib": 39088,
+    "quench_resource_usage_max_rss_kib": 49616
+  },
+  "implementation": "Worker source paths are registered with the parent HMR graph and use restart fallback. Eval workers have a virtual graph so loaded files are tracked even if the importer has no filesystem path. Darwin process_methods now uses task_info for current RSS, Mach thread_info for thread CPU, and converts ru_maxrss bytes to KiB per pinned libuv source.",
+  "binary": "target/debug/quench-node",
+  "host": {
+    "os": "macOS 26.5",
+    "machine_model": "Mac16,10",
+    "cpu": "Apple M4",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_kbytes": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_seconds": "unlimited",
+      "file_size_blocks": "unlimited",
+      "address_space_kbytes": "unlimited"
+    },
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)"
+  },
+  "scope": "Focused runtime smokes on one macOS host. Process metric values naturally differed between Node and Quench; this compared observable result shapes and units, not performance or exact machine-dependent counters.",
+  "result": "Both file-backed and eval worker changes restarted the main CLI invocation in the original PID and loaded generation 2."
+}

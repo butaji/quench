@@ -1,0 +1,27 @@
+{
+  "kind": "quench-hmr-inflight-call-generation",
+  "date": "2026-10-31",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "invocation": "target/debug/quench-node --hmr <main.mjs>",
+  "scenario": "The entry starts an async function that prints old-start and awaits a 500 ms timer. After old-start, the file is replaced with a self-accepted generation that starts the same async function with new labels.",
+  "observed": [
+    "old-start",
+    "new-start",
+    "old-end",
+    "new-end"
+  ],
+  "result": "The already-suspended call completed using the old generation after the replacement started the new generation. The HMR process stayed resident until explicitly stopped after observation.",
+  "limits": "Focused runtime evidence for one self-accepted ESM entry; it does not prove all async scheduling paths or full HMR compatibility."
+}

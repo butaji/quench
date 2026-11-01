@@ -1,0 +1,76 @@
+{
+  "kind": "quench-hmr-package-scope-change",
+  "date": "2026-10-31",
+  "scenario": "change the loaded .js entry's nearest package.json from type commonjs to type module while --hmr is resident",
+  "observed": [
+    "RUN 58336",
+    "RUN 58336"
+  ],
+  "result": "Package type changes/creation, workspace main and exports resolution, and linked workspace source edits trigger fallback and load current sources.",
+  "implementation": "HMR graph records package-scope package.json paths, including absent nearer candidates up to the nearest existing package boundary; these paths are watched as dependencies of loaded source modules",
+  "verification": [
+    "cargo build -p quench-node passed",
+    "git diff --check passed",
+    "live CLI smoke passed"
+  ],
+  "scope": "Focused runtime checks on this host; not a full Node module-resolution conformance suite.",
+  "scenarios": [
+    {
+      "name": "change nearest existing package type",
+      "initial": [
+        "RUN 58336"
+      ],
+      "after_change": [
+        "RUN 58336"
+      ],
+      "change": "type commonjs -> type module",
+      "result": "entry re-executed under the new package scope with the same PID"
+    },
+    {
+      "name": "create a previously missing package scope",
+      "initial": [
+        "RUN 58553"
+      ],
+      "after_change": [
+        "RUN 58553"
+      ],
+      "change": "create package.json with type module in the entry directory",
+      "result": "a watched absent package candidate became present and triggered restart fallback with the same PID"
+    },
+    {
+      "name": "workspace package resolution metadata change",
+      "initial": [
+        "RUN 59348 one"
+      ],
+      "after_change": [
+        "RUN 59348 two"
+      ],
+      "change": "workspace-pkg/package.json main: one.cjs -> two.cjs",
+      "result": "package config edit restarted the resident CLI with the same PID and re-resolved the importer to the new package main target"
+    },
+    {
+      "name": "workspace source resolved through a node_modules symlink",
+      "initial": [
+        "RUN 59505 one"
+      ],
+      "package_change": [
+        "RUN 59505 two"
+      ],
+      "source_edit": [
+        "RUN 59505 two-edited"
+      ],
+      "result": "the linked workspace package's package.json and resolved source file were both watched after real-path resolution; edits restarted and loaded the updated value with the same PID"
+    },
+    {
+      "name": "workspace package exports change through node_modules symlink",
+      "initial": [
+        "RUN 59659 one"
+      ],
+      "after_change": [
+        "RUN 59659 two"
+      ],
+      "change": "exports['.']: ./one.cjs -> ./two.cjs",
+      "result": "stable package metadata change restarted the CLI and the new resolver selected the updated exports target"
+    }
+  ]
+}

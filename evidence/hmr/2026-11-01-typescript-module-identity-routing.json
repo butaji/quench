@@ -1,0 +1,75 @@
+{
+  "kind": "quench-hmr-typescript-fact-module-identity-routing",
+  "date": "2026-11-01",
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "change": {
+    "problem": "TypeScript checker responses were installed by looking up a canonical filesystem path, while compiled module programs are keyed by their source name. ESM module names may preserve file URL query or fragment identity.",
+    "fix": "Carry the exact compiled module source name from the loader through the asynchronous checker request and response, then install parameter facts under that same program identity.",
+    "files": [
+      "crates/quench-node/src/host/hmr/type_worker.rs",
+      "crates/quench-node/src/host/node_host.rs",
+      "crates/quench-node/src/host/shared_vm.rs",
+      "crates/quench-node/src/host/shared_vm/commonjs.rs",
+      "crates/quench-node/src/shared_run.rs",
+      "crates/quench-node/src/modules/process_shared_vm.rs"
+    ]
+  },
+  "verification": {
+    "build": {
+      "command": "cargo build -p quench-node",
+      "result": "passed"
+    },
+    "manual_runtime_smoke": {
+      "entry": "ESM entry imports a TypeScript dependency with one annotated number parameter",
+      "startup_output": "ENTRY 3",
+      "update": "Replaced the dependency while quench-node --hmr remained running",
+      "update_output": "ACCEPT",
+      "checker_diagnostics": "No checker error or parameter-fact installation mismatch was emitted during startup or update."
+    },
+    "pinned_tsrs_direct_query": {
+      "path": "/tmp/quench-hmr-ts-types-6dleYf/dep.ts",
+      "position_utf16": 24,
+      "command": "tools/quench-tsrs-worker/target/debug/quench-tsrs-worker",
+      "reply": {
+        "typescript_version": "7.1.0-beta",
+        "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+        "types": [
+          "number"
+        ],
+        "error": null
+      }
+    },
+    "commonjs_smoke": {
+      "entry": "CommonJS entry requires a TypeScript dependency with one annotated number parameter",
+      "startup_output": "ENTRY 3",
+      "update": "Replaced the dependency while quench-node --hmr remained running",
+      "update_output": "ACCEPT",
+      "checker_diagnostics": "No checker error or parameter-fact installation mismatch was emitted during startup or update."
+    },
+    "commonjs_tsrs_direct_query": {
+      "typescript_version": "7.1.0-beta",
+      "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+      "types": [
+        "number"
+      ],
+      "error": null
+    }
+  },
+  "limitations": [
+    "This validates the loader-to-ProgramStore identity route in a focused ESM-to-TypeScript HMR session, not full getTypesAtPositions/typeToString compatibility.",
+    "The pinned TSRS checker compatibility release gate remains open."
+  ]
+}

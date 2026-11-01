@@ -1,0 +1,26 @@
+{
+  "kind": "quench-hmr-deleted-module-fallback",
+  "date": "2026-10-31",
+  "scenario": "remove a previously loaded CommonJS dependency while --hmr is active",
+  "initial_output": [
+    "RUN 55029",
+    "VALUE v1"
+  ],
+  "after_deletion": [
+    "RUN 55029",
+    "LOADERR MODULE_NOT_FOUND"
+  ],
+  "result": "stable deletion used the restart fallback; the same PID confirms CLI re-execution via exec",
+  "implementation": {
+    "behavior": "when source preparation fails because a stable watched path is missing, verify that the watcher still reports the same missing stamp and request the restart fallback",
+    "why": "previously, a stable deletion was consumed as a preparation error and left the running process stale"
+  },
+  "verification": [
+    "cargo build -p quench-node passed",
+    "git diff --check passed",
+    "live CLI smoke passed"
+  ],
+  "limitations": [
+    "The deleted import correctly fails during the restarted entry load; this smoke verifies fallback and does not recover missing application modules."
+  ]
+}

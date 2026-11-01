@@ -1,0 +1,49 @@
+{
+  "kind": "quench-hmr-pinned-typescript-api-gate",
+  "date": "2026-11-01",
+  "typescript": {
+    "version": "7.1.0-beta",
+    "commit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a"
+  },
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "host": "macOS Darwin 25.5 arm64, Mac16,10, 10 logical CPUs, 16 GiB memory",
+  "upstream_suite": {
+    "oracle": {
+      "tests": 885,
+      "passed": 885,
+      "failed": 0,
+      "skipped": 0,
+      "timed_out": false,
+      "leaked_processes": 0
+    },
+    "tsrs": {
+      "tests": 885,
+      "passed": 884,
+      "failed": 1,
+      "skipped": 0,
+      "timed_out": false,
+      "leaked_processes": 0,
+      "failure": {
+        "test": "test/async/api.test.ts :: readFile callback semantics > invalid callback results do not fall through to the server OS",
+        "kind": "test timeout",
+        "timeout_ms": 120000
+      }
+    }
+  },
+  "parity_suite": {
+    "oracle": { "tests": 55, "passed": 49, "failed": 0, "skipped": 4, "todo": 2, "soft_mismatches": 1 },
+    "tsrs": { "tests": 55, "passed": 49, "failed": 0, "skipped": 4, "todo": 2, "soft_mismatches": 4 },
+    "tsrs_additional_soft_mismatches": [
+      "profiling methods are unsupported by TSRS",
+      "sync huge declared payload is rejected before EOF",
+      "async huge content length is rejected before EOF"
+    ]
+  },
+  "hmr_checker_path": {
+    "paired_type_display_queries": 30,
+    "matched": 30,
+    "typescript_semantic_parameter_assertions": 30,
+    "end_to_end_typed_jit_and_guard": "passed; see 2026-11-01-typescript-fact-native-guard.json"
+  },
+  "result": "Quench's sampled HMR type-query path matches the pinned compiler for all 30 compared parameter displays and installs guarded numeric facts. The broader TSRS Node API gate is not fully green: one unrelated async readFile callback test timed out and several documented soft differences remain. Do not claim full pinned TypeScript API compatibility from the HMR-focused type-query evidence."
+}

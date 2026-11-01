@@ -7,6 +7,7 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--test-randomize", false),
     ("--test-update-snapshots", false),
     ("--experimental-vfs", false),
+    ("--hmr", false),
     ("--experimental-stream-iter", false),
     ("--expose-internals", false),
     ("--warnings", true),

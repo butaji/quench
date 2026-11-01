@@ -1,0 +1,319 @@
+{
+  "kind": "quench-hmr-tsrs-project-query-parity",
+  "date": "2026-11-01",
+  "typescript_version": "7.1.0-beta",
+  "typescript_commit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "fixture": "evidence/hmr/fixtures/tsrs-project-parity/main.ts",
+  "fixture_hashes_sha256": {
+    "main.ts": "bd21bd375e6445548a99e928c472026ec3181d148eb888dd49847bd15efca748",
+    "types.ts": "99439a81700e7409573e2857cd890c9bb099e7fcf23c9252c9ea45643b9f1999",
+    "tsconfig.json": "72a50a0d5590855874ca615eb9caf1a253222bde434886b1c829d0ad32d21305",
+    "assertions.ts": "a235ee3af561348fa222361a4e238af2c82561e71cb276b142c12fad46d523da"
+  },
+  "project_features": [
+    "astral character before UTF-16 parameter positions",
+    "tsconfig strict + exactOptionalPropertyTypes",
+    "tsconfig paths alias @model/*",
+    "cross-file imported aliases and declarations",
+    "generic, conditional, mapped, indexed, template-literal, utility, standard-library and primitive parameter types"
+  ],
+  "query_count": 54,
+  "oracle_path": "Pinned Go TypeScript API createSnapshot(openFiles), getTypesAtPositions, typeToString",
+  "candidate_path": "Pinned Quench TSRS worker createSnapshot(openFiles), getTypesAtPositions, typeToString",
+  "comparison": {
+    "matched": 54,
+    "mismatched": 0,
+    "mismatches": [],
+    "cases": [
+      {
+        "name": "user",
+        "go": "User",
+        "tsrs": "User"
+      },
+      {
+        "name": "branded",
+        "go": "Branded",
+        "tsrs": "Branded"
+      },
+      {
+        "name": "choice",
+        "go": "Choice",
+        "tsrs": "Choice"
+      },
+      {
+        "name": "keys",
+        "go": "keyof User",
+        "tsrs": "keyof User"
+      },
+      {
+        "name": "box",
+        "go": "Box<number>",
+        "tsrs": "Box<number>"
+      },
+      {
+        "name": "maybe",
+        "go": "string",
+        "tsrs": "string"
+      },
+      {
+        "name": "tuple",
+        "go": "ReadonlyTuple",
+        "tsrs": "ReadonlyTuple"
+      },
+      {
+        "name": "handler",
+        "go": "Handler<User>",
+        "tsrs": "Handler<User>"
+      },
+      {
+        "name": "direction",
+        "go": "Direction",
+        "tsrs": "Direction"
+      },
+      {
+        "name": "tagged",
+        "go": "Tagged",
+        "tsrs": "Tagged"
+      },
+      {
+        "name": "nested",
+        "go": "Value",
+        "tsrs": "Value"
+      },
+      {
+        "name": "literal",
+        "go": "\"ready\"",
+        "tsrs": "\"ready\""
+      },
+      {
+        "name": "union",
+        "go": "string | number",
+        "tsrs": "string | number"
+      },
+      {
+        "name": "intersection",
+        "go": "{ a: number; } & { b: string; }",
+        "tsrs": "{ a: number; } & { b: string; }"
+      },
+      {
+        "name": "indexed",
+        "go": "number",
+        "tsrs": "number"
+      },
+      {
+        "name": "array",
+        "go": "readonly (string | number)[]",
+        "tsrs": "readonly (string | number)[]"
+      },
+      {
+        "name": "optional",
+        "go": "number | undefined",
+        "tsrs": "number | undefined"
+      },
+      {
+        "name": "nullable",
+        "go": "string | null",
+        "tsrs": "string | null"
+      },
+      {
+        "name": "conditional",
+        "go": "number",
+        "tsrs": "number"
+      },
+      {
+        "name": "mapped",
+        "go": "Partial<User>",
+        "tsrs": "Partial<User>"
+      },
+      {
+        "name": "record",
+        "go": "Record<keyof User, unknown>",
+        "tsrs": "Record<keyof User, unknown>"
+      },
+      {
+        "name": "promise",
+        "go": "Promise<User>",
+        "tsrs": "Promise<User>"
+      },
+      {
+        "name": "awaited",
+        "go": "User",
+        "tsrs": "User"
+      },
+      {
+        "name": "extract",
+        "go": "string",
+        "tsrs": "string"
+      },
+      {
+        "name": "exclude",
+        "go": "number",
+        "tsrs": "number"
+      },
+      {
+        "name": "nonnullable",
+        "go": "string",
+        "tsrs": "string"
+      },
+      {
+        "name": "template",
+        "go": "`event:${string}`",
+        "tsrs": "`event:${string}`"
+      },
+      {
+        "name": "function",
+        "go": "(x: number, y?: string | undefined) => boolean",
+        "tsrs": "(x: number, y?: string | undefined) => boolean"
+      },
+      {
+        "name": "constructor",
+        "go": "new (x: number) => User",
+        "tsrs": "new (x: number) => User"
+      },
+      {
+        "name": "predicate",
+        "go": "User",
+        "tsrs": "User"
+      },
+      {
+        "name": "thisarg",
+        "go": "ThisType<User>",
+        "tsrs": "ThisType<User>"
+      },
+      {
+        "name": "sym",
+        "go": "unique symbol",
+        "tsrs": "unique symbol"
+      },
+      {
+        "name": "optionalprop",
+        "go": "{ value?: string; }",
+        "tsrs": "{ value?: string; }"
+      },
+      {
+        "name": "tupleRest",
+        "go": "[string, ...number[]]",
+        "tsrs": "[string, ...number[]]"
+      },
+      {
+        "name": "promiseLike",
+        "go": "PromiseLike<number>",
+        "tsrs": "PromiseLike<number>"
+      },
+      {
+        "name": "bigint",
+        "go": "bigint",
+        "tsrs": "bigint"
+      },
+      {
+        "name": "symbol",
+        "go": "symbol",
+        "tsrs": "symbol"
+      },
+      {
+        "name": "never",
+        "go": "never",
+        "tsrs": "never"
+      },
+      {
+        "name": "unknown",
+        "go": "unknown",
+        "tsrs": "unknown"
+      },
+      {
+        "name": "any",
+        "go": "any",
+        "tsrs": "any"
+      },
+      {
+        "name": "void",
+        "go": "void",
+        "tsrs": "void"
+      },
+      {
+        "name": "object",
+        "go": "object",
+        "tsrs": "object"
+      },
+      {
+        "name": "functionObj",
+        "go": "Function",
+        "tsrs": "Function"
+      },
+      {
+        "name": "date",
+        "go": "Date",
+        "tsrs": "Date"
+      },
+      {
+        "name": "regex",
+        "go": "RegExp",
+        "tsrs": "RegExp"
+      },
+      {
+        "name": "map",
+        "go": "Map<string, number>",
+        "tsrs": "Map<string, number>"
+      },
+      {
+        "name": "set",
+        "go": "Set<User>",
+        "tsrs": "Set<User>"
+      },
+      {
+        "name": "weakmap",
+        "go": "WeakMap<object, User>",
+        "tsrs": "WeakMap<object, User>"
+      },
+      {
+        "name": "iterator",
+        "go": "IterableIterator<User>",
+        "tsrs": "IterableIterator<User>"
+      },
+      {
+        "name": "thisType",
+        "go": "ThisType<User>",
+        "tsrs": "ThisType<User>"
+      },
+      {
+        "name": "generic",
+        "go": "T",
+        "tsrs": "T"
+      },
+      {
+        "name": "constrained",
+        "go": "T",
+        "tsrs": "T"
+      },
+      {
+        "name": "defaulted",
+        "go": "T",
+        "tsrs": "T"
+      },
+      {
+        "name": "constgeneric",
+        "go": "T",
+        "tsrs": "T"
+      }
+    ]
+  },
+  "validity": {
+    "pinned_tsc_no_emit_with_type_equalities_exit_status": 0,
+    "type_equalities": 50
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "scope": "Direct parity for 54 valid parameter bindings in a configured multi-file project. This narrows the known checker gap but does not prove all TypeScript type formatting or all TSRS Node API compatibility."
+}

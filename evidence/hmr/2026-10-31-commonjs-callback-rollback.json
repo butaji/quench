@@ -1,0 +1,31 @@
+{
+  "kind": "quench-hmr-commonjs-callback-rollback",
+  "date": "2026-10-31",
+  "scenarios": [
+    {
+      "name": "self-accepted entry callback throws once",
+      "observed": [
+        "GEN 1",
+        "GEN 2",
+        "update failed; restored the prior module generation: Error: accept callback failure",
+        "GEN 3"
+      ],
+      "result": "previous CommonJS cache generation restored; subsequent edit applied"
+    },
+    {
+      "name": "importer accepts changed dependency and callback throws once",
+      "observed": [
+        "ENTRY v1",
+        "update failed; restored the prior module generation: Error: dependency accept failure",
+        "ACCEPT v3"
+      ],
+      "result": "dependency cache and importer boundary remained usable after rollback; later replacement was delivered to the accept callback"
+    }
+  ],
+  "rollback_limit": "Guest side effects from a failed evaluation or callback cannot be rolled back.",
+  "invocation": "target/debug/quench-node --hmr <main.cjs>",
+  "verification": [
+    "cargo build -p quench-node passed before these runtime smokes",
+    "git diff --check passed"
+  ]
+}

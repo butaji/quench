@@ -930,6 +930,7 @@ pub(super) fn compile_js_numeric_region(
         code,
         params,
         requires_signed_int32_arguments: int32_bitwise,
+        number_argument_mask: None,
         result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
@@ -2722,6 +2723,7 @@ pub(super) fn compile_js_general_dispatch(
         code,
         params: usize::from(function.params),
         requires_signed_int32_arguments: false,
+        number_argument_mask: None,
         result: super::js_compiled::JsJitResultKind::GeneralDispatch,
         field_argument: None,
         numeric_field_inputs: Vec::new(),
@@ -5690,6 +5692,7 @@ pub(super) struct CompiledJsFunction {
     entry: CompiledJsEntry,
     params: usize,
     requires_signed_int32_arguments: bool,
+    number_argument_mask: Option<smallvec::SmallVec<[bool; super::js_compiled::MAX_PARAMETERS]>>,
     mapped_bytes: usize,
     return_constants: Vec<(u32, u32)>,
     field_argument: Option<super::js_compiled::JsJitFieldArgument>,
@@ -6490,6 +6493,7 @@ impl CompiledJsFunction {
             entry,
             params: artifact.params,
             requires_signed_int32_arguments: artifact.requires_signed_int32_arguments,
+            number_argument_mask: artifact.number_argument_mask,
             mapped_bytes,
             return_constants,
             field_argument,
@@ -6562,6 +6566,10 @@ impl CompiledJsFunction {
 
     pub(super) fn requires_signed_int32_arguments(&self) -> bool {
         self.requires_signed_int32_arguments
+    }
+
+    pub(super) fn number_argument_mask(&self) -> Option<&[bool]> {
+        self.number_argument_mask.as_deref()
     }
 
     pub(super) fn field_argument(&self) -> Option<super::js_compiled::JsJitFieldArgument> {
@@ -12564,17 +12572,38 @@ impl<H: Host> Vm<H> {
             Some(compiled) => compiled.is_field_reject(),
             None => facts.field_reject,
         };
+        let number_argument_mask = match compiled_tier {
+            Some(compiled) => compiled
+                .number_argument_mask()
+                .map(|mask| mask.iter().copied().collect()),
+            None if numeric_loop_candidate => self
+                .programs
+                .typescript_number_parameter_mask(program_id, function_id),
+            None => None,
+        };
         let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
         let mut numeric = true;
+        let mut legacy_arguments_numeric = true;
         for (index, value) in registers.iter().copied().enumerate() {
             if is_field_receiver_parameter(index) {
                 arguments.push(0.0);
                 continue;
             }
-            match value.as_number() {
-                Some(value) => arguments.push(value),
-                None => {
+            match (
+                number_argument_mask
+                    .as_ref()
+                    .and_then(|mask| mask.get(index))
+                    .copied(),
+                value.as_number(),
+            ) {
+                (_, Some(value)) => arguments.push(value),
+                (Some(false), None) => {
+                    arguments.push(0.0);
+                    legacy_arguments_numeric = false;
+                }
+                (Some(true) | None, None) => {
                     numeric = false;
+                    legacy_arguments_numeric = false;
                     break;
                 }
             }
@@ -12829,7 +12858,23 @@ impl<H: Host> Vm<H> {
                     .js_jit_diagnostics_enabled()
                     .then(std::time::Instant::now);
                 self.host.before_native_compilation();
-                let artifact = super::js_compiled::compile(&residual, function_id);
+                let artifact = if let Some(number_parameters) = self
+                    .programs
+                    .typescript_number_parameter_mask(program_id, function_id)
+                {
+                    super::js_compiled::compile_typescript_numeric_parameters(
+                        &residual,
+                        function_id,
+                        &number_parameters,
+                    )
+                    .or_else(|| {
+                        legacy_arguments_numeric
+                            .then(|| super::js_compiled::compile(&residual, function_id))
+                            .flatten()
+                    })
+                } else {
+                    super::js_compiled::compile(&residual, function_id)
+                };
                 self.host.after_native_compilation();
                 let artifact_failed = artifact.is_none();
                 let compile_rejection = artifact_failed.then(|| {
@@ -14521,7 +14566,18 @@ fn direct_call(
         return None;
     }
     let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for (index, argument) in arguments.iter().enumerate() {
+    let number_argument_mask = compiled.number_argument_mask();
+    let argument_count = match number_argument_mask {
+        Some(mask) if mask.len() == compiled.params => mask.len(),
+        Some(_) => return None,
+        None => arguments.len(),
+    };
+    for index in 0..argument_count {
+        if number_argument_mask.is_some_and(|mask| !mask.get(index).copied().unwrap_or(false)) {
+            numeric_arguments.push(0.0);
+            continue;
+        }
+        let argument = arguments.get(index).copied().unwrap_or(Value::UNDEFINED);
         // An integer Value is an int32 Number by representation; any other Number is
         // checked where the body's guards require one.
         let value = match argument.as_int() {

@@ -1,0 +1,33 @@
+{
+  "objective": "Measure warm TypeScript HMR update latency with the pinned TSRS worker available",
+  "method": "30 sequential atomic replacements of one self-accepted .ts entry after initial load; each sample runs from just before writing the replacement through the updated generation's stdout line",
+  "entry": "temporary self-accepted ESM TypeScript entry with one annotated numeric parameter and return type",
+  "checker_worker": "tools/quench-tsrs-worker/target/debug/quench-tsrs-worker (pinned TSRS revision e18fb617ee516917342dcda27063ab67acc79e49)",
+  "edits": 30,
+  "median_ms": 71.606,
+  "p95_ms_nearest_rank": 79.392,
+  "max_ms": 82.467,
+  "raw_ms": [
+    48.917, 75.418, 79.392, 67.835, 72.603, 63.684, 77.124, 73.119, 66.642, 82.467,
+    71.737, 73.153, 73.303, 66.531, 69.720, 71.732, 70.987, 69.552, 70.081, 72.468,
+    71.084, 73.432, 73.551, 67.141, 68.821, 66.661, 78.038, 73.971, 68.246, 71.480
+  ],
+  "host": {
+    "os": "macOS 26.5",
+    "build": "25F71",
+    "machine_model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)",
+    "ulimits": {
+      "stack_kbytes": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_seconds": "unlimited",
+      "file_size_blocks": "unlimited",
+      "address_space_kbytes": "unlimited"
+    }
+  },
+  "binary": "target/debug/quench-node",
+  "scope": "Warm updates for one small typed TypeScript ESM file on this host; not a multi-module, cold-start, cross-host, full-checker-compatibility, or production claim."
+}

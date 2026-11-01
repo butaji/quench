@@ -1,0 +1,46 @@
+{
+  "date_utc": "2026-11-01T04:34:34Z",
+  "commit": "56ae6d71e5",
+  "platform": {
+    "os": "macOS 25.5.0",
+    "kernel": "Darwin 25.5.0, arm64, Apple T8132",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "build": {
+    "command": "cargo build -p quench-node",
+    "result": "passed"
+  },
+  "manual_smokes": [
+    {
+      "case": "one query-suffixed JavaScript module accepted by its importer",
+      "initial_output": ["ENTRY v1"],
+      "update_output": ["ACCEPT v2"],
+      "entry_reran": false,
+      "result": "in-process update"
+    },
+    {
+      "case": "one query-suffixed TypeScript module accepted by its importer",
+      "initial_output": ["ENTRY 41"],
+      "update_output": ["ACCEPT 42"],
+      "entry_reran": false,
+      "result": "in-process update"
+    },
+    {
+      "case": "same JavaScript file loaded under two query identities",
+      "initial_output": ["ENTRY v1 v1"],
+      "update_output": ["ENTRY v2 v2"],
+      "accept_callbacks_ran": false,
+      "result": "restart fallback; both identities observed the new source"
+    }
+  ],
+  "fixture_sha256": {
+    "js/entry.mjs": "6a97a30f061fc46a470a9508f8528347f7cb759ae3a71827e229d857a233c3bd",
+    "js/dep.js": "c73d0f3fbf32e007f358109bb09ea399bd2360e14e3d79561cbdc2775dae2d4d",
+    "ts/entry.mjs": "4625624ed41dab2b4b7193838eef546dcf02af8c32afac7c66fc9e0af3cfbbaf",
+    "ts/dep.ts": "f4ce5df2e0467218f5a3a348ee2319944a53477d3c717dc0d667eaee23977af8",
+    "multi/entry.mjs": "8610fa792a1481b18e66e21a60948d88c14384c770e04d0cca015c3d33f7a602",
+    "multi/dep.js": "c73d0f3fbf32e007f358109bb09ea399bd2360e14e3d79561cbdc2775dae2d4d"
+  },
+  "interpretation": "The loader preserves each loaded source identity for HMR. A single identity can replace its exact module record in process. Multiple identities for one disk path are treated as ambiguous and safely restart so no query variant remains stale."
+}

@@ -8,6 +8,7 @@ mod commonjs_exports;
 mod esm_errors;
 pub(crate) mod esm_wasm;
 pub(crate) mod policy_projection;
+pub(crate) mod source_transform;
 pub(crate) use commonjs::source_kind;
 
 pub(crate) use commonjs::with_import_resolver;
@@ -33,6 +34,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "workerPoll" (0) => crate::modules::worker_threads_shared_vm::poll_native,
 
         method "nodeLibraryRequire" (1) => commonjs::require_node_library,
+        method "hmrHotAccept" (2) => crate::host::hmr::hot_accept,
+        method "hmrHotDispose" (1) => crate::host::hmr::hot_dispose,
+        method "hmrHotDecline" (0) => crate::host::hmr::hot_decline,
+        method "hmrHotInvalidate" (0) => crate::host::hmr::hot_invalidate,
+        method "hmrApplyEntry" (3) => commonjs::hmr_apply_entry,
         method "primordialsCopy" (7) => crate::modules::primordials_shared_vm::copy,
         method "nodeTestMock" (0) => crate::modules::test_shared_vm::mock,
         method "nodeTestNamespace" (0) => crate::modules::test_shared_vm::namespace,
@@ -64,18 +70,19 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsHrtimeBigInt" (0) => crate::modules::process_metrics_shared_vm::hrtime_bigint,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsCpu" (0) => crate::modules::process_metrics_shared_vm::process_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsThreadCpu" (0) => crate::modules::process_metrics_shared_vm::thread_cpu,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsResources" (0) => crate::modules::process_metrics_shared_vm::resources,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsRss" (0) => crate::modules::process_metrics_shared_vm::rss,
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMetricsMemoryUsage" (1) => crate::modules::process_metrics_shared_vm::memory_usage,
         #[cfg(unix)]
         method "processExecve" (3) => crate::modules::process_execve_shared_vm::execve,
@@ -222,6 +229,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processWarningOption" (1) => crate::modules::process_warning_shared_vm::option,
         method "processWarningBasename" (2) => crate::modules::process_warning_shared_vm::path_basename,
         method "consoleWarningWriter" (0) => crate::modules::console_shared_vm::warning_writer,
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         method "processMethodsInitialize" (0) => crate::modules::process_metrics_shared_vm::initialize_methods,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -1083,7 +1091,10 @@ impl quench_runtime::Host for NodeHost {
     /// no Promise tracked and no hook tracking them, it does neither
     /// (`async_hooks_shared_vm::promise_job_boundary`).
     fn observes_promise_job_boundaries(&self) -> bool {
-        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+        self.shared_state
+            .borrow()
+            .async_hooks
+            .observes_job_boundaries()
     }
 
     /// The code a run touched since the last collection leaves the resident set after each
@@ -1108,6 +1119,7 @@ impl quench_runtime::Host for NodeHost {
             crate::host::resident_pages::release_read_only_pages();
             crate::host::resident_pages::release_free_heap_pages();
         }
+        #[cfg(target_os = "linux")]
         quench_alloc::release_empty_pages();
         crate::host::resident_pages::note_collection();
     }
@@ -1119,14 +1131,18 @@ impl quench_runtime::Host for NodeHost {
     /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
     /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
     fn before_native_compilation(&mut self) {
-        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::Before);
+        crate::host::resident_pages::at_native_compilation(
+            crate::host::resident_pages::NativeCompilation::Before,
+        );
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
     /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
     /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
     fn after_native_compilation(&mut self) {
-        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::After);
+        crate::host::resident_pages::at_native_compilation(
+            crate::host::resident_pages::NativeCompilation::After,
+        );
     }
 
     /// Snapshots and compile-cache entries are tracked read-only mappings
@@ -1135,7 +1151,11 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::release_tracked_bytes(bytes);
     }
 
-    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+    fn kept_compiled_program(
+        &mut self,
+        name: &str,
+        parts: &[&str],
+    ) -> Option<quench_runtime::KeptBytes> {
         self.compile_cache.entry(name, parts)?.load()
     }
     fn keeps_compiled_programs(&self) -> bool {
@@ -1160,7 +1180,9 @@ impl quench_runtime::Host for NodeHost {
     /// (lodash scenario, x86_64 VM, 2026-10-22: 45,700 madvise calls, 87 -> 372 ms).
     fn cached_program_decoded(&mut self) {
         if self.bootstrapped {
-            crate::host::resident_pages::at_compile_phase(quench_runtime::CompilePhase::CodeGeneration);
+            crate::host::resident_pages::at_compile_phase(
+                quench_runtime::CompilePhase::CodeGeneration,
+            );
         }
     }
 
@@ -1228,8 +1250,9 @@ impl quench_runtime::Host for NodeHost {
         specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         // Parsed once: every import resolves through here, and the table is 21 KB of JSON.
-        static BUILTIN_EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> =
-            std::sync::OnceLock::new();
+        static BUILTIN_EXPORTS: std::sync::OnceLock<
+            std::collections::BTreeMap<String, Vec<String>>,
+        > = std::sync::OnceLock::new();
         let builtin_exports = BUILTIN_EXPORTS.get_or_init(|| {
             serde_json::from_str(include_str!("builtin_esm_exports.json"))
                 .expect("generated Node builtin export names are valid JSON")
@@ -1298,6 +1321,17 @@ impl quench_runtime::Host for NodeHost {
             }
         };
         let (path, name) = (location.path.clone(), location.name.clone());
+        let transform_for_hmr = self.hmr_graph.is_some()
+            && source_transform::needs_transform(&path)
+            && self.hmr_tracks_path(&path);
+        if let Ok((_, importer)) = referrer_location(referrer) {
+            self.record_hmr_dependency(&importer, &path, Some(specifier));
+        } else {
+            self.record_hmr_module(&path);
+        }
+        if self.hmr_tracks_path(&path) {
+            self.record_hmr_source_name(&path, &name);
+        }
         let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => match referrer_location(referrer) {
                 Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
@@ -1317,21 +1351,41 @@ impl quench_runtime::Host for NodeHost {
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
         } else {
-            let kind = commonjs::source_kind_of_real_bytes(&path, &bytes)?;
+            let raw_source = std::str::from_utf8(&bytes)
+                .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?;
+            let (source, type_query_positions) = if transform_for_hmr {
+                source_transform::transform_with_type_positions(&path, raw_source)?
+            } else {
+                if self.hmr_graph.is_some()
+                    && self.hmr_tracks_path(&path)
+                    && matches!(extension, "js" | "mjs")
+                {
+                    source_transform::validate_raw_javascript(&path, raw_source)?;
+                }
+                (raw_source.to_owned(), Vec::new())
+            };
+            let kind = if transform_for_hmr {
+                commonjs::hmr_source_kind(&path, &source)?
+            } else {
+                commonjs::source_kind_of_real_bytes(&path, source.as_bytes())?
+            };
             if kind == quench_runtime::SourceKind::Module {
-                String::from_utf8(bytes)
-                    .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
+                self.queue_hmr_type_queries(&path, &name, 0, &type_query_positions);
+                source
             } else {
                 let filename = serde_json::to_string(&path.to_string_lossy())
                     .map_err(|error| error.to_string())?;
+                // The request is absolute, so the private host require can load it without
+                // importing `node:module` and re-entering process initialization.
                 let mut source = format!(
-                    "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+                    "const __quenchRequire = globalThis[{}];\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n",
+                    serde_json::to_string(commonjs::BOOTSTRAP_REQUIRE)
+                        .map_err(|error| error.to_string())?
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in
-                    commonjs_exports::names(&path, &commonjs::source_text(&bytes))
-                        .into_iter()
-                        .enumerate()
+                for (index, export) in commonjs_exports::names(&path, &source)
+                    .into_iter()
+                    .enumerate()
                 {
                     let local = format!("__quenchExport{index}");
                     source.push_str("const ");
@@ -1385,6 +1439,39 @@ impl quench_runtime::Host for NodeHost {
         url::Url::from_file_path(absolute)
             .map(|url| url.to_string())
             .unwrap_or_else(|_| source_name.to_owned())
+    }
+
+    fn initializes_import_meta(&self) -> bool {
+        self.hmr_graph.is_some()
+    }
+
+    fn initialize_import_meta(
+        context: &mut NativeContext<'_, Self>,
+        source_name: &str,
+        import_meta: quench_runtime::RootId,
+    ) -> Result<(), RootedError> {
+        let (_, source_path) = referrer_location(source_name)
+            .map_err(|error| RootedError::host(error.message))?;
+        let path = context.host_mut().real_path(source_path);
+        if !context.host_mut().hmr_tracks_path(&path) {
+            return Ok(());
+        }
+        context
+            .host_mut()
+            .record_hmr_source_name(&path, source_name);
+        let hot = crate::host::hmr::create_hot_api(context, source_name)?;
+        if let Some(data) = context.host_mut().take_hmr_hot_data(&path) {
+            let applied = crate::host::hmr::set_data(context, hot, data);
+            context.release_root(data);
+            applied?;
+        }
+        let key = context.string_rooted("hot");
+        context.define_data_property_rooted(import_meta, key, hot, true, true, true)?;
+        let retained = context.retain(hot)?;
+        if let Some(previous) = context.host_mut().replace_hmr_hot_module(path, retained) {
+            context.release_root(previous);
+        }
+        Ok(())
     }
 
     fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
@@ -1472,7 +1559,10 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
-        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(
+            &self.shared_state,
+            contexts,
+        );
     }
 
     fn functions(&self) -> &[HostFunction<Self>] {
@@ -1483,7 +1573,9 @@ impl quench_runtime::Host for NodeHost {
     /// frame, only argument values and host state, and enters guest code, if at all, through
     /// the runtime's calls (`Host::host_function_runs_beside_activations`).
     fn host_function_runs_beside_activations(&self, index: usize) -> bool {
-        bindings().get(index).is_some_and(|binding| BESIDE_ACTIVATIONS.contains(&binding.name))
+        bindings()
+            .get(index)
+            .is_some_and(|binding| BESIDE_ACTIVATIONS.contains(&binding.name))
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
@@ -1540,7 +1632,8 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let shape_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
     let capture_key =
         crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
     let validate = context.host_function(operation("emitterValidateCaptureRejections"))?;
@@ -1628,7 +1721,11 @@ mod tests {
     fn operation_names_are_unique() {
         let mut names = std::collections::HashSet::new();
         for binding in super::bindings() {
-            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+            assert!(
+                names.insert(binding.name),
+                "Node operation {} is registered twice",
+                binding.name
+            );
         }
     }
 }
@@ -1735,10 +1832,18 @@ impl NodeHost {
                     specifier.to_owned()
                 };
                 let resolved = with_import_resolver(|resolver| {
-                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, &resolution_specifier)) {
+                    match commonjs::resolve_kept(resolver, |resolver| {
+                        resolver.resolve(&base, &resolution_specifier)
+                    }) {
                         Ok(resolution) => Ok(Some(resolution.full_path())),
                         Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
-                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                        Err(error) => Err(esm_errors::unresolved(
+                            resolver,
+                            error,
+                            specifier,
+                            &base,
+                            &referrer_path,
+                        )),
                     }
                 })?;
                 let Some(path) = resolved else {
@@ -1748,9 +1853,14 @@ impl NodeHost {
             }
         };
         let path = self.real_path(path);
+        let transform_for_hmr = self.hmr_graph.is_some()
+            && source_transform::needs_transform(&path)
+            && self.hmr_tracks_path(&path);
         if !internal {
-            if let Some(error) = esm_errors::unloadable(&path) {
-                return Err(error);
+            if !transform_for_hmr {
+                if let Some(error) = esm_errors::unloadable(&path) {
+                    return Err(error);
+                }
             }
         }
         let name = if let Some(original) = file_url.as_ref().filter(|url| {

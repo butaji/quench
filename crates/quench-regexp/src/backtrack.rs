@@ -1102,7 +1102,7 @@ impl StartRanges {
         if let Some(found) = haystack[..near].iter().position(admits) {
             return Some(found);
         }
-        let mut offset = near;
+        let offset = near;
         #[cfg(target_arch = "x86_64")]
         // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads a whole block
         // inside `haystack`.

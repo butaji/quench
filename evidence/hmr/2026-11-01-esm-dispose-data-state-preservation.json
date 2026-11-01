@@ -1,0 +1,22 @@
+{
+  "kind": "quench-hmr-esm-dispose-data-state-preservation",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "invocation": "target/debug/quench-node --hmr <main.mjs>",
+  "scenario": "A self-accepted ESM entry stores state in import.meta.hot.data during dispose and is replaced while a separate global object remains live.",
+  "observed": [
+    "STATE 1 1 7 0",
+    "STATE 2 2 7 1"
+  ],
+  "result": "The dispose callback transferred count 1 to the replacement. The process-local generation advanced from 1 to 2 and the unrelated global object's value stayed 7.",
+  "verification": {
+    "build_command": "cargo build -p quench-node",
+    "build_result": "passed before the runtime smoke",
+    "runtime_smoke": "passed"
+  }
+}

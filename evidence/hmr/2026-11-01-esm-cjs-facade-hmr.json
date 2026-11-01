@@ -1,0 +1,35 @@
+{
+  "kind": "quench-hmr-esm-commonjs-facade-smoke",
+  "date": "2026-11-01",
+  "commit": "56ae6d71e5",
+  "platform": {
+    "os": "macOS 25.5.0",
+    "architecture": "arm64",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "problem": "The ESM loader's generated CommonJS facade imported node:module and called createRequire. On this host, that path failed during Node internal process-method initialization with `No such binding: process_methods`, before guest code ran. The failure reproduced without --hmr.",
+  "change": "The generated facade now uses Quench's private bootstrap require to load the absolute CommonJS path directly. The CommonJS module's own wrapper still receives its path-bound require for resolving its dependencies.",
+  "smokes": [
+    {
+      "mode": "ordinary ESM-to-CJS import without HMR",
+      "command": "target/debug/quench-node /tmp/quench-cjs-interop-oracle/entry.mjs",
+      "output": ["ENTRY v1"],
+      "exit_code": 0
+    },
+    {
+      "mode": "HMR ESM importer accepts CJS dependency",
+      "command": "target/debug/quench-node --hmr <entry.mjs>",
+      "output": ["ENTRY v1", "ENTRY v2"],
+      "accept_callback_ran": false,
+      "result": "unsafe cross-format acceptance takes same-invocation restart; new CJS export is observed",
+      "exit_code": 0
+    }
+  ],
+  "fixture_sha256": {
+    "ordinary/entry.mjs": "2a7037c91082ccb5ecf0901f7c4309c30b43603ae753ee41fceaf0226a32b379",
+    "ordinary/dep.cjs": "c52882509130ab877432f545591ce007ee8f410a58685e9856a290422f2bc590",
+    "hmr/entry.mjs": "77f109333b028e3d19ca54a633235a981607c8122a909f920303df685a37049a",
+    "hmr/dep.cjs": "11d5fcffb1c1857f26e1cbea69ab60ad01a08b15f2c2eae8af0413481eb97d1b"
+  }
+}

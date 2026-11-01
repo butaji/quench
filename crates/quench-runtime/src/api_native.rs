@@ -113,6 +113,21 @@ pub enum SynchronousModule<T> {
     Evaluating,
 }
 
+/// The namespace arguments registered by one module accept callback.
+pub enum ModuleAcceptArguments {
+    Namespace,
+    NamespaceArray {
+        length: usize,
+        updated_indices: Vec<usize>,
+    },
+}
+
+/// A module accept callback and the namespace shape it expects.
+pub struct ModuleAcceptCallback {
+    pub callback: RootId,
+    pub arguments: ModuleAcceptArguments,
+}
+
 /// Arithmetic operations at native boundaries use the same guest coercions as code.
 #[derive(Clone, Copy)]
 pub enum NativeArithmetic {
@@ -133,6 +148,16 @@ pub struct SourceStackFrame {
     pub is_eval: bool,
     pub line_number: u32,
     pub column_number: u32,
+}
+
+/// A checker result for one parameter in generated JavaScript source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeScriptParameterType {
+    pub function_start: u32,
+    pub parameter_index: u32,
+    pub type_text: String,
+    /// Checker TypeFlags says every represented value inhabits TypeScript's NumberLike domain.
+    pub is_number_like: bool,
 }
 
 /// Compiler-owned source for an unformatted captured error, or the current activation.
@@ -1667,6 +1692,96 @@ impl<'a, H: Host> NativeContext<'a, H> {
         })
     }
 
+    /// Re-evaluate an already-evaluated root module while retaining its old record
+    /// until replacement and acceptance callbacks complete. `None` means the graph
+    /// is not in the synchronous, evaluated state this operation can replace.
+    pub fn replace_module_sync_rooted(
+        &mut self,
+        module: &crate::ModuleSource,
+        accept_callbacks: &[RootId],
+    ) -> Result<Option<RootId>, RootedError> {
+        let callbacks = accept_callbacks
+            .iter()
+            .copied()
+            .map(|callback| super::ModuleAcceptCallback {
+                callback,
+                arguments: super::ModuleAcceptArguments::Namespace,
+            })
+            .collect::<Vec<_>>();
+        self.replace_module_sync_with_accept_callbacks_rooted(module, &callbacks)
+    }
+
+    /// Re-evaluate a synchronous module and deliver its new namespace using the
+    /// argument shape registered by each accepting importer.
+    pub fn replace_module_sync_with_accept_callbacks_rooted(
+        &mut self,
+        module: &crate::ModuleSource,
+        accept_callbacks: &[super::ModuleAcceptCallback],
+    ) -> Result<Option<RootId>, RootedError> {
+        let begun = match self.vm.begin_module_replacement(module) {
+            Ok(begun) => begun,
+            Err(error) => return Err(self.error(error)),
+        };
+        if !begun {
+            return Ok(None);
+        }
+
+        let namespace = match self.vm.evaluate_module_sync(module) {
+            Ok(crate::SynchronousModule::Namespace(namespace)) => self.scoped_value(namespace),
+            Ok(crate::SynchronousModule::AsyncGraph | crate::SynchronousModule::Evaluating) => {
+                self.vm.rollback_module_replacement(&module.name);
+                return Ok(None);
+            }
+            Err(error) => {
+                let error = self.error(error);
+                self.vm.rollback_module_replacement(&module.name);
+                return Err(error);
+            }
+        };
+
+        let receiver = self.undefined();
+        let callbacks_result = (|| {
+            for callback in accept_callbacks {
+                let array = match &callback.arguments {
+                    super::ModuleAcceptArguments::Namespace => None,
+                    super::ModuleAcceptArguments::NamespaceArray {
+                        length,
+                        updated_indices,
+                    } => {
+                        let undefined = self.undefined();
+                        let mut values = vec![undefined; *length];
+                        for &index in updated_indices {
+                            let Some(value) = values.get_mut(index) else {
+                                self.release_root(undefined);
+                                return Err(RootedError::host(
+                                    "module accept callback index exceeds its array length",
+                                ));
+                            };
+                            *value = namespace;
+                        }
+                        let array = self.array_rooted(&values);
+                        self.release_root(undefined);
+                        Some(array?)
+                    }
+                };
+                let arguments = array.map_or_else(|| vec![namespace], |array| vec![array]);
+                let result = self.call_rooted(callback.callback, receiver, &arguments);
+                if let Some(array) = array {
+                    self.release_root(array);
+                }
+                self.release_root(result?);
+            }
+            Ok::<(), RootedError>(())
+        })();
+        self.release_root(receiver);
+        if let Err(error) = callbacks_result {
+            self.vm.rollback_module_replacement(&module.name);
+            return Err(error);
+        }
+        self.vm.commit_module_replacement(&module.name);
+        Ok(Some(namespace))
+    }
+
     /// Add a constant export while retaining a namespace's original live bindings.
     pub fn module_namespace_with_export_rooted(
         &mut self,
@@ -2123,6 +2238,37 @@ impl<H: Host> Runtime<H> {
             Ok(value) => Ok(self.root(value)),
             Err(error) => Err(RootedError::retain(&mut self.vm, error)),
         }
+    }
+
+    /// Retain background TypeScript checker results on matching live programs.
+    /// `function_start_offset` accounts for a host wrapper around generated source.
+    pub fn install_typescript_parameter_types(
+        &mut self,
+        source_name: &str,
+        function_start_offset: u32,
+        facts: &[TypeScriptParameterType],
+    ) -> usize {
+        self.vm.install_typescript_parameter_types(
+            source_name,
+            function_start_offset,
+            facts,
+        )
+    }
+
+    /// Read one retained checker result by its generated function source span.
+    pub fn typescript_parameter_type(
+        &self,
+        source_name: &str,
+        function_start_offset: u32,
+        function_start: u32,
+        parameter_index: u32,
+    ) -> Option<String> {
+        self.vm.typescript_parameter_type(
+            source_name,
+            function_start_offset,
+            function_start,
+            parameter_index,
+        )
     }
 }
 

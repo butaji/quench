@@ -8,9 +8,11 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, PreparedScript, NativeArithmetic,
-    CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
-    DeserializerDelegate, SerializerDelegate,
+    BufferStorage, BuiltinBrand, BuiltinData, CollectionPreview, CompiledScript, DescriptorFields,
+    DeserializerDelegate, ErrorSourcePosition, HostFunction, HostFunctionId, HostWeakRoot,
+    ModuleAcceptArguments, ModuleAcceptCallback, NativeArithmetic, NativeContext, PreparedScript,
+    PromiseSnapshot, RootScopeMark, RootedIterator, SerializerDelegate, SourceStackFrame,
+    SynchronousModule, TypeScriptParameterType, ValueType,
 };
 
 /// The syntax context used when compiling source. Script and Module use

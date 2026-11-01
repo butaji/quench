@@ -1446,6 +1446,42 @@ impl<H: Host> Vm<H> {
         self.synchronous_module_namespace(&program, module)
     }
 
+    pub(crate) fn begin_module_replacement(
+        &mut self,
+        module: &crate::ModuleSource,
+    ) -> Result<bool, JsError> {
+        self.embedding_program()?;
+        let key = super::promise::module_cache_key(&module.name, "javascript");
+        if self.realm.promise.module_replacements.contains_key(&key)
+            || !self.realm.promise.modules.get(&key).is_some_and(|record| {
+                record.phase() == super::module::ModulePhase::Evaluated
+            })
+        {
+            return Ok(false);
+        }
+        let record = self
+            .realm
+            .promise
+            .modules
+            .remove(&key)
+            .expect("evaluated module checked before removal");
+        self.realm.promise.module_replacements.insert(key, record);
+        Ok(true)
+    }
+
+    pub(crate) fn commit_module_replacement(&mut self, name: &str) {
+        let key = super::promise::module_cache_key(name, "javascript");
+        self.realm.promise.module_replacements.remove(&key);
+    }
+
+    pub(crate) fn rollback_module_replacement(&mut self, name: &str) {
+        let key = super::promise::module_cache_key(name, "javascript");
+        if let Some(record) = self.realm.promise.module_replacements.remove(&key) {
+            self.realm.promise.modules.remove(&key);
+            self.realm.promise.modules.insert(key, record);
+        }
+    }
+
     pub(crate) fn module_namespace_with_export_rooted(
         &mut self,
         namespace: RootId,

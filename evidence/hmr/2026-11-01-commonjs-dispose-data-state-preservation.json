@@ -1,0 +1,18 @@
+{
+  "kind": "quench-hmr-commonjs-dispose-data-state-preservation",
+  "date_utc": "2026-11-01",
+  "command": "target/debug/quench-node --hmr <main.cjs>",
+  "fixture_behavior": [
+    "module.hot.accept()",
+    "register a dispose callback that increments data.count",
+    "print process ID, generation value, and module.hot.data.count",
+    "keep the CLI process alive"
+  ],
+  "edit": "const value changed from 1 to 2",
+  "observed_output": [
+    "GEN 53358 1 0",
+    "GEN 53358 2 1"
+  ],
+  "result": "CommonJS dispose data was carried into the replacement module and the accepted update stayed in the same process.",
+  "cleanup": "The resident process was terminated after observation."
+}

@@ -52,7 +52,9 @@ pub(crate) struct WorkerControl {
 
 impl WorkerControl {
     fn lock(&self) -> MutexGuard<'_, ControlState> {
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub(crate) fn set_online(&self) {
@@ -80,7 +82,8 @@ impl WorkerControl {
     /// The exit code, once all output and the fatal exception have been delivered.
     pub(crate) fn take_exit(&self) -> Option<i32> {
         let mut state = self.lock();
-        if !state.output.is_empty() || state.exit.as_ref().is_some_and(|exit| exit.error.is_some()) {
+        if !state.output.is_empty() || state.exit.as_ref().is_some_and(|exit| exit.error.is_some())
+        {
             return None;
         }
         state.exit.take().map(|exit| exit.code)
@@ -108,8 +111,13 @@ impl WorkerControl {
         let (code, error) = match outcome {
             Ok(SharedCompletion::Completed) => (0, None),
             Ok(SharedCompletion::GuestExit { code }) => (code, None),
-            Ok(SharedCompletion::PendingTopLevelAwait) => (UNSETTLED_TOP_LEVEL_AWAIT_EXIT_CODE, None),
-            Err(message) => (FATAL_EXIT_CODE, Some(failure.unwrap_or(Failure::Message(message)))),
+            Ok(SharedCompletion::PendingTopLevelAwait) => {
+                (UNSETTLED_TOP_LEVEL_AWAIT_EXIT_CODE, None)
+            }
+            Err(message) => (
+                FATAL_EXIT_CODE,
+                Some(failure.unwrap_or(Failure::Message(message))),
+            ),
         };
         // A worker that came up ran JavaScript; one that failed earlier still reports online
         // first, as Node emits 'online' before 'error' and 'exit'.
@@ -127,6 +135,8 @@ pub(crate) struct WorkerContext {
     pub(crate) control: Arc<WorkerControl>,
     /// The worker's `process.env` snapshot (its parent's, or `options.env`).
     pub(crate) env: Vec<(String, String)>,
+    /// Parent-owned file-watch registry; worker updates require restarting the CLI.
+    pub(crate) hmr_watch_registry: Option<crate::host::hmr::WorkerWatchRegistry>,
 }
 
 /// Everything a worker thread needs from its parent.
@@ -139,6 +149,7 @@ pub(crate) struct Launch {
     pub(crate) env: Vec<(String, String)>,
     pub(crate) data: Message,
     pub(crate) parent: Arc<Endpoint>,
+    pub(crate) hmr_watch_registry: Option<crate::host::hmr::WorkerWatchRegistry>,
 }
 
 /// Start a worker thread; returns its thread id and control block.
@@ -165,28 +176,66 @@ fn run(thread_id: u64, launch: Launch, control: Arc<WorkerControl>) {
             libc::pthread_sigmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut());
         }
     }
-    let Launch { filename, is_eval, argv, exec_path, exec_argv, env, data, parent } = launch;
+    let Launch {
+        filename,
+        is_eval,
+        argv,
+        exec_path,
+        exec_argv,
+        env,
+        data,
+        parent,
+        hmr_watch_registry,
+    } = launch;
     let (input, entry) = if is_eval {
-        let input = SharedInput::Eval { source: filename, goal: EntryGoal::CommonJs, exec_argv, print: false };
+        let input = SharedInput::Eval {
+            source: filename,
+            goal: EntryGoal::CommonJs,
+            exec_argv,
+            print: false,
+        };
         (input, EVAL_ENTRY_NAME.to_owned())
     } else {
-        let input = SharedInput::File { path: filename.clone().into(), exec_argv, goal: EntryGoal::Node };
+        let input = SharedInput::File {
+            path: filename.clone().into(),
+            exec_argv,
+            goal: EntryGoal::Node,
+        };
         (input, filename)
     };
     let mut process_argv = vec![exec_path, entry];
     process_argv.extend(argv);
-    let context = WorkerContext { thread_id, parent: Some(parent), data: Some(data), control: control.clone(), env };
+    let context = WorkerContext {
+        thread_id,
+        parent: Some(parent),
+        data: Some(data),
+        control: control.clone(),
+        env,
+        hmr_watch_registry,
+    };
     let outcome = crate::shared_run::execute_worker(input, process_argv, context);
     control.finish(outcome);
 }
 
 /// Record a worker's fatal exception for its parent before the VM reports it. Main-thread
 /// VMs are unaffected.
-pub(crate) fn capture_fatal(runtime: &mut quench_runtime::Runtime<NodeHost>, exception: Option<RootId>) {
-    if runtime.host_mut().shared_state().borrow().messaging.context.is_none() {
+pub(crate) fn capture_fatal(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    exception: Option<RootId>,
+) {
+    if runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .messaging
+        .context
+        .is_none()
+    {
         return;
     }
-    let Ok(operation) = runtime.host_function(crate::host::shared_vm::operation("workerCaptureError")) else {
+    let Ok(operation) =
+        runtime.host_function(crate::host::shared_vm::operation("workerCaptureError"))
+    else {
         return;
     };
     let receiver = runtime.root(Value::UNDEFINED);
@@ -205,7 +254,14 @@ pub(crate) fn capture_error(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let exception = args.first().copied().unwrap_or_else(|| c.undefined());
-    let control = c.host_mut().shared_state().borrow().messaging.context.as_ref().map(|context| context.control.clone());
+    let control = c
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .messaging
+        .context
+        .as_ref()
+        .map(|context| context.control.clone());
     if let Some(control) = control {
         let failure = match c.serialize_rooted(exception, &[], &[]) {
             Ok(value) => Failure::Thrown(value),

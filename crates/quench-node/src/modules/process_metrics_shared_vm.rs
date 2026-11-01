@@ -1,7 +1,8 @@
-//! Genuine Linux process facts; public validation stays in the configured SDK.
+//! Native process facts; public validation stays in the configured SDK.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
+const MICROS_PER_SECOND: f64 = std::time::Duration::from_secs(1).as_micros() as f64;
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
     c.get_named_property_rooted(object, name)
@@ -53,12 +54,16 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         }
         #[cfg(unix)]
         {
-            let function = c.host_function_named(crate::host::shared_vm::operation("processExecve"), "execve")?;
+            let function = c.host_function_named(
+                crate::host::shared_vm::operation("processExecve"),
+                "execve",
+            )?;
             put(c, module, "execve", function)?;
         }
-        for (name,operation) in [("cwd","processCwd"),("umask","workerRawUmask")] {
-            let function=c.host_function_named(crate::host::shared_vm::operation(operation),name)?;
-            put(c,module,name,function)?;
+        for (name, operation) in [("cwd", "processCwd"), ("umask", "workerRawUmask")] {
+            let function =
+                c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+            put(c, module, name, function)?;
         }
         Ok(module)
     })
@@ -128,7 +133,6 @@ fn usage(who: libc::c_int) -> Result<libc::rusage, RootedError> {
     Ok(unsafe { value.assume_init() })
 }
 fn micros(value: libc::timeval) -> f64 {
-    const MICROS_PER_SECOND: f64 = std::time::Duration::from_secs(1).as_micros() as f64;
     value.tv_sec as f64 * MICROS_PER_SECOND + value.tv_usec as f64
 }
 fn cpu(c: &mut Context<'_>, args: &[RootId], who: libc::c_int) -> Result<RootId, RootedError> {
@@ -152,7 +156,20 @@ pub(crate) fn thread_cpu(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    cpu(c, args, libc::RUSAGE_THREAD)
+    #[cfg(target_os = "linux")]
+    {
+        cpu(c, args, libc::RUSAGE_THREAD)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let (user, system) = current_thread_cpu_micros()?;
+        let target = args
+            .first()
+            .copied()
+            .ok_or_else(|| RootedError::host("CPU metrics result is absent"))?;
+        write_values(c, target, &[user, system])?;
+        Ok(c.undefined())
+    }
 }
 pub(crate) fn resources(
     c: &mut Context<'_>,
@@ -164,14 +181,17 @@ pub(crate) fn resources(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("resource metrics result is absent"))?;
-    // Linux getrusage already expresses max RSS in KiB, as Node's public API does.
+    #[cfg(target_os = "linux")]
+    let max_rss_kib = usage.ru_maxrss as f64;
+    #[cfg(target_os = "macos")]
+    let max_rss_kib = usage.ru_maxrss as f64 / BYTES_PER_KIBIBYTE;
     write_values(
         c,
         target,
         &[
             micros(usage.ru_utime),
             micros(usage.ru_stime),
-            usage.ru_maxrss as f64,
+            max_rss_kib,
             usage.ru_ixrss as f64,
             usage.ru_idrss as f64,
             usage.ru_isrss as f64,
@@ -189,20 +209,69 @@ pub(crate) fn resources(
     )?;
     Ok(c.undefined())
 }
-/// The process's resident set from `/proc/self/statm`, in bytes.
+const BYTES_PER_KIBIBYTE: f64 = 1024.0;
+
+/// The process's resident set in bytes, using the host OS's process accounting API.
 fn resident_bytes() -> Result<f64, RootedError> {
-    let text = std::fs::read_to_string("/proc/self/statm")
-        .map_err(|error| RootedError::host(error.to_string()))?;
-    let pages = text
-        .split_whitespace()
-        .nth(1)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| RootedError::host("invalid /proc/self/statm resident pages"))?;
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    if page_size <= 0 {
-        return Err(os_error("sysconf(_SC_PAGESIZE)"));
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/self/statm")
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let pages = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| RootedError::host("invalid /proc/self/statm resident pages"))?;
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if page_size <= 0 {
+            return Err(os_error("sysconf(_SC_PAGESIZE)"));
+        }
+        Ok(pages as f64 * page_size as f64)
     }
-    Ok(pages as f64 * page_size as f64)
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info_data_t>::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        #[allow(deprecated)]
+        let task = unsafe { libc::mach_task_self() };
+        let status = unsafe {
+            libc::task_info(
+                task,
+                libc::MACH_TASK_BASIC_INFO,
+                info.as_mut_ptr().cast(),
+                &mut count,
+            )
+        };
+        if status != libc::KERN_SUCCESS {
+            return Err(RootedError::host(format!("task_info failed: {status}")));
+        }
+        let info = unsafe { info.assume_init() };
+        Ok(info.resident_size as f64)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_thread_cpu_micros() -> Result<(f64, f64), RootedError> {
+    let thread = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
+    let mut info = std::mem::MaybeUninit::<libc::thread_basic_info_data_t>::zeroed();
+    let mut count = libc::THREAD_BASIC_INFO_COUNT;
+    let status = unsafe {
+        libc::thread_info(
+            thread,
+            libc::THREAD_BASIC_INFO as libc::thread_flavor_t,
+            info.as_mut_ptr().cast(),
+            &mut count,
+        )
+    };
+    if status != libc::KERN_SUCCESS {
+        return Err(RootedError::host(format!("thread_info failed: {status}")));
+    }
+    let info = unsafe { info.assume_init() };
+    let user =
+        info.user_time.seconds as f64 * MICROS_PER_SECOND + info.user_time.microseconds as f64;
+    let system =
+        info.system_time.seconds as f64 * MICROS_PER_SECOND + info.system_time.microseconds as f64;
+    Ok((user, system))
 }
 pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     Ok(c.number(resident_bytes()?))
@@ -210,7 +279,11 @@ pub(crate) fn rss(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId
 /// `binding.memoryUsage(values)` (src/node_process_methods.cc): fills `rss, heapTotal,
 /// heapUsed, external, arrayBuffers`. ArrayBuffer backing stores are V8's only external
 /// memory here, so `external` and `arrayBuffers` agree.
-pub(crate) fn memory_usage(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn memory_usage(
+    c: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let target = args
         .first()
         .copied()
@@ -220,20 +293,34 @@ pub(crate) fn memory_usage(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
     write_values(
         c,
         target,
-        &[resident_bytes()?, heap.reserved_bytes() as f64, heap.used_bytes() as f64, external, external],
+        &[
+            resident_bytes()?,
+            heap.reserved_bytes() as f64,
+            heap.used_bytes() as f64,
+            external,
+            external,
+        ],
     )?;
     Ok(c.undefined())
 }
 pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
     let process = process(c)?;
     // Node's wrappers load with `internal/process/per_thread.js` on the first read of one.
-    let initializer = c.host_function(crate::host::shared_vm::operation("processMethodsInitialize"))?;
+    let initializer = c.host_function(crate::host::shared_vm::operation(
+        "processMethodsInitialize",
+    ))?;
     c.define_lazy_data_properties_rooted(process, &WRAPPED_METHODS, true, initializer)?;
     Ok(())
 }
 
 /// The process methods Node's `wrapProcessMethods` makes over the native binding.
-const WRAPPED_METHODS: [&str; 5] = ["cpuUsage", "threadCpuUsage", "memoryUsage", "resourceUsage", "execve"];
+const WRAPPED_METHODS: [&str; 5] = [
+    "cpuUsage",
+    "threadCpuUsage",
+    "memoryUsage",
+    "resourceUsage",
+    "execve",
+];
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.host_mut()
@@ -244,7 +331,11 @@ fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 }
 
 /// Defines the wrapped process methods as Node's.
-pub(crate) fn initialize_methods(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn initialize_methods(
+    c: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     let native = binding(c)?;
     let wrapper = crate::host::shared_vm::commonjs::node_library_export(
         c,

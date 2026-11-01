@@ -1,0 +1,18 @@
+{
+  "kind": "quench-tsrs-live-type-query",
+  "date": "2026-10-31",
+  "worker": "tools/quench-tsrs-worker/target/debug/quench-tsrs-worker",
+  "source": "export function greet(name: string) { return name.toUpperCase(); }",
+  "queried_utf16_offset": 22,
+  "response": {
+    "protocol_version": 1,
+    "typescript_version": "7.1.0-beta",
+    "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+    "types": [
+      "string"
+    ],
+    "error": null
+  },
+  "result": "pinned TSRS sidecar resolved the file and returned the expected parameter type",
+  "scope": "single live protocol query; not proof of full TypeScript API compatibility"
+}

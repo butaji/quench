@@ -12,7 +12,7 @@ mod node_sources;
 pub mod polyfills;
 pub mod shared_run;
 
-pub use host::{NodeHost, NodeOutputSink};
+pub use host::{HmrChangeSet, NodeHost, NodeOutputSink};
 pub use shared_run::EntryGoal;
 
 /// On Linux, every binary that links this host (the CLI and the Node test runners alike)

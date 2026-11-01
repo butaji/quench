@@ -1,0 +1,1575 @@
+{
+  "kind": "typescript-go-tsrs-checker-wide-parameter-query-comparison",
+  "typescript_version": "7.1.0-beta",
+  "typescript_package_git_commit": "3e9236361fa97a9a6c685f4833ac457ae2d8c50a",
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "case_count": 219,
+  "matched": 219,
+  "mismatches": [],
+  "typescript_diagnostics": 0,
+  "fixture_sha256": "c9fe71f81e90db930ce140ca48573309b815946a4a0f7f317fca6997cf08b7f2",
+  "position_encoding": "JavaScript API string indexes (UTF-16 code units), after astral prefix",
+  "compiler_options": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "skipLibCheck": true
+  },
+  "oracle_api": "TypeScript package sync API: checker.getTypeAtPosition(file, positions) (array overload dispatches getTypesAtPositions), then checker.typeToString(type)",
+  "candidate_api": "quench-tsrs-worker getTypesAtPositions then typeToString with default flags",
+  "cases": [
+    {
+      "case": 0,
+      "annotation": "string",
+      "position_utf16": 1061,
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "case": 1,
+      "annotation": "number",
+      "position_utf16": 1133,
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "case": 2,
+      "annotation": "boolean",
+      "position_utf16": 1205,
+      "go": "boolean",
+      "tsrs": "boolean"
+    },
+    {
+      "case": 3,
+      "annotation": "symbol",
+      "position_utf16": 1278,
+      "go": "symbol",
+      "tsrs": "symbol"
+    },
+    {
+      "case": 4,
+      "annotation": "bigint",
+      "position_utf16": 1350,
+      "go": "bigint",
+      "tsrs": "bigint"
+    },
+    {
+      "case": 5,
+      "annotation": "object",
+      "position_utf16": 1422,
+      "go": "object",
+      "tsrs": "object"
+    },
+    {
+      "case": 6,
+      "annotation": "unknown",
+      "position_utf16": 1494,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 7,
+      "annotation": "any",
+      "position_utf16": 1567,
+      "go": "any",
+      "tsrs": "any"
+    },
+    {
+      "case": 8,
+      "annotation": "never",
+      "position_utf16": 1636,
+      "go": "never",
+      "tsrs": "never"
+    },
+    {
+      "case": 9,
+      "annotation": "void",
+      "position_utf16": 1707,
+      "go": "void",
+      "tsrs": "void"
+    },
+    {
+      "case": 10,
+      "annotation": "null",
+      "position_utf16": 1777,
+      "go": "null",
+      "tsrs": "null"
+    },
+    {
+      "case": 11,
+      "annotation": "undefined",
+      "position_utf16": 1847,
+      "go": "undefined",
+      "tsrs": "undefined"
+    },
+    {
+      "case": 12,
+      "annotation": "1",
+      "position_utf16": 1922,
+      "go": "1",
+      "tsrs": "1"
+    },
+    {
+      "case": 13,
+      "annotation": "\"literal\"",
+      "position_utf16": 1989,
+      "go": "\"literal\"",
+      "tsrs": "\"literal\""
+    },
+    {
+      "case": 14,
+      "annotation": "true",
+      "position_utf16": 2064,
+      "go": "true",
+      "tsrs": "true"
+    },
+    {
+      "case": 15,
+      "annotation": "1 | 2",
+      "position_utf16": 2134,
+      "go": "1 | 2",
+      "tsrs": "1 | 2"
+    },
+    {
+      "case": 16,
+      "annotation": "\"a\" | \"b\"",
+      "position_utf16": 2205,
+      "go": "\"a\" | \"b\"",
+      "tsrs": "\"a\" | \"b\""
+    },
+    {
+      "case": 17,
+      "annotation": "string | number",
+      "position_utf16": 2280,
+      "go": "string | number",
+      "tsrs": "string | number"
+    },
+    {
+      "case": 18,
+      "annotation": "number & { brand: true }",
+      "position_utf16": 2361,
+      "go": "number & { brand: true; }",
+      "tsrs": "number & { brand: true; }"
+    },
+    {
+      "case": 19,
+      "annotation": "number[]",
+      "position_utf16": 2451,
+      "go": "number[]",
+      "tsrs": "number[]"
+    },
+    {
+      "case": 20,
+      "annotation": "Array<string>",
+      "position_utf16": 2525,
+      "go": "string[]",
+      "tsrs": "string[]"
+    },
+    {
+      "case": 21,
+      "annotation": "readonly string[]",
+      "position_utf16": 2604,
+      "go": "readonly string[]",
+      "tsrs": "readonly string[]"
+    },
+    {
+      "case": 22,
+      "annotation": "[number, string]",
+      "position_utf16": 2687,
+      "go": "[number, string]",
+      "tsrs": "[number, string]"
+    },
+    {
+      "case": 23,
+      "annotation": "readonly [number, string?]",
+      "position_utf16": 2769,
+      "go": "readonly [number, (string | undefined)?]",
+      "tsrs": "readonly [number, (string | undefined)?]"
+    },
+    {
+      "case": 24,
+      "annotation": "[head: number, ...tail: string[]]",
+      "position_utf16": 2861,
+      "go": "[head: number, ...tail: string[]]",
+      "tsrs": "[head: number, ...tail: string[]]"
+    },
+    {
+      "case": 25,
+      "annotation": "Box<number>",
+      "position_utf16": 2960,
+      "go": "Box<number>",
+      "tsrs": "Box<number>"
+    },
+    {
+      "case": 26,
+      "annotation": "Box<Shape>",
+      "position_utf16": 3037,
+      "go": "Box<Shape>",
+      "tsrs": "Box<Shape>"
+    },
+    {
+      "case": 27,
+      "annotation": "Pair<string, number>",
+      "position_utf16": 3113,
+      "go": "Pair<string, number>",
+      "tsrs": "Pair<string, number>"
+    },
+    {
+      "case": 28,
+      "annotation": "Promise<Shape>",
+      "position_utf16": 3199,
+      "go": "Promise<Shape>",
+      "tsrs": "Promise<Shape>"
+    },
+    {
+      "case": 29,
+      "annotation": "PromiseLike<number>",
+      "position_utf16": 3279,
+      "go": "PromiseLike<number>",
+      "tsrs": "PromiseLike<number>"
+    },
+    {
+      "case": 30,
+      "annotation": "Shape",
+      "position_utf16": 3364,
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "case": 31,
+      "annotation": "Named",
+      "position_utf16": 3435,
+      "go": "Named",
+      "tsrs": "Named"
+    },
+    {
+      "case": 32,
+      "annotation": "Base",
+      "position_utf16": 3506,
+      "go": "Base",
+      "tsrs": "Base"
+    },
+    {
+      "case": 33,
+      "annotation": "Direction",
+      "position_utf16": 3576,
+      "go": "Direction",
+      "tsrs": "Direction"
+    },
+    {
+      "case": 34,
+      "annotation": "Direction.Up",
+      "position_utf16": 3651,
+      "go": "Direction.Up",
+      "tsrs": "Direction.Up"
+    },
+    {
+      "case": 35,
+      "annotation": "typeof Direction",
+      "position_utf16": 3729,
+      "go": "typeof Direction",
+      "tsrs": "typeof Direction"
+    },
+    {
+      "case": 36,
+      "annotation": "Unique",
+      "position_utf16": 3811,
+      "go": "unique symbol",
+      "tsrs": "unique symbol"
+    },
+    {
+      "case": 37,
+      "annotation": "keyof Shape",
+      "position_utf16": 3883,
+      "go": "keyof Shape",
+      "tsrs": "keyof Shape"
+    },
+    {
+      "case": 38,
+      "annotation": "Shape[\"a\"]",
+      "position_utf16": 3960,
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "case": 39,
+      "annotation": "Shape[\"b\"]",
+      "position_utf16": 4036,
+      "go": "string | undefined",
+      "tsrs": "string | undefined"
+    },
+    {
+      "case": 40,
+      "annotation": "Partial<Shape>",
+      "position_utf16": 4112,
+      "go": "Partial<Shape>",
+      "tsrs": "Partial<Shape>"
+    },
+    {
+      "case": 41,
+      "annotation": "Required<Shape>",
+      "position_utf16": 4192,
+      "go": "Required<Shape>",
+      "tsrs": "Required<Shape>"
+    },
+    {
+      "case": 42,
+      "annotation": "Readonly<Shape>",
+      "position_utf16": 4273,
+      "go": "Readonly<Shape>",
+      "tsrs": "Readonly<Shape>"
+    },
+    {
+      "case": 43,
+      "annotation": "Pick<Shape, \"a\" | \"c\">",
+      "position_utf16": 4354,
+      "go": "Pick<Shape, \"a\" | \"c\">",
+      "tsrs": "Pick<Shape, \"a\" | \"c\">"
+    },
+    {
+      "case": 44,
+      "annotation": "Omit<Shape, \"b\">",
+      "position_utf16": 4442,
+      "go": "Omit<Shape, \"b\">",
+      "tsrs": "Omit<Shape, \"b\">"
+    },
+    {
+      "case": 45,
+      "annotation": "Record<string, number>",
+      "position_utf16": 4524,
+      "go": "Record<string, number>",
+      "tsrs": "Record<string, number>"
+    },
+    {
+      "case": 46,
+      "annotation": "Record<\"x\" | \"y\", boolean>",
+      "position_utf16": 4612,
+      "go": "Record<\"x\" | \"y\", boolean>",
+      "tsrs": "Record<\"x\" | \"y\", boolean>"
+    },
+    {
+      "case": 47,
+      "annotation": "Exclude<string | number | null, string>",
+      "position_utf16": 4704,
+      "go": "number | null",
+      "tsrs": "number | null"
+    },
+    {
+      "case": 48,
+      "annotation": "Extract<string | number, string>",
+      "position_utf16": 4809,
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "case": 49,
+      "annotation": "NonNullable<string | null>",
+      "position_utf16": 4907,
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "case": 50,
+      "annotation": "ReturnType<typeof makeShape>",
+      "position_utf16": 4999,
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "case": 51,
+      "annotation": "Parameters<typeof makeShape>",
+      "position_utf16": 5093,
+      "go": "[]",
+      "tsrs": "[]"
+    },
+    {
+      "case": 52,
+      "annotation": "Awaited<Promise<Shape>>",
+      "position_utf16": 5187,
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "case": 53,
+      "annotation": "ToText<string>",
+      "position_utf16": 5276,
+      "go": "`text:${string}`",
+      "tsrs": "`text:${string}`"
+    },
+    {
+      "case": 54,
+      "annotation": "ToText<number>",
+      "position_utf16": 5356,
+      "go": "`${number}px`",
+      "tsrs": "`${number}px`"
+    },
+    {
+      "case": 55,
+      "annotation": "`event:${string}`",
+      "position_utf16": 5436,
+      "go": "`event:${string}`",
+      "tsrs": "`event:${string}`"
+    },
+    {
+      "case": 56,
+      "annotation": "`${number}px`",
+      "position_utf16": 5519,
+      "go": "`${number}px`",
+      "tsrs": "`${number}px`"
+    },
+    {
+      "case": 57,
+      "annotation": "Fn",
+      "position_utf16": 5598,
+      "go": "Fn",
+      "tsrs": "Fn"
+    },
+    {
+      "case": 58,
+      "annotation": "Ctor",
+      "position_utf16": 5666,
+      "go": "Ctor",
+      "tsrs": "Ctor"
+    },
+    {
+      "case": 59,
+      "annotation": "(x: number, y?: string) => boolean",
+      "position_utf16": 5736,
+      "go": "(x: number, y?: string | undefined) => boolean",
+      "tsrs": "(x: number, y?: string | undefined) => boolean"
+    },
+    {
+      "case": 60,
+      "annotation": "new (x: Shape) => Base",
+      "position_utf16": 5836,
+      "go": "new (x: Shape) => Base",
+      "tsrs": "new (x: Shape) => Base"
+    },
+    {
+      "case": 61,
+      "annotation": "{ x: number; y?: string }",
+      "position_utf16": 5924,
+      "go": "{ x: number; y?: string | undefined; }",
+      "tsrs": "{ x: number; y?: string | undefined; }"
+    },
+    {
+      "case": 62,
+      "annotation": "{ readonly x: number; [key: string]: unknown }",
+      "position_utf16": 6015,
+      "go": "{ [key: string]: unknown; readonly x: number; }",
+      "tsrs": "{ [key: string]: unknown; readonly x: number; }"
+    },
+    {
+      "case": 63,
+      "annotation": "Shape | Named",
+      "position_utf16": 6127,
+      "go": "Named | Shape",
+      "tsrs": "Named | Shape"
+    },
+    {
+      "case": 64,
+      "annotation": "Shape & Named",
+      "position_utf16": 6206,
+      "go": "Shape & Named",
+      "tsrs": "Shape & Named"
+    },
+    {
+      "case": 65,
+      "annotation": "Box<string | number>",
+      "position_utf16": 6285,
+      "go": "Box<string | number>",
+      "tsrs": "Box<string | number>"
+    },
+    {
+      "case": 66,
+      "annotation": "Box<never>",
+      "position_utf16": 6371,
+      "go": "Box<never>",
+      "tsrs": "Box<never>"
+    },
+    {
+      "case": 67,
+      "annotation": "Box<unknown>",
+      "position_utf16": 6447,
+      "go": "Box<unknown>",
+      "tsrs": "Box<unknown>"
+    },
+    {
+      "case": 68,
+      "annotation": "Box<any>",
+      "position_utf16": 6525,
+      "go": "Box<any>",
+      "tsrs": "Box<any>"
+    },
+    {
+      "case": 69,
+      "annotation": "Box<Box<number>>",
+      "position_utf16": 6599,
+      "go": "Box<Box<number>>",
+      "tsrs": "Box<Box<number>>"
+    },
+    {
+      "case": 70,
+      "annotation": "Recursive<string[]>",
+      "position_utf16": 6681,
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "case": 71,
+      "annotation": "Maybe<number>",
+      "position_utf16": 6766,
+      "go": "Maybe<number>",
+      "tsrs": "Maybe<number>"
+    },
+    {
+      "case": 72,
+      "annotation": "DeepReadonly<Shape>",
+      "position_utf16": 6845,
+      "go": "{ readonly a: number; readonly b?: string | undefined; readonly c: boolean; }",
+      "tsrs": "{ readonly a: number; readonly b?: string | undefined; readonly c: boolean; }"
+    },
+    {
+      "case": 73,
+      "annotation": "Direction | \"other\"",
+      "position_utf16": 6930,
+      "go": "\"other\" | Direction",
+      "tsrs": "\"other\" | Direction"
+    },
+    {
+      "case": 74,
+      "annotation": "1 | 2 | 3",
+      "position_utf16": 7015,
+      "go": "1 | 2 | 3",
+      "tsrs": "1 | 2 | 3"
+    },
+    {
+      "case": 75,
+      "annotation": "\"north\" | \"south\"",
+      "position_utf16": 7090,
+      "go": "\"north\" | \"south\"",
+      "tsrs": "\"north\" | \"south\""
+    },
+    {
+      "case": 76,
+      "annotation": "number | undefined",
+      "position_utf16": 7173,
+      "go": "number | undefined",
+      "tsrs": "number | undefined"
+    },
+    {
+      "case": 77,
+      "annotation": "string | null",
+      "position_utf16": 7257,
+      "go": "string | null",
+      "tsrs": "string | null"
+    },
+    {
+      "case": 78,
+      "annotation": "boolean | undefined",
+      "position_utf16": 7336,
+      "go": "boolean | undefined",
+      "tsrs": "boolean | undefined"
+    },
+    {
+      "case": 79,
+      "annotation": "readonly number[]",
+      "position_utf16": 7421,
+      "go": "readonly number[]",
+      "tsrs": "readonly number[]"
+    },
+    {
+      "case": 80,
+      "annotation": "ReadonlyArray<Shape>",
+      "position_utf16": 7504,
+      "go": "readonly Shape[]",
+      "tsrs": "readonly Shape[]"
+    },
+    {
+      "case": 81,
+      "annotation": "Map<string, Shape>",
+      "position_utf16": 7590,
+      "go": "Map<string, Shape>",
+      "tsrs": "Map<string, Shape>"
+    },
+    {
+      "case": 82,
+      "annotation": "Set<number>",
+      "position_utf16": 7674,
+      "go": "Set<number>",
+      "tsrs": "Set<number>"
+    },
+    {
+      "case": 83,
+      "annotation": "WeakMap<object, string>",
+      "position_utf16": 7751,
+      "go": "WeakMap<object, string>",
+      "tsrs": "WeakMap<object, string>"
+    },
+    {
+      "case": 84,
+      "annotation": "Date",
+      "position_utf16": 7840,
+      "go": "Date",
+      "tsrs": "Date"
+    },
+    {
+      "case": 85,
+      "annotation": "Error",
+      "position_utf16": 7910,
+      "go": "Error",
+      "tsrs": "Error"
+    },
+    {
+      "case": 86,
+      "annotation": "RegExp",
+      "position_utf16": 7981,
+      "go": "RegExp",
+      "tsrs": "RegExp"
+    },
+    {
+      "case": 87,
+      "annotation": "Int8Array",
+      "position_utf16": 8053,
+      "go": "Int8Array<ArrayBufferLike>",
+      "tsrs": "Int8Array<ArrayBufferLike>"
+    },
+    {
+      "case": 88,
+      "annotation": "ArrayBuffer",
+      "position_utf16": 8128,
+      "go": "ArrayBuffer",
+      "tsrs": "ArrayBuffer"
+    },
+    {
+      "case": 89,
+      "annotation": "Promise<void>",
+      "position_utf16": 8205,
+      "go": "Promise<void>",
+      "tsrs": "Promise<void>"
+    },
+    {
+      "case": 90,
+      "annotation": "ThisType<Shape>",
+      "position_utf16": 8284,
+      "go": "ThisType<Shape>",
+      "tsrs": "ThisType<Shape>"
+    },
+    {
+      "case": 91,
+      "annotation": "NumericBrand",
+      "position_utf16": 8365,
+      "go": "NumericBrand",
+      "tsrs": "NumericBrand"
+    },
+    {
+      "case": 92,
+      "annotation": "Choice",
+      "position_utf16": 8443,
+      "go": "Choice",
+      "tsrs": "Choice"
+    },
+    {
+      "case": 93,
+      "annotation": "Box<string>",
+      "position_utf16": 8515,
+      "go": "Box<string>",
+      "tsrs": "Box<string>"
+    },
+    {
+      "case": 94,
+      "annotation": "Pair<string, number>",
+      "position_utf16": 8592,
+      "go": "Pair<string, number>",
+      "tsrs": "Pair<string, number>"
+    },
+    {
+      "case": 95,
+      "annotation": "Maybe<string>",
+      "position_utf16": 8678,
+      "go": "Maybe<string>",
+      "tsrs": "Maybe<string>"
+    },
+    {
+      "case": 96,
+      "annotation": "Promise<string>",
+      "position_utf16": 8757,
+      "go": "Promise<string>",
+      "tsrs": "Promise<string>"
+    },
+    {
+      "case": 97,
+      "annotation": "readonly string[]",
+      "position_utf16": 8838,
+      "go": "readonly string[]",
+      "tsrs": "readonly string[]"
+    },
+    {
+      "case": 98,
+      "annotation": "Box<number>",
+      "position_utf16": 8921,
+      "go": "Box<number>",
+      "tsrs": "Box<number>"
+    },
+    {
+      "case": 99,
+      "annotation": "Pair<number, number>",
+      "position_utf16": 8998,
+      "go": "Pair<number, number>",
+      "tsrs": "Pair<number, number>"
+    },
+    {
+      "case": 100,
+      "annotation": "Maybe<number>",
+      "position_utf16": 9084,
+      "go": "Maybe<number>",
+      "tsrs": "Maybe<number>"
+    },
+    {
+      "case": 101,
+      "annotation": "Promise<number>",
+      "position_utf16": 9163,
+      "go": "Promise<number>",
+      "tsrs": "Promise<number>"
+    },
+    {
+      "case": 102,
+      "annotation": "readonly number[]",
+      "position_utf16": 9244,
+      "go": "readonly number[]",
+      "tsrs": "readonly number[]"
+    },
+    {
+      "case": 103,
+      "annotation": "Box<boolean>",
+      "position_utf16": 9327,
+      "go": "Box<boolean>",
+      "tsrs": "Box<boolean>"
+    },
+    {
+      "case": 104,
+      "annotation": "Pair<boolean, number>",
+      "position_utf16": 9405,
+      "go": "Pair<boolean, number>",
+      "tsrs": "Pair<boolean, number>"
+    },
+    {
+      "case": 105,
+      "annotation": "Maybe<boolean>",
+      "position_utf16": 9492,
+      "go": "Maybe<boolean>",
+      "tsrs": "Maybe<boolean>"
+    },
+    {
+      "case": 106,
+      "annotation": "Promise<boolean>",
+      "position_utf16": 9572,
+      "go": "Promise<boolean>",
+      "tsrs": "Promise<boolean>"
+    },
+    {
+      "case": 107,
+      "annotation": "readonly boolean[]",
+      "position_utf16": 9654,
+      "go": "readonly boolean[]",
+      "tsrs": "readonly boolean[]"
+    },
+    {
+      "case": 108,
+      "annotation": "Box<Shape>",
+      "position_utf16": 9738,
+      "go": "Box<Shape>",
+      "tsrs": "Box<Shape>"
+    },
+    {
+      "case": 109,
+      "annotation": "Pair<Shape, number>",
+      "position_utf16": 9814,
+      "go": "Pair<Shape, number>",
+      "tsrs": "Pair<Shape, number>"
+    },
+    {
+      "case": 110,
+      "annotation": "Maybe<Shape>",
+      "position_utf16": 9899,
+      "go": "Maybe<Shape>",
+      "tsrs": "Maybe<Shape>"
+    },
+    {
+      "case": 111,
+      "annotation": "Promise<Shape>",
+      "position_utf16": 9977,
+      "go": "Promise<Shape>",
+      "tsrs": "Promise<Shape>"
+    },
+    {
+      "case": 112,
+      "annotation": "readonly Shape[]",
+      "position_utf16": 10057,
+      "go": "readonly Shape[]",
+      "tsrs": "readonly Shape[]"
+    },
+    {
+      "case": 113,
+      "annotation": "Box<Named>",
+      "position_utf16": 10139,
+      "go": "Box<Named>",
+      "tsrs": "Box<Named>"
+    },
+    {
+      "case": 114,
+      "annotation": "Pair<Named, number>",
+      "position_utf16": 10215,
+      "go": "Pair<Named, number>",
+      "tsrs": "Pair<Named, number>"
+    },
+    {
+      "case": 115,
+      "annotation": "Maybe<Named>",
+      "position_utf16": 10300,
+      "go": "Maybe<Named>",
+      "tsrs": "Maybe<Named>"
+    },
+    {
+      "case": 116,
+      "annotation": "Promise<Named>",
+      "position_utf16": 10378,
+      "go": "Promise<Named>",
+      "tsrs": "Promise<Named>"
+    },
+    {
+      "case": 117,
+      "annotation": "readonly Named[]",
+      "position_utf16": 10458,
+      "go": "readonly Named[]",
+      "tsrs": "readonly Named[]"
+    },
+    {
+      "case": 118,
+      "annotation": "Box<1>",
+      "position_utf16": 10540,
+      "go": "Box<1>",
+      "tsrs": "Box<1>"
+    },
+    {
+      "case": 119,
+      "annotation": "Pair<1, number>",
+      "position_utf16": 10612,
+      "go": "Pair<1, number>",
+      "tsrs": "Pair<1, number>"
+    },
+    {
+      "case": 120,
+      "annotation": "Maybe<1>",
+      "position_utf16": 10693,
+      "go": "Maybe<1>",
+      "tsrs": "Maybe<1>"
+    },
+    {
+      "case": 121,
+      "annotation": "Promise<1>",
+      "position_utf16": 10767,
+      "go": "Promise<1>",
+      "tsrs": "Promise<1>"
+    },
+    {
+      "case": 122,
+      "annotation": "readonly 1[]",
+      "position_utf16": 10843,
+      "go": "readonly 1[]",
+      "tsrs": "readonly 1[]"
+    },
+    {
+      "case": 123,
+      "annotation": "Box<\"lit\">",
+      "position_utf16": 10921,
+      "go": "Box<\"lit\">",
+      "tsrs": "Box<\"lit\">"
+    },
+    {
+      "case": 124,
+      "annotation": "Pair<\"lit\", number>",
+      "position_utf16": 10997,
+      "go": "Pair<\"lit\", number>",
+      "tsrs": "Pair<\"lit\", number>"
+    },
+    {
+      "case": 125,
+      "annotation": "Maybe<\"lit\">",
+      "position_utf16": 11082,
+      "go": "Maybe<\"lit\">",
+      "tsrs": "Maybe<\"lit\">"
+    },
+    {
+      "case": 126,
+      "annotation": "Promise<\"lit\">",
+      "position_utf16": 11160,
+      "go": "Promise<\"lit\">",
+      "tsrs": "Promise<\"lit\">"
+    },
+    {
+      "case": 127,
+      "annotation": "readonly \"lit\"[]",
+      "position_utf16": 11240,
+      "go": "readonly \"lit\"[]",
+      "tsrs": "readonly \"lit\"[]"
+    },
+    {
+      "case": 128,
+      "annotation": "Box<unknown>",
+      "position_utf16": 11322,
+      "go": "Box<unknown>",
+      "tsrs": "Box<unknown>"
+    },
+    {
+      "case": 129,
+      "annotation": "Pair<unknown, number>",
+      "position_utf16": 11400,
+      "go": "Pair<unknown, number>",
+      "tsrs": "Pair<unknown, number>"
+    },
+    {
+      "case": 130,
+      "annotation": "Maybe<unknown>",
+      "position_utf16": 11487,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 131,
+      "annotation": "Promise<unknown>",
+      "position_utf16": 11567,
+      "go": "Promise<unknown>",
+      "tsrs": "Promise<unknown>"
+    },
+    {
+      "case": 132,
+      "annotation": "readonly unknown[]",
+      "position_utf16": 11649,
+      "go": "readonly unknown[]",
+      "tsrs": "readonly unknown[]"
+    },
+    {
+      "case": 133,
+      "annotation": "Box<null>",
+      "position_utf16": 11733,
+      "go": "Box<null>",
+      "tsrs": "Box<null>"
+    },
+    {
+      "case": 134,
+      "annotation": "Pair<null, number>",
+      "position_utf16": 11808,
+      "go": "Pair<null, number>",
+      "tsrs": "Pair<null, number>"
+    },
+    {
+      "case": 135,
+      "annotation": "Maybe<null>",
+      "position_utf16": 11892,
+      "go": "Maybe<null>",
+      "tsrs": "Maybe<null>"
+    },
+    {
+      "case": 136,
+      "annotation": "Promise<null>",
+      "position_utf16": 11969,
+      "go": "Promise<null>",
+      "tsrs": "Promise<null>"
+    },
+    {
+      "case": 137,
+      "annotation": "readonly null[]",
+      "position_utf16": 12048,
+      "go": "readonly null[]",
+      "tsrs": "readonly null[]"
+    },
+    {
+      "case": 138,
+      "annotation": "Box<undefined>",
+      "position_utf16": 12129,
+      "go": "Box<undefined>",
+      "tsrs": "Box<undefined>"
+    },
+    {
+      "case": 139,
+      "annotation": "Pair<undefined, number>",
+      "position_utf16": 12209,
+      "go": "Pair<undefined, number>",
+      "tsrs": "Pair<undefined, number>"
+    },
+    {
+      "case": 140,
+      "annotation": "Maybe<undefined>",
+      "position_utf16": 12298,
+      "go": "undefined",
+      "tsrs": "undefined"
+    },
+    {
+      "case": 141,
+      "annotation": "Promise<undefined>",
+      "position_utf16": 12380,
+      "go": "Promise<undefined>",
+      "tsrs": "Promise<undefined>"
+    },
+    {
+      "case": 142,
+      "annotation": "readonly undefined[]",
+      "position_utf16": 12464,
+      "go": "readonly undefined[]",
+      "tsrs": "readonly undefined[]"
+    },
+    {
+      "case": 143,
+      "annotation": "Box<never>",
+      "position_utf16": 12550,
+      "go": "Box<never>",
+      "tsrs": "Box<never>"
+    },
+    {
+      "case": 144,
+      "annotation": "Pair<never, number>",
+      "position_utf16": 12626,
+      "go": "Pair<never, number>",
+      "tsrs": "Pair<never, number>"
+    },
+    {
+      "case": 145,
+      "annotation": "Maybe<never>",
+      "position_utf16": 12711,
+      "go": "undefined",
+      "tsrs": "undefined"
+    },
+    {
+      "case": 146,
+      "annotation": "Promise<never>",
+      "position_utf16": 12789,
+      "go": "Promise<never>",
+      "tsrs": "Promise<never>"
+    },
+    {
+      "case": 147,
+      "annotation": "readonly never[]",
+      "position_utf16": 12869,
+      "go": "readonly never[]",
+      "tsrs": "readonly never[]"
+    },
+    {
+      "case": 148,
+      "annotation": "Box<Direction>",
+      "position_utf16": 12951,
+      "go": "Box<Direction>",
+      "tsrs": "Box<Direction>"
+    },
+    {
+      "case": 149,
+      "annotation": "Pair<Direction, number>",
+      "position_utf16": 13031,
+      "go": "Pair<Direction, number>",
+      "tsrs": "Pair<Direction, number>"
+    },
+    {
+      "case": 150,
+      "annotation": "Maybe<Direction>",
+      "position_utf16": 13120,
+      "go": "Maybe<Direction>",
+      "tsrs": "Maybe<Direction>"
+    },
+    {
+      "case": 151,
+      "annotation": "Promise<Direction>",
+      "position_utf16": 13202,
+      "go": "Promise<Direction>",
+      "tsrs": "Promise<Direction>"
+    },
+    {
+      "case": 152,
+      "annotation": "readonly Direction[]",
+      "position_utf16": 13286,
+      "go": "readonly Direction[]",
+      "tsrs": "readonly Direction[]"
+    },
+    {
+      "case": 153,
+      "annotation": "string | number",
+      "position_utf16": 13372,
+      "go": "string | number",
+      "tsrs": "string | number"
+    },
+    {
+      "case": 154,
+      "annotation": "string | boolean",
+      "position_utf16": 13453,
+      "go": "string | boolean",
+      "tsrs": "string | boolean"
+    },
+    {
+      "case": 155,
+      "annotation": "string | Shape",
+      "position_utf16": 13535,
+      "go": "string | Shape",
+      "tsrs": "string | Shape"
+    },
+    {
+      "case": 156,
+      "annotation": "string | Named",
+      "position_utf16": 13615,
+      "go": "string | Named",
+      "tsrs": "string | Named"
+    },
+    {
+      "case": 157,
+      "annotation": "string | 1",
+      "position_utf16": 13695,
+      "go": "string | 1",
+      "tsrs": "string | 1"
+    },
+    {
+      "case": 158,
+      "annotation": "string | \"lit\"",
+      "position_utf16": 13771,
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "case": 159,
+      "annotation": "string | unknown",
+      "position_utf16": 13851,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 160,
+      "annotation": "string | null",
+      "position_utf16": 13933,
+      "go": "string | null",
+      "tsrs": "string | null"
+    },
+    {
+      "case": 161,
+      "annotation": "string | undefined",
+      "position_utf16": 14012,
+      "go": "string | undefined",
+      "tsrs": "string | undefined"
+    },
+    {
+      "case": 162,
+      "annotation": "string | never",
+      "position_utf16": 14096,
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "case": 163,
+      "annotation": "string | Direction",
+      "position_utf16": 14176,
+      "go": "string | Direction",
+      "tsrs": "string | Direction"
+    },
+    {
+      "case": 164,
+      "annotation": "number | boolean",
+      "position_utf16": 14260,
+      "go": "number | boolean",
+      "tsrs": "number | boolean"
+    },
+    {
+      "case": 165,
+      "annotation": "number | Shape",
+      "position_utf16": 14342,
+      "go": "number | Shape",
+      "tsrs": "number | Shape"
+    },
+    {
+      "case": 166,
+      "annotation": "number | Named",
+      "position_utf16": 14422,
+      "go": "number | Named",
+      "tsrs": "number | Named"
+    },
+    {
+      "case": 167,
+      "annotation": "number | 1",
+      "position_utf16": 14502,
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "case": 168,
+      "annotation": "number | \"lit\"",
+      "position_utf16": 14578,
+      "go": "number | \"lit\"",
+      "tsrs": "number | \"lit\""
+    },
+    {
+      "case": 169,
+      "annotation": "number | unknown",
+      "position_utf16": 14658,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 170,
+      "annotation": "number | null",
+      "position_utf16": 14740,
+      "go": "number | null",
+      "tsrs": "number | null"
+    },
+    {
+      "case": 171,
+      "annotation": "number | undefined",
+      "position_utf16": 14819,
+      "go": "number | undefined",
+      "tsrs": "number | undefined"
+    },
+    {
+      "case": 172,
+      "annotation": "number | never",
+      "position_utf16": 14903,
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "case": 173,
+      "annotation": "number | Direction",
+      "position_utf16": 14983,
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "case": 174,
+      "annotation": "boolean | Shape",
+      "position_utf16": 15067,
+      "go": "boolean | Shape",
+      "tsrs": "boolean | Shape"
+    },
+    {
+      "case": 175,
+      "annotation": "boolean | Named",
+      "position_utf16": 15148,
+      "go": "boolean | Named",
+      "tsrs": "boolean | Named"
+    },
+    {
+      "case": 176,
+      "annotation": "boolean | 1",
+      "position_utf16": 15229,
+      "go": "1 | boolean",
+      "tsrs": "1 | boolean"
+    },
+    {
+      "case": 177,
+      "annotation": "boolean | \"lit\"",
+      "position_utf16": 15306,
+      "go": "\"lit\" | boolean",
+      "tsrs": "\"lit\" | boolean"
+    },
+    {
+      "case": 178,
+      "annotation": "boolean | unknown",
+      "position_utf16": 15387,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 179,
+      "annotation": "boolean | null",
+      "position_utf16": 15470,
+      "go": "boolean | null",
+      "tsrs": "boolean | null"
+    },
+    {
+      "case": 180,
+      "annotation": "boolean | undefined",
+      "position_utf16": 15550,
+      "go": "boolean | undefined",
+      "tsrs": "boolean | undefined"
+    },
+    {
+      "case": 181,
+      "annotation": "boolean | never",
+      "position_utf16": 15635,
+      "go": "boolean",
+      "tsrs": "boolean"
+    },
+    {
+      "case": 182,
+      "annotation": "boolean | Direction",
+      "position_utf16": 15716,
+      "go": "boolean | Direction",
+      "tsrs": "boolean | Direction"
+    },
+    {
+      "case": 183,
+      "annotation": "Shape | Named",
+      "position_utf16": 15801,
+      "go": "Named | Shape",
+      "tsrs": "Named | Shape"
+    },
+    {
+      "case": 184,
+      "annotation": "Shape | 1",
+      "position_utf16": 15880,
+      "go": "1 | Shape",
+      "tsrs": "1 | Shape"
+    },
+    {
+      "case": 185,
+      "annotation": "Shape | \"lit\"",
+      "position_utf16": 15955,
+      "go": "\"lit\" | Shape",
+      "tsrs": "\"lit\" | Shape"
+    },
+    {
+      "case": 186,
+      "annotation": "Shape | unknown",
+      "position_utf16": 16034,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 187,
+      "annotation": "Shape | null",
+      "position_utf16": 16115,
+      "go": "Shape | null",
+      "tsrs": "Shape | null"
+    },
+    {
+      "case": 188,
+      "annotation": "Shape | undefined",
+      "position_utf16": 16193,
+      "go": "Shape | undefined",
+      "tsrs": "Shape | undefined"
+    },
+    {
+      "case": 189,
+      "annotation": "Shape | never",
+      "position_utf16": 16276,
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "case": 190,
+      "annotation": "Shape | Direction",
+      "position_utf16": 16355,
+      "go": "Shape | Direction",
+      "tsrs": "Shape | Direction"
+    },
+    {
+      "case": 191,
+      "annotation": "Named | 1",
+      "position_utf16": 16438,
+      "go": "1 | Named",
+      "tsrs": "1 | Named"
+    },
+    {
+      "case": 192,
+      "annotation": "Named | \"lit\"",
+      "position_utf16": 16513,
+      "go": "\"lit\" | Named",
+      "tsrs": "\"lit\" | Named"
+    },
+    {
+      "case": 193,
+      "annotation": "Named | unknown",
+      "position_utf16": 16592,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 194,
+      "annotation": "Named | null",
+      "position_utf16": 16673,
+      "go": "Named | null",
+      "tsrs": "Named | null"
+    },
+    {
+      "case": 195,
+      "annotation": "Named | undefined",
+      "position_utf16": 16751,
+      "go": "Named | undefined",
+      "tsrs": "Named | undefined"
+    },
+    {
+      "case": 196,
+      "annotation": "Named | never",
+      "position_utf16": 16834,
+      "go": "Named",
+      "tsrs": "Named"
+    },
+    {
+      "case": 197,
+      "annotation": "Named | Direction",
+      "position_utf16": 16913,
+      "go": "Named | Direction",
+      "tsrs": "Named | Direction"
+    },
+    {
+      "case": 198,
+      "annotation": "1 | \"lit\"",
+      "position_utf16": 16996,
+      "go": "\"lit\" | 1",
+      "tsrs": "\"lit\" | 1"
+    },
+    {
+      "case": 199,
+      "annotation": "1 | unknown",
+      "position_utf16": 17071,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 200,
+      "annotation": "1 | null",
+      "position_utf16": 17148,
+      "go": "1 | null",
+      "tsrs": "1 | null"
+    },
+    {
+      "case": 201,
+      "annotation": "1 | undefined",
+      "position_utf16": 17222,
+      "go": "1 | undefined",
+      "tsrs": "1 | undefined"
+    },
+    {
+      "case": 202,
+      "annotation": "1 | never",
+      "position_utf16": 17301,
+      "go": "1",
+      "tsrs": "1"
+    },
+    {
+      "case": 203,
+      "annotation": "1 | Direction",
+      "position_utf16": 17376,
+      "go": "1 | Direction",
+      "tsrs": "1 | Direction"
+    },
+    {
+      "case": 204,
+      "annotation": "\"lit\" | unknown",
+      "position_utf16": 17455,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 205,
+      "annotation": "\"lit\" | null",
+      "position_utf16": 17536,
+      "go": "\"lit\" | null",
+      "tsrs": "\"lit\" | null"
+    },
+    {
+      "case": 206,
+      "annotation": "\"lit\" | undefined",
+      "position_utf16": 17614,
+      "go": "\"lit\" | undefined",
+      "tsrs": "\"lit\" | undefined"
+    },
+    {
+      "case": 207,
+      "annotation": "\"lit\" | never",
+      "position_utf16": 17697,
+      "go": "\"lit\"",
+      "tsrs": "\"lit\""
+    },
+    {
+      "case": 208,
+      "annotation": "\"lit\" | Direction",
+      "position_utf16": 17776,
+      "go": "\"lit\" | Direction",
+      "tsrs": "\"lit\" | Direction"
+    },
+    {
+      "case": 209,
+      "annotation": "unknown | null",
+      "position_utf16": 17859,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 210,
+      "annotation": "unknown | undefined",
+      "position_utf16": 17939,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 211,
+      "annotation": "unknown | never",
+      "position_utf16": 18024,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 212,
+      "annotation": "unknown | Direction",
+      "position_utf16": 18105,
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "case": 213,
+      "annotation": "null | undefined",
+      "position_utf16": 18190,
+      "go": "null | undefined",
+      "tsrs": "null | undefined"
+    },
+    {
+      "case": 214,
+      "annotation": "null | never",
+      "position_utf16": 18272,
+      "go": "null",
+      "tsrs": "null"
+    },
+    {
+      "case": 215,
+      "annotation": "null | Direction",
+      "position_utf16": 18350,
+      "go": "Direction | null",
+      "tsrs": "Direction | null"
+    },
+    {
+      "case": 216,
+      "annotation": "undefined | never",
+      "position_utf16": 18432,
+      "go": "undefined",
+      "tsrs": "undefined"
+    },
+    {
+      "case": 217,
+      "annotation": "undefined | Direction",
+      "position_utf16": 18515,
+      "go": "Direction | undefined",
+      "tsrs": "Direction | undefined"
+    },
+    {
+      "case": 218,
+      "annotation": "never | Direction",
+      "position_utf16": 18602,
+      "go": "Direction",
+      "tsrs": "Direction"
+    }
+  ],
+  "date": "2026-11-01",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "fixture": "evidence/hmr/fixtures/tsrs-go-api-wide-parity.ts",
+  "fixture_config": "evidence/hmr/fixtures/tsrs-go-api-wide-parity.tsconfig.json",
+  "fixture_config_sha256": "6b4c636b18a083f6fcb70a9373c892f588573427c251e05e2746700d930f2460",
+  "oracle_runner": "Pinned TypeScript package synchronous API; API({cwd, tsserverPath}).createSnapshot({openFiles}); project.checker.getTypeAtPosition(file, positions); checker.typeToString(type) using default flags.",
+  "candidate_runner": "tools/quench-tsrs-worker/target/debug/quench-tsrs-worker, one batched request for the same file and UTF-16 positions.",
+  "result": "Exact display strings matched for every valid HMR-shaped parameter query in the generated corpus. This is direct differential evidence for the default flag path HMR uses; it does not establish the full checker API surface, all TypeScript syntax, all formatting flags, or arbitrary enclosing declarations."
+}

@@ -1,0 +1,37 @@
+{
+  "kind": "quench-hmr-tsx-configured-warm-update-latency",
+  "date": "2026-11-01",
+  "method": "30 sequential atomic replacements of a self-accepted TSX ESM entry; each sample starts before replacing the source and ends when the updated generation prints.",
+  "entry": "Typed View component using jsxImportSource=preact, OXC JSX transform, a local ESM jsx-runtime shim, and import.meta.hot.accept().",
+  "invocation": "target/debug/quench-node --hmr /tmp/quench-hmr-tsx-warm-ae9lma0z/main.tsx",
+  "updates": 30,
+  "median_ms": 68.307375,
+  "p95_ms_nearest_rank": 79.116834,
+  "max_ms": 79.8575,
+  "raw_ms": [
+    73.671333, 66.670083, 63.508125, 73.025791, 70.632291,
+    65.423209, 79.8575, 72.444875, 65.663125, 68.327916,
+    79.116834, 68.2925, 77.524917, 67.889916, 66.903208,
+    67.33475, 69.984833, 62.902417, 68.756, 71.181458,
+    68.32225, 66.071625, 75.82575, 64.861542, 61.999667,
+    77.171625, 64.595583, 78.637, 63.091084, 68.091
+  ],
+  "observed": [
+    "GEN 0 {\"type\":\"button\",\"props\":{\"children\":0}}",
+    "GEN 30 {\"type\":\"button\",\"props\":{\"children\":30}}"
+  ],
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "scope": "This one configured TSX entry stayed under 100 ms for all 30 warm replacements on this Mac host. It is not a cross-platform or full React compatibility claim."
+}

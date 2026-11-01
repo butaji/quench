@@ -1,0 +1,19 @@
+{
+  "kind": "quench-hmr-tsconfig-path-alias-live-update",
+  "date": "2026-11-01",
+  "invocation": "target/debug/quench-node --jit --hmr <main.ts>",
+  "project": {
+    "tsconfig": "strict TypeScript, ESNext modules, Bundler resolution, paths @model/* -> types/*",
+    "type_dependency": "main.ts imports Numeric from @model/numeric; types/numeric.ts exports type Numeric = number",
+    "entry": "self-accepted ESM TypeScript module with loop(limit: Numeric), 20,000 calls to loop(64), and generation marker"
+  },
+  "checker_worker_override": "unset",
+  "observed_output": [
+    "GEN 1 40320000",
+    "GEN 2 40320000"
+  ],
+  "checker_errors": [],
+  "result": "The CLI loaded and live-replaced a typed TypeScript entry whose parameter annotation resolves through a tsconfig paths alias; the process remained resident and produced the same numeric result.",
+  "related_direct_checker_evidence": "evidence/hmr/2026-11-01-tsrs-project-query-parity.json",
+  "scope": "This live smoke confirms project-path resolution and HMR execution, but does not itself inspect installed type facts or JIT compilation status; the separate TypeScript fact guard artifact covers that path."
+}

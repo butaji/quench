@@ -389,10 +389,12 @@ enum CompileRelease {
     FirstCall,
     Encoding,
     Kept,
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     LaneDerivation,
 }
 
 impl CompileRelease {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     const COUNT: usize = 5;
 
     /// The releases that may come inside their interval once resident code passes the budget

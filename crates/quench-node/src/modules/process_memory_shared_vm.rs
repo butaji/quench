@@ -15,6 +15,7 @@ pub(crate) fn constrained(
 ) -> Result<RootId, RootedError> {
     Ok(context.number(super::memory_facts::constrained() as f64))
 }
+#[cfg(target_os = "linux")]
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let process = context
         .host_mut()

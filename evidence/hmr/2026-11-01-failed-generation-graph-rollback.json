@@ -1,0 +1,27 @@
+{
+  "kind": "quench-hmr-failed-generation-graph-rollback",
+  "date": "2026-11-01",
+  "scenario": "a failed CommonJS replacement temporarily requires a dependency that the prior generation accepted but never imported",
+  "invocation": "target/debug/quench-node --hmr <main.cjs>",
+  "steps": [
+    "The loaded dep.cjs generation registered module.hot.accept('./ghost.cjs') but had no require edge to ghost.cjs.",
+    "A replacement generation required ghost.cjs and then threw; Quench reported the failure and retained the prior dep.cjs generation.",
+    "ghost.cjs was edited after rollback. The old generation's acceptance callback was not invoked for the failed generation's transient edge.",
+    "The detached ghost module caused conservative restart fallback; startup then exited because dep.cjs still contained the intentionally throwing disk version."
+  ],
+  "observed": {
+    "pid": 45433,
+    "initial_output": ["BOOT old"],
+    "failed_update_reported": true,
+    "phantom_accept_callback_called": false,
+    "process_exit_after_detached_module_edit": 1
+  },
+  "result": "Rollback restored the old importer edge set instead of retaining dependency edges recorded by failed evaluation.",
+  "verification": {
+    "cargo_build_p_quench_node": "passed before this live smoke",
+    "git_diff_check": "passed before this live smoke",
+    "live_cli_smoke": "passed",
+    "test_suite": "not run"
+  },
+  "scope": "Focused rollback behavior check on one macOS host; the final exit is expected fallback against deliberately failing on-disk source."
+}

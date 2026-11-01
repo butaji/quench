@@ -1,0 +1,25 @@
+{
+  "kind": "quench-hmr-dependency-accept-array-smoke",
+  "date_utc": "2026-11-01T04:39:35Z",
+  "commit": "56ae6d71e5",
+  "platform": {
+    "os": "macOS 25.5.0",
+    "architecture": "arm64",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "command": "target/debug/quench-node --hmr <entry.mjs>",
+  "fixture": {
+    "entry.mjs": "Imports `a.mjs` and `b.mjs`; registers `import.meta.hot.accept(['./a.mjs', './b.mjs'], callback)`.",
+    "a_initial": "export const value = 'a1';",
+    "a_updated": "export const value = 'a2';",
+    "b": "export const value = 'b1';"
+  },
+  "observed_output": ["ENTRY a1 b1", "ACCEPT a2 undefined"],
+  "interpretation": "The dependency-array callback ran in process. It received the changed module namespace at the registered index and undefined for the unchanged dependency; the entry was not rerun.",
+  "fixture_sha256": {
+    "entry.mjs": "d20b5ba26c59e2144abeed091e1cd6041f00d267b769b83af155b857d1eef64a",
+    "a.mjs": "694b9d92ed408bc2491a1deb61b19e49a9723c27cf6778bb25eb26edb51a789d",
+    "b.mjs": "5bdc0b3b5ed8ae7fd61298a4df1dbd4297f353a2edb50e273e01c60c95e00b5d"
+  }
+}

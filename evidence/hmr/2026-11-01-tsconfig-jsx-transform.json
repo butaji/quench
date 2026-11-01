@@ -1,0 +1,58 @@
+{
+  "kind": "quench-hmr-tsconfig-jsx-transform",
+  "date": "2026-11-01",
+  "initial_failure": {
+    "config": "jsx=react-jsx, jsxImportSource=preact",
+    "result": "The HMR loader imported react/jsx-runtime and failed because that module did not provide jsx."
+  },
+  "implemented_behavior": [
+    "Read resolved JSX compiler options from the nearest TypeScript project config, including inherited configs.",
+    "Apply jsx runtime, jsxImportSource, jsxFactory, and jsxFragmentFactory through OXC Transformer options.",
+    "Track the resolved tsconfig and inherited config files as HMR metadata dependencies.",
+    "Treat tsconfig edits as restart-only changes so the same CLI invocation reloads with fresh transform options."
+  ],
+  "verification": {
+    "command": "cargo build -p quench-node",
+    "formatting": "rustfmt --edition 2021 on the three changed Rust files",
+    "diff_check": "passed",
+    "runtime_smokes": [
+      {
+        "case": "automatic jsxImportSource=preact",
+        "output": "JSX {\"type\":\"button\",\"props\":{\"children\":\"ok\"}}",
+        "result": "passed"
+      },
+      {
+        "case": "inherited JSONC tsconfig.base.json import source changed from preact to custom during the live session",
+        "outputs": [
+          "JSX {\"runtime\":\"preact\",\"type\":\"button\",\"props\":{\"children\":\"ok\"}}",
+          "JSX {\"runtime\":\"custom\",\"type\":\"button\",\"props\":{\"children\":\"ok\"}}"
+        ],
+        "result": "passed; same CLI PID re-executed with the new inherited JSX config"
+      },
+      {
+        "case": "jsx=react with jsxFactory=h and jsxFragmentFactory=Fragment",
+        "output": "CLASSIC {\"factory\":\"h\",\"props\":null}",
+        "result": "passed; classic factory h executed"
+      },
+      {
+        "case": "jsx=react-jsxdev with jsxImportSource=preact",
+        "output": "DEV {\"runtime\":\"preact-dev\",\"type\":\"button\",\"props\":{\"children\":\"dev\"},\"isStaticChildren\":false}",
+        "result": "passed; OXC loaded preact/jsx-dev-runtime"
+      }
+    ]
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "scope": "Manual HMR CLI checks with local JSX runtime shims. They verify the listed config modes and inherited-config reload on this host; they do not claim full compatibility with every JSX compiler mode or React Fast Refresh."
+}

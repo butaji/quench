@@ -1,0 +1,24 @@
+{
+  "kind": "quench-hmr-commonjs-inflight-generation",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "invocation": "target/debug/quench-node --hmr <main.cjs>",
+  "scenario": "A self-accepted CommonJS entry starts an asynchronous call, then receives a replacement before that call finishes.",
+  "observed": [
+    "START 1",
+    "START 2",
+    "DONE 1",
+    "DONE 2"
+  ],
+  "result": "The old in-flight call completed using generation 1 while the replacement started generation 2 in the same process.",
+  "verification": {
+    "build_command": "cargo build -p quench-node",
+    "build_result": "passed before the runtime smoke",
+    "runtime_smoke": "passed"
+  }
+}

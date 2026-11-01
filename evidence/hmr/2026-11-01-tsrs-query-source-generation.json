@@ -1,0 +1,32 @@
+{
+  "kind": "quench-hmr-tsrs-query-source-generation-binding",
+  "date": "2026-11-01",
+  "problem": "A TSRS response could arrive after its source file changed and be installed using source positions mapped from an older file generation.",
+  "change": {
+    "query_mapping": "Each OXC-mapped parameter position carries the SHA-1 digest of the exact source text used to generate its UTF-16 query position.",
+    "response_installation": "Before installing returned facts, the HMR checkpoint compares that digest with the tracked graph stamp and the current file contents. Stale responses are discarded.",
+    "runtime_safety": "The existing exact numeric runtime guard and fallback remain authoritative."
+  },
+  "files": [
+    "crates/quench-node/src/host/shared_vm/source_transform.rs",
+    "crates/quench-node/src/host/hmr/type_worker.rs",
+    "crates/quench-node/src/modules/process_shared_vm.rs"
+  ],
+  "verification": {
+    "command": "cargo build -p quench-node",
+    "result": "passed",
+    "fresh_query_smoke": {
+      "source": "main.mts with count(limit: number, unused: string)",
+      "worker_reply": "2 facts, 1 numeric; the source digest matched the graph stamp",
+      "runtime": "The fresh numeric fact reached the program (numeric_entries=1). This minimal function's whole-function native lowering was unsupported; the existing typescript-fact-native-guard artifact covers successful guarded native compilation."
+    },
+    "stale_response_race": {
+      "worker_start_delay_ms": 3000,
+      "initial_generation": "GEN1 76363 5",
+      "edit": "Added a TypeScript decorator while the first checker request was waiting; Quench rejected this edit and kept the old module generation active.",
+      "stale_worker_reply": "2 facts, 0 numeric, source current=false",
+      "result": "The late response was discarded, and the invalid edit did not replace the active generation."
+    }
+  },
+  "scope": "The freshness binding was exercised with both a current response and a delayed stale response on this host. The separate pinned TypeScript checker compatibility gate remains open."
+}

@@ -1,0 +1,38 @@
+{
+  "kind": "quench-hmr-tsx-configured-warm-update-latency",
+  "date": "2026-11-01",
+  "method": "30 sequential atomic replacements of a self-accepted TSX ESM entry; each sample starts before writing the replacement and ends at the updated generation's output.",
+  "entry": "Typed View component using jsxImportSource=preact, OXC JSX transform, a local ESM jsx-runtime shim, and import.meta.hot.accept().",
+  "binary": "target/debug/quench-node",
+  "checker_worker_override": "unset",
+  "updates": 30,
+  "median_ms": 72.857271,
+  "p95_ms_nearest_rank": 77.81475,
+  "max_ms": 79.757292,
+  "raw_ms": [
+    50.914792, 70.873916, 73.290959, 79.757292, 77.761375,
+    73.1785, 74.488042, 67.1495, 74.536, 72.536042,
+    72.090291, 69.457667, 67.57625, 75.584375, 74.596166,
+    66.12475, 69.88875, 72.298667, 77.81475, 75.455375,
+    77.161959, 77.487, 70.165083, 76.1395, 71.390625,
+    66.688916, 64.181208, 74.5925, 68.842, 75.519709
+  ],
+  "observed": [
+    "GEN 0 {\"type\":\"button\",\"props\":{\"children\":0}}",
+    "GEN 30 {\"type\":\"button\",\"props\":{\"children\":30}}"
+  ],
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "scope": "Warm updates for one small configured TSX ESM entry on this host; not a cross-platform or full React package compatibility claim."
+}

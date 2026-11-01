@@ -1,0 +1,28 @@
+{
+  "kind": "quench-hmr-tsconfig-package-import-extends-restart",
+  "date": "2026-11-01",
+  "host": "macOS Darwin 25.5 arm64, Mac16,10, 10 logical CPUs, 16 GiB memory",
+  "scenario": "A tsconfig extends a package-import alias (#base) resolved through package.json imports to a config outside the source's ancestor chain.",
+  "command": "target/debug/quench-node --hmr <workspace>/main.ts",
+  "initial_configuration": {
+    "package_json": "imports: { #base: ./configs/base.json }",
+    "tsconfig": "extends: #base; compilerOptions.module: ESNext",
+    "resolved_config": "configs/base.json with compilerOptions.target ES2022"
+  },
+  "change": "Changed configs/base.json target from ES2022 to ES2020.",
+  "observed": {
+    "pid": 68766,
+    "output": ["GEN", "GEN"],
+    "result": "The package-import resolved config change restarted the CLI and reloaded the accepted TypeScript entry in the same PID."
+  },
+  "implementation_facts": [
+    "Resolve tsconfig extends dependencies with OXC Resolver's node/import conditions, JSON extension, and tsconfig main file rules.",
+    "Track resolved config files as restart-only metadata, including paths outside the source's ancestor chain."
+  ],
+  "verification": {
+    "cargo_build_p_quench_node": "passed",
+    "runtime_smoke": "passed",
+    "git_diff_check": "passed",
+    "test_suite": "not run"
+  }
+}

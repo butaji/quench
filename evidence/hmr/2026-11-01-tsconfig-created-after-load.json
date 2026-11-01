@@ -1,0 +1,37 @@
+{
+  "kind": "quench-hmr-tsconfig-created-after-load",
+  "date": "2026-11-01",
+  "scenario": "create the first tsconfig.json after an .mts HMR entry has loaded",
+  "command": "target/debug/quench-node --hmr <entry.mts>",
+  "entry": "/tmp/quench-hmr-tsconfig-create-qgprsxkx/main.mts",
+  "observed": {
+    "pid": 44304,
+    "before_config_creation": ["HMR_CONFIG_BOOT"],
+    "after_config_creation": ["HMR_CONFIG_BOOT", "HMR_CONFIG_BOOT"],
+    "running_after_restart": true,
+    "fallback_latency_ms": 170.1
+  },
+  "ancestor_config_search": {
+    "entry": "/tmp/quench-hmr-tsconfig-ancestor-4qucd0fn/sub/main.mts",
+    "pid": 44391,
+    "initial_configs": {
+      "parent": "includes sub/**/* and claims the entry",
+      "nearer": "files=[] and include=[]; does not claim the entry"
+    },
+    "change": "edit the nearer tsconfig to include **/*",
+    "observed": {
+      "before": ["HMR_CONFIG_BOOT"],
+      "after": ["HMR_CONFIG_BOOT", "HMR_CONFIG_BOOT"],
+      "running_after_restart": true
+    },
+    "result": "A nearer config that was skipped by OXC auto-discovery was still watched because it is part of the resolver's ancestor search."
+  },
+  "result": "The previously absent ancestor tsconfig.json was watched. Creating it triggered a conservative CLI restart and re-evaluated the entry in the same process.",
+  "verification": {
+    "cargo_build_p_quench_node": "passed before runtime smoke",
+    "git_diff_check": "passed",
+    "runtime_smoke": "passed",
+    "test_suite": "not run"
+  },
+  "scope": "Focused runtime check on one macOS host. The measured latency is restart fallback latency, not the accepted-source-update latency claim."
+}

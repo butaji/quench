@@ -1,0 +1,55 @@
+{
+  "kind": "quench-hmr-lifecycle-callback-invalidation-restart",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "invocation": "target/debug/quench-node --hmr <entry>",
+  "change": "An accept callback or dispose callback calls hot.invalidate() while a stable source update is being applied.",
+  "scenarios": [
+    {
+      "format": "ESM",
+      "callback": "accept",
+      "observed": ["RUN 1 1", "RUN 2 2", "INVALIDATE", "RUN 2 1"],
+      "result": "The callback invalidated the update; the CLI restarted and loaded the changed source. Process-local global state reset on restart."
+    },
+    {
+      "format": "CommonJS",
+      "callback": "accept",
+      "observed": ["RUN 1 1", "RUN 2 2", "INVALIDATE", "RUN 2 1"],
+      "result": "The callback invalidated the update; the CLI restarted and loaded the changed source. Process-local global state reset on restart."
+    },
+    {
+      "format": "ESM",
+      "callback": "dispose",
+      "observed": ["RUN 1 1", "INVALIDATE", "RUN 2 1"],
+      "result": "The dispose callback invalidated the update before replacement; the CLI restarted and loaded the changed source."
+    },
+    {
+      "format": "CommonJS",
+      "callback": "dispose",
+      "observed": ["RUN 1 1", "INVALIDATE", "RUN 2 1"],
+      "result": "The dispose callback invalidated the update before replacement; the CLI restarted and loaded the changed source."
+    }
+  ],
+  "non_invalidating_controls": [
+    {
+      "format": "ESM",
+      "observed": ["RUN 1 1", "RUN 2 2"],
+      "result": "A self-accepted update without invalidation stayed in the same process."
+    },
+    {
+      "format": "CommonJS",
+      "observed": ["RUN 1 1", "RUN 2 2"],
+      "result": "A self-accepted update without invalidation stayed in the same process."
+    }
+  ],
+  "verification": {
+    "command": "cargo build -p quench-node",
+    "result": "passed",
+    "runtime_smokes": "all four invalidation scenarios and both non-invalidating controls passed"
+  }
+}

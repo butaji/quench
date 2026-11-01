@@ -1,0 +1,63 @@
+{
+  "kind": "quench-hmr-package-link-retarget-restart",
+  "date": "2026-11-01",
+  "host": {
+    "platform": "Darwin 25.5.0",
+    "architecture": "arm64",
+    "machine": "Mac mini"
+  },
+  "scenario": "Retarget a loaded CommonJS package symlink under app/node_modules while --hmr is resident.",
+  "command": "target/debug/quench-node --hmr <workspace>/app/main.cjs",
+  "fixture": {
+    "entry": "const value = require('pkg'); console.log(`RUN ${process.pid} ${value}`); setInterval(() => {}, 100);",
+    "initial_link": "app/node_modules/pkg -> ../../workspace/pkg-b",
+    "replacement_link": "app/node_modules/pkg -> ../../workspace/pkg-a",
+    "values": {
+      "pkg-a/index.cjs": "one",
+      "pkg-b/index.cjs": "two"
+    }
+  },
+  "observed": [
+    "RUN 74034 two",
+    "RUN 74034 one",
+    "ENTRY 74164 one",
+    "ENTRY 74164 two",
+    "ESM 74521 one",
+    "ESM 74521 two",
+    "REL 74690 one",
+    "REL 74690 two",
+    "WORKER-LINK 76103 one",
+    "WORKER-LINK 76103 two"
+  ],
+  "additional_scenario": {
+    "entry_symlink": {
+      "description": "The CLI entry itself is a symlink; retarget it from targets/one.cjs to targets/two.cjs while --hmr is resident.",
+      "result": "The entry alias change restarted the resident CLI with the same PID and executed the new target."
+    },
+    "esm_package_symlink": {
+      "description": "A .mjs entry imports the ESM bare package `pkg`; retarget app/node_modules/pkg from workspace/pkg-a to workspace/pkg-b while --hmr is resident.",
+      "result": "The package link change restarted the resident CLI with the same PID and loaded the new ESM package target."
+    },
+    "relative_commonjs_symlink": {
+      "description": "A CommonJS entry requires ./linked/value.cjs through an app/linked directory symlink; retarget linked from workspace/lib-a to workspace/lib-b.",
+      "result": "The relative resolution link change restarted the resident CLI with the same PID and required the new target."
+    },
+    "worker_relative_symlink": {
+      "description": "A file-backed worker requires ./linked/value.cjs through an app/linked directory symlink; retarget linked from workspace/lib-a to workspace/lib-b.",
+      "result": "The worker-published link stamp reached the parent watcher, which restarted the CLI with the same PID and started one new worker using the new target.",
+      "control": "Before retargeting, the resident session emitted one worker message over five seconds; the parent did not enter a restart loop."
+    }
+  },
+  "result": "CommonJS and ESM bare package links, relative CommonJS links, worker-loaded relative links, and the CLI entry link were detected; the resident CLI restarted with the same PID and loaded the newly resolved source.",
+  "implementation": "HMR records symlinks used by file and package resolution as restart-only graph inputs. Worker graphs publish symlink paths with their own path identity; the parent preserves these aliases while importing stamps. Link stamps hash the link target itself rather than following it to the unchanged source file.",
+  "verification": [
+    "cargo build -p quench-node passed",
+    "git diff --check passed",
+    "live CommonJS --hmr bare package symlink retarget smoke passed",
+    "live CommonJS --hmr entry symlink retarget smoke passed",
+    "live ESM --hmr bare package symlink retarget smoke passed",
+    "live CommonJS --hmr relative symlink retarget smoke passed",
+    "live file-backed worker --hmr relative symlink retarget smoke passed without restart loop"
+  ],
+  "scope": "Focused runtime check on this host; does not establish full Node resolver conformance or close the pinned TSRS checker compatibility gate."
+}

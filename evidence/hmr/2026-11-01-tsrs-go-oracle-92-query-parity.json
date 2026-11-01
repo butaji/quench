@@ -1,0 +1,592 @@
+{
+  "kind": "quench-hmr-pinned-typescript-parameter-query-parity",
+  "date": "2026-11-01",
+  "typescript": {
+    "version": "7.1.0-beta",
+    "go_source_commit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a"
+  },
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "fixture": {
+    "path": "evidence/hmr/fixtures/tsrs-type-query-parity.ts",
+    "sha256": "d41d46ffda40afa78dda42a69b6d7a8fff5cd6b262dc2172390c914681992945",
+    "valid_pinned_tsc_no_emit": true,
+    "astral_prefix": "\ud83d\ude00",
+    "query_count": 92
+  },
+  "oracle_path": "Pinned Go API createSnapshot(openFiles), getTypesAtPositions, then typeToString.",
+  "candidate_path": "Pinned Rust TSRS worker createSnapshot(openFiles), getTypesAtPositions, then typeToString.",
+  "positions_encoding": "UTF-16 code units, computed at each parameter binding identifier after an astral character.",
+  "comparison": {
+    "matched": 92,
+    "mismatched": 0,
+    "mismatches": []
+  },
+  "cases": [
+    {
+      "probe": "000",
+      "parameter_type": "string",
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "probe": "001",
+      "parameter_type": "number",
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "probe": "002",
+      "parameter_type": "boolean",
+      "go": "boolean",
+      "tsrs": "boolean"
+    },
+    {
+      "probe": "003",
+      "parameter_type": "symbol",
+      "go": "symbol",
+      "tsrs": "symbol"
+    },
+    {
+      "probe": "004",
+      "parameter_type": "bigint",
+      "go": "bigint",
+      "tsrs": "bigint"
+    },
+    {
+      "probe": "005",
+      "parameter_type": "object",
+      "go": "object",
+      "tsrs": "object"
+    },
+    {
+      "probe": "006",
+      "parameter_type": "unknown",
+      "go": "unknown",
+      "tsrs": "unknown"
+    },
+    {
+      "probe": "007",
+      "parameter_type": "any",
+      "go": "any",
+      "tsrs": "any"
+    },
+    {
+      "probe": "008",
+      "parameter_type": "never",
+      "go": "never",
+      "tsrs": "never"
+    },
+    {
+      "probe": "009",
+      "parameter_type": "void",
+      "go": "void",
+      "tsrs": "void"
+    },
+    {
+      "probe": "010",
+      "parameter_type": "null",
+      "go": "null",
+      "tsrs": "null"
+    },
+    {
+      "probe": "011",
+      "parameter_type": "undefined",
+      "go": "undefined",
+      "tsrs": "undefined"
+    },
+    {
+      "probe": "012",
+      "parameter_type": "1",
+      "go": "1",
+      "tsrs": "1"
+    },
+    {
+      "probe": "013",
+      "parameter_type": "\"literal\"",
+      "go": "\"literal\"",
+      "tsrs": "\"literal\""
+    },
+    {
+      "probe": "014",
+      "parameter_type": "true",
+      "go": "true",
+      "tsrs": "true"
+    },
+    {
+      "probe": "015",
+      "parameter_type": "1 | 2",
+      "go": "1 | 2",
+      "tsrs": "1 | 2"
+    },
+    {
+      "probe": "016",
+      "parameter_type": "\"a\" | \"b\"",
+      "go": "\"a\" | \"b\"",
+      "tsrs": "\"a\" | \"b\""
+    },
+    {
+      "probe": "017",
+      "parameter_type": "string | number",
+      "go": "string | number",
+      "tsrs": "string | number"
+    },
+    {
+      "probe": "018",
+      "parameter_type": "number & { brand: true }",
+      "go": "number & { brand: true; }",
+      "tsrs": "number & { brand: true; }"
+    },
+    {
+      "probe": "019",
+      "parameter_type": "number[]",
+      "go": "number[]",
+      "tsrs": "number[]"
+    },
+    {
+      "probe": "020",
+      "parameter_type": "Array<string>",
+      "go": "string[]",
+      "tsrs": "string[]"
+    },
+    {
+      "probe": "021",
+      "parameter_type": "readonly string[]",
+      "go": "readonly string[]",
+      "tsrs": "readonly string[]"
+    },
+    {
+      "probe": "022",
+      "parameter_type": "[number, string]",
+      "go": "[number, string]",
+      "tsrs": "[number, string]"
+    },
+    {
+      "probe": "023",
+      "parameter_type": "readonly [number, string?]",
+      "go": "readonly [number, (string | undefined)?]",
+      "tsrs": "readonly [number, (string | undefined)?]"
+    },
+    {
+      "probe": "024",
+      "parameter_type": "[head: number, ...tail: string[]]",
+      "go": "[head: number, ...tail: string[]]",
+      "tsrs": "[head: number, ...tail: string[]]"
+    },
+    {
+      "probe": "025",
+      "parameter_type": "Box<number>",
+      "go": "Box<number>",
+      "tsrs": "Box<number>"
+    },
+    {
+      "probe": "026",
+      "parameter_type": "Box<Shape>",
+      "go": "Box<Shape>",
+      "tsrs": "Box<Shape>"
+    },
+    {
+      "probe": "027",
+      "parameter_type": "Pair<string, number>",
+      "go": "Pair<string, number>",
+      "tsrs": "Pair<string, number>"
+    },
+    {
+      "probe": "028",
+      "parameter_type": "Promise<Shape>",
+      "go": "Promise<Shape>",
+      "tsrs": "Promise<Shape>"
+    },
+    {
+      "probe": "029",
+      "parameter_type": "PromiseLike<number>",
+      "go": "PromiseLike<number>",
+      "tsrs": "PromiseLike<number>"
+    },
+    {
+      "probe": "030",
+      "parameter_type": "Shape",
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "probe": "031",
+      "parameter_type": "Named",
+      "go": "Named",
+      "tsrs": "Named"
+    },
+    {
+      "probe": "032",
+      "parameter_type": "Base",
+      "go": "Base",
+      "tsrs": "Base"
+    },
+    {
+      "probe": "033",
+      "parameter_type": "Direction",
+      "go": "Direction",
+      "tsrs": "Direction"
+    },
+    {
+      "probe": "034",
+      "parameter_type": "Direction.Up",
+      "go": "Direction.Up",
+      "tsrs": "Direction.Up"
+    },
+    {
+      "probe": "035",
+      "parameter_type": "typeof Direction",
+      "go": "typeof Direction",
+      "tsrs": "typeof Direction"
+    },
+    {
+      "probe": "036",
+      "parameter_type": "Unique",
+      "go": "unique symbol",
+      "tsrs": "unique symbol"
+    },
+    {
+      "probe": "037",
+      "parameter_type": "keyof Shape",
+      "go": "keyof Shape",
+      "tsrs": "keyof Shape"
+    },
+    {
+      "probe": "038",
+      "parameter_type": "Shape[\"a\"]",
+      "go": "number",
+      "tsrs": "number"
+    },
+    {
+      "probe": "039",
+      "parameter_type": "Shape[\"b\"]",
+      "go": "string | undefined",
+      "tsrs": "string | undefined"
+    },
+    {
+      "probe": "040",
+      "parameter_type": "Partial<Shape>",
+      "go": "Partial<Shape>",
+      "tsrs": "Partial<Shape>"
+    },
+    {
+      "probe": "041",
+      "parameter_type": "Required<Shape>",
+      "go": "Required<Shape>",
+      "tsrs": "Required<Shape>"
+    },
+    {
+      "probe": "042",
+      "parameter_type": "Readonly<Shape>",
+      "go": "Readonly<Shape>",
+      "tsrs": "Readonly<Shape>"
+    },
+    {
+      "probe": "043",
+      "parameter_type": "Pick<Shape, \"a\" | \"c\">",
+      "go": "Pick<Shape, \"a\" | \"c\">",
+      "tsrs": "Pick<Shape, \"a\" | \"c\">"
+    },
+    {
+      "probe": "044",
+      "parameter_type": "Omit<Shape, \"b\">",
+      "go": "Omit<Shape, \"b\">",
+      "tsrs": "Omit<Shape, \"b\">"
+    },
+    {
+      "probe": "045",
+      "parameter_type": "Record<string, number>",
+      "go": "Record<string, number>",
+      "tsrs": "Record<string, number>"
+    },
+    {
+      "probe": "046",
+      "parameter_type": "Record<\"x\" | \"y\", boolean>",
+      "go": "Record<\"x\" | \"y\", boolean>",
+      "tsrs": "Record<\"x\" | \"y\", boolean>"
+    },
+    {
+      "probe": "047",
+      "parameter_type": "Exclude<string | number | null, string>",
+      "go": "number | null",
+      "tsrs": "number | null"
+    },
+    {
+      "probe": "048",
+      "parameter_type": "Extract<string | number, string>",
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "probe": "049",
+      "parameter_type": "NonNullable<string | null>",
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "probe": "050",
+      "parameter_type": "ReturnType<typeof makeShape>",
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "probe": "051",
+      "parameter_type": "Parameters<typeof makeShape>",
+      "go": "[]",
+      "tsrs": "[]"
+    },
+    {
+      "probe": "052",
+      "parameter_type": "Awaited<Promise<Shape>>",
+      "go": "Shape",
+      "tsrs": "Shape"
+    },
+    {
+      "probe": "053",
+      "parameter_type": "ToText<string>",
+      "go": "`text:${string}`",
+      "tsrs": "`text:${string}`"
+    },
+    {
+      "probe": "054",
+      "parameter_type": "ToText<number>",
+      "go": "`${number}px`",
+      "tsrs": "`${number}px`"
+    },
+    {
+      "probe": "055",
+      "parameter_type": "`event:${string}`",
+      "go": "`event:${string}`",
+      "tsrs": "`event:${string}`"
+    },
+    {
+      "probe": "056",
+      "parameter_type": "`${number}px`",
+      "go": "`${number}px`",
+      "tsrs": "`${number}px`"
+    },
+    {
+      "probe": "057",
+      "parameter_type": "Fn",
+      "go": "Fn",
+      "tsrs": "Fn"
+    },
+    {
+      "probe": "058",
+      "parameter_type": "Ctor",
+      "go": "Ctor",
+      "tsrs": "Ctor"
+    },
+    {
+      "probe": "059",
+      "parameter_type": "(x: number, y?: string",
+      "go": "(x: number, y?: string | undefined) => boolean",
+      "tsrs": "(x: number, y?: string | undefined) => boolean"
+    },
+    {
+      "probe": "060",
+      "parameter_type": "new (x: Shape",
+      "go": "new (x: Shape) => Base",
+      "tsrs": "new (x: Shape) => Base"
+    },
+    {
+      "probe": "061",
+      "parameter_type": "{ x: number; y?: string }",
+      "go": "{ x: number; y?: string | undefined; }",
+      "tsrs": "{ x: number; y?: string | undefined; }"
+    },
+    {
+      "probe": "062",
+      "parameter_type": "{ readonly x: number; [key: string]: unknown }",
+      "go": "{ [key: string]: unknown; readonly x: number; }",
+      "tsrs": "{ [key: string]: unknown; readonly x: number; }"
+    },
+    {
+      "probe": "063",
+      "parameter_type": "Shape | Named",
+      "go": "Named | Shape",
+      "tsrs": "Named | Shape"
+    },
+    {
+      "probe": "064",
+      "parameter_type": "Shape & Named",
+      "go": "Shape & Named",
+      "tsrs": "Shape & Named"
+    },
+    {
+      "probe": "065",
+      "parameter_type": "Box<string | number>",
+      "go": "Box<string | number>",
+      "tsrs": "Box<string | number>"
+    },
+    {
+      "probe": "066",
+      "parameter_type": "Box<never>",
+      "go": "Box<never>",
+      "tsrs": "Box<never>"
+    },
+    {
+      "probe": "067",
+      "parameter_type": "Box<unknown>",
+      "go": "Box<unknown>",
+      "tsrs": "Box<unknown>"
+    },
+    {
+      "probe": "068",
+      "parameter_type": "Box<any>",
+      "go": "Box<any>",
+      "tsrs": "Box<any>"
+    },
+    {
+      "probe": "069",
+      "parameter_type": "Outer<Box<number>>",
+      "go": "Outer<Box<number>>",
+      "tsrs": "Outer<Box<number>>"
+    },
+    {
+      "probe": "070",
+      "parameter_type": "Node<string>",
+      "go": "Node<string>",
+      "tsrs": "Node<string>"
+    },
+    {
+      "probe": "071",
+      "parameter_type": "Recursive<string[]>",
+      "go": "string",
+      "tsrs": "string"
+    },
+    {
+      "probe": "072",
+      "parameter_type": "Maybe<number>",
+      "go": "Maybe<number>",
+      "tsrs": "Maybe<number>"
+    },
+    {
+      "probe": "073",
+      "parameter_type": "DeepReadonly<Shape>",
+      "go": "DeepReadonly<Shape>",
+      "tsrs": "DeepReadonly<Shape>"
+    },
+    {
+      "probe": "074",
+      "parameter_type": "Direction | \"other\"",
+      "go": "\"other\" | Direction",
+      "tsrs": "\"other\" | Direction"
+    },
+    {
+      "probe": "075",
+      "parameter_type": "1 | 2 | 3",
+      "go": "1 | 2 | 3",
+      "tsrs": "1 | 2 | 3"
+    },
+    {
+      "probe": "076",
+      "parameter_type": "\"north\" | \"south\"",
+      "go": "\"north\" | \"south\"",
+      "tsrs": "\"north\" | \"south\""
+    },
+    {
+      "probe": "078",
+      "parameter_type": "number | undefined",
+      "go": "number | undefined",
+      "tsrs": "number | undefined"
+    },
+    {
+      "probe": "079",
+      "parameter_type": "string | null",
+      "go": "string | null",
+      "tsrs": "string | null"
+    },
+    {
+      "probe": "080",
+      "parameter_type": "boolean | undefined",
+      "go": "boolean | undefined",
+      "tsrs": "boolean | undefined"
+    },
+    {
+      "probe": "081",
+      "parameter_type": "readonly number[]",
+      "go": "readonly number[]",
+      "tsrs": "readonly number[]"
+    },
+    {
+      "probe": "082",
+      "parameter_type": "ReadonlyArray<Shape>",
+      "go": "readonly Shape[]",
+      "tsrs": "readonly Shape[]"
+    },
+    {
+      "probe": "083",
+      "parameter_type": "Map<string, Shape>",
+      "go": "Map<string, Shape>",
+      "tsrs": "Map<string, Shape>"
+    },
+    {
+      "probe": "084",
+      "parameter_type": "Set<number>",
+      "go": "Set<number>",
+      "tsrs": "Set<number>"
+    },
+    {
+      "probe": "085",
+      "parameter_type": "WeakMap<object, string>",
+      "go": "WeakMap<object, string>",
+      "tsrs": "WeakMap<object, string>"
+    },
+    {
+      "probe": "086",
+      "parameter_type": "Date",
+      "go": "Date",
+      "tsrs": "Date"
+    },
+    {
+      "probe": "087",
+      "parameter_type": "Error",
+      "go": "Error",
+      "tsrs": "Error"
+    },
+    {
+      "probe": "088",
+      "parameter_type": "RegExp",
+      "go": "RegExp",
+      "tsrs": "RegExp"
+    },
+    {
+      "probe": "089",
+      "parameter_type": "Int8Array",
+      "go": "Int8Array<ArrayBufferLike>",
+      "tsrs": "Int8Array<ArrayBufferLike>"
+    },
+    {
+      "probe": "090",
+      "parameter_type": "ArrayBuffer",
+      "go": "ArrayBuffer",
+      "tsrs": "ArrayBuffer"
+    },
+    {
+      "probe": "091",
+      "parameter_type": "Promise<void>",
+      "go": "Promise<void>",
+      "tsrs": "Promise<void>"
+    },
+    {
+      "probe": "092",
+      "parameter_type": "(this: Shape, value: number",
+      "go": "(this: Shape, value: number) => string",
+      "tsrs": "(this: Shape, value: number) => string"
+    }
+  ],
+  "interpretation": "All 92 valid parameter query/display results matched the pinned Go compiler on this fixture. This validates the HMR-used query pair across common primitive, literal, union/intersection, tuple, mapped, conditional, utility, recursive, generic, built-in, enum, unique-symbol alias, function, and object type forms; it is not a proof for every TypeScript construct or formatting context."
+}

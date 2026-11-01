@@ -1,0 +1,28 @@
+{
+  "kind": "quench-hmr-tsconfig-project-reference-restart",
+  "date": "2026-11-01",
+  "host": "macOS Darwin 25.5 arm64, Mac16,10, 10 logical CPUs, 16 GiB memory",
+  "scenario": "A solution tsconfig references two projects. The entry is initially claimed by the second project; changing the first project's config makes it claim the entry and changes the selected transform config.",
+  "command": "target/debug/quench-node --hmr <workspace>/src/main.ts",
+  "initial_configuration": {
+    "root": "files: [], include: [], references: [projects/a, projects/b]",
+    "projects_a": "files: [], include: []",
+    "projects_b": "include: [../../src/**/*]"
+  },
+  "change": "Changed projects/a/tsconfig.json to include ../../src/**/* and target ES2020.",
+  "observed": {
+    "pid": 68707,
+    "output": ["GEN", "GEN"],
+    "result": "Editing the previously nonselected project config restarted the CLI and reloaded the entry in the same PID."
+  },
+  "implementation_facts": [
+    "Watch ancestor tsconfig candidates and their extends/reference chains because edits can change which project claims a loaded source.",
+    "Treat tracked TypeScript config metadata as restart-only."
+  ],
+  "verification": {
+    "cargo_build_p_quench_node": "passed",
+    "runtime_smoke": "passed",
+    "git_diff_check": "passed",
+    "test_suite": "not run"
+  }
+}

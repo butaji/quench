@@ -1,0 +1,37 @@
+{
+  "kind": "quench-hmr-pruned-module-reimport-restart",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "scenario": "An accepted entry update removes a loaded dependency, the dependency changes while unreachable, and a later entry update imports it again.",
+  "formats": [
+    {
+      "format": "CommonJS",
+      "invocation": "target/debug/quench-node --hmr <main.cjs>",
+      "observed": ["RUN v1", "RUN none", "RUN none", "RUN v2"],
+      "result": "The detached cached dependency stayed in the watcher graph. Its v2 edit triggered same-invocation restart, clearing the CommonJS cache before reimport loaded v2."
+    },
+    {
+      "format": "ESM",
+      "invocation": "target/debug/quench-node --hmr <main.mjs>",
+      "observed": ["RUN v1", "RUN none", "RUN none", "RUN v2"],
+      "result": "The detached cached dependency stayed in the watcher graph. Its v2 edit triggered same-invocation restart, clearing the ESM module cache before reimport loaded v2."
+    }
+  ],
+  "control": {
+    "format": "ESM",
+    "observed": ["RUN 1 1", "RUN 2 2"],
+    "result": "A replacement with no dependency pruning remained in-process."
+  },
+  "reason": "Quench does not yet evict unreachable module records from both module caches coherently. Detached cached modules remain watched; if one changes with no active importer boundary, the update requests restart so a later reimport cannot execute stale source.",
+  "limitation": "When a detached module changes, its later reimport requires a process restart, which resets session state. The accepted importer update that detached it remains in-process.",
+  "verification": {
+    "command": "cargo build -p quench-node",
+    "result": "passed",
+    "runtime_smokes": "CommonJS, ESM, and in-process control passed"
+  }
+}

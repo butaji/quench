@@ -1,0 +1,58 @@
+{
+  "kind": "quench-hmr-post-recovery-revalidation",
+  "date": "2026-11-01",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "build": {
+    "command": "cargo build -p quench-node",
+    "exit_code": 0
+  },
+  "diff_check": {
+    "command": "git diff --check",
+    "exit_code": 0,
+    "output": ""
+  },
+  "manual_live_smokes": {
+    "invocation": "target/debug/quench-node --hmr <entry>",
+    "formats": {
+      ".js": {
+        "package_scope": "Temporary package.json with type=module.",
+        "output": ["GEN 1", "GEN 2"],
+        "result": "A self-accepted JavaScript entry replaced itself in the same process."
+      },
+      ".ts": {
+        "output": ["GEN 1", "GEN 2"],
+        "result": "A self-accepted TypeScript entry replaced itself in the same process."
+      },
+      ".jsx": {
+        "jsx_runtime": "Temporary minimal ESM react/jsx-runtime shim implementing jsx and jsxs.",
+        "output": ["GEN one", "GEN two"],
+        "result": "A self-accepted JSX entry replaced itself in the same process."
+      },
+      ".tsx": {
+        "jsx_runtime": "Temporary minimal ESM react/jsx-runtime shim implementing jsx and jsxs.",
+        "output": ["GEN one 1", "GEN two 2"],
+        "result": "A self-accepted typed TSX entry replaced itself in the same process."
+      }
+    },
+    "typed_runtime_fallback": {
+      "invocation": "target/debug/quench-node --jit --hmr <entry.mts>",
+      "source_parameter": "limit: number",
+      "runtime_argument": "\"2016\"",
+      "output": "RESULT 2016",
+      "result": "The mismatched runtime string preserved JavaScript comparison behavior. This run does not claim that the typed native tier compiled."
+    }
+  },
+  "scope": "Post-recovery build and focused live HMR revalidation on one macOS host. Not a full TypeScript checker compatibility result, full React compatibility claim, performance measurement, or cross-platform qualification. No test suite was run."
+}

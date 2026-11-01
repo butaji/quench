@@ -656,6 +656,17 @@ impl JitTierManager {
         }
     }
 
+    /// Checker facts can make a function eligible for the typed numeric tier after its
+    /// runtime-only profile has already settled. Reopen that decision once, while preserving
+    /// an artifact that was already compiled for the function.
+    fn enable_typescript_numeric_parameters(&mut self, function: u32) {
+        if let Some(state) = self.js_mut(function) {
+            if !matches!(state, JsTierState::Compiled(_)) {
+                *state = JsTierState::PromotionPending;
+            }
+        }
+    }
+
     fn js_values(&self) -> impl Iterator<Item = &JsTierState> {
         let functions = match self {
             Self::JavaScript(functions) => Some(functions),
@@ -815,6 +826,11 @@ impl std::ops::Deref for Residual {
     }
 }
 
+struct InstalledTypeScriptParameterType {
+    display: Box<str>,
+    is_number_like: bool,
+}
+
 struct ProgramEntry {
     residual: Residual,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
@@ -833,6 +849,8 @@ struct ProgramEntry {
     lane_views: LaneViews,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
+    /// Background TypeScript checker results, keyed by residual function and parameter.
+    typescript_parameter_types: FxHashMap<(u32, u32), InstalledTypeScriptParameterType>,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
     /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
@@ -1024,6 +1042,93 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
+    pub(crate) fn install_typescript_parameter_types(
+        &mut self,
+        source_name: &str,
+        function_start_offset: u32,
+        facts: &[crate::TypeScriptParameterType],
+    ) -> usize {
+        let Some(entry) = self
+            .programs
+            .iter_mut()
+            .rev()
+            .flatten()
+            .find(|entry| entry.residual.source_name == source_name)
+        else {
+            return 0;
+        };
+        let mut by_function: FxHashMap<(u32, u32), InstalledTypeScriptParameterType> =
+            FxHashMap::default();
+        for (function_index, function) in entry.residual.functions.iter().enumerate() {
+            let Some(span) = function.header().source_span else { continue };
+            let Some(function_start) = span.start.checked_sub(function_start_offset) else {
+                continue;
+            };
+            for fact in facts.iter().filter(|fact| fact.function_start == function_start) {
+                by_function.insert(
+                    (function_index as u32, fact.parameter_index),
+                    InstalledTypeScriptParameterType {
+                        display: fact.type_text.as_str().into(),
+                        is_number_like: fact.is_number_like,
+                    },
+                );
+            }
+        }
+        let installed = by_function.len();
+        for (&(function, _), type_fact) in &by_function {
+            if type_fact.is_number_like {
+                entry
+                    .jit_tiers
+                    .enable_typescript_numeric_parameters(function);
+            }
+        }
+        entry.typescript_parameter_types = by_function;
+        installed
+    }
+
+    pub(crate) fn typescript_number_parameter_mask(
+        &self,
+        id: ProgramId,
+        function: u32,
+    ) -> Option<smallvec::SmallVec<[bool; super::js_compiled::MAX_PARAMETERS]>> {
+        let entry = self.entry(id)?;
+        let header = entry.residual.functions.get(function as usize)?.header();
+        // The JIT candidate gate requires simple parameters, so `length` is the formal
+        // parameter count here. Its header survives after the compiled body is released.
+        let formal_parameter_count = usize::from(header.length);
+        let mask = (0..formal_parameter_count)
+            .map(|parameter| {
+                entry
+                    .typescript_parameter_types
+                    .get(&(function, parameter as u32))
+                    .is_some_and(|type_fact| type_fact.is_number_like)
+            })
+            .collect::<smallvec::SmallVec<[bool; super::js_compiled::MAX_PARAMETERS]>>();
+        mask.iter().any(|is_number| *is_number).then_some(mask)
+    }
+
+    pub(crate) fn typescript_parameter_type(
+        &self,
+        source_name: &str,
+        function_start_offset: u32,
+        function_start: u32,
+        parameter_index: u32,
+    ) -> Option<&str> {
+        self.programs.iter().rev().flatten().find_map(|entry| {
+            if entry.residual.source_name != source_name {
+                return None;
+            }
+            let function = entry.residual.functions.iter().enumerate().find_map(|(index, body)| {
+                let start = body.source_span?.start.checked_sub(function_start_offset)?;
+                (start == function_start).then_some(index as u32)
+            })?;
+            entry
+                .typescript_parameter_types
+                .get(&(function, parameter_index))
+                .map(|type_fact| type_fact.display.as_ref())
+        })
+    }
+
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
@@ -1422,6 +1527,7 @@ impl ProgramStore {
             module: false,
             lane_views,
             js_entry_facts: JsEntryFactsTable::default(),
+            typescript_parameter_types: FxHashMap::default(),
             lane_deferred,
             compiled: None,
             jit_tiers: JitTierManager::default(),

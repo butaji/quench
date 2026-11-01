@@ -1,0 +1,55 @@
+{
+  "date": "2026-11-01",
+  "scope": "Manual HMR CLI checks for explicit TypeScript target and useDefineForClassFields transform settings.",
+  "upstream_reference": "https://www.typescriptlang.org/tsconfig/#useDefineForClassFields",
+  "additional_upstream_reference": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html#simple-default-changes",
+  "implementation": {
+    "transformer": "OXC 0.153.0",
+    "target_mapping": "Read an explicit tsconfig target when present. Otherwise use the pinned TSRS TypeScript 7 default (latest standard target), independently of module kind. HMR keeps Quench's native JavaScript syntax target instead of downleveling source to the application's output target.",
+    "class_fields": "Use explicit useDefineForClassFields when present; otherwise derive the mode from the TypeScript target. The false mode enables assignment semantics and removes type-only fields without initializers."
+  },
+  "cases": [
+    {
+      "target": "ES2022",
+      "useDefineForClassFields": true,
+      "observed": [
+        "An initialized derived field defined an own property without invoking the inherited setter.",
+        "A type-only field without an initializer remained an own field."
+      ]
+    },
+    {
+      "target": "ES2015",
+      "useDefineForClassFields": false,
+      "observed": [
+        "An initialized derived field used assignment and invoked the inherited setter.",
+        "A type-only field without an initializer was removed."
+      ]
+    },
+    {
+      "target": "omitted",
+      "tsconfig": "absent",
+      "pinned_tsrs_default": "ScriptTarget::LATEST_STANDARD (ES2026); class fields use define semantics at ES2022 and later.",
+      "observed": [
+        "An initialized derived field defined an own property without invoking the inherited setter.",
+        "Runtime output: FIELD_DEFAULT 0 true 1."
+      ]
+    },
+    {
+      "target": "ES5",
+      "observed": [
+        "The file loaded and executed; the target was normalized to OXC's supported ES2015 minimum."
+      ]
+    }
+  ],
+  "limits": [
+    "These checks exercise the listed transform options and field cases, not every TypeScript target or compiler option.",
+    "The earlier omitted-target observation in this artifact reflected the incorrect ES5 fallback and is superseded by the current runtime observation above.",
+    "The HMR process was terminated after observing output; the resident watcher is expected to remain active."
+  ],
+  "verification": {
+    "cargo_build_p_quench_node": "passed",
+    "git_diff_check": "passed",
+    "runtime_smoke": "passed; observed FIELD_DEFAULT 0 true 1",
+    "test_suite": "not run"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "objective": "Check semantic equality of TSRS type-position query results and pinned TypeScript parameter binding types over a broader HMR-relevant fixture",
+  "versions": {
+    "typescript": "7.1.0-beta",
+    "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49"
+  },
+  "method": {
+    "query": "For each simple identifier parameter, sent its UTF-16 binding position to the Quench TSRS worker, which ran getTypesAtPositions then typeToString.",
+    "oracle": "Generated `Expect<Equal<typeof x, TSRS type text>>` checks in each function body and ran the pinned native tsc with --noEmit against the same tsconfig.",
+    "stability_check": "Repeated TSRS queries after inserting the assertions; the query results were unchanged.",
+    "configurations": [
+      { "strict": true, "exactOptionalPropertyTypes": false, "tsc_exit_code": 0 },
+      { "strict": true, "exactOptionalPropertyTypes": true, "tsc_exit_code": 0 }
+    ],
+    "unique_symbol": "TSRS prints `unique symbol`, which is not valid standalone TypeScript type syntax. For this case the equivalence assertion used the source alias `typeof uniqueKey`; all other TSRS output strings were used verbatim."
+  },
+  "forms": [
+    "branded alias",
+    "readonly optional tuple",
+    "generic object alias",
+    "keyof alias",
+    "indexed access",
+    "conditional generic",
+    "template literal alias",
+    "ReturnType alias",
+    "Awaited Promise object",
+    "Partial mapped type",
+    "Record mapped type",
+    "discriminated union",
+    "const literal default",
+    "object default",
+    "empty array default",
+    "function type",
+    "constructor type",
+    "unique symbol",
+    "enum",
+    "generic constraint",
+    "readonly union array",
+    "rest tuple",
+    "optional array parameter",
+    "NonNullable utility type",
+    "Extract utility type",
+    "Exclude utility type",
+    "PromiseLike generic",
+    "void",
+    "readonly never array",
+    "ThisType marker"
+  ],
+  "results": {
+    "parameter_bindings": 30,
+    "assertions_passed": 30,
+    "assertions_passed_exact_optional_false": 30,
+    "assertions_passed_exact_optional_true": 30,
+    "tsc_diagnostics": 0,
+    "all_query_results_stable_after_assertion_instrumentation": true
+  },
+  "scope": "Semantic equality for these 30 queried parameter bindings under two strict compiler configurations. This does not prove full checker API, diagnostics, project-resolution, library, or all compiler-option compatibility."
+}

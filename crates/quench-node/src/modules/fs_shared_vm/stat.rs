@@ -197,6 +197,7 @@ pub(crate) fn statfs_sync(
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let value = super::super::fs_path::validate(context, value, "path")?;
     let bigint = bigint_option(context, args.get(1).copied())?;
+    #[cfg(target_os = "linux")]
     let path = super::super::fs_path::resolve(context, value)?;
     #[cfg(target_os = "linux")]
     let result = {
@@ -749,12 +750,25 @@ pub(crate) fn read_link_sync(
     }
 }
 
-fn bigint_option(context: &mut NativeContext<'_, NodeHost>, options: Option<RootId>) -> Result<bool, RootedError> {
-    let Some(options) = options else { return Ok(false); };
-    if context.rooted_value(options).is_some_and(|value| value.is_undefined()) { return Ok(false); }
+fn bigint_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<bool, RootedError> {
+    let Some(options) = options else {
+        return Ok(false);
+    };
+    if context
+        .rooted_value(options)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Ok(false);
+    }
     let key = context.string_rooted("bigint");
     let value = context.get_property_rooted(options, key)?;
-    Ok(context.rooted_value(value).and_then(|value| value.as_bool()) == Some(true))
+    Ok(context
+        .rooted_value(value)
+        .and_then(|value| value.as_bool())
+        == Some(true))
 }
 
 fn stat_time_ms(time: i128) -> f64 {

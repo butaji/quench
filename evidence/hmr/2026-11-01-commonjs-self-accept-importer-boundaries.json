@@ -1,0 +1,34 @@
+{
+  "kind": "quench-hmr-commonjs-self-accept-importer-boundaries",
+  "date": "2026-11-01",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "build": "passed: ./tools/build-quench-node-hmr.sh",
+  "scenarios": [
+    {
+      "case": "self-accepted dependency plus explicit app importer dependency accept",
+      "before": ["boot", "value old"],
+      "after": ["value new"],
+      "entry_boot_count": 1,
+      "result": "Both the module self-accept callback and importer dependency callback ran; the captured importer value updated without restarting the entry."
+    },
+    {
+      "case": "self-accepted dependency callback with importer that does not accept the dependency",
+      "before": ["read old"],
+      "after": ["ACCEPT new", "read new"],
+      "result": "The dependency's own callback handled the update, and later require calls observed the replacement without reexecuting the importer."
+    },
+    {
+      "case": "no-op self-accept with a captured importer under node_modules",
+      "before": ["tick old"],
+      "after": ["tick new"],
+      "result": "Because the dependency had no self-accept callback capable of refreshing the captured export, Quench restarted the same CLI invocation."
+    }
+  ],
+  "diff_check": "passed: git diff --check",
+  "scope": "Focused live CLI evidence for CommonJS self-accept and importer boundary decisions. It does not close the pinned TSRS checker compatibility gate or qualify all HMR acceptance cases."
+}

@@ -1,0 +1,18 @@
+{
+  "kind": "quench-hmr-accept-callback-rollback",
+  "date": "2026-10-31",
+  "scenario": "self-accepted ESM entry whose accept callback throws once",
+  "observed": [
+    "GEN 1",
+    "GEN 2",
+    "update failed; restored the prior module generation: Error: accept callback failure",
+    "GEN 3"
+  ],
+  "result": "callback failure restored the previous runtime module state; a later stable edit applied successfully",
+  "rollback_limit": "guest side effects from the failed evaluation/callback cannot be rolled back; the global generation increment and one-shot failure flag persisted",
+  "invocation": "target/debug/quench-node --hmr <main.mjs>",
+  "verification": [
+    "cargo build -p quench-node passed before this runtime smoke",
+    "git diff --check passed in the same worktree"
+  ]
+}

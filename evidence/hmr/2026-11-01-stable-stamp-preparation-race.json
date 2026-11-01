@@ -1,0 +1,38 @@
+{
+  "objective": "Verify HMR does not apply an intermediate source version when a file changes between watcher emission and source preparation",
+  "method": "A live quench-node --hmr process loaded a self-accepted .mjs entry. The file was atomically replaced with generation 2 containing a 4 MB comment, then atomically replaced with generation 3 75 ms later while preparation of the changed source was intentionally made more expensive. The process output was observed for 8 seconds after the second edit.",
+  "watcher_stable_interval_ms": 30,
+  "watcher_poll_interval_ms": 20,
+  "edit_separation_ms": 75,
+  "generation_2_applied": false,
+  "generation_3_applied": true,
+  "process_remained_running": true,
+  "diagnostics": [],
+  "scope": "One local macOS stress run. It verifies the user-visible outcome for closely spaced atomic edits; there is no instrumentation proving the precise instruction at which the second edit overlapped preparation.",
+  "host": {
+    "os": "macOS 26.5",
+    "machine_model": "Mac16,10",
+    "cpu": "Apple M4",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)"
+  },
+  "binary": "target/debug/quench-node",
+  "scenarios": [
+    {
+      "description": "Two valid atomic replacements separated by 75 ms while a 4 MB comment lengthened preparation.",
+      "generation_2_applied": false,
+      "generation_3_applied": true,
+      "diagnostics": [],
+      "process_remained_running": true
+    },
+    {
+      "description": "An invalid intermediate ESM source (4 MB comment followed by `const = ;`) was atomically replaced by a valid self-accepted generation 75 ms later. Initial generation 0 and final generation 3 were observed.",
+      "initial_generation_observed": true,
+      "invalid_intermediate_diagnostic_emitted": false,
+      "generation_3_applied": true,
+      "process_remained_running": true
+    }
+  ],
+  "result": "Both rapid-edit runs left the process alive and applied only the final valid generation; the invalid intermediate source emitted no HMR diagnostic."
+}

@@ -1,0 +1,90 @@
+{
+  "date": "2026-11-01",
+  "scope": "Manual correctness smokes for TypeScript legacy decorators and unsupported standard decorators across Quench HMR's TS/JS source paths; not a full TypeScript checker or decorators compatibility claim.",
+  "implementation": {
+    "transformer": "OXC 0.153.0",
+    "options": [
+      "Read experimentalDecorators, emitDecoratorMetadata, strictNullChecks, and strict from resolved tsconfig.json.",
+      "Inline OXC's generated decorate, decorateMetadata, and decorateParam helpers in the prepared module while preserving generated source offsets before the appended helper declarations.",
+      "Use OXC AST validation on raw JavaScript and transformed JSX/TypeScript paths to reject standard decorators until the pinned transformer can lower them.",
+      "No @oxc-project/runtime installation is required by the application."
+    ]
+  },
+  "cases": [
+    {
+      "extension": ".mts",
+      "options": {
+        "experimentalDecorators": true,
+        "emitDecoratorMetadata": true
+      },
+      "observed": [
+        "design:returntype metadata resolved to String.",
+        "design:paramtypes metadata resolved to [String].",
+        "design:type metadata resolved to Function.",
+        "Parameter decorator ran with index 0.",
+        "Method decorator ran.",
+        "Class decorator ran.",
+        "Method returned ok."
+      ]
+    },
+    {
+      "extension": ".cts",
+      "options": {
+        "experimentalDecorators": true,
+        "emitDecoratorMetadata": true
+      },
+      "observed": [
+        "CJS method decorator ran.",
+        "CJS class decorator ran.",
+        "Method returned ok."
+      ]
+    },
+    {
+      "extension": ".ts",
+      "scenario": "Atomically replace a self-accepted decorated TypeScript entry while quench-node --hmr is running.",
+      "observed": [
+        "Generation 1 decorator ran and global generation became 1.",
+        "Generation 2 decorator ran after the accepted replacement and global generation became 2.",
+        "The same quench-node CLI process remained running throughout the update."
+      ]
+    },
+    {
+      "extension": ".mts",
+      "scenario": "A TypeScript file uses standard decorators without experimentalDecorators.",
+      "observed": [
+        "Quench exits with a clear unsupported-transform error from the pinned OXC transformer.",
+        "The previous behavior silently erased the decorator and ran the undecorated class; that behavior is no longer allowed."
+      ]
+    },
+    {
+      "extension": ".jsx",
+      "scenario": "A JavaScript JSX file uses standard ECMAScript decorators.",
+      "observed": [
+        "HMR exits with an explicit unsupported-transform error from the pinned OXC transformer.",
+        "Neither the decorator nor the module body runs, preventing silent loss of the decorator's behavior."
+      ]
+    },
+    {
+      "extensions": [".js", ".cjs", ".mjs"],
+      "scenario": "Raw JavaScript entries and imported modules use standard ECMAScript decorators.",
+      "observed": [
+        "All three entry formats exit with an explicit unsupported-transform error from the pinned OXC transformer.",
+        "Neither the decorator nor the module body runs.",
+        "The same rejection occurs for a CommonJS .cjs dependency and an ESM .mjs dependency before either importer body runs.",
+        "A plain .js control module executes normally with HMR enabled."
+      ]
+    }
+  ],
+  "limits": [
+    "A TSRS diagnostic from the ESM fixture installed 11 of 12 available parameter facts; this smoke does not qualify all queried types.",
+    "OXC 0.153.0 does not lower standard ECMAScript decorators. Quench rejects standard decorator syntax in raw JavaScript, JSX, and TypeScript modules; full standard decorator support remains unimplemented.",
+    "Only the listed legacy decorator forms and metadata were exercised, not all TypeScript compiler options or decorator edge cases.",
+    "Resident HMR control processes were terminated after observing output; decorator rejection cases exited with code 1 before module execution."
+  ],
+  "verification": {
+    "cargo_build_p_quench_node": "passed",
+    "git_diff_check": "passed",
+    "runtime_smokes": "passed for .js, .cjs, .mjs, .jsx; raw JavaScript control passed",
+    "test_suite": "not run"
+  }
+}

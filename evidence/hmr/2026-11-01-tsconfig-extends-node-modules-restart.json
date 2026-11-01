@@ -1,0 +1,32 @@
+{
+  "kind": "quench-hmr-tsconfig-extends-node-modules-restart",
+  "date": "2026-11-01",
+  "host": "macOS Darwin 25.5 arm64, Mac16,10, 10 logical CPUs, 16 GiB memory",
+  "scenario": "An HMR TypeScript entry extends ./node_modules/@quench/tsconfig/base.json; editing the extended config must restart because transform/compiler settings can change.",
+  "command": "target/debug/quench-node --hmr <workspace>/main.ts",
+  "initial_config": {
+    "extends": "./node_modules/@quench/tsconfig/base.json",
+    "compilerOptions": {
+      "module": "ESNext",
+      "target": "ES2022"
+    }
+  },
+  "change": "Changed the extended base config target from ES2022 to ES2020.",
+  "entry": "import.meta.hot.accept(); console.log(\"GEN\"); setInterval(() => {}, 1000);",
+  "observed": {
+    "pid": 67742,
+    "output": ["GEN", "GEN"],
+    "result": "The entry restarted in the same CLI process after the extended config changed."
+  },
+  "implementation_facts": [
+    "Collect extends chains from ancestor tsconfig candidates with a separate visited set.",
+    "Track collected package and TypeScript config metadata even when it resides under node_modules or has a non-tsconfig filename.",
+    "Restart on changes to tracked config/package metadata and worker-loaded modules."
+  ],
+  "verification": {
+    "cargo_build_p_quench_node": "passed",
+    "runtime_smoke": "passed",
+    "git_diff_check": "passed",
+    "test_suite": "not run"
+  }
+}

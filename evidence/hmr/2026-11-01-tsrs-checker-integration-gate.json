@@ -1,0 +1,40 @@
+{
+  "kind": "quench-hmr-tsrs-checker-integration-gate",
+  "date": "2026-11-01",
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "typescript": {
+    "version": "7.1.0-beta",
+    "commit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a"
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "command": "cargo test --profile dev -p tsrs_api --test integration checker_test",
+  "result": {
+    "passed": 25,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 89,
+    "duration_seconds": 14.56
+  },
+  "relevant_cases": [
+    "types_and_symbols_at_utf16_positions",
+    "structured_type_shapes_tuple_mapped_conditional_literal",
+    "generics_properties_index_infos_and_type_arguments",
+    "classes_predicates_enums_and_jsdoc",
+    "pinned_go_differential",
+    "coverage_inventory_matches_pinned_proto_and_dispatch"
+  ],
+  "interpretation": "The pinned checker integration slice passed, including its Go differential and type-query-position cases. Combined with 30/30 HMR query display comparisons, this is substantial focused coverage but not the full TypeScript checker API or proof of byte-for-byte equivalence for every type formatting case.",
+  "scope": "One pinned TSRS revision and one macOS host; the full TSRS Node API suite remains separately recorded and has one unrelated readFile callback timeout."
+}

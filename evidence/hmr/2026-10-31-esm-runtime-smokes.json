@@ -1,0 +1,46 @@
+{
+  "kind": "quench-hmr-runtime-smokes",
+  "date": "2026-10-31",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "build": {
+    "command": "cargo build -p quench-node",
+    "result": "passed; dev profile already current"
+  },
+  "scenarios": [
+    {
+      "name": "ESM self-accept entry replacement",
+      "invocation": "target/debug/quench-node --hmr <main.mjs>",
+      "observed": [
+        "GEN 1",
+        "GEN 2"
+      ],
+      "result": "atomic source edit applied in the same resident process"
+    },
+    {
+      "name": "ESM dependency accept callback",
+      "observed": [
+        "ENTRY v1",
+        "ACCEPT v2"
+      ],
+      "result": "updated dependency namespace reached the importing module's registered accept callback"
+    },
+    {
+      "name": "ESM evaluation failure recovery",
+      "observed": [
+        "GEN 1",
+        "update failed; restored the prior module generation",
+        "GEN 2"
+      ],
+      "result": "failed replacement retained the running generation and a subsequent valid edit applied"
+    }
+  ],
+  "limitations": [
+    "Guest side effects during a failed update cannot be rolled back.",
+    "These focused runtime smokes do not establish full HMR compatibility or performance qualification."
+  ]
+}

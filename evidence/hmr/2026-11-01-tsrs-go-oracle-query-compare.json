@@ -1,0 +1,166 @@
+{
+  "kind": "quench-hmr-tsrs-go-oracle-query-compare",
+  "date": "2026-11-01",
+  "typescript_commit": "3e9236361fa97a9e6c685f4833ac457ae2d8c50a",
+  "typescript_version": "7.1.0-beta",
+  "tsrs_revision": "e18fb617ee516917342dcda27063ab67acc79e49",
+  "go_version": "go1.27.3 darwin/arm64",
+  "oracle_method": "pinned API checker.getTypeAtPosition(file, positions), then typeToString",
+  "candidate_method": "Quench TSRS worker getTypesAtPositions, then typeToString",
+  "fixture_sha256": "a307780ea077bc09dce3311703e56b50a0305c861211ab70aa42985206bc7465",
+  "query_count": 30,
+  "equal": true,
+  "mismatches": [],
+  "cases": [
+    {
+      "name": "branded alias",
+      "oracle": "Branded",
+      "tsrs": "Branded"
+    },
+    {
+      "name": "readonly optional tuple",
+      "oracle": "ReadonlyOptionalTuple",
+      "tsrs": "ReadonlyOptionalTuple"
+    },
+    {
+      "name": "generic object alias",
+      "oracle": "GenericBox<number>",
+      "tsrs": "GenericBox<number>"
+    },
+    {
+      "name": "keyof alias",
+      "oracle": "keyof Model",
+      "tsrs": "keyof Model"
+    },
+    {
+      "name": "indexed access",
+      "oracle": "number",
+      "tsrs": "number"
+    },
+    {
+      "name": "conditional generic",
+      "oracle": "T",
+      "tsrs": "T"
+    },
+    {
+      "name": "template literal alias",
+      "oracle": "`change:${string}`",
+      "tsrs": "`change:${string}`"
+    },
+    {
+      "name": "ReturnType alias",
+      "oracle": "number",
+      "tsrs": "number"
+    },
+    {
+      "name": "Awaited Promise object",
+      "oracle": "{ value: number; }",
+      "tsrs": "{ value: number; }"
+    },
+    {
+      "name": "Partial mapped type",
+      "oracle": "Partial<Model>",
+      "tsrs": "Partial<Model>"
+    },
+    {
+      "name": "Record mapped type",
+      "oracle": "NumericRecord",
+      "tsrs": "NumericRecord"
+    },
+    {
+      "name": "discriminated union",
+      "oracle": "Choice",
+      "tsrs": "Choice"
+    },
+    {
+      "name": "const literal default",
+      "oracle": "1",
+      "tsrs": "1"
+    },
+    {
+      "name": "object default",
+      "oracle": "{ value: number; }",
+      "tsrs": "{ value: number; }"
+    },
+    {
+      "name": "empty array default",
+      "oracle": "never[]",
+      "tsrs": "never[]"
+    },
+    {
+      "name": "function type",
+      "oracle": "(value: number) => string",
+      "tsrs": "(value: number) => string"
+    },
+    {
+      "name": "constructor type",
+      "oracle": "new () => Model",
+      "tsrs": "new () => Model"
+    },
+    {
+      "name": "unique symbol",
+      "oracle": "unique symbol",
+      "tsrs": "unique symbol"
+    },
+    {
+      "name": "enum",
+      "oracle": "Direction",
+      "tsrs": "Direction"
+    },
+    {
+      "name": "generic constraint",
+      "oracle": "T",
+      "tsrs": "T"
+    },
+    {
+      "name": "readonly union array",
+      "oracle": "readonly (string | number)[]",
+      "tsrs": "readonly (string | number)[]"
+    },
+    {
+      "name": "rest tuple",
+      "oracle": "[number, (string | undefined)?]",
+      "tsrs": "[number, (string | undefined)?]"
+    },
+    {
+      "name": "optional array parameter",
+      "oracle": "number[] | undefined",
+      "tsrs": "number[] | undefined"
+    },
+    {
+      "name": "NonNullable utility",
+      "oracle": "string",
+      "tsrs": "string"
+    },
+    {
+      "name": "Extract utility",
+      "oracle": "string",
+      "tsrs": "string"
+    },
+    {
+      "name": "Exclude utility",
+      "oracle": "number",
+      "tsrs": "number"
+    },
+    {
+      "name": "PromiseLike generic",
+      "oracle": "PromiseLike<T>",
+      "tsrs": "PromiseLike<T>"
+    },
+    {
+      "name": "void",
+      "oracle": "void",
+      "tsrs": "void"
+    },
+    {
+      "name": "readonly never array",
+      "oracle": "readonly never[]",
+      "tsrs": "readonly never[]"
+    },
+    {
+      "name": "ThisType marker",
+      "oracle": "ThisType<Model>",
+      "tsrs": "ThisType<Model>"
+    }
+  ]
+}

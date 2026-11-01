@@ -1,0 +1,21 @@
+{
+  "objective": "Verify a loaded self-accepted ESM entry still updates in process after its watcher baseline was changed to the exact source read during startup",
+  "method": "A live target/debug/quench-node --hmr process loaded a self-accepted .mjs entry, then the entry was replaced with generation 2. The process output and PID were observed.",
+  "initial_generation": 1,
+  "replacement_generation": 2,
+  "initial_pid": 58742,
+  "replacement_pid": 58742,
+  "process_remained_running": true,
+  "stderr": "",
+  "scope": "One focused macOS regression smoke. It confirms the normal startup and accepted-update path; it does not force an edit into the narrow interval between source read and host setup.",
+  "host": {
+    "os": "macOS 26.5",
+    "machine_model": "Mac16,10",
+    "cpu": "Apple M4",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)"
+  },
+  "binary": "target/debug/quench-node",
+  "result": "Generation 2 was applied in the original PID with no diagnostics."
+}

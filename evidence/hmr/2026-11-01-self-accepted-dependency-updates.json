@@ -1,0 +1,30 @@
+{
+  "kind": "quench-hmr-self-accepted-dependency-updates",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "scenario": "A loaded dependency accepts its own update while its importer does not register dependency acceptance.",
+  "formats": [
+    {
+      "format": "CommonJS",
+      "invocation": "target/debug/quench-node --hmr <main.cjs>",
+      "observed": ["ENTRY 1", "READ v1", "READ v1", "ACCEPT v2", "READ v2"],
+      "result": "The dependency self-accepted in-process, its callback received the new exports, and later require calls observed v2 without rerunning the importer."
+    },
+    {
+      "format": "ESM",
+      "invocation": "target/debug/quench-node --hmr <main.mjs>",
+      "observed": ["ENTRY 1", "PARENT v1", "PARENT v1", "ACCEPT v2"],
+      "result": "The dependency self-accepted in-process, its callback received the replacement namespace, and the importer was not reexecuted."
+    }
+  ],
+  "verification": {
+    "command": "cargo build -p quench-node",
+    "result": "passed",
+    "runtime_smokes": "CommonJS and ESM passed"
+  }
+}

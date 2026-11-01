@@ -3099,6 +3099,36 @@ impl<H: Host> Vm<H> {
         self.materialize_program_constants(id, &residual);
         Some(id)
     }
+
+    pub(crate) fn typescript_parameter_type(
+        &self,
+        source_name: &str,
+        function_start_offset: u32,
+        function_start: u32,
+        parameter_index: u32,
+    ) -> Option<String> {
+        self.programs
+            .typescript_parameter_type(
+                source_name,
+                function_start_offset,
+                function_start,
+                parameter_index,
+            )
+            .map(str::to_owned)
+    }
+
+    pub(crate) fn install_typescript_parameter_types(
+        &mut self,
+        source_name: &str,
+        function_start_offset: u32,
+        facts: &[crate::TypeScriptParameterType],
+    ) -> usize {
+        self.programs.install_typescript_parameter_types(
+            source_name,
+            function_start_offset,
+            facts,
+        )
+    }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let program = self.intern_program_atoms(program);
         self.store_dynamic_program_shared(Rc::new(program))

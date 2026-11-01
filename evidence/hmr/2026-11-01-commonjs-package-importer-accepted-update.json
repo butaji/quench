@@ -1,0 +1,23 @@
+{
+  "kind": "quench-hmr-commonjs-package-importer-accepted-update",
+  "date": "2026-11-01",
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184
+  },
+  "command": "cargo build -p quench-node; target/debug/quench-node --hmr <temporary-app>/main.js",
+  "fixture": {
+    "entry": "Requires consumer.cjs, prints consumer.value, and prints boot once",
+    "consumer.cjs": "Requires shared.cjs and explicitly accepts that dependency, replacing its exported value in the accept callback",
+    "shared.cjs": "Exports value=old and self-accepts"
+  },
+  "procedure": "Wait until value old is observed, then change shared.cjs to export value=new while keeping its self-accept.",
+  "observed_output": ["boot", "value old", "value old", "value new", "value new"],
+  "boot_count": 1,
+  "result": "The loaded importer under the app root explicitly accepted the dependency update. The CommonJS self-accepted module and importer callbacks ran, the consumer observed new, and the entry did not restart.",
+  "build": "passed: cargo build -p quench-node",
+  "diff_check": "passed: git diff --check",
+  "scope": "Focused live runtime smoke for an explicitly accepted CommonJS dependency boundary. This does not qualify the full TSRS checker compatibility gate or all HMR acceptance cases."
+}

@@ -370,6 +370,7 @@ pub(crate) fn worker_start(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
         let state = state.borrow();
         (state.process_argv.as_slice().first().cloned().unwrap_or_default(), state.exec_argv.clone())
     };
+    let hmr_watch_registry = c.host_mut().hmr_worker_watch_registry();
     let launch = thread::Launch {
         filename,
         is_eval,
@@ -379,6 +380,7 @@ pub(crate) fn worker_start(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
         env,
         data,
         parent: worker_side,
+        hmr_watch_registry,
     };
     let (thread_id, control) = thread::spawn(launch).map_err(RootedError::host)?;
     let object = c.retain(worker)?;

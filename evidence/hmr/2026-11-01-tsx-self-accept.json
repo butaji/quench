@@ -1,0 +1,42 @@
+{
+  "kind": "quench-hmr-tsx-self-accept",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "invocation": "target/debug/quench-node --hmr <main.tsx>",
+  "fixture": {
+    "source_kind": "TSX ESM",
+    "jsx_runtime": "temporary ESM react/jsx-runtime shim implementing jsx/jsxs",
+    "features": [
+      "import.meta.hot.accept() self acceptance",
+      "TypeScript Props annotation erased by OXC",
+      "JSX transformed to automatic runtime calls",
+      "astral emoji before typed component to exercise UTF-16 source positions"
+    ]
+  },
+  "observed": [
+    "GEN 1 😀 {\"type\":\"button\",\"props\":{\"count\":1,\"children\":\"one\"}}",
+    "GEN 2 😀 {\"type\":\"button\",\"props\":{\"count\":2,\"children\":\"two\"}}"
+  ],
+  "jsx_control": {
+    "source_kind": "JSX ESM",
+    "observed": [
+      "GEN 1 {\"type\":\"button\",\"props\":{\"count\":1,\"children\":\"one\"}}",
+      "GEN 2 {\"type\":\"button\",\"props\":{\"count\":2,\"children\":\"two\"}}"
+    ],
+    "result": "The same live self-accept flow passed for .jsx with the local JSX runtime shim."
+  },
+  "javascript_and_typescript_controls": {
+    "observed": {
+      ".js": ["GEN 1 1", "GEN 2 2"],
+      ".ts": ["GEN 1 1", "GEN 2 2"]
+    },
+    "result": "Plain .js and .ts ESM entry points also self-accepted live replacements in one quench-node invocation; the .ts control included an erased Props annotation."
+  },
+  "result": "A live edit was transformed and self-accepted in the same resident quench-node invocation; updated TSX re-evaluated and emitted the new JSX props.",
+  "scope": "Focused extension-family smoke for .js, .jsx, .ts, and .tsx. JSX cases use a minimal local JSX runtime shim and do not establish compatibility with full React packages or broader JSX runtime behavior."
+}

@@ -1,0 +1,63 @@
+{
+  "kind": "quench-hmr-multi-module-update",
+  "date": "2026-10-31",
+  "scenarios": [
+    {
+      "kind": "commonjs",
+      "initial_output": [
+        "RUN 56878",
+        "ENTRY a1 b1"
+      ],
+      "update_output": [
+        "ACCEPT_A a2",
+        "ACCEPT_B b2"
+      ],
+      "timed_repeat": {
+        "process_id": 57119,
+        "callback_timestamps_ms": [
+          1793501272273,
+          1793501272275
+        ],
+        "delta_ms": 2
+      }
+    },
+    {
+      "kind": "esm",
+      "initial_output": [
+        "RUN 57199 a1 b1"
+      ],
+      "update_output": [
+        "ACCEPT_A a2",
+        "ACCEPT_B b2"
+      ],
+      "callback_timestamps_ms": [
+        1793501299411,
+        1793501299413
+      ],
+      "delta_ms": 2
+    },
+    {
+      "kind": "commonjs-batch-partial-fallback",
+      "initial_output": [
+        "RUN 57279",
+        "ENTRY a1 b1"
+      ],
+      "after_updates": [
+        "ACCEPT_A a2",
+        "update failed; restored the prior module generation: Error: batch callback failure",
+        "RUN 57279",
+        "ENTRY a2 b2"
+      ],
+      "result": "first accepted update ran, second callback failure triggered restart fallback, and re-execution loaded both changed files"
+    }
+  ],
+  "result": "Two dependency edits within one watcher cadence were both applied in each module format; the importing entry did not rerun.",
+  "implementation": "stable prepared updates are applied sequentially; a rejected update falls back to restarting the CLI, and a failure in a multi-file batch requests fallback after per-module rollback",
+  "verification": [
+    "cargo build -p quench-node passed",
+    "git diff --check passed",
+    "live CommonJS and ESM CLI smokes passed",
+    "multi-file partial failure converged through restart fallback in a live CLI smoke"
+  ],
+  "limitation": "If an earlier update in the batch has guest-visible side effects and a later update is rejected or fails, those guest effects cannot be rolled back before restart fallback."
+}

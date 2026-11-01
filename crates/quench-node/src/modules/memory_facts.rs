@@ -1,11 +1,14 @@
 //! Process memory limits from the same OS sources used by libuv.
+#[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "linux")]
 #[derive(Clone)]
 enum Controller {
     Unified(PathBuf),
     Legacy(PathBuf),
 }
+#[cfg(target_os = "linux")]
 fn number(path: impl AsRef<Path>) -> u64 {
     std::fs::read_to_string(path)
         .ok()
@@ -19,6 +22,7 @@ fn number(path: impl AsRef<Path>) -> u64 {
         })
         .unwrap_or(0)
 }
+#[cfg(target_os = "linux")]
 impl Controller {
     fn discover() -> Option<Self> {
         #[cfg(target_os = "linux")]
@@ -115,7 +119,10 @@ fn resource_limit() -> Option<u64> {
     None
 }
 pub(crate) fn constrained() -> u64 {
+    #[cfg(target_os = "linux")]
     let cgroup = Controller::discover().and_then(|controller| controller.limits());
+    #[cfg(not(target_os = "linux"))]
+    let cgroup = None;
     match (cgroup, resource_limit()) {
         (Some(group), Some(resource)) => group.min(resource),
         (Some(limit), None) | (None, Some(limit)) => limit,

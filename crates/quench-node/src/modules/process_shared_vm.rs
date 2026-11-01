@@ -1930,6 +1930,7 @@ pub(crate) fn finish_execution(
         .borrow()
         .process_control
         .clone();
+    let hmr_restart_on_change = runtime.host_mut().hmr_restart_on_change();
     // Top-level execution has returned. Native polling and process lifecycle
     // events run outside that JavaScript resource; queued jobs restore their
     // own captured identity and stores while they execute.
@@ -1938,7 +1939,11 @@ pub(crate) fn finish_execution(
         &native_state, super::async_hooks_state::NATIVE_ASYNC_ID,
     );
     let checkpoint = (|| loop {
-        drain_checkpoint(runtime, program)?;
+        if drain_checkpoint(runtime, program, hmr_restart_on_change)? {
+            finish_requested_exit(runtime, program)?;
+            crate::host::hmr::restart_cli_process()?;
+            return Ok(());
+        }
         if process_control.requested_exit_code().is_some() {
             return Ok(());
         }
@@ -1952,7 +1957,9 @@ pub(crate) fn finish_execution(
         drop(span);
         emitted?;
         drain_shared_jobs(runtime, program, &state)?;
-        if process_control.requested_exit_code().is_some() || !has_referenced_shared_work(&state) {
+        if process_control.requested_exit_code().is_some()
+            || !has_referenced_shared_work(&state, hmr_restart_on_change)
+        {
             return Ok(());
         }
     })();
@@ -2099,9 +2106,177 @@ pub(crate) fn route_uncaught_exception_value(
 fn drain_checkpoint(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
-) -> Result<(), String> {
+    hmr_restart_on_change: bool,
+) -> Result<bool, String> {
     let shared_state = runtime.host_mut().shared_state();
     loop {
+        if shared_state.borrow().process_control.requested_exit_code().is_some() {
+            return Ok(false);
+        }
+        if hmr_restart_on_change {
+            for update in runtime.host_mut().poll_hmr_type_queries() {
+                match update {
+                    Ok(update) => {
+                        if !runtime.host_mut().hmr_change_matches_stamp(
+                            &update.path,
+                            Some(&update.source_digest),
+                        ) {
+                            continue;
+                        }
+                        let facts = update
+                            .facts
+                            .into_iter()
+                            .map(|fact| quench_runtime::TypeScriptParameterType {
+                                function_start: fact.function_start,
+                                parameter_index: fact.parameter_index,
+                                type_text: fact.type_text,
+                                is_number_like: fact.is_number_like,
+                            })
+                            .collect::<Vec<_>>();
+                        let installed = runtime.install_typescript_parameter_types(
+                            &update.source_name,
+                            update.function_start_offset,
+                            &facts,
+                        );
+                        if installed != facts.len() {
+                            eprintln!(
+                                "quench-node HMR: installed {installed} of {} TypeScript parameter facts for {}",
+                                facts.len(),
+                                update.path.display()
+                            );
+                        }
+                    }
+                    Err(error) => eprintln!("quench-node HMR checker: {error}"),
+                }
+            }
+            for request in runtime.host_mut().take_hmr_type_queries() {
+                if let Err(error) = runtime.host_mut().submit_hmr_type_queries(
+                    &request.path,
+                    &request.source_name,
+                    request.function_start_offset,
+                    &request.positions,
+                ) {
+                    eprintln!("quench-node HMR checker: {error}");
+                }
+            }
+        }
+        if hmr_restart_on_change {
+            let changes = runtime.host_mut().poll_hmr_changes();
+            if let Some(changes) = changes.filter(|changes| !changes.changed.is_empty()) {
+                let restart_only_changed = changes
+                    .changed
+                    .iter()
+                    .any(|path| runtime.host_mut().hmr_restart_only(path));
+                if restart_only_changed {
+                    return Ok(true);
+                }
+                let mut prepared = changes
+                    .changed
+                    .iter()
+                    .map(|path| {
+                        (
+                            path,
+                            crate::host::shared_vm::source_transform::prepare(path),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let stale = prepared
+                    .iter()
+                    .filter_map(|(path, result)| {
+                        let digest = result
+                            .as_ref()
+                            .ok()
+                            .and_then(Option::as_ref)
+                            .map(|source| &source.content_digest);
+                        (!runtime.host_mut().hmr_change_matches_stamp(path, digest))
+                            .then(|| (*path).clone())
+                    })
+                    .collect::<Vec<_>>();
+                if !stale.is_empty() {
+                    runtime.host_mut().retry_hmr_changes(stale.iter().cloned());
+                    prepared.retain(|(path, _)| !stale.iter().any(|stale| stale == *path));
+                }
+                let restart_only = prepared.iter().any(|(_, result)| {
+                    result
+                        .as_ref()
+                        .ok()
+                        .and_then(Option::as_ref)
+                        .is_some_and(|source| source.restart_only)
+                });
+                if restart_only {
+                    return Ok(true);
+                }
+                let removed = prepared.iter().any(|(path, result)| {
+                    result.is_err()
+                        && crate::host::shared_vm::source_transform::source_file_is_missing(path)
+                        && runtime.host_mut().hmr_change_matches_stamp(path, None)
+                });
+                if removed {
+                    return Ok(true);
+                }
+                let failed = prepared
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().err())
+                    .collect::<Vec<_>>();
+                if failed.is_empty() && !prepared.is_empty() {
+                    let prepared = prepared
+                        .into_iter()
+                        .map(|(path, result)| {
+                            result
+                                .expect("all changed files were prepared")
+                                .map(|source| (path.clone(), source))
+                        })
+                        .collect::<Vec<_>>();
+                    let Some(prepared) = prepared.into_iter().collect::<Option<Vec<_>>>() else {
+                        return Ok(true);
+                    };
+                    let multiple_updates = prepared.len() > 1;
+                    for (path, source) in prepared {
+                        match apply_hmr_entry(runtime, program, &path, &source) {
+                            Ok(true) => {
+                                let function_start_offset =
+                                    if source.kind == quench_runtime::SourceKind::Script {
+                                        crate::host::shared_vm::commonjs::hmr_wrapper_prefix_len()
+                                    } else {
+                                        0
+                                    };
+                                let source_name = runtime
+                                    .host_mut()
+                                    .hmr_source_name(&path)
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                                if let Err(error) = runtime.host_mut().submit_hmr_type_queries(
+                                    &path,
+                                    &source_name,
+                                    function_start_offset,
+                                    &source.type_query_positions,
+                                ) {
+                                    eprintln!("quench-node HMR checker: {error}");
+                                }
+                            }
+                            Ok(false) => return Ok(true),
+                            Err(error) => {
+                                eprintln!(
+                                    "quench-node HMR: update failed; restored the prior module generation, but guest side effects cannot be rolled back: {error}"
+                                );
+                                if multiple_updates {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    for error in failed {
+                        eprintln!("quench-node HMR: {error}");
+                    }
+                    runtime.host_mut().retry_hmr_changes(
+                        prepared
+                            .into_iter()
+                            .filter_map(|(path, result)| result.is_ok().then(|| path.clone())),
+                    );
+                }
+            }
+        }
         drain_shared_jobs(runtime, program, &shared_state)?;
         if crate::modules::worker_threads_shared_vm::poll(runtime,program)? { continue; }
         if crate::modules::process_stdin_shared_vm::poll(runtime)? {
@@ -2149,12 +2324,12 @@ fn drain_checkpoint(
             continue;
         }
 
-        if has_referenced_shared_work(&shared_state)
+        if has_referenced_shared_work(&shared_state, hmr_restart_on_change)
             && super::fs_watch_shared_vm::poll(runtime, program)?
         {
             continue;
         }
-        let can_run_timers = has_referenced_shared_work(&shared_state);
+        let can_run_timers = has_referenced_shared_work(&shared_state, hmr_restart_on_change);
         if can_run_timers && super::fs_stat_watch_shared_vm::poll(runtime, program)? {
             continue;
         }
@@ -2219,14 +2394,14 @@ fn drain_checkpoint(
             continue;
         }
 
-        if !has_referenced_shared_work(&shared_state) {
+        if !has_referenced_shared_work(&shared_state, hmr_restart_on_change) {
             release_unreferenced_shared_callbacks(runtime, &shared_state);
-            break;
+            break Ok(false);
         }
         let immediate_cutoff = shared_state.borrow().scheduler.shared_immediate_cutoff();
         let Some(cutoff) = immediate_cutoff else {
             let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
-            if has_referenced_shared_work(&shared_state) {
+            if has_referenced_shared_work(&shared_state, hmr_restart_on_change) {
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
@@ -2234,8 +2409,9 @@ fn drain_checkpoint(
                 let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+                let has_polled_work = hmr_restart_on_change || has_polled_shared_work(&shared_state);
                 let wait = match until_timer {
-                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
+                    Some(delay) if !has_polled_work => delay,
                     Some(delay) => delay.min(poll_interval),
                     None => poll_interval,
                 };
@@ -2245,7 +2421,7 @@ fn drain_checkpoint(
                 continue;
             }
             release_unreferenced_shared_callbacks(runtime, &shared_state);
-            break;
+            break Ok(false);
         };
         let _check_span =
             crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "CheckImmediate");
@@ -2289,7 +2465,7 @@ fn drain_checkpoint(
         }
         if !ran_immediate {
             let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
-            if has_referenced_shared_work(&shared_state) {
+            if has_referenced_shared_work(&shared_state, hmr_restart_on_change) {
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
                     .min(crate::modules::net_shared_vm::poll_interval())
                     .min(crate::modules::child_process_shared_vm::poll_interval());
@@ -2297,8 +2473,9 @@ fn drain_checkpoint(
                 let poll_interval = shared_state.borrow().cares.next_timeout().map_or(poll_interval, |timeout| poll_interval.min(timeout));
                 let until_timer =
                     next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+                let has_polled_work = hmr_restart_on_change || has_polled_shared_work(&shared_state);
                 let wait = match until_timer {
-                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
+                    Some(delay) if !has_polled_work => delay,
                     Some(delay) => delay.min(poll_interval),
                     None => poll_interval,
                 };
@@ -2308,10 +2485,44 @@ fn drain_checkpoint(
                 continue;
             }
             release_unreferenced_shared_callbacks(runtime, &shared_state);
-            break;
+            break Ok(false);
         }
     }
-    Ok(())
+}
+
+fn apply_hmr_entry(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    path: &std::path::Path,
+    source: &crate::host::shared_vm::source_transform::PreparedSource,
+) -> Result<bool, String> {
+    let operation = runtime
+        .host_function(crate::host::shared_vm::operation("hmrApplyEntry"))
+        .map_err(|error| rooted_error_message(runtime, program, error))?;
+    let receiver = runtime.root(Value::UNDEFINED);
+    let path = runtime.string_rooted(&path.to_string_lossy());
+    let source_text = runtime.string_rooted(&source.source);
+    let is_module = runtime.root(Value::boolean(source.kind == quench_runtime::SourceKind::Module));
+    let result = runtime.call_rooted(operation, receiver, &[path, source_text, is_module]);
+    runtime.release_root(operation);
+    runtime.release_root(receiver);
+    runtime.release_root(path);
+    runtime.release_root(source_text);
+    runtime.release_root(is_module);
+    match result {
+        Ok(result) => {
+            let applied = runtime.rooted_value(result).and_then(Value::as_bool) == Some(true);
+            runtime.release_root(result);
+            Ok(applied)
+        }
+        Err(error) => {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            Err(message)
+        }
+    }
 }
 
 fn run_and_clear_native_immediates(
@@ -2337,8 +2548,12 @@ fn run_and_clear_native_immediates(
     }
 }
 
-fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    has_polled_shared_work(shared_state)
+fn has_referenced_shared_work(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    hmr_restart_on_change: bool,
+) -> bool {
+    hmr_restart_on_change
+        || has_polled_shared_work(shared_state)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
         || shared_state
             .borrow()
@@ -3451,7 +3666,10 @@ fn poll_process_signals(
         let event = runtime.string_rooted(&name);
         let signal = runtime.string_rooted(&name);
         // Listeners receive the signal's name and number (src/signal_wrap.cc).
+        #[cfg(target_os = "linux")]
         let mut args = vec![event, signal];
+        #[cfg(not(target_os = "linux"))]
+        let args = vec![event, signal];
         #[cfg(target_os = "linux")]
         if let Some(number) = crate::modules::process_signals_state::signal_number(&name) {
             args.push(runtime.root(quench_runtime::Value::number(f64::from(number))));

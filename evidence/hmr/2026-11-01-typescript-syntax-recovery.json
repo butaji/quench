@@ -1,0 +1,22 @@
+{
+  "kind": "quench-hmr-typescript-syntax-recovery",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184
+  },
+  "invocation": "target/debug/quench-node --hmr <main.ts>",
+  "scenario": "A running TypeScript entry receives an invalid edit followed by a valid edit.",
+  "observed": [
+    "GEN 1",
+    "quench-node HMR: <main.ts>: Unexpected token",
+    "GEN 2"
+  ],
+  "result": "The syntax-invalid update left the active process and prior generation running. A later valid edit applied in the same process.",
+  "verification": {
+    "command": "cargo build -p quench-node",
+    "result": "passed"
+  }
+}

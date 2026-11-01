@@ -1,0 +1,30 @@
+{
+  "kind": "quench-hmr-decline-restart-fallback",
+  "date_utc": "2026-11-01",
+  "command": "target/debug/quench-node --hmr <entry>",
+  "scenarios": [
+    {
+      "format": "CommonJS",
+      "entry": "main.cjs",
+      "decline_api": "module.hot.decline()",
+      "edit": "const VALUE = 1 -> const VALUE = 2",
+      "observed": [
+        "GEN 52821 1",
+        "GEN 52821 2"
+      ],
+      "result": "The rejected update used restart fallback, loaded edited source, and retained the process ID."
+    },
+    {
+      "format": "ESM",
+      "entry": "main.mjs",
+      "decline_api": "import.meta.hot.decline()",
+      "edit": "const VALUE = 1 -> const VALUE = 2",
+      "observed": [
+        "GEN 52882 1",
+        "GEN 52882 2"
+      ],
+      "result": "The rejected update used restart fallback, loaded edited source, and retained the process ID."
+    }
+  ],
+  "cleanup": "Both resident processes were terminated after observation."
+}

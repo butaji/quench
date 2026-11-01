@@ -1,0 +1,52 @@
+{
+  "objective": "Measure warm multi-module HMR update latency after adding batched accepted updates",
+  "date": "2026-10-31",
+  "method": "10 sequential iterations in one warmed target/debug process. Each iteration atomically replaces two small loaded CommonJS dependencies accepted independently by the importer. Timing starts before staging the first replacement and ends after the second accept callback output. Callback wall-clock timestamps also confirm both callbacks run in the same watcher cadence.",
+  "files_per_batch": 2,
+  "batches": 10,
+  "median_ms": 71.558,
+  "p95_ms_nearest_rank": 74.84,
+  "max_ms": 74.84,
+  "raw_ms": [
+    74.84,
+    68.392,
+    67.349,
+    71.733,
+    74.773,
+    73.497,
+    71.384,
+    72.03,
+    69.186,
+    65.937
+  ],
+  "callback_delta_ms": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2,
+    1,
+    1,
+    1
+  ],
+  "host": {
+    "os": "macOS 26.5 arm64",
+    "kernel": "Darwin 25.5.0",
+    "machine_model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)",
+    "ulimits": {
+      "stack_kbytes": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_seconds": "unlimited",
+      "file_size_blocks": "unlimited",
+      "address_space_kbytes": "unlimited"
+    }
+  },
+  "binary": "target/debug/quench-node",
+  "scope": "This is a warm two-file CommonJS accepted-boundary measurement on this host. It is not cold-start, cross-host, or production qualification."
+}

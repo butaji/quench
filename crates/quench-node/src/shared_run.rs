@@ -280,11 +280,25 @@ fn execute_shared_on_worker(
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
+    let worker_hmr_registry = worker
+        .as_ref()
+        .and_then(|worker| worker.hmr_watch_registry.clone());
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
     };
-    let (source, name, kind, commonjs_entry, exec_argv, entry_goal, entry_file) = match input {
+    let (
+        source,
+        name,
+        kind,
+        commonjs_entry,
+        exec_argv,
+        entry_goal,
+        entry_file,
+        hmr_entry_requested_path,
+        entry_file_stamp,
+        entry_type_query_positions,
+    ) = match input {
         SharedInput::Eval {
             source,
             goal,
@@ -306,6 +320,9 @@ fn execute_shared_on_worker(
             exec_argv,
             goal,
             None,
+            None,
+            None,
+            Vec::new(),
         ),
         SharedInput::Eval { source, exec_argv, print: true, .. } => {
             let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
@@ -317,6 +334,9 @@ fn execute_shared_on_worker(
                 exec_argv,
                 EntryGoal::Node,
                 None,
+                None,
+                None,
+                Vec::new(),
             )
         }
         SharedInput::File {
@@ -324,30 +344,110 @@ fn execute_shared_on_worker(
             exec_argv,
             goal,
         } => {
+            let hmr_entry_requested_path = if path.is_absolute() {
+                path.clone()
+            } else {
+                std::env::current_dir()
+                    .map_err(|error| error.to_string())?
+                    .join(&path)
+            };
             let path = crate::host::shared_vm::commonjs::entry_path(&path)?;
+            let hmr_requested = exec_argv.iter().any(|argument| argument == "--hmr")
+                || worker_hmr_registry.is_some();
+            let mut entry_file_stamp = None;
+            let (hmr_source, entry_type_query_positions) = if hmr_requested
+                && crate::host::shared_vm::source_transform::needs_transform(&path)
+            {
+                let raw_source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+                entry_file_stamp = Some(crate::host::hmr::file_stamp_for_source(&path, &raw_source));
+                let (source, positions) =
+                    crate::host::shared_vm::source_transform::transform_with_type_positions(
+                        &path, &raw_source,
+                    )?;
+                (Some(source), positions)
+            } else {
+                (None, Vec::new())
+            };
             let kind = match goal {
-                EntryGoal::Node => NodeHost::source_kind(&path)?,
+                EntryGoal::Node => match hmr_source.as_deref() {
+                    Some(source) => crate::host::shared_vm::commonjs::hmr_source_kind(&path, source)?,
+                    None => NodeHost::source_kind(&path)?,
+                },
                 EntryGoal::CommonJs => SourceKind::Script,
                 EntryGoal::Module => SourceKind::Module,
             };
             let is_module = kind == SourceKind::Module;
             let wasm = path.extension().is_some_and(|extension| extension == "wasm");
+            let mut hmr_source = hmr_source;
+            let raw_javascript_entry = matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("js" | "mjs" | "cjs")
+            );
+            if hmr_requested
+                && is_module
+                && raw_javascript_entry
+                && !wasm
+                && hmr_source.is_none()
+            {
+                let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+                entry_file_stamp = Some(crate::host::hmr::file_stamp_for_source(&path, &source));
+                crate::host::shared_vm::source_transform::validate_raw_javascript(&path, &source)?;
+                if is_module {
+                    hmr_source = Some(source);
+                }
+            }
             let source = if is_module && wasm {
                 crate::host::shared_vm::esm_wasm::entry_facade(&path)?
             } else if is_module {
-                std::fs::read_to_string(&path).map_err(|error| error.to_string())?
+                match hmr_source {
+                    Some(source) => source,
+                    None => {
+                        let source = std::fs::read_to_string(&path)
+                            .map_err(|error| error.to_string())?;
+                        if hmr_requested {
+                            entry_file_stamp = Some(
+                                crate::host::hmr::file_stamp_for_source(&path, &source),
+                            );
+                        }
+                        source
+                    }
+                }
             } else {
                 String::new()
             };
             let name = path.to_string_lossy().into_owned();
             let commonjs_entry = if is_module { None } else { Some(path.clone()) };
-            (source, name, kind, commonjs_entry, exec_argv, goal, Some(path))
+            (
+                source,
+                name,
+                kind,
+                commonjs_entry,
+                exec_argv,
+                goal,
+                Some(path),
+                Some(hmr_entry_requested_path),
+                entry_file_stamp,
+                entry_type_query_positions,
+            )
         }
     };
 
     let memory_policy = select_memory_policy(None)?;
+    let hmr_requested = exec_argv.iter().any(|argument| argument == "--hmr")
+        || worker_hmr_registry.is_some();
+    let hmr_entry = if hmr_requested {
+        hmr_entry_requested_path
+            .clone()
+            .or_else(|| entry_file.clone())
+    } else {
+        None
+    };
+    let in_worker = worker.is_some();
     let new_host = |worker: Option<crate::modules::worker_shared_vm::WorkerContext>| -> Result<NodeHost, String> {
         let mut host = NodeHost::new(argv.clone()).with_exec_argv(exec_argv.clone())?;
+        if let Some(registry) = worker_hmr_registry.clone() {
+            host = host.with_hmr_worker_watch_registry(registry);
+        }
         host.inline_source = inline_source;
         host.eval_builtin_globals = eval_builtin_globals;
         host.eval_source_nonempty = eval_source_nonempty;
@@ -355,6 +455,32 @@ fn execute_shared_on_worker(
             Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
             None => host,
         };
+        let mut host = match hmr_entry.clone() {
+            Some(path) => {
+                let host = match entry_file_stamp.clone() {
+                    Some(stamp) => host.with_hmr_entry_file_stamp(path, stamp),
+                    None => host.with_hmr_entry(path),
+                };
+                if in_worker {
+                    host
+                } else {
+                    host.with_hmr_restart_on_change()
+                }
+            }
+            None if in_worker && worker_hmr_registry.is_some() => host.with_hmr_worker_graph(),
+            None => host,
+        };
+        if kind == SourceKind::Module {
+            if let Some(path) = entry_file.as_deref() {
+                host.record_hmr_source_name(path, &name);
+                host.queue_hmr_type_queries(
+                    path,
+                    &path.to_string_lossy(),
+                    0,
+                    &entry_type_query_positions,
+                );
+            }
+        }
         let shared_state = host.shared_state();
         shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();
@@ -365,7 +491,6 @@ fn execute_shared_on_worker(
         Ok(host)
     };
     let request = ExecutionRequest { source: &source, name: &name, kind };
-    let in_worker = worker.is_some();
     let host = new_host(worker)?;
     let snapshot_entry = match &entry_file {
         Some(path) => Some(crate::host::startup_snapshot::SnapshotEntry::File(path)),
@@ -510,7 +635,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let args = arguments.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
-            println!("quench-node [--jit] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", memory_policy_names());
+            println!("quench-node [--jit] [--hmr] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", memory_policy_names());
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -545,6 +670,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             "--experimental-vfs" | "--no-experimental-vfs" => {
                 exec_argv.push(args[index].clone());
             }
+            "--hmr" => exec_argv.push(args[index].clone()),
             option if crate::modules::cli_options::takes_string_value(option) => {
                 let option = args[index].clone();
                 index += 1;
@@ -691,6 +817,9 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         },
         exec_argv,
     });
+    if matches!(&input, SharedInput::Eval { exec_argv, .. } | SharedInput::Stdin { exec_argv, .. } if exec_argv.iter().any(|argument| argument == "--hmr")) {
+        return Err("--hmr requires a script file".into());
+    }
     let executable = executable_path().map_err(|error| error.to_string())?;
     let mut argv = vec![executable.to_string_lossy().into_owned()];
     argv.extend(guest_arguments);

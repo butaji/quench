@@ -1,0 +1,50 @@
+{
+  "kind": "quench-hmr-typescript-fact-native-guard",
+  "date": "2026-11-01",
+  "platform": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "model": "Mac16,10",
+    "cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "limits": {
+      "stack_size_kib": 8176,
+      "processes": 2666,
+      "open_files": 8192,
+      "cpu_time": "unlimited",
+      "address_space": "unlimited"
+    }
+  },
+  "source": "An HMR-loaded .mts file starts with an astral emoji comment, then defines loop(limit: number, unused: string). The numeric while-loop is written in a shape supported by the whole-function numeric compiler.",
+  "invocation": "QUENCH_JS_JIT_STATS=1 target/debug/quench-node --jit --hmr <main.mts>",
+  "typed_worker_run": {
+    "checker": "pinned TSRS worker e18fb617ee516917342dcda27063ab67acc79e49",
+    "wait_before_calls_ms": 1200,
+    "numeric_calls": 20000,
+    "numeric_result": 40320000,
+    "runtime_string_argument_result": 2016,
+    "loop_jit": {
+      "status": "compiled",
+      "compile_attempts": 1,
+      "compile_successes": 1,
+      "native_entries": 20001,
+      "entries": 20002,
+      "fallback_entries": 1,
+      "native_entry_coverage_ppm": 999950
+    },
+    "interpretation": "OXC source mapping and the TSRS query reached the compiled runtime function; the checker fact enabled typed numeric specialization. A string passed in the statically-number parameter slot took the guard fallback, preserving JavaScript relational coercion and result 2016."
+  },
+  "no_worker_control": {
+    "checker": "QUENCH_TSRS_WORKER=/usr/bin/false (worker exits without facts)",
+    "numeric_calls": 20000,
+    "numeric_result": 40320000,
+    "runtime_string_argument_result": 2016,
+    "loop_jit": {
+      "status": "unsupported",
+      "compile_attempts": 0,
+      "compile_successes": 0,
+      "function_entry_fallbacks": 20001
+    },
+    "interpretation": "Without checker facts the same program remains semantically correct but the whole-function typed tier is unavailable; OSR still handles eligible loop regions."
+  },
+  "scope": "One typed ESM function and one mismatched runtime argument on this host; focused evidence, not full cross-platform performance qualification or full TypeScript compatibility."
+}

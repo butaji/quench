@@ -12,6 +12,7 @@ doctest = false
 name = "quench-node"
 path = "src/bin/quench-node.rs"
 
+
 [features]
 default = []
 profile-memory = ["quench-runtime/profile-memory"]
@@ -23,6 +24,7 @@ quench-js-check = { path = "../quench-js-check" }
 quench-runtime = { path = "../quench-runtime" }
 quench-wasm = { path = "../quench-wasm" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
 sha1 = "0.10"
 base64 = "0.22"
@@ -38,10 +40,13 @@ oxc_resolver = "11"
 oxc_allocator = { workspace = true }
 oxc_ast = { workspace = true }
 oxc_ast_visit = { workspace = true }
+oxc_codegen = { workspace = true }
 oxc_parser = { workspace = true }
 oxc_semantic = { workspace = true }
+oxc_sourcemap = { workspace = true }
 oxc_span = { workspace = true }
 oxc_syntax = { workspace = true }
+oxc_transformer = { workspace = true }
 quench-stack = { path = "../quench-stack" }
 url = { version = "2", features = ["expose_internals"] }
 brotli = "7"
