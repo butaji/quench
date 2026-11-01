@@ -1482,6 +1482,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsDirConstruct" (3) => crate::modules::fs_shared_vm::dir::construct_dir,
         method "fsDirPath" (0) => crate::modules::fs_shared_vm::dir::path,
         method "fsDirRead" (1) => crate::modules::fs_shared_vm::dir::read,
+        method "fsDirDeliverRead" (0) => crate::modules::fs_shared_vm::dir::deliver_read,
         method "fsDirReadSync" (0) => crate::modules::fs_shared_vm::dir::read_sync,
         method "fsDirClose" (1) => crate::modules::fs_shared_vm::dir::close,
         method "fsDirCloseSync" (0) => crate::modules::fs_shared_vm::dir::close_sync,

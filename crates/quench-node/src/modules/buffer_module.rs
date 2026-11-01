@@ -1154,14 +1154,15 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let uint8_prototype = get(c, uint8, "prototype")?;
     c.set_prototype_rooted(buffer, uint8)?;
     c.set_prototype_rooted(prototype, uint8_prototype)?;
-    let method = |c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, data: Option<RootId>| -> Result<(), RootedError> {
+    let method = |c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, data: Option<RootId>| -> Result<RootId, RootedError> {
         let function = match data {
             Some(data) => c.host_function_named_with_data(operation(operation_name), name, data)?,
             None => c.host_function_named(operation(operation_name), name)?,
         };
+        // Node assigns its Buffer methods, so they are ordinary enumerable data properties.
         let key = c.string_rooted(name);
-        c.define_data_property_rooted(target, key, function, true, false, true)?;
-        Ok(())
+        c.define_data_property_rooted(target, key, function, true, true, true)?;
+        Ok(function)
     };
     for (name, operation_name) in [
         ("from", "bufferFrom"),
@@ -1189,6 +1190,7 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         ("fill", "bufferFill"),
         ("write", "bufferWrite"),
         ("toJSON", "bufferToJson"),
+        ("subarray", "bufferSlice"),
         ("slice", "bufferSlice"),
         ("inspect", "bufferInspect"),
     ] {
@@ -1209,11 +1211,11 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     for (index, accessor) in ACCESSORS.iter().enumerate() {
         let data = c.number(index as f64);
-        method(c, prototype, accessor.name, "bufferNumeric", Some(data))?;
-        // Node aliases each `UInt` accessor as `Uint`.
+        let function = method(c, prototype, accessor.name, "bufferNumeric", Some(data))?;
+        // Node aliases each `UInt` accessor as `Uint`: the same function under a second name.
         if accessor.name.contains("UInt") {
-            let alias = accessor.name.replace("UInt", "Uint");
-            method(c, prototype, &alias, "bufferNumeric", Some(data))?;
+            let alias = c.string_rooted(&accessor.name.replace("UInt", "Uint"));
+            c.define_data_property_rooted(prototype, alias, function, true, true, true)?;
         }
     }
     let util = get(c, global, "Symbol")?;
@@ -1221,7 +1223,7 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let custom = c.string_rooted("nodejs.util.inspect.custom");
     let custom = c.call_rooted(registry, util, &[custom])?;
     let inspect = c.host_function_named(operation("bufferInspect"), "inspect")?;
-    c.define_data_property_rooted(prototype, custom, inspect, true, false, true)?;
+    c.define_data_property_rooted(prototype, custom, inspect, true, true, true)?;
     for (name, target) in [("parent", "buffer"), ("offset", "byteOffset")] {
         let data = c.string_rooted(target);
         let getter = c.host_function_named_with_data(operation("bufferAliasGet"), "get", data)?;
