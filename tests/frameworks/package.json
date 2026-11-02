@@ -2,10 +2,29 @@
   "name": "quench-framework-scenarios",
   "private": true,
   "type": "commonjs",
-  "description": "Pinned Express, Koa and Fastify scenarios for Stage A Node compatibility.",
+  "description": "Pinned web framework scenarios for Node compatibility.",
   "dependencies": {
+    "@hapi/hapi": "21.4.12",
+    "@hono/node-server": "2.1.5",
+    "@nestjs/common": "12.3.2",
+    "@nestjs/core": "12.3.2",
+    "@nestjs/platform-express": "12.3.2",
     "express": "5.2.1",
     "fastify": "5.12.5",
-    "koa": "3.2.1"
+    "graphql": "17.0.2",
+    "graphql-yoga": "6.0.1",
+    "h3": "2.0.8",
+    "hono": "4.13.16",
+    "koa": "3.2.1",
+    "next": "16.4.3",
+    "polka": "0.5.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "reflect-metadata": "0.2.2",
+    "restify": "12.1.0",
+    "rxjs": "7.8.2",
+    "socket.io": "4.8.4",
+    "socket.io-client": "4.8.4",
+    "ws": "8.22.1"
   }
 }
