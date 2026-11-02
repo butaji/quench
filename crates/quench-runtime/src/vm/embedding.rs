@@ -1661,6 +1661,35 @@ impl<H: Host> Vm<H> {
         self.synchronous_module_namespace(&program, module)
     }
 
+    /// Hold back `module`'s evaluated record so evaluating it again builds a new one; false
+    /// when it has no evaluated record or one is already held back.
+    pub(crate) fn begin_module_replacement(&mut self, module: &crate::ModuleSource) -> bool {
+        let key = super::promise::module_cache_key(&module.name, "javascript");
+        let promise = &mut self.realm.promise;
+        if promise.module_replacements.contains_key(&key)
+            || !promise.modules.get(&key).is_some_and(|record| record.phase() == super::module::ModulePhase::Evaluated)
+        {
+            return false;
+        }
+        let record = promise.modules.remove(&key).expect("an evaluated record was found");
+        promise.module_replacements.insert(key, record);
+        true
+    }
+
+    /// Keep the replacement record and release the held-back one.
+    pub(crate) fn commit_module_replacement(&mut self, name: &str) {
+        let key = super::promise::module_cache_key(name, "javascript");
+        self.realm.promise.module_replacements.remove(&key);
+    }
+
+    /// Restore the held-back record in place of whatever the replacement left.
+    pub(crate) fn rollback_module_replacement(&mut self, name: &str) {
+        let key = super::promise::module_cache_key(name, "javascript");
+        if let Some(record) = self.realm.promise.module_replacements.remove(&key) {
+            self.realm.promise.modules.insert(key, record);
+        }
+    }
+
     pub(crate) fn module_namespace_with_export_rooted(
         &mut self,
         namespace: RootId,

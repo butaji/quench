@@ -28,7 +28,7 @@ pub(super) struct PromiseSpeciesProof {
     getter: Value,
 }
 
-fn module_cache_key(name: &str, module_type: &str) -> String {
+pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
     format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
 
@@ -1116,6 +1116,8 @@ pub(super) struct PromiseRuntime {
     pub(super) aggregate_jobs: FxHashMap<Value, AggregateJob>,
     pub(super) reaction_capabilities: FxHashMap<Value, (Value, Value)>,
     pub(super) modules: FxHashMap<String, ModuleRecord>,
+    /// Evaluated records a host holds back while it replaces them (`begin_module_replacement`).
+    pub(super) module_replacements: FxHashMap<String, ModuleRecord>,
     pub(super) dynamic_import_jobs: Vec<DynamicImportJob>,
     pub(super) async_module_order: VecDeque<String>,
     /// A promise an async-evaluating module waits on has settled since module advancement
@@ -6163,6 +6165,7 @@ impl PromiseRuntime {
             aggregate_jobs,
             reaction_capabilities,
             modules,
+            module_replacements,
             dynamic_import_jobs,
             async_module_order,
             module_sources,
@@ -6175,7 +6178,7 @@ impl PromiseRuntime {
             ("a finally callback", finally_handler_callbacks.is_empty() && finally_continuation_callbacks.is_empty()),
             ("a promise combinator", aggregates.is_empty() && aggregate_jobs.is_empty()),
             ("a reaction capability", reaction_capabilities.is_empty()),
-            ("a module record", modules.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
+            ("a module record", modules.is_empty() && module_replacements.is_empty() && async_module_order.is_empty() && module_sources.is_empty()),
             ("a module load", dynamic_import_jobs.is_empty() && waiting_static_modules.is_empty()),
             ("a settled async module", !async_module_settled),
             ("a native activation", active_native.is_empty()),

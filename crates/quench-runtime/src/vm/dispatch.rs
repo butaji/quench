@@ -759,6 +759,12 @@ impl<H: Host> Vm<H> {
                                 self.set_property(value, dirname_atom, dirname_value)?;
                             }
                         }
+                        if self.host.initializes_import_meta() {
+                            let mut context = crate::NativeContext::new(self);
+                            let import_meta = context.scoped_value(value);
+                            H::initialize_import_meta(&mut context, &source_name, import_meta)
+                                .map_err(|error| context.finish_error(error))?;
+                        }
                     }
                     self.programs.set_import_meta(program, value);
                     value

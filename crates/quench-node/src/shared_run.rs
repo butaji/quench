@@ -436,6 +436,12 @@ fn execute_shared_on_worker(
             None => host,
         };
         let shared_state = host.shared_state();
+        // Workers' modules are not hot-replaced: their edits restart nothing.
+        if worker.is_none() && crate::host::hmr::requested(&exec_argv) {
+            if let Some(entry) = &entry_file {
+                shared_state.borrow_mut().hmr = Some(crate::host::hmr::HmrState::new(entry.clone()));
+            }
+        }
         shared_state.borrow_mut().messaging.context = worker;
         let mut state = shared_state.borrow_mut();
         let argv = state.process_argv.clone();
@@ -687,7 +693,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         Some("--help") | Some("-h") => {
             print_cli_help();
             // Quench's own options follow Node's.
-            println!("quench-node [--jit] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", memory_policy_names());
+            println!("quench-node [--jit] [{}] [{MEMORY_POLICY_FLAG}={}] [-e CODE|SCRIPT]", crate::host::hmr::FLAG, memory_policy_names());
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -769,7 +775,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 exec_argv.extend([args[index].clone(), value.clone()]);
                 index += 1;
             }
-            "--experimental-vfs" | "--no-experimental-vfs" => {
+            "--experimental-vfs" | "--no-experimental-vfs" | crate::host::hmr::FLAG => {
                 exec_argv.push(args[index].clone());
             }
             option if crate::modules::cli_options::takes_string_value(option) => {
@@ -954,6 +960,10 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     }
     if print && input_type_module {
         eprintln!("--print cannot be used with ESM input");
+        return Ok(ExitCode::FAILURE);
+    }
+    if matches!(&input, SharedInput::Eval { exec_argv, .. } | SharedInput::Stdin { exec_argv, .. } if crate::host::hmr::requested(exec_argv)) {
+        eprintln!("{} requires a script file", crate::host::hmr::FLAG);
         return Ok(ExitCode::FAILURE);
     }
     let executable = executable_path().map_err(|error| error.to_string())?;

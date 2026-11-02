@@ -741,6 +741,7 @@ impl<H: Host> Vm<H> {
                 .promise
                 .modules
                 .values()
+                .chain(self.realm.promise.module_replacements.values())
                 .flat_map(ModuleRecord::roots),
         );
         roots.extend(self.realm.promise.module_sources.values().copied());

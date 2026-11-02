@@ -2602,6 +2602,10 @@ fn poll_io(
         let ran = super::fs_stat_watch_shared_vm::poll(runtime, program)?;
         settle(runtime, ran)?;
     }
+    if shared_state.borrow().hmr.is_some() {
+        let ran = crate::host::hmr::poll(runtime, program)?;
+        settle(runtime, ran)?;
+    }
     Ok(progressed)
 }
 
@@ -2784,6 +2788,8 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
+        // The HMR watcher keeps the process alive, as a file watch does.
+        || shared_state.borrow().hmr.is_some()
 }
 
 fn mark_timer_destroyed(

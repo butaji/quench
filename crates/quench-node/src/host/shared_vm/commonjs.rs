@@ -236,20 +236,36 @@ fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind
     // Package scope is a filesystem/JSON question, not another resolution of
     // this already-resolved file. In particular, do not build a resolver cache
     // (with parsed exports maps) for every source-kind query.
-    for directory in path.ancestors().skip(1) {
-        if directory
-            .file_name()
-            .is_some_and(|name| name == "node_modules")
-        {
-            break;
-        }
-        let package = directory.join("package.json");
+    for package in package_scope_candidates(path) {
         let Some(explicit) = package_type(package)? else {
             continue;
         };
         return Ok(explicit);
     }
     Ok(None)
+}
+
+/// The `package.json` files that may decide `path`'s package scope, nearest first: the
+/// first that exists does, and no scope crosses a `node_modules` directory.
+fn package_scope_candidates(path: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    path.ancestors()
+        .skip(1)
+        .take_while(|directory| directory.file_name().is_none_or(|name| name != "node_modules"))
+        .map(|directory| directory.join("package.json"))
+}
+
+/// The package files whose creation, edit or removal can change `path`'s package scope:
+/// each candidate up to and including the one that decides it.
+pub(crate) fn package_scope_files(path: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for package in package_scope_candidates(path) {
+        let decides = package.is_file();
+        files.push(package);
+        if decides {
+            break;
+        }
+    }
+    files
 }
 
 /// Node first accepts the CommonJS wrapper. Only syntax that cannot live in
@@ -803,6 +819,7 @@ fn require_for_module_inner(
     {
         let resolved = get(context, directory_cache, &specifier)?;
         if let Some(filename) = context.string_text(resolved)? {
+            record_hmr_load(context, Some(parent), Path::new(&filename), Some(&specifier))?;
             let cache = commonjs_cache(context)?;
             let cached = get(context, cache, &filename)?;
             if !context
@@ -2518,6 +2535,12 @@ fn module_record(
     let module = context.object_rooted()?;
     let exports = context.object_rooted()?;
     set(context, module, "exports", exports)?;
+    let hot = context.host_mut().shared_state().borrow().hmr.is_some()
+        && crate::host::hmr::HmrState::watches(filename);
+    if hot {
+        let hot = crate::host::hmr::create_hot(context, &filename.to_string_lossy())?;
+        set(context, module, "hot", hot)?;
+    }
     let id = if parent.is_none() {
         if is_main {
             "."
@@ -2739,6 +2762,7 @@ fn load_with_resolution(
     goal: EntryGoal,
     resolution: Option<(RootId, &str)>,
 ) -> Result<RootId, RootedError> {
+    record_hmr_load(context, parent, filename, resolution.map(|(_, specifier)| specifier))?;
     let key = filename.to_string_lossy().into_owned();
     let roots = context.host_mut().shared_state();
     let active = roots.borrow().active_esm_requires.get(&key).copied();
@@ -2808,6 +2832,133 @@ fn load_with_resolution(
         }
     }
     result
+}
+
+/// Record a CommonJS load in the HMR graph: `filename` as `parent`'s dependency, or as a
+/// root module.
+fn record_hmr_load(
+    context: &mut Context<'_>,
+    parent: Option<RootId>,
+    filename: &Path,
+    specifier: Option<&str>,
+) -> Result<(), RootedError> {
+    if context.host_mut().shared_state().borrow().hmr.is_none() {
+        return Ok(());
+    }
+    let importer = match parent {
+        Some(parent) => {
+            let importer = get(context, parent, "filename")?;
+            context.string_text(importer)?.map(PathBuf::from)
+        }
+        None => None,
+    };
+    crate::host::hmr::with_state(context, |state| match importer {
+        Some(importer) => state.record_dependency(&importer, filename, specifier),
+        None => state.record_module(filename),
+    });
+    Ok(())
+}
+
+/// Whether the CommonJS loader holds `path`'s module record.
+pub(crate) fn hmr_loaded(context: &mut Context<'_>, path: &Path) -> Result<bool, RootedError> {
+    let cache = commonjs_cache(context)?;
+    let module = get(context, cache, &path.to_string_lossy())?;
+    context.is_object_rooted(module)
+}
+
+/// Replace the CommonJS module at `path` with a new record executed from its file, when
+/// it or its importers accept the update; false when it must restart instead. A failure
+/// restores the prior record, its graph edges and its importers' children.
+pub(crate) fn hmr_replace(context: &mut Context<'_>, path: &Path) -> Result<bool, RootedError> {
+    if path.extension().is_some_and(|extension| extension == "json") {
+        return Ok(false);
+    }
+    let declared = declared_source_kind(&real_path_for_kind(path).map_err(RootedError::host)?).map_err(RootedError::host)?;
+    if declared == Some(quench_runtime::SourceKind::Module) {
+        return Ok(false);
+    }
+    let key = path.to_string_lossy().into_owned();
+    let cache = commonjs_cache(context)?;
+    let old_module = get(context, cache, &key)?;
+    let old_hot = get(context, old_module, "hot")?;
+    if !context.is_object_rooted(old_hot)? {
+        return Ok(false);
+    }
+    let (entry, importer_paths) =
+        crate::host::hmr::with_state(context, |state| (state.entry() == path, state.importers(path)));
+    let mut importers = Vec::with_capacity(importer_paths.len());
+    let mut importer_hots = Vec::with_capacity(importer_paths.len());
+    for (importer, specifiers) in importer_paths {
+        let module = get(context, cache, &importer.to_string_lossy())?;
+        let hot = if context.is_object_rooted(module)? {
+            importers.push(module);
+            let hot = get(context, module, "hot")?;
+            context.is_object_rooted(hot)?.then_some(hot)
+        } else {
+            None
+        };
+        importer_hots.push((hot, specifiers));
+    }
+    let system = crate::host::hmr::ModuleSystem::CommonJs;
+    let Some(plan) = crate::host::hmr::accept_plan(context, system, Some(old_hot), &importer_hots)? else {
+        return Ok(false);
+    };
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("shared process module is not initialized"))?;
+    let old_main = get(context, process, "mainModule")?;
+    let old_parent = first_module_parent(context, old_module)?;
+    let data = crate::host::hmr::dispose(context, old_hot)?;
+    if crate::host::hmr::rejected(context, old_hot)? {
+        return Ok(false);
+    }
+    crate::host::hmr::set_active(context, old_hot, false)?;
+    let dependencies = crate::host::hmr::with_state(context, |state| state.take_dependencies(path));
+    let parent = if entry { None } else { importers.first().copied() };
+    let mut parents = importers.clone();
+    if context.is_object_rooted(old_parent)? && !parents.iter().any(|&parent| context.rooted_value(parent) == context.rooted_value(old_parent)) {
+        parents.push(old_parent);
+    }
+    let mut new_module = None;
+    let replaced = (|| {
+        let module = module_record(context, path, parent, entry)?;
+        new_module = Some(module);
+        let hot = get(context, module, "hot")?;
+        crate::host::hmr::set_data(context, hot, data)?;
+        context.assign_named_property_rooted(cache, &key, module)?;
+        let source = ModuleSource { key: &key, module, filename: path, parent, declared, is_main: entry };
+        let exports = execute_module(context, source)?;
+        for &parent in &parents {
+            transition_child(context, parent, old_module, ChildTransition::Detach)?;
+        }
+        for &importer in &importers {
+            transition_child(context, importer, module, ChildTransition::Attach)?;
+        }
+        crate::host::hmr::invoke_accept_callbacks(context, &plan.callbacks, exports)?;
+        let mut accepted = !crate::host::hmr::rejected(context, hot)?;
+        for hot in std::iter::once(old_hot).chain(plan.importer_hots.iter().copied()) {
+            accepted &= !crate::host::hmr::rejected(context, hot)?;
+        }
+        Ok(accepted)
+    })();
+    if replaced.is_err() {
+        crate::host::hmr::with_state(context, |state| state.restore_dependencies(path, dependencies));
+        if let Some(module) = new_module {
+            for &importer in &importers {
+                transition_child(context, importer, module, ChildTransition::Detach)?;
+            }
+        }
+        for &parent in &parents {
+            transition_child(context, parent, old_module, ChildTransition::Attach)?;
+        }
+        set(context, process, "mainModule", old_main)?;
+        context.assign_named_property_rooted(cache, &key, old_module)?;
+        crate::host::hmr::set_active(context, old_hot, true)?;
+    }
+    replaced
 }
 
 /// What compiling one module's file needs to know about it.

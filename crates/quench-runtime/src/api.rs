@@ -11,6 +11,7 @@ pub use native::{
     CollectionContext,
     BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostFunction, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
+    ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
 };
 
