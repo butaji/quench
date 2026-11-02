@@ -585,15 +585,26 @@ impl Call {
         format!("Failed to execute '{}' on 'SubtleCrypto'", self.method)
     }
 
+    /// A `BufferSource` argument's bytes; shared memory is no BufferSource.
     fn buffer_source(self, c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<Vec<u8>, RootedError> {
+        const NOT_INSTANCE: &str = "is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.";
         let value = arg(c, args, index);
-        match super::buffer_bytes(c, value) {
-            Some(bytes) => Ok(bytes),
-            None => {
-                let message = format!("{}: {} argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.", self.prefix(), ordinal(index));
-                Err(errors::throw(c, CryptoError::InvalidArgTypeMessage(message)))
+        let shared = |c: &mut Context<'_>, value: RootId| c.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::SharedArrayBuffer);
+        let problem = if shared(c, value)? {
+            NOT_INSTANCE
+        } else if c.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::ArrayBufferView)? && {
+            let buffer = c.get_named_property_rooted(value, "buffer")?;
+            shared(c, buffer)?
+        } {
+            "is a view on a SharedArrayBuffer, which is not allowed."
+        } else {
+            match super::buffer_bytes(c, value) {
+                Some(bytes) => return Ok(bytes),
+                None => NOT_INSTANCE,
             }
-        }
+        };
+        let message = format!("{}: {} argument {problem}", self.prefix(), ordinal(index));
+        Err(errors::throw(c, CryptoError::InvalidArgTypeMessage(message)))
     }
 
     fn crypto_key(self, c: &mut Context<'_>, args: &[RootId], index: usize) -> Result<(RootId, Arc<Key>, KeyAlgorithm, bool, Vec<Usage>), RootedError> {

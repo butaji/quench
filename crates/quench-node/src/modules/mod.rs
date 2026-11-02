@@ -210,7 +210,6 @@ pub(crate) mod crypto_provider_shared_vm;
 pub(crate) mod stream_binding;
 
 #[cfg(quench_openssl_provider)]
-pub(crate) mod deep_equal_shared_vm;
 pub(crate) mod dom_exception_shared_vm;
 
 

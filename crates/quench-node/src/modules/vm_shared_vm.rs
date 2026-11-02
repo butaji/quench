@@ -561,7 +561,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         ("compileFunction", "vmCompileFunction"),
         ("measureMemory", "vmMeasureMemory"),
     ] {
-        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        // Ordinary functions in Node, so `new` applies them too.
+        let function = c.host_constructor_named(crate::host::shared_vm::operation(operation), name)?;
         c.assign_named_property_rooted(module, name, function)?;
     }
     let constants = constants(c)?;

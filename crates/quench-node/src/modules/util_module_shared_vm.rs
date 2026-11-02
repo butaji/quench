@@ -400,21 +400,26 @@ pub(crate) fn key_type_check(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
     let data = c.host_function_data()?;
     let class = c.to_string(data)?;
     let value = argument(c, args, 0);
+    let matches = is_key_class(c, value, &class)?;
+    Ok(c.boolean(matches))
+}
+
+/// Whether `value` is an instance of the crypto key class `class` (`KeyObject` or `CryptoKey`).
+pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> Result<bool, RootedError> {
     if !c.is_object_rooted(value)? {
-        return Ok(c.boolean(false));
+        return Ok(false);
     }
     let global = c.global_root()?;
     let constructor = if class == "KeyObject" {
         let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
-        get(c, crypto, &class)?
+        get(c, crypto, class)?
     } else {
-        get(c, global, &class)?
+        get(c, global, class)?
     };
     if !c.is_callable_rooted(constructor)? {
-        return Ok(c.boolean(false));
+        return Ok(false);
     }
-    let matches = c.instance_of_rooted(value, constructor)?;
-    Ok(c.boolean(matches))
+    c.instance_of_rooted(value, constructor)
 }
 
 pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
@@ -541,7 +546,7 @@ pub(crate) fn deprecate(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     deprecated_wrapper(c, target, message, code)
 }
 
-fn deprecated_wrapper(c: &mut Context<'_>, target: RootId, message: RootId, code: RootId) -> Result<RootId, RootedError> {
+pub(crate) fn deprecated_wrapper(c: &mut Context<'_>, target: RootId, message: RootId, code: RootId) -> Result<RootId, RootedError> {
     let state = c.null_object_rooted()?;
     for (name, value) in [("target", target), ("message", message), ("code", code)] {
         put(c, state, name, value)?;
@@ -767,11 +772,12 @@ pub(crate) fn set_trace_sig_int(c: &mut Context<'_>, _: RootId, args: &[RootId])
 }
 
 /// The lazy `TextDecoder` and `TextEncoder` exports: the globals of those names.
-pub(crate) fn global_export(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn global_export(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let global = c.global_root()?;
+    let module = super::util_shared_vm::module(c)?;
     for name in ["TextDecoder", "TextEncoder"] {
         let value = get(c, global, name)?;
-        put(c, this, name, value)?;
+        put(c, module, name, value)?;
     }
     Ok(c.undefined())
 }

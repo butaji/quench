@@ -173,6 +173,9 @@ pub(crate) const PRIMORDIALS: &[(&str, &[&str])] = &[
     ("Number", &["Number"]),
     ("String", &["String"]),
     ("Uint8Array", &["Uint8Array"]),
+    ("setHas", &["Set", "prototype", "has"]),
+    ("mapHas", &["Map", "prototype", "has"]),
+    ("mapGet", &["Map", "prototype", "get"]),
 ];
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {

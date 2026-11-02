@@ -6,7 +6,7 @@
 //! line or a line diff of the values inspected one entry per line, the falsy call's own
 //! source for `ok`, and the throws/rejects/match families' explanations.
 use super::console_format_shared_vm::{self as format, Layout, Options};
-use super::deep_equal_shared_vm::{self as deep, Mode};
+use super::util_comparisons_shared_vm::{self as comparisons, Mode};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
@@ -42,6 +42,7 @@ enum Assertion {
     NotDeepStrictEqual,
     StrictEqual,
     NotStrictEqual,
+    PartialDeepStrictEqual,
     Match,
     DoesNotMatch,
     Throws,
@@ -53,7 +54,7 @@ enum Assertion {
 }
 
 impl Assertion {
-    const ALL: [Assertion; 18] = [
+    const ALL: [Assertion; 19] = [
         Assertion::Ok,
         Assertion::Fail,
         Assertion::Equal,
@@ -64,6 +65,7 @@ impl Assertion {
         Assertion::NotDeepStrictEqual,
         Assertion::StrictEqual,
         Assertion::NotStrictEqual,
+        Assertion::PartialDeepStrictEqual,
         Assertion::Match,
         Assertion::DoesNotMatch,
         Assertion::Throws,
@@ -87,6 +89,7 @@ impl Assertion {
             Assertion::NotDeepStrictEqual => "notDeepStrictEqual",
             Assertion::StrictEqual => "strictEqual",
             Assertion::NotStrictEqual => "notStrictEqual",
+            Assertion::PartialDeepStrictEqual => "partialDeepStrictEqual",
             Assertion::Match => "match",
             Assertion::DoesNotMatch => "doesNotMatch",
             Assertion::Throws => "throws",
@@ -113,7 +116,7 @@ impl Assertion {
 }
 
 /// The module's members after `AssertionError`, in Node's order.
-const MEMBERS: [Assertion; 17] = [
+const MEMBERS: [Assertion; 18] = [
     Assertion::Ok,
     Assertion::Fail,
     Assertion::Equal,
@@ -124,6 +127,7 @@ const MEMBERS: [Assertion; 17] = [
     Assertion::NotDeepStrictEqual,
     Assertion::StrictEqual,
     Assertion::NotStrictEqual,
+    Assertion::PartialDeepStrictEqual,
     Assertion::Match,
     Assertion::DoesNotMatch,
     Assertion::Throws,
@@ -134,6 +138,43 @@ const MEMBERS: [Assertion; 17] = [
 ];
 
 /// `assert.strict`'s loose names and the strict assertions they become.
+/// `Assert.prototype`'s methods, in Node's order; its `ok` is its own function.
+const PROTOTYPE_MEMBERS: [Assertion; 18] = [
+    Assertion::Fail,
+    Assertion::Ok,
+    Assertion::Equal,
+    Assertion::NotEqual,
+    Assertion::DeepEqual,
+    Assertion::NotDeepEqual,
+    Assertion::DeepStrictEqual,
+    Assertion::NotDeepStrictEqual,
+    Assertion::StrictEqual,
+    Assertion::NotStrictEqual,
+    Assertion::PartialDeepStrictEqual,
+    Assertion::Throws,
+    Assertion::Rejects,
+    Assertion::DoesNotThrow,
+    Assertion::DoesNotReject,
+    Assertion::IfError,
+    Assertion::Match,
+    Assertion::DoesNotMatch,
+];
+
+/// The diffs `new Assert({ diff })` accepts.
+const DIFFS: [&str; 2] = [DEFAULT_DIFF, "full"];
+/// The description of `Assert` instances' options symbol (`kOptions`).
+const OPTIONS_DESCRIPTION: &str = "options";
+const OPTIONS_KEY: &str = "\0builtin:assert/kOptions";
+const ASSERT_CLASS: &str = "Assert";
+
+/// One assertion call: its function and the receiver's diff option
+/// (`this?.[kOptions]?.diff`, undefined for a detached call).
+#[derive(Clone, Copy)]
+struct Invocation {
+    assertion: Assertion,
+    diff: RootId,
+}
+
 const STRICT_ALIASES: [(&str, Assertion); 4] = [
     ("equal", Assertion::StrictEqual),
     ("deepEqual", Assertion::DeepStrictEqual),
@@ -145,6 +186,7 @@ const STRICT_ALIASES: [(&str, Assertion); 4] = [
 fn readable(operator: &str) -> Option<&'static str> {
     Some(match operator {
         "deepStrictEqual" => "Expected values to be strictly deep-equal:",
+        "partialDeepStrictEqual" => "Expected values to be partially and strictly deep-equal:",
         "strictEqual" => "Expected values to be strictly equal:",
         "strictEqualObject" => "Expected \"actual\" to be reference-equal to \"expected\":",
         "deepEqual" => "Expected values to be loosely deep-equal:",
@@ -212,6 +254,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         functions.push((assertion, assertion_function(c, assertion)?));
     }
     let module = functions[0].1;
+    let class = assert_class(c, &functions)?;
     put(c, module, "AssertionError", error_class)?;
     for &(assertion, function) in &functions {
         put(c, module, assertion.name(), function)?;
@@ -226,10 +269,88 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         };
         put(c, strict, assertion.name(), function)?;
     }
+    put(c, strict, ASSERT_CLASS, class)?;
     put(c, strict, "strict", strict)?;
     put(c, module, "strict", strict)?;
+    put(c, module, ASSERT_CLASS, class)?;
     cache(c, MODULE_KEY, module)?;
     Ok(module)
+}
+
+/// `Assert`, whose prototype carries the module's assertions (and an `ok` of its own).
+fn assert_class(c: &mut Context<'_>, functions: &[(Assertion, RootId)]) -> Result<RootId, RootedError> {
+    let class = c.host_constructor_named(crate::host::shared_vm::operation("assertAssert"), ASSERT_CLASS)?;
+    let length = c.number(1.0);
+    c.define_named_data_property_rooted(class, "length", length, false, false, true)?;
+    let prototype = get(c, class, "prototype")?;
+    for assertion in PROTOTYPE_MEMBERS {
+        let function = match functions.iter().find(|(candidate, _)| *candidate == assertion && assertion != Assertion::Ok) {
+            Some(&(_, function)) => function,
+            None => assertion_function(c, assertion)?,
+        };
+        c.define_named_data_property_rooted(prototype, assertion.name(), function, true, false, true)?;
+    }
+    Ok(class)
+}
+
+fn options_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    if let Some(symbol) = cached(c, OPTIONS_KEY) {
+        return Ok(symbol);
+    }
+    let symbol = c.symbol_rooted(Some(OPTIONS_DESCRIPTION));
+    cache(c, OPTIONS_KEY, symbol)?;
+    Ok(symbol)
+}
+
+/// `new Assert(options)`: the options over `{ strict: true }`, a valid `diff`, and with
+/// `strict` the loose assertions replaced by the strict ones.
+pub(crate) fn assert_constructor(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let Some(target) = c.new_target_rooted() else {
+        let error = c.type_error_rooted("Class constructor Assert cannot be invoked without `new`")?;
+        super::node_errors_shared_vm::decorate_type_error(c, error, "ERR_CONSTRUCT_CALL_REQUIRED")?;
+        return Err(c.throw(error));
+    };
+    let options = c.null_object_rooted()?;
+    let strict = c.boolean(true);
+    put(c, options, "strict", strict)?;
+    let global = c.global_root()?;
+    let object = get(c, global, "Object")?;
+    let assign = get(c, object, "assign")?;
+    let given = argument(c, args, 0);
+    c.call_rooted(assign, object, &[options, given])?;
+    let diff = get(c, options, "diff")?;
+    if !is_undefined(c, diff) && !DIFFS.iter().any(|name| c.string_text(diff).ok().flatten().as_deref() == Some(name)) {
+        let allowed = DIFFS.map(|name| format!("'{name}'")).join(", ");
+        return Err(super::util_shared_vm::argument_value_error(c, diff, "options.diff", &format!("must be one of: {allowed}"))?);
+    }
+    let prototype = get(c, target, "prototype")?;
+    let instance = c.object_rooted()?;
+    c.set_prototype_rooted(instance, prototype)?;
+    let error_class = error_class(c)?;
+    put(c, instance, "AssertionError", error_class)?;
+    let symbol = options_symbol(c)?;
+    c.define_data_property_rooted(instance, symbol, options, false, false, false)?;
+    let strict = get(c, options, "strict")?;
+    if c.truthy_rooted(strict)? {
+        for (loose, target) in STRICT_ALIASES {
+            let function = get(c, instance, target.name())?;
+            put(c, instance, loose, function)?;
+        }
+    }
+    Ok(instance)
+}
+
+/// The receiver's `diff` option, undefined unless it is an `Assert` given one.
+fn receiver_diff(c: &mut Context<'_>, receiver: RootId) -> Result<RootId, RootedError> {
+    if !c.is_object_rooted(receiver)? {
+        return Ok(c.undefined());
+    }
+    let symbol = options_symbol(c)?;
+    let options = c.get_property_rooted(receiver, symbol)?;
+    if !c.is_object_rooted(options)? {
+        return Ok(c.undefined());
+    }
+    get(c, options, "diff")
 }
 
 /// `assert/strict`.
@@ -280,9 +401,7 @@ pub(crate) fn error_constructor(c: &mut Context<'_>, _: RootId, args: &[RootId])
     let operator_text = if is_undefined(c, operator) { String::new() } else { c.to_string(operator)? };
     let class = error_class(c)?;
     let target = c.new_target_rooted().unwrap_or(class);
-    let diff = diff?;
-    let diff = if is_undefined(c, diff) { c.string_rooted(DEFAULT_DIFF) } else { diff };
-    let failure = Failure { actual: actual?, expected: expected?, operator, operator_text, message: message?, start: start?, diff };
+    let failure = Failure { actual: actual?, expected: expected?, operator, operator_text, message: message?, start: start?, diff: diff? };
     build_error(c, &failure, target)
 }
 
@@ -300,8 +419,10 @@ struct Failure {
 fn build_error(c: &mut Context<'_>, failure: &Failure, target: RootId) -> Result<RootId, RootedError> {
     let generated = is_nullish(c, failure.message);
     let text = if generated {
-        generated_message(c, failure.actual, failure.expected, &failure.operator_text, None)?
-    } else if matches!(failure.operator_text.as_str(), "deepStrictEqual" | "strictEqual") {
+        let (actual, expected) = (failure.actual, failure.expected);
+        let (actual, expected) = if is_error_with_stack(c, actual)? && is_error_with_stack(c, expected)? { (copy_error(c, actual)?, copy_error(c, expected)?) } else { (actual, expected) };
+        generated_message(c, actual, expected, &failure.operator_text, None)?
+    } else if matches!(failure.operator_text.as_str(), "deepStrictEqual" | "strictEqual" | "partialDeepStrictEqual") {
         let custom = c.to_string(failure.message)?;
         generated_message(c, failure.actual, failure.expected, &failure.operator_text, Some(custom))?
     } else {
@@ -317,7 +438,8 @@ fn build_error(c: &mut Context<'_>, failure: &Failure, target: RootId) -> Result
     put(c, error, "actual", failure.actual)?;
     put(c, error, "expected", failure.expected)?;
     put(c, error, "operator", failure.operator)?;
-    put(c, error, "diff", failure.diff)?;
+    let diff = if is_undefined(c, failure.diff) { c.string_rooted(DEFAULT_DIFF) } else { failure.diff };
+    put(c, error, "diff", diff)?;
     // The stack's header names the code, as Node's does, then the name is the class's.
     let coded = c.string_rooted(&format!("{ERROR_NAME} [{ERROR_CODE}]"));
     c.define_named_data_property_rooted(error, "name", coded, true, false, true)?;
@@ -335,6 +457,40 @@ fn build_error(c: &mut Context<'_>, failure: &Failure, target: RootId) -> Result
     Ok(error)
 }
 
+/// An `Error` instance with a `stack`, whose message shows a stackless copy.
+fn is_error_with_stack(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedError> {
+    if !c.is_object_rooted(value)? {
+        return Ok(false);
+    }
+    let stack = c.string_rooted("stack");
+    if !c.has_property_rooted(value, stack)? {
+        return Ok(false);
+    }
+    let global = c.global_root()?;
+    let error = get(c, global, "Error")?;
+    c.instance_of_rooted(value, error)
+}
+
+/// `copyError`: the error's prototype and own enumerable properties, its message and
+/// (copied) cause as hidden own properties, and no stack.
+fn copy_error(c: &mut Context<'_>, source: RootId) -> Result<RootId, RootedError> {
+    let target = c.object_rooted()?;
+    let prototype = c.prototype_rooted(source)?;
+    c.set_prototype_rooted(target, prototype)?;
+    let global = c.global_root()?;
+    let object = get(c, global, "Object")?;
+    let assign = get(c, object, "assign")?;
+    c.call_rooted(assign, object, &[target, source])?;
+    let message = get(c, source, "message")?;
+    c.define_named_data_property_rooted(target, "message", message, false, false, false)?;
+    if c.has_own_property_rooted(source, "cause")? {
+        let cause = get(c, source, "cause")?;
+        let cause = if super::util_inspect_shared_vm::is_error(c, cause)? { copy_error(c, cause)? } else { cause };
+        c.define_named_data_property_rooted(target, "cause", cause, false, false, false)?;
+    }
+    Ok(target)
+}
+
 /// `inspectValue`: every container one entry per line, keys sorted, no custom inspection.
 fn inspect_value(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
     let options = Options {
@@ -344,7 +500,6 @@ fn inspect_value(c: &mut Context<'_>, value: RootId) -> Result<String, RootedErr
         custom_inspect: false,
         show_hidden: false,
         sorted: true,
-        error_stacks: false,
     };
     format::inspect(c, value, options)
 }
@@ -352,7 +507,7 @@ fn inspect_value(c: &mut Context<'_>, value: RootId) -> Result<String, RootedErr
 /// The generated message of `operator`'s failure, or `custom`'s with the diff.
 fn generated_message(c: &mut Context<'_>, actual: RootId, expected: RootId, operator: &str, custom: Option<String>) -> Result<String, RootedError> {
     match operator {
-        "deepStrictEqual" | "strictEqual" => difference(c, actual, expected, operator, custom),
+        "deepStrictEqual" | "strictEqual" | "partialDeepStrictEqual" => difference(c, actual, expected, operator, custom),
         "notDeepStrictEqual" | "notStrictEqual" => {
             let base = if operator == "notStrictEqual" && is_object_like(c, actual) { "notStrictEqualObject" } else { operator };
             let base = readable(base).unwrap_or_default();
@@ -513,20 +668,19 @@ fn print_diff(lines: &[DiffLine<'_>]) -> (String, bool) {
 }
 
 /// `innerFail`: an Error message is thrown itself, anything else as an AssertionError's.
-fn fail_with(c: &mut Context<'_>, actual: RootId, expected: RootId, operator: &str, message: RootId, start: Assertion) -> Result<RootedError, RootedError> {
+fn fail_with(c: &mut Context<'_>, actual: RootId, expected: RootId, operator: &str, message: RootId, call: Invocation) -> Result<RootedError, RootedError> {
     if c.is_error_rooted(message)? {
         return Ok(c.throw(message));
     }
-    let error = assertion_error(c, actual, expected, operator, message, start)?;
+    let error = assertion_error(c, actual, expected, operator, message, call)?;
     Ok(c.throw(error))
 }
 
-fn assertion_error(c: &mut Context<'_>, actual: RootId, expected: RootId, operator: &str, message: RootId, start: Assertion) -> Result<RootId, RootedError> {
+fn assertion_error(c: &mut Context<'_>, actual: RootId, expected: RootId, operator: &str, message: RootId, call: Invocation) -> Result<RootId, RootedError> {
     let class = error_class(c)?;
     let operator_value = c.string_rooted(operator);
-    let start = function_of(c, start)?;
-    let diff = c.string_rooted(DEFAULT_DIFF);
-    let failure = Failure { actual, expected, operator: operator_value, operator_text: operator.to_owned(), message, start, diff };
+    let start = function_of(c, call.assertion)?;
+    let failure = Failure { actual, expected, operator: operator_value, operator_text: operator.to_owned(), message, start, diff: call.diff };
     build_error(c, &failure, class)
 }
 
@@ -540,14 +694,16 @@ fn function_of(c: &mut Context<'_>, assertion: Assertion) -> Result<RootId, Root
 }
 
 /// Every assertion's host function.
-pub(crate) fn call(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn call(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let code = c.host_function_data()?;
     let assertion = Assertion::ALL[c.to_number(code)? as usize];
+    let diff = receiver_diff(c, receiver)?;
+    let call = Invocation { assertion, diff };
     let undefined = c.undefined();
     let (actual, expected, message) = (argument(c, args, 0), argument(c, args, 1), argument(c, args, 2));
     match assertion {
-        Assertion::Ok | Assertion::Strict => ok(c, assertion, args)?,
-        Assertion::Fail => return Err(fail(c, args)?),
+        Assertion::Ok | Assertion::Strict => ok(c, call, args)?,
+        Assertion::Fail => return Err(fail(c, call, args)?),
         Assertion::Equal | Assertion::NotEqual => {
             if args.len() < 2 {
                 return Err(super::event_target_shared_vm::missing_args(c, &["actual", "expected"]));
@@ -556,7 +712,7 @@ pub(crate) fn call(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Ro
             let equal = c.equal_rooted(actual, expected)? || (nan(c, actual) && nan(c, expected));
             if equal != (assertion == Assertion::Equal) {
                 let operator = if assertion == Assertion::Equal { "==" } else { "!=" };
-                return Err(fail_with(c, actual, expected, operator, message, assertion)?);
+                return Err(fail_with(c, actual, expected, operator, message, call)?);
             }
         }
         Assertion::StrictEqual | Assertion::NotStrictEqual => {
@@ -564,20 +720,24 @@ pub(crate) fn call(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Ro
                 return Err(super::event_target_shared_vm::missing_args(c, &["actual", "expected"]));
             }
             if c.same_value_rooted(actual, expected)? != (assertion == Assertion::StrictEqual) {
-                return Err(fail_with(c, actual, expected, assertion.name(), message, assertion)?);
+                return Err(fail_with(c, actual, expected, assertion.name(), message, call)?);
             }
         }
-        Assertion::DeepEqual | Assertion::NotDeepEqual | Assertion::DeepStrictEqual | Assertion::NotDeepStrictEqual => {
+        Assertion::DeepEqual | Assertion::NotDeepEqual | Assertion::DeepStrictEqual | Assertion::NotDeepStrictEqual | Assertion::PartialDeepStrictEqual => {
             if args.len() < 2 {
                 return Err(super::event_target_shared_vm::missing_args(c, &["actual", "expected"]));
             }
-            let mode = if matches!(assertion, Assertion::DeepStrictEqual | Assertion::NotDeepStrictEqual) { Mode::Strict } else { Mode::Loose };
-            let expect_equal = matches!(assertion, Assertion::DeepEqual | Assertion::DeepStrictEqual);
-            if deep::equal(c, actual, expected, mode)? != expect_equal {
-                return Err(fail_with(c, actual, expected, assertion.name(), message, assertion)?);
+            let mode = match assertion {
+                Assertion::DeepStrictEqual | Assertion::NotDeepStrictEqual => Mode::Strict,
+                Assertion::PartialDeepStrictEqual => Mode::Partial,
+                _ => Mode::Loose,
+            };
+            let expect_equal = matches!(assertion, Assertion::DeepEqual | Assertion::DeepStrictEqual | Assertion::PartialDeepStrictEqual);
+            if comparisons::deep_equal(c, actual, expected, mode)? != expect_equal {
+                return Err(fail_with(c, actual, expected, assertion.name(), message, call)?);
             }
         }
-        Assertion::Match | Assertion::DoesNotMatch => matches(c, assertion, actual, expected, message)?,
+        Assertion::Match | Assertion::DoesNotMatch => matches(c, call, actual, expected, message)?,
         Assertion::Throws | Assertion::DoesNotThrow => {
             let function = actual;
             if !c.is_callable_rooted(function)? {
@@ -589,19 +749,19 @@ pub(crate) fn call(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Ro
             };
             let rest = args.get(1..).unwrap_or_default();
             if assertion == Assertion::Throws {
-                expects_error(c, assertion, thrown, rest)?;
+                expects_error(c, call, thrown, rest)?;
             } else {
-                expects_no_error(c, assertion, thrown, rest)?;
+                expects_no_error(c, call, thrown, rest)?;
             }
         }
-        Assertion::Rejects | Assertion::DoesNotReject => return awaiting(c, assertion, args),
-        Assertion::IfError => if_error(c, actual)?,
+        Assertion::Rejects | Assertion::DoesNotReject => return awaiting(c, call, args),
+        Assertion::IfError => if_error(c, call, actual)?,
     }
     Ok(undefined)
 }
 
 /// `innerOk`: a falsy value fails with the message, or with the falsy call's source.
-fn ok(c: &mut Context<'_>, assertion: Assertion, args: &[RootId]) -> Result<(), RootedError> {
+fn ok(c: &mut Context<'_>, call: Invocation, args: &[RootId]) -> Result<(), RootedError> {
     let value = argument(c, args, 0);
     if c.truthy_rooted(value)? {
         return Ok(());
@@ -621,7 +781,7 @@ fn ok(c: &mut Context<'_>, assertion: Assertion, args: &[RootId]) -> Result<(), 
         (message, false)
     };
     let expected = c.boolean(true);
-    let error = assertion_error(c, value, expected, "==", message, assertion)?;
+    let error = assertion_error(c, value, expected, "==", message, call)?;
     let generated = c.boolean(generated);
     put(c, error, "generatedMessage", generated)?;
     Err(c.throw(error))
@@ -636,7 +796,7 @@ fn falsy_source(c: &mut Context<'_>) -> Option<String> {
 }
 
 /// `fail(message)`, and the legacy `fail(actual, expected, message, operator)`.
-fn fail(c: &mut Context<'_>, args: &[RootId]) -> Result<RootedError, RootedError> {
+fn fail(c: &mut Context<'_>, call: Invocation, args: &[RootId]) -> Result<RootedError, RootedError> {
     let undefined = c.undefined();
     let first = argument(c, args, 0);
     let internal = is_nullish(c, first) && args.len() <= 1;
@@ -652,7 +812,7 @@ fn fail(c: &mut Context<'_>, args: &[RootId]) -> Result<RootedError, RootedError
     if c.is_error_rooted(message)? {
         return Ok(c.throw(message));
     }
-    let error = assertion_error(c, actual, expected, &operator, message, Assertion::Fail)?;
+    let error = assertion_error(c, actual, expected, &operator, message, call)?;
     if internal {
         let generated = c.boolean(true);
         put(c, error, "generatedMessage", generated)?;
@@ -661,7 +821,8 @@ fn fail(c: &mut Context<'_>, args: &[RootId]) -> Result<RootedError, RootedError
 }
 
 /// `match`/`doesNotMatch(string, regexp, message)`.
-fn matches(c: &mut Context<'_>, assertion: Assertion, string: RootId, regexp: RootId, message: RootId) -> Result<(), RootedError> {
+fn matches(c: &mut Context<'_>, call: Invocation, string: RootId, regexp: RootId, message: RootId) -> Result<(), RootedError> {
+    let assertion = call.assertion;
     if !c.has_builtin_brand_rooted(regexp, quench_runtime::BuiltinBrand::RegExp)? {
         return Err(super::util_shared_vm::argument_type_error(c, regexp, "regexp", "RegExp")?);
     }
@@ -689,7 +850,7 @@ fn matches(c: &mut Context<'_>, assertion: Assertion, string: RootId, regexp: Ro
     } else {
         message
     };
-    let error = assertion_error(c, string, regexp, assertion.name(), message, assertion)?;
+    let error = assertion_error(c, string, regexp, assertion.name(), message, call)?;
     let generated = c.boolean(generated);
     put(c, error, "generatedMessage", generated)?;
     Err(c.throw(error))
@@ -719,7 +880,8 @@ fn regexp_matches(c: &mut Context<'_>, regexp: RootId, string: RootId) -> Result
 }
 
 /// `(error, message)` of a throws-family call, a string `error` being the message.
-fn error_and_message(c: &mut Context<'_>, assertion: Assertion, thrown: Option<RootId>, rest: &[RootId]) -> Result<(RootId, RootId), RootedError> {
+fn error_and_message(c: &mut Context<'_>, call: Invocation, thrown: Option<RootId>, rest: &[RootId]) -> Result<(RootId, RootId), RootedError> {
+    let assertion = call.assertion;
     let error = argument(c, rest, 0);
     let message = argument(c, rest, 1);
     if c.value_type_rooted(error) != Some(ValueType::String) {
@@ -756,8 +918,9 @@ fn invalid_error_argument(c: &mut Context<'_>, error: RootId) -> Result<RootedEr
 
 /// `expectsError`: no throw fails with "Missing expected exception", a thrown value is
 /// checked against `error`.
-fn expects_error(c: &mut Context<'_>, assertion: Assertion, thrown: Option<RootId>, rest: &[RootId]) -> Result<(), RootedError> {
-    let (error, message) = error_and_message(c, assertion, thrown, rest)?;
+fn expects_error(c: &mut Context<'_>, call: Invocation, thrown: Option<RootId>, rest: &[RootId]) -> Result<(), RootedError> {
+    let assertion = call.assertion;
+    let (error, message) = error_and_message(c, call, thrown, rest)?;
     let Some(actual) = thrown else {
         let mut details = String::new();
         if is_object_like(c, error) {
@@ -770,17 +933,18 @@ fn expects_error(c: &mut Context<'_>, assertion: Assertion, thrown: Option<RootI
         let kind = if assertion == Assertion::Rejects { "rejection" } else { "exception" };
         let undefined = c.undefined();
         let text = c.string_rooted(&format!("Missing expected {kind}{details}"));
-        return Err(fail_with(c, undefined, error, assertion.name(), text, assertion)?);
+        return Err(fail_with(c, undefined, error, assertion.name(), text, call)?);
     };
     if !c.truthy_rooted(error)? {
         return Ok(());
     }
-    expected_exception(c, assertion, actual, error, message)
+    expected_exception(c, call, actual, error, message)
 }
 
 /// `expectedException`: `expected` as a regular expression, a validation object or error,
 /// an error class, or a validation function.
-fn expected_exception(c: &mut Context<'_>, assertion: Assertion, actual: RootId, expected: RootId, message: RootId) -> Result<(), RootedError> {
+fn expected_exception(c: &mut Context<'_>, call: Invocation, actual: RootId, expected: RootId, message: RootId) -> Result<(), RootedError> {
+    let assertion = call.assertion;
     let mut generated = false;
     let mut message = message;
     if !c.is_callable_rooted(expected)? {
@@ -796,7 +960,7 @@ fn expected_exception(c: &mut Context<'_>, assertion: Assertion, actual: RootId,
                 message = c.string_rooted(&format!("The input did not match the regular expression {pattern}. Input:\n\n{input}\n"));
             }
         } else if !c.is_object_rooted(actual)? {
-            let error = assertion_error(c, actual, expected, "deepStrictEqual", message, assertion)?;
+            let error = assertion_error(c, actual, expected, "deepStrictEqual", message, call)?;
             let operator = c.string_rooted(assertion.name());
             put(c, error, "operator", operator)?;
             return Err(c.throw(error));
@@ -818,14 +982,14 @@ fn expected_exception(c: &mut Context<'_>, assertion: Assertion, actual: RootId,
                     continue;
                 }
                 let present = c.has_property_rooted(actual, key)?;
-                if !present || !deep::equal(c, actual_value, expected_value, Mode::Strict)? {
+                if !present || !comparisons::deep_equal(c, actual_value, expected_value, Mode::Strict)? {
                     if c.truthy_rooted(message)? {
-                        return Err(fail_with(c, actual, expected, assertion.name(), message, assertion)?);
+                        return Err(fail_with(c, actual, expected, assertion.name(), message, call)?);
                     }
                     let left = comparison(c, actual, &keys, None)?;
                     let right = comparison(c, expected, &keys, Some(actual))?;
                     let undefined = c.undefined();
-                    let error = assertion_error(c, left, right, "deepStrictEqual", undefined, assertion)?;
+                    let error = assertion_error(c, left, right, "deepStrictEqual", undefined, call)?;
                     put(c, error, "actual", actual)?;
                     put(c, error, "expected", expected)?;
                     let operator = c.string_rooted(assertion.name());
@@ -889,7 +1053,7 @@ fn expected_exception(c: &mut Context<'_>, assertion: Assertion, actual: RootId,
             }
         }
     }
-    let error = assertion_error(c, actual, expected, assertion.name(), message, assertion)?;
+    let error = assertion_error(c, actual, expected, assertion.name(), message, call)?;
     let generated = c.boolean(generated);
     put(c, error, "generatedMessage", generated)?;
     Err(c.throw(error))
@@ -986,22 +1150,23 @@ fn has_matching_error(c: &mut Context<'_>, actual: RootId, expected: RootId) -> 
 
 /// `expectsNoError`: a thrown value fails as unwanted when it matches `error`, else is
 /// rethrown.
-fn expects_no_error(c: &mut Context<'_>, assertion: Assertion, thrown: Option<RootId>, rest: &[RootId]) -> Result<(), RootedError> {
+fn expects_no_error(c: &mut Context<'_>, call: Invocation, thrown: Option<RootId>, rest: &[RootId]) -> Result<(), RootedError> {
+    let assertion = call.assertion;
     let Some(actual) = thrown else { return Ok(()) };
-    let (error, message) = error_and_message(c, assertion, None, rest)?;
+    let (error, message) = error_and_message(c, call, None, rest)?;
     if !c.truthy_rooted(error)? || has_matching_error(c, actual, error)? {
         let details = if c.truthy_rooted(message)? { format!(": {}", c.to_string(message)?) } else { ".".to_owned() };
         let kind = if assertion == Assertion::DoesNotReject { "rejection" } else { "exception" };
         let actual_message = if is_object_like(c, actual) { get(c, actual, "message")? } else { c.undefined() };
         let actual_message = c.to_string(actual_message)?;
         let text = c.string_rooted(&format!("Got unwanted {kind}{details}\nActual message: \"{actual_message}\""));
-        return Err(fail_with(c, actual, error, assertion.name(), text, assertion)?);
+        return Err(fail_with(c, actual, error, assertion.name(), text, call)?);
     }
     Err(c.throw(actual))
 }
 
 /// `ifError(value)`: anything but null and undefined fails.
-fn if_error(c: &mut Context<'_>, value: RootId) -> Result<(), RootedError> {
+fn if_error(c: &mut Context<'_>, call: Invocation, value: RootId) -> Result<(), RootedError> {
     if is_nullish(c, value) {
         return Ok(());
     }
@@ -1020,7 +1185,7 @@ fn if_error(c: &mut Context<'_>, value: RootId) -> Result<(), RootedError> {
     }
     let message = c.string_rooted(&text);
     let null = c.null();
-    let error = assertion_error(c, value, null, "ifError", message, Assertion::IfError)?;
+    let error = assertion_error(c, value, null, "ifError", message, call)?;
     Err(c.throw(error))
 }
 
@@ -1043,7 +1208,8 @@ fn is_promise_like(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedErr
 
 /// `rejects`/`doesNotReject(promiseFn, error, message)`: the promise settles, then the
 /// rejection is checked as `throws`/`doesNotThrow` check a throw.
-fn awaiting(c: &mut Context<'_>, assertion: Assertion, args: &[RootId]) -> Result<RootId, RootedError> {
+fn awaiting(c: &mut Context<'_>, call: Invocation, args: &[RootId]) -> Result<RootId, RootedError> {
+    let assertion = call.assertion;
     let promise = c.pending_promise_rooted()?;
     let source = argument(c, args, 0);
     let target = if c.is_callable_rooted(source)? {
@@ -1073,7 +1239,7 @@ fn awaiting(c: &mut Context<'_>, assertion: Assertion, args: &[RootId]) -> Resul
     };
     let rest = c.array_rooted(args.get(1..).unwrap_or_default())?;
     let code = c.number(assertion.code());
-    let state = c.array_rooted(&[promise, rest, code])?;
+    let state = c.array_rooted(&[promise, rest, code, call.diff])?;
     let fulfilled = c.host_function_with_data(crate::host::shared_vm::operation("assertSettled"), state)?;
     let rejected = c.host_function_with_data(crate::host::shared_vm::operation("assertRejected"), state)?;
     let then = get(c, target, "then")?;
@@ -1084,13 +1250,14 @@ fn awaiting(c: &mut Context<'_>, assertion: Assertion, args: &[RootId]) -> Resul
 fn settle(c: &mut Context<'_>, thrown: Option<RootId>) -> Result<RootId, RootedError> {
     let state = c.host_function_data()?;
     let parts = c.array_like_values_rooted(state)?;
-    let [promise, rest, code] = parts[..] else { return Err(RootedError::host("assertion settlement malformed")) };
+    let [promise, rest, code, diff] = parts[..] else { return Err(RootedError::host("assertion settlement malformed")) };
     let assertion = Assertion::ALL[c.to_number(code)? as usize];
+    let call = Invocation { assertion, diff };
     let rest = c.array_like_values_rooted(rest)?;
     let checked = if assertion == Assertion::Rejects {
-        expects_error(c, assertion, thrown, &rest)
+        expects_error(c, call, thrown, &rest)
     } else {
-        expects_no_error(c, assertion, thrown, &rest)
+        expects_no_error(c, call, thrown, &rest)
     };
     match checked {
         Ok(()) => {

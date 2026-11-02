@@ -155,14 +155,7 @@ fn key_slots(c: &mut Context<'_>, state: RootId, key: RootId) -> Result<RootId, 
                 get(c, data, "der")?,
             )
         };
-        let constructor = c
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .builtin_cache
-            .get("\0builtin:buffer/FastBuffer")
-            .copied()
-            .ok_or_else(|| RootedError::host("FastBuffer is not initialized"))?;
+        let constructor = super::buffer_shared_vm::fast_buffer_constructor(c)?;
         let bytes = c.construct_rooted(constructor, constructor, &[bytes])?;
         let handle_ctor = get(c, state, "handleConstructor")?;
         let handle_ctor = if c.is_callable_rooted(handle_ctor)? {
@@ -536,14 +529,7 @@ pub(crate) fn operation(
                 "getSymmetricKeySize" => Ok(c.number(bytes.len() as f64)),
                 "export" => {
                     let bytes = c.uint8_array_rooted(&bytes)?;
-                    let constructor = c
-                        .host_mut()
-                        .shared_state()
-                        .borrow()
-                        .builtin_cache
-                        .get("\0builtin:buffer/FastBuffer")
-                        .copied()
-                        .ok_or_else(|| RootedError::host("FastBuffer is not initialized"))?;
+                    let constructor = super::buffer_shared_vm::fast_buffer_constructor(c)?;
                     c.construct_rooted(constructor, constructor, &[bytes])
                 }
                 _ => {

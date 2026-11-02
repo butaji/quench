@@ -28,8 +28,6 @@ pub(crate) struct Options {
     pub(crate) show_hidden: bool,
     /// Writes a container's entries sorted.
     pub(crate) sorted: bool,
-    /// Writes an error as its stack; otherwise as `[Name: message]`.
-    pub(crate) error_stacks: bool,
 }
 
 /// How containers break over lines.
@@ -52,7 +50,6 @@ impl Default for Options {
             custom_inspect: true,
             show_hidden: false,
             sorted: false,
-            error_stacks: true,
         }
     }
 }

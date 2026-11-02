@@ -236,7 +236,7 @@ pub(crate) fn read_view(c: &mut Context<'_>, input: &SharedWireInput, buffer: Ro
         return Err(throw_error(c, DESERIALIZATION_ERROR));
     };
     let (element_size, constructor) = if index == BUFFER_INDEX {
-        (BUFFER_ELEMENT_SIZE, crate::modules::buffer_shared_vm::fast_buffer(c)?)
+        (BUFFER_ELEMENT_SIZE, crate::modules::buffer_shared_vm::fast_buffer_constructor(c)?)
     } else {
         let Some(view_type) = VIEW_TYPES.iter().find(|view_type| view_type.index == index) else {
             return Ok(None);

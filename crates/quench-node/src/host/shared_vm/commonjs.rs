@@ -2619,6 +2619,8 @@ fn module_record(
     set(context, require, "main", main)?;
     let cache = commonjs_cache(context)?;
     set(context, require, "cache", cache)?;
+    let extensions = crate::modules::module_shared_vm::extensions(context)?;
+    set(context, require, "extensions", extensions)?;
     set(context, module, "require", require)?;
     Ok(module)
 }
@@ -2820,147 +2822,11 @@ fn load_with_resolution(
         let name = context.string_rooted(&key);
         set(context, directory, specifier, name)?;
     }
-    let result = (|| {
-        if declared == Some(quench_runtime::SourceKind::Module) {
-            return load_es_module(context, &key, module, filename, parent);
-        }
-        if filename
-            .extension()
-            .and_then(|extension| extension.to_str())
-            == Some("node")
-        {
-            // Module._extensions['.node']: process.dlopen(module, filename).
-            let path = context.string_rooted(&filename.to_string_lossy());
-            crate::modules::napi::dlopen(context, module, &[module, path])?;
-            let exports = get(context, module, "exports")?;
-            let loaded = context.boolean(true);
-            set(context, module, "loaded", loaded)?;
-            return Ok(exports);
-        }
-        let file_text: std::borrow::Cow<'static, str> =
-            match module_file_bytes(context, filename, declared.unwrap_or(quench_runtime::SourceKind::Script)) {
-                Ok(bytes) => String::from_utf8(bytes)
-                    .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
-                    .into(),
-                Err(error) => return Err(RootedError::host(error.to_string())),
-            };
-        #[cfg(feature = "native-execution")]
-        let prepared = context.host_mut().embedded_module(filename).and_then(|file| file.prepared);
-        #[cfg(not(feature = "native-execution"))]
-        let prepared: Option<()> = None;
-        let file_text: std::borrow::Cow<'static, str> = match prepared {
-            #[cfg(feature = "native-execution")]
-            Some(crate::aot::PreparedModuleSource::Original) => file_text,
-            #[cfg(feature = "native-execution")]
-            Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
-            _ => file_text,
-        };
-        let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
-        let file_text = if prepared.is_none() && typed_commonjs {
-            match quench_runtime::Engine::project_typescript_module_syntax(&file_text) {
-                Some((std::borrow::Cow::Owned(source), _)) => source.into(),
-                _ => file_text,
-            }
-        } else { file_text };
-        #[cfg(feature = "aot")]
-        if typed_commonjs {
-            context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
-        }
-
-        // An embedded file is static text the compiled program can retain as is; a
-        // projected one is new text.
-        let embedded = match file_text {
-            std::borrow::Cow::Borrowed(text) => Some(script_body(text)),
-            std::borrow::Cow::Owned(_) => None,
-        };
-        let text = file_text.as_ref();
-        match filename
-            .extension()
-            .and_then(|extension| extension.to_str())
-        {
-            Some("json") => {
-                let exports = context.parse_json_rooted(text.strip_prefix('\u{feff}').unwrap_or(text))?;
-                set(context, module, "exports", exports)?;
-            }
-            Some("mjs") => {
-                return Err(RootedError::host(
-                    "this module format is not implemented on the shared VM",
-                ));
-            }
-            _ => {
-                let text = script_body(text);
-                let exports = get(context, module, "exports")?;
-                let require = get(context, module, "require")?;
-                let name = context.string_rooted(&key);
-                let directory = context.string_rooted(
-                    &filename
-                        .parent()
-                        .unwrap_or(Path::new("."))
-                        .to_string_lossy(),
-                );
-                let (prefix, suffix) = (WRAPPER_PREFIX, WRAPPER_SUFFIX);
-                if parent.is_none() {
-                    crate::host::resident_pages::release_before_entry_compile();
-                }
-                let wrapper = match embedded {
-                    // The program retains the embedded text itself, not a wrapped copy.
-                    Some(body) => context
-                        .evaluate_specialized_static_body_rooted(prefix, body, suffix, &key)?,
-                    // A text an earlier run detected as a module loads as one, without the
-                    // CommonJS compile that would fail again (a failed compile is not cached).
-                    None if declared.is_none() && cached_source_kind(text) == Some(quench_runtime::SourceKind::Module) => {
-                        drop(file_text);
-                        return load_es_module(context, &key, module, filename, parent);
-                    }
-                    None => {
-                        // The wrapper is built in the file's own buffer: growing a large one
-                        // remaps its pages, where a second copy of typescript.js (9 MB) was
-                        // briefly resident beside it. Its byte-order mark and `#!` line are
-                        // what the prefix replaces.
-                        let body_start = file_text.len() - text.len();
-                        let mut wrapper_source = file_text.into_owned();
-                        wrapper_source.reserve_exact(prefix.len() + suffix.len());
-                        wrapper_source.replace_range(..body_start, prefix);
-                        wrapper_source.push_str(suffix);
-                        let typescript = matches!(
-                            filename.extension().and_then(|extension| extension.to_str()),
-                            Some("cts" | "ts"),
-                        );
-                        let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, &key, is_main, typescript) {
-                            Ok(wrapper) => wrapper,
-                            Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
-                                && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
-                                    == quench_runtime::SourceKind::Module =>
-                            {
-                                drop(wrapper_source);
-                                return load_es_module(context, &key, module, filename, parent);
-                            }
-                            Err(error) => return Err(error),
-                        };
-                        crate::modules::source_map_shared_vm::maybe_cache(
-                            context,
-                            filename,
-                            &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()],
-                        )?;
-                        // The compiled program keeps its own source; the module body runs
-                        // inside this call, so the wrapper is released before it.
-                        drop(wrapper_source);
-                        wrapper
-                    }
-                };
-                if parent.is_none() {
-                    crate::host::resident_pages::release_read_only_code_and_data();
-                    crate::host::resident_pages::release_free_heap_pages();
-                    crate::host::resident_pages::quench_entry_compiled();
-                }
-                context.call_rooted(wrapper, exports, &[exports, require, module, name, directory])?;
-            }
-        }
-        let exports = get(context, module, "exports")?;
-        let loaded = context.boolean(true);
-        set(context, module, "loaded", loaded)?;
-        Ok(exports)
-    })();
+    let source = ModuleSource { key: &key, module, filename, parent, declared, is_main };
+    let result = match crate::modules::module_shared_vm::replaced_extension_handler(context, filename)? {
+        Some(handler) => run_extension_handler(context, handler, module, filename),
+        None => execute_module(context, source),
+    };
     if let Some(retained) = roots.borrow_mut().active_esm_requires.remove(&key) {
         context.release_root(retained);
     }
@@ -2974,6 +2840,183 @@ fn load_with_resolution(
         }
     }
     result
+}
+
+/// What compiling one module's file needs to know about it.
+#[derive(Clone, Copy)]
+struct ModuleSource<'a> {
+    key: &'a str,
+    module: RootId,
+    filename: &'a Path,
+    parent: Option<RootId>,
+    declared: Option<quench_runtime::SourceKind>,
+    is_main: bool,
+}
+
+/// A replaced `Module._extensions` handler loading `module`: `handler(module, filename)`,
+/// then the exports it left.
+fn run_extension_handler(context: &mut Context<'_>, handler: RootId, module: RootId, filename: &Path) -> Result<RootId, RootedError> {
+    let name = context.string_rooted(&filename.to_string_lossy());
+    let extensions = crate::modules::module_shared_vm::extensions(context)?;
+    context.call_rooted(handler, extensions, &[module, name])?;
+    let loaded = context.boolean(true);
+    set(context, module, "loaded", loaded)?;
+    get(context, module, "exports")
+}
+
+/// Node's own `Module._extensions[ext](module, filename)` for a user module, as script calls
+/// it (a replaced handler delegating to the original).
+pub(crate) fn execute_user_module(context: &mut Context<'_>, module: RootId, filename: &Path) -> Result<RootId, RootedError> {
+    let key = filename.to_string_lossy().into_owned();
+    let declared = declared_source_kind(&real_path_for_kind(filename).map_err(RootedError::host)?).map_err(RootedError::host)?;
+    let parent = get(context, module, "parent")?;
+    let parent = context.is_object_rooted(parent)?.then_some(parent);
+    let source = ModuleSource { key: &key, module, filename, parent, declared, is_main: false };
+    execute_module(context, source)
+}
+
+/// Compile and run one module's file into `module` by its kind and extension.
+fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result<RootId, RootedError> {
+    let ModuleSource { key, module, filename, parent, declared, is_main } = source;
+    if declared == Some(quench_runtime::SourceKind::Module) {
+        return load_es_module(context, key, module, filename, parent);
+    }
+    if filename
+        .extension()
+        .and_then(|extension| extension.to_str())
+        == Some("node")
+    {
+        // Module._extensions['.node']: process.dlopen(module, filename).
+        let path = context.string_rooted(&filename.to_string_lossy());
+        crate::modules::napi::dlopen(context, module, &[module, path])?;
+        let exports = get(context, module, "exports")?;
+        let loaded = context.boolean(true);
+        set(context, module, "loaded", loaded)?;
+        return Ok(exports);
+    }
+    let file_text: std::borrow::Cow<'static, str> =
+        match module_file_bytes(context, filename, declared.unwrap_or(quench_runtime::SourceKind::Script)) {
+            Ok(bytes) => String::from_utf8(bytes)
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+                .into(),
+            Err(error) => return Err(RootedError::host(error.to_string())),
+        };
+    #[cfg(feature = "native-execution")]
+    let prepared = context.host_mut().embedded_module(filename).and_then(|file| file.prepared);
+    #[cfg(not(feature = "native-execution"))]
+    let prepared: Option<()> = None;
+    let file_text: std::borrow::Cow<'static, str> = match prepared {
+        #[cfg(feature = "native-execution")]
+        Some(crate::aot::PreparedModuleSource::Original) => file_text,
+        #[cfg(feature = "native-execution")]
+        Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
+        _ => file_text,
+    };
+    let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
+    let file_text = if prepared.is_none() && typed_commonjs {
+        match quench_runtime::Engine::project_typescript_module_syntax(&file_text) {
+            Some((std::borrow::Cow::Owned(source), _)) => source.into(),
+            _ => file_text,
+        }
+    } else { file_text };
+    #[cfg(feature = "aot")]
+    if typed_commonjs {
+        context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
+    }
+
+    // An embedded file is static text the compiled program can retain as is; a
+    // projected one is new text.
+    let embedded = match file_text {
+        std::borrow::Cow::Borrowed(text) => Some(script_body(text)),
+        std::borrow::Cow::Owned(_) => None,
+    };
+    let text = file_text.as_ref();
+    match filename
+        .extension()
+        .and_then(|extension| extension.to_str())
+    {
+        Some("json") => {
+            let exports = context.parse_json_rooted(text.strip_prefix('\u{feff}').unwrap_or(text))?;
+            set(context, module, "exports", exports)?;
+        }
+        Some("mjs") => {
+            return Err(RootedError::host(
+                "this module format is not implemented on the shared VM",
+            ));
+        }
+        _ => {
+            let text = script_body(text);
+            let exports = get(context, module, "exports")?;
+            let require = get(context, module, "require")?;
+            let name = context.string_rooted(key);
+            let directory = context.string_rooted(
+                &filename
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_string_lossy(),
+            );
+            let (prefix, suffix) = (WRAPPER_PREFIX, WRAPPER_SUFFIX);
+            if parent.is_none() {
+                crate::host::resident_pages::release_before_entry_compile();
+            }
+            let wrapper = match embedded {
+                // The program retains the embedded text itself, not a wrapped copy.
+                Some(body) => context
+                    .evaluate_specialized_static_body_rooted(prefix, body, suffix, key)?,
+                // A text an earlier run detected as a module loads as one, without the
+                // CommonJS compile that would fail again (a failed compile is not cached).
+                None if declared.is_none() && cached_source_kind(text) == Some(quench_runtime::SourceKind::Module) => {
+                    drop(file_text);
+                    return load_es_module(context, key, module, filename, parent);
+                }
+                None => {
+                    // The wrapper is built in the file's own buffer: growing a large one
+                    // remaps its pages, where a second copy of typescript.js (9 MB) was
+                    // briefly resident beside it. Its byte-order mark and `#!` line are
+                    // what the prefix replaces.
+                    let body_start = file_text.len() - text.len();
+                    let mut wrapper_source = file_text.into_owned();
+                    wrapper_source.reserve_exact(prefix.len() + suffix.len());
+                    wrapper_source.replace_range(..body_start, prefix);
+                    wrapper_source.push_str(suffix);
+                    let typescript = matches!(
+                        filename.extension().and_then(|extension| extension.to_str()),
+                        Some("cts" | "ts"),
+                    );
+                    let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, key, is_main, typescript) {
+                        Ok(wrapper) => wrapper,
+                        Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
+                            && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
+                                == quench_runtime::SourceKind::Module =>
+                        {
+                            drop(wrapper_source);
+                            return load_es_module(context, key, module, filename, parent);
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    crate::modules::source_map_shared_vm::maybe_cache(
+                        context,
+                        filename,
+                        &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()],
+                    )?;
+                    // The compiled program keeps its own source; the module body runs
+                    // inside this call, so the wrapper is released before it.
+                    drop(wrapper_source);
+                    wrapper
+                }
+            };
+            if parent.is_none() {
+                crate::host::resident_pages::release_read_only_code_and_data();
+                crate::host::resident_pages::release_free_heap_pages();
+                crate::host::resident_pages::quench_entry_compiled();
+            }
+            context.call_rooted(wrapper, exports, &[exports, require, module, name, directory])?;
+        }
+    }
+    let exports = get(context, module, "exports")?;
+    let loaded = context.boolean(true);
+    set(context, module, "loaded", loaded)?;
+    Ok(exports)
 }
 
 /// `require` of an ES module: `module` is active until `load_with_resolution` finishes, so a

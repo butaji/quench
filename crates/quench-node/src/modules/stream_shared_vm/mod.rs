@@ -560,7 +560,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let mut intrinsics = Intrinsics { slots, classes: [undefined; Class::COUNT], ticks, nop, promise, promise_then, module: undefined };
     c.host_mut().shared_state().borrow_mut().stream_intrinsics = Some(intrinsics);
     let emitter = get(c, global, "__nodeEventEmitter")?;
-    let buffer = super::buffer_shared_vm::fast_buffer(c)?;
+    let buffer = super::buffer_shared_vm::fast_buffer_constructor(c)?;
     let stream = legacy::build(c, emitter)?;
     let readable_state = state::build_readable_state(c)?;
     let writable_state = state::build_writable_state(c)?;
