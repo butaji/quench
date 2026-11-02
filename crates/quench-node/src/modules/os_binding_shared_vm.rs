@@ -47,6 +47,11 @@ const SIGNAL_CONSTANTS: &[(&str, libc::c_int)] = &[
     ("SIGSYS", libc::SIGSYS),
 ];
 
+/// A signal number from the same platform inventory exported by `os.constants`.
+pub(crate) fn signal_number(name: &str) -> Option<libc::c_int> {
+    SIGNAL_CONSTANTS.iter().find_map(|&(signal, number)| (signal == name).then_some(number))
+}
+
 fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name);
     c.define_data_property_rooted(object, key, value, true, true, true)?;

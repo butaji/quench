@@ -259,11 +259,11 @@ pub(crate) fn set_property(context: &mut Context<'_>, _: RootId, args: &[RootId]
 
 /// `validateSignalName`: `ERR_UNKNOWN_SIGNAL`, hinting at capitals for a lowercase name.
 fn validate_signal(context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
-    if super::process_signals_state::signal_number(name).is_some() {
+    if super::os_binding_shared_vm::signal_number(name).is_some() {
         return Ok(());
     }
     let upper = name.to_uppercase();
-    let hint = if super::process_signals_state::signal_number(&upper).is_some() {
+    let hint = if super::os_binding_shared_vm::signal_number(&upper).is_some() {
         " (signals must use all capital letters)"
     } else {
         ""

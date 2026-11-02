@@ -407,8 +407,6 @@ mod platform {
 pub(crate) use platform::{wake_fd, SignalState};
 #[cfg(target_os = "linux")]
 pub(crate) use platform::SIGNALS;
-#[cfg(target_os = "linux")]
-pub(crate) use platform::signal_number;
 
 /// The VM runs on a stack-owning worker. Keep process-directed signals from
 /// being delivered to its waiting caller, while preserving the caller's mask
