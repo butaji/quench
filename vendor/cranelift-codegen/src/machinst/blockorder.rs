@@ -61,11 +61,17 @@
 //! the other redundancies that this scheme produces.
 
 use crate::dominator_tree::DominatorTree;
-use crate::entity::SecondaryMap;
+use crate::bitset::CompoundBitSet;
+use crate::entity::{EntitySet, SecondaryMap};
+use crate::flowgraph::ControlFlowGraph;
 use crate::inst_predicates::visit_block_succs;
 use crate::ir::{Block, Function, Inst, Opcode};
+use crate::loop_analysis::{Loop, LoopAnalysis};
 use crate::{FxHashMap, FxHashSet};
 use crate::{machinst::*, trace};
+
+/// Keep small function schedules inline; larger CFGs spill without a size limit.
+const INLINE_EMISSION_BLOCKS: usize = 16;
 
 /// Mapping from CLIF BBs to VCode BBs.
 #[derive(Debug)]
@@ -90,6 +96,8 @@ pub struct BlockLoweringOrder {
     cold_blocks: FxHashSet<BlockIndex>,
     /// Lowered blocks that are indirect branch targets.
     indirect_branch_targets: FxHashSet<BlockIndex>,
+    /// Physical layout may rotate loops after lowering and register allocation.
+    emission_order: SmallVec<[BlockIndex; INLINE_EMISSION_BLOCKS]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -297,17 +305,109 @@ impl BlockLoweringOrder {
                 (opt_inst, start..end)
             }));
 
-        let result = BlockLoweringOrder {
+        let mut result = BlockLoweringOrder {
             lowered_order,
             lowered_succ_indices,
             lowered_succ_ranges,
             blockindex_by_block,
             cold_blocks,
             indirect_branch_targets,
+            emission_order: SmallVec::new(),
         };
+        result.emission_order = result.plan_emission(f, domtree);
 
         trace!("BlockLoweringOrder: {:#?}", result);
         result
+    }
+
+    /// Rotate simple natural-loop cycles so a conditional closes the cycle.
+    /// This removes a taken unconditional branch on the repeating path. RPO
+    /// remains authoritative for lowering; only final label placement changes.
+    fn plan_emission(&self, f: &Function, domtree: &DominatorTree)
+        -> SmallVec<[BlockIndex; INLINE_EMISSION_BLOCKS]>
+    {
+        let cfg = ControlFlowGraph::with_function(f);
+        let mut loops = LoopAnalysis::new();
+        loops.compute(f, &cfg, domtree);
+        let membership: Vec<_> = self.lowered_order.iter().map(|block| match *block {
+            LoweredBlock::Orig { block } => loops.innermost_loop(block),
+            LoweredBlock::CriticalEdge { pred, succ, .. } => loops.innermost_loop(pred)
+                .filter(|lp| loops.is_in_loop(succ, *lp)),
+        }).collect();
+        let mut sizes = SecondaryMap::<Loop, usize>::new();
+        let mut tops = SecondaryMap::<Loop, Option<BlockIndex>>::new();
+        let mut exits = SecondaryMap::<Loop, Option<BlockIndex>>::new();
+        let mut blocked = EntitySet::<Loop>::new();
+        let mut next = vec![None; self.lowered_order.len()];
+        for (index, lp) in membership.iter().copied().enumerate() {
+            let Some(lp) = lp else { continue; };
+            sizes[lp] += 1;
+            let block = BlockIndex::new(index);
+            if index == 0 || self.is_cold(block) { blocked.insert(lp); }
+            let (terminator, successors) = self.succ_indices(block);
+            let mut internal = successors.iter().copied()
+                .filter(|succ| membership[succ.index()] == Some(lp));
+            next[index] = internal.next();
+            if next[index].is_none() || internal.next().is_some() { blocked.insert(lp); }
+            if successors.len() == 2 && terminator.is_some_and(|inst|
+                f.dfg.insts[inst].opcode() == Opcode::Brif) {
+                if let Some(exit) = successors.iter().copied().find(|succ|
+                    membership[succ.index()] != Some(lp) && !self.is_cold(*succ)) {
+                    tops[lp] = next[index];
+                    exits[lp] = Some(exit);
+                }
+            }
+        }
+        for lp in loops.loops() {
+            let Some(top) = tops[lp] else { continue; };
+            let mut current = Some(top);
+            // The walk must visit every member exactly once before closing.
+            // Its bound is the actual CFG size, not a compilation budget.
+            for position in 0..sizes[lp] {
+                current = current.and_then(|block| next[block.index()]);
+                if current.is_none() || (current == Some(top) && position + 1 < sizes[lp]) {
+                    current = None;
+                    break;
+                }
+            }
+            if blocked.contains(lp) || current != Some(top) {
+                tops[lp] = None;
+            }
+        }
+        let mut emitted = CompoundBitSet::<usize>::with_capacity(self.lowered_order.len());
+        let mut order = SmallVec::new();
+        for (index, lp) in membership.iter().copied().enumerate() {
+            let block = BlockIndex::new(index);
+            if self.is_cold(block) || emitted.contains(index) { continue; }
+            if let Some(lp) = lp && let Some(top) = tops[lp] {
+                let exit = exits[lp].expect("conditional cycle exit");
+                if !emitted.contains(exit.index()) {
+                    let mut current = top;
+                    for _ in 0..sizes[lp] {
+                        order.push(current);
+                        emitted.insert(current.index());
+                        current = next[current.index()].expect("verified loop cycle");
+                    }
+                    // The final conditional's other edge now falls through;
+                    // MachBuffer can invert it and erase the hot-path jump.
+                    order.push(exit);
+                    emitted.insert(exit.index());
+                    if let Some(owner) = membership[exit.index()] { tops[owner] = None; }
+                    continue;
+                }
+                tops[lp] = None;
+            }
+            order.push(block);
+            emitted.insert(index);
+        }
+        order.extend((0..self.lowered_order.len()).map(BlockIndex::new)
+            .filter(|block| self.is_cold(*block)));
+        order
+    }
+
+    /// Final machine-code placement, independent of the lowering RPO.
+    pub fn emission_order(&self) -> &[BlockIndex] {
+        &self.emission_order
     }
 
     /// Get the lowered order of blocks.
@@ -395,7 +495,30 @@ mod test {
         cfg.compute(&func);
         let dom_tree = DominatorTree::with_function(&func, &cfg);
 
-        BlockLoweringOrder::new(&func, &dom_tree, &mut Default::default())
+        let order = BlockLoweringOrder::new(&func, &dom_tree, &mut Default::default());
+        let mut emitted: Vec<_> = order.emission_order().iter().map(|block| block.index()).collect();
+        emitted.sort_unstable();
+        assert_eq!(emitted, (0..order.lowered_order.len()).collect::<Vec<_>>(),
+            "every lowered block must be emitted exactly once");
+        assert_eq!(order.emission_order()[0], BlockIndex::new(0), "entry remains first");
+        order
+    }
+
+    #[test]
+    fn simple_loop_emission_closes_at_a_conditional() {
+        let order = build_test_func(6, &[(0, 1), (1, 2), (1, 5), (2, 3), (2, 4), (3, 1)]);
+        let source: Vec<_> = order.emission_order().iter().filter_map(|index|
+            order.lowered_order[index.index()].orig_block()).map(|block| block.as_u32()).collect();
+        assert_eq!(source, [0, 3, 1, 2, 4, 5], "conditional closes the cycle and exits by fallthrough");
+    }
+
+    #[test]
+    fn emission_preserves_entry_nested_branching_and_irreducible_cfgs() {
+        build_test_func(3, &[(0, 1), (1, 0), (1, 2)]);
+        build_test_func(6, &[(0, 1), (1, 2), (1, 3), (2, 4), (3, 4), (4, 1), (4, 5)]);
+        build_test_func(6, &[(0, 1), (1, 2), (1, 5), (2, 3), (2, 4), (3, 2), (4, 1)]);
+        build_test_func(4, &[(0, 1), (0, 2), (1, 2), (1, 3), (2, 1), (2, 3)]);
+        build_test_func(4, &[(0, 1), (1, 2), (1, 3), (2, 1), (2, 3)]);
     }
 
     #[test]

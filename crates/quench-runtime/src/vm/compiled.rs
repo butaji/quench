@@ -16854,17 +16854,70 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "aot", target_arch = "aarch64"))]
+    fn assert_aarch64_cfg_edges(code: &cranelift_codegen::CompiledCode) {
+        // A64 direct branch encodings; this fixture has no calls, jump tables
+        // or literal islands. Compare the metadata with actual branch targets.
+        const B_MASK: u32 = 0xfc00_0000;
+        const B: u32 = 0x1400_0000;
+        const B_COND_MASK: u32 = 0xff00_0010;
+        const B_COND: u32 = 0x5400_0000;
+        const CB_MASK: u32 = 0x7e00_0000;
+        const CB: u32 = 0x3400_0000;
+        const RET_MASK: u32 = 0xffff_fc1f;
+        const RET: u32 = 0xd65f_0000;
+        const RETAA: u32 = 0xd65f_0bff;
+        const RETAB: u32 = 0xd65f_0fff;
+        const BRANCH_BITS: u32 = 26;
+        const CONDITIONAL_BITS: u32 = 19;
+        const CONDITIONAL_SHIFT: u32 = 5;
+        let bytes = code.buffer.data();
+        let mut actual = Vec::new();
+        for (index, &start) in code.bb_starts.iter().enumerate() {
+            let end = code.bb_starts.get(index + 1).copied().unwrap_or(bytes.len() as u32);
+            let mut terminal = false;
+            for pc in (start..end).step_by(std::mem::size_of::<u32>()) {
+                let word = u32::from_le_bytes(bytes[pc as usize..pc as usize + std::mem::size_of::<u32>()].try_into().unwrap());
+                let branch = if word & B_MASK == B { terminal = true; Some((word, BRANCH_BITS)) }
+                    else if word & B_COND_MASK == B_COND || word & CB_MASK == CB {
+                        Some((word >> CONDITIONAL_SHIFT, CONDITIONAL_BITS))
+                    } else { None };
+                if let Some((immediate, bits)) = branch {
+                    let signed = ((immediate << (u32::BITS - bits)) as i32) >> (u32::BITS - bits);
+                    actual.push((start, (i64::from(pc) + i64::from(signed) * std::mem::size_of::<u32>() as i64) as u32));
+                }
+                terminal |= word & RET_MASK == RET || word == RETAA || word == RETAB;
+                if terminal { break; }
+            }
+            if !terminal && end < bytes.len() as u32 { actual.push((start, end)); }
+        }
+        actual.sort_unstable(); actual.dedup();
+        let mut recorded = code.bb_edges.clone();
+        recorded.sort_unstable(); recorded.dedup();
+        assert_eq!(recorded, actual, "machine CFG must follow physical blocks: starts{:?}, bytes{:x?}, {:?}",
+            code.bb_starts, bytes.chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect::<Vec<_>>(), code.vcode);
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn loop_carried_updates_reuse_the_comparison_value() {
         use std::sync::atomic::AtomicU8;
+        use cranelift_codegen::settings::Configurable;
         const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLCU");
-        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        const BOUND_LABEL_INDEX: u32 = 0;
+        let bound_label = ir::ValueLabel::from_u32(BOUND_LABEL_INDEX);
+        const PROBE_SOURCE_OFFSET: u32 = 42;
+        let probe_location = ir::SourceLoc::new(PROBE_SOURCE_OFFSET);
+        let mut flags = cranelift_codegen::settings::builder();
+        flags.set("opt_level", "speed").unwrap();
+        flags.set("machine_code_cfg_info", "true").unwrap();
+        let isa = cranelift_native::builder().unwrap().finish(cranelift_codegen::settings::Flags::new(flags)).unwrap();
         for ty in [types::I32, types::I64] { for step in [1_i64, -1, 7, -7] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
-            signature.params.extend([AbiParam::new(types::I64); 3]);
+            signature.params.extend([AbiParam::new(types::I64); 4]);
             signature.returns.push(AbiParam::new(types::I64));
             let mut function = ir::Function::with_name_signature(UserFuncName::user(TEST_NAMESPACE, 0), signature);
+            function.collect_debug_info();
             let mut context = FunctionBuilderContext::new();
             let mut builder = FunctionBuilder::new(&mut function, &mut context);
             let entry = builder.create_block();
@@ -16882,6 +16935,8 @@ mod tests {
             } else { value };
             let start = narrow(&mut builder, args[0]);
             let bound = narrow(&mut builder, args[1]);
+            builder.set_srcloc(ir::SourceLoc::new(0));
+            builder.set_val_label(bound, bound_label);
             let empty = builder.ins().icmp(IntCC::Equal, start, bound);
             builder.ins().brif(empty, exit, &[start.into()], header, &[start.into()]);
             builder.switch_to_block(header);
@@ -16893,6 +16948,10 @@ mod tests {
             let done = builder.ins().icmp(IntCC::Equal, next, bound);
             builder.ins().brif(done, exit, &[next.into()], backedge, &[]);
             builder.switch_to_block(backedge);
+            builder.set_srcloc(probe_location);
+            let observed = if ty == types::I32 { builder.ins().uextend(types::I64, bound) } else { bound };
+            builder.ins().store(MemFlagsData::trusted(), observed, args[3], 0);
+            builder.set_srcloc(ir::SourceLoc::new(0));
             builder.ins().jump(header, &[next.into()]);
             builder.switch_to_block(exit);
             let result = builder.block_params(exit)[0];
@@ -16901,7 +16960,21 @@ mod tests {
             builder.seal_all_blocks();
             builder.finalize(isa.frontend_config());
             let mut compiler = cranelift_codegen::Context::for_function(function);
+            compiler.set_disasm(true);
             let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+            let locations = compiled.value_labels_ranges.get(&bound_label).expect("live bound label");
+            assert!(!locations.is_empty());
+            assert!(locations.windows(2).all(|pair| pair[0].end <= pair[1].start));
+            let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
+                .filter(|source| source.loc == probe_location && source.start < source.end).collect();
+            assert!(!probes.is_empty(), "the relocated backedge must retain its probe");
+            for probe in probes {
+                assert!(locations.iter().any(|range| range.start <= probe.start && probe.end <= range.end),
+                    "bound debug location must cover its relocated use: {}..{}, {locations:?}", probe.start, probe.end);
+            }
+            assert!(compiled.bb_starts.windows(2).all(|pair| pair[0] < pair[1]));
+            #[cfg(target_arch = "aarch64")]
+            assert_aarch64_cfg_edges(compiled);
             let memory = CodeMemory::new(compiled.buffer.data()).unwrap();
             let native = &compiler.func;
             let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
@@ -16913,10 +16986,10 @@ mod tests {
                 .flat_map(|block| native.layout.block_insts(block))
                 .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Iadd).count();
             assert_eq!(updates, 1, "one update serves comparison and backedge: {ty} step{step}\n{native}");
-            // SAFETY: the verified function has three word inputs and one word
-            // output. The third input points to a live atomic byte for the call.
+            // SAFETY: the verified function has four word inputs and one word
+            // output; the pointers name a live atomic byte and writable probe.
             let run = unsafe { std::mem::transmute::<*mut u8,
-                unsafe extern "C" fn(u64, u64, *const AtomicU8) -> u64>(memory.pointer()) };
+                unsafe extern "C" fn(u64, u64, *const AtomicU8, *mut u64) -> u64>(memory.pointer()) };
             let mask = u64::MAX >> (u64::BITS - ty.bits());
             for seed in [0_u64, 1, u64::MAX, i32::MAX as u64, i64::MAX as u64] {
                 for trips in [0_u64, 1, 2, 17, 257] { for requested in [0_u8, 1] {
@@ -16926,8 +16999,10 @@ mod tests {
                     let expected = if trips == 0 { seed } else if requested != 0 {
                         seed.wrapping_add(step as u64) & mask
                     } else { bound };
-                    assert_eq!(unsafe { run(seed, bound, &flag) }, expected,
+                    let mut probe = 0;
+                    assert_eq!(unsafe { run(seed, bound, &flag, &mut probe) }, expected,
                         "{ty} step{step} seed{seed} trips{trips} stop{requested}");
+                    assert_eq!(probe, if trips > 1 && requested == 0 { bound } else { 0 });
                 }}
             }
         }}
