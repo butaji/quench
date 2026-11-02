@@ -19958,6 +19958,80 @@ fn lane_fused_update_read_and_operator_falls_back_to_each_step() {
 }
 
 #[test]
+fn proved_element_records_keep_semantics_when_array_storage_changes() {
+    // Loop element reads and stores of a base the loop does not redefine run through the
+    // lane's array storage proofs (`specialize_proved_arrays`). A `valueOf` mid-loop that
+    // truncates, grows, freezes, shares, punches a hole in, splices or gives an accessor
+    // to the array, an in-lane append or truncation, another array or a non-array in the
+    // same register each retire the proof or miss it, with Node's results.
+    let source = r#"
+      function scan(x, n, hook) {
+        let t = 0, last;
+        for (let i = 0; i < n; i++) { t = t + x[i]; last = x[i] = t * hook; }
+        return t + ':' + last;
+      }
+      function walk(x, k, n, hook) {
+        let t = 0;
+        for (let i = 0; i < n; i++) { t = t + x[++k]; x[k] = t * hook; }
+        return t;
+      }
+      function strictScan(x, n, hook) {
+        'use strict';
+        let t = 0;
+        for (let i = 0; i < n; i++) { t = t + x[i]; x[i] = t * hook; }
+        return t;
+      }
+      function bump(x, n) {
+        for (let i = 0; i < n; i++) { x[i] = x[i] + 1; if (i % 3 === 0) x[x.length] = -i; }
+        return x.join('|');
+      }
+      function cut(x, n) {
+        let t = 0;
+        for (let i = 0; i < n; i++) { t = t + x[i]; if (i === 2) x.length = 3; }
+        return t + ':' + x.join('|');
+      }
+      const seen = [];
+      let shared;
+      const actions = {
+        truncate(x) { x.length = 2; },
+        grow(x) { for (let j = 0; j < 12; j++) x.push(j); },
+        freeze(x) { Object.freeze(x); },
+        share(x) { shared = x.slice(); },
+        accessor(x) { Object.defineProperty(x, 4, { get() { return 1000; }, set(v) { seen.push('set' + v); } }); },
+        hole(x) { delete x[4]; },
+        splice(x) { x.splice(1, 2); },
+        inherit(x) { delete x[5]; Array.prototype[5] = 7; },
+      };
+      function hookAt(at, action, x) {
+        let calls = 0;
+        return { valueOf() { if (++calls === at) action(x); return 1; } };
+      }
+      for (let round = 0; round < 2; round++) {
+        for (const name of Object.keys(actions)) {
+          const a = [1, 2, 3, 4, 5, 6, 7, 8];
+          const b = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+          const c = [1, 2, 3, 4, 5, 6, 7, 8];
+          shared = undefined;
+          seen.push(name, scan(a, 8, hookAt(3, actions[name], a)), a.join('|'), String(shared));
+          delete Array.prototype[5];
+          seen.push(walk(b, -1, 8, hookAt(3, actions[name], b)), b.join('|'));
+          delete Array.prototype[5];
+          try { seen.push(strictScan(c, 8, hookAt(2, actions[name], c))); } catch (error) { seen.push(error.constructor.name); }
+          seen.push(c.join('|'));
+          delete Array.prototype[5];
+        }
+        seen.push(bump([0, 0, 0, 0, 0, 0, 0, 0], 8), bump([1, 2, 3, 4], 12), cut([1, 2, 3, 4, 5, 6], 6));
+        seen.push(scan([0.5, 1.5], 2, 2), scan(new Float64Array([1, 2]), 2, 2), scan({ 0: 1, 1: 2 }, 2, 1), scan('ab', 2, 1));
+      }
+      print(seen.join(','));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "proved-element-records.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["truncate,NaN:NaN,1|3|6|NaN|NaN|NaN|NaN|NaN,undefined,NaN,1|3|6|NaN|NaN|NaN|NaN|NaN,NaN,1|3|NaN|NaN|NaN|NaN|NaN|NaN,grow,36:36,1|3|6|10|15|21|28|36|0|1|2|3|4|5|6|7|8|9|10|11,undefined,36,1|3|6|10|15|21|28|36|9|0|1|2|3|4|5|6|7|8|9|10|11,36,1|3|6|10|15|21|28|36|0|1|2|3|4|5|6|7|8|9|10|11,freeze,36:36,1|3|3|4|5|6|7|8,undefined,36,1|3|3|4|5|6|7|8|9,TypeError,1|2|3|4|5|6|7|8,share,36:36,1|3|6|10|15|21|28|36,1,3,3,4,5,6,7,8,36,1|3|6|10|15|21|28|36|9,36,1|3|6|10|15|21|28|36,set1010,accessor,1031:1031,1|3|6|10|1000|1016|1023|1031,undefined,set1010,1031,1|3|6|10|1000|1016|1023|1031|9,set1010,1031,1|3|6|10|1000|1016|1023|1031,hole,NaN:NaN,1|3|6|10|NaN|NaN|NaN|NaN,undefined,NaN,1|3|6|10|NaN|NaN|NaN|NaN|9,NaN,1|3|6|10|NaN|NaN|NaN|NaN,splice,NaN:NaN,1|4|6|12|19|27|NaN|NaN,undefined,NaN,1|4|6|12|19|27|36|NaN,NaN,1|3|8|14|21|29|NaN|NaN,inherit,37:37,1|3|6|10|15|22|29|37,undefined,37,1|3|6|10|15|22|29|37|9,37,1|3|6|10|15|22|29|37,1|1|1|1|1|1|1|1|0|-3|-6,2|3|4|5|1|-2|NaN|-5|NaN|NaN|-8|NaN,NaN:1|2|3,2:4,3:6,3:3,0ab:NaN,truncate,NaN:NaN,1|3|6|NaN|NaN|NaN|NaN|NaN,undefined,NaN,1|3|6|NaN|NaN|NaN|NaN|NaN,NaN,1|3|NaN|NaN|NaN|NaN|NaN|NaN,grow,36:36,1|3|6|10|15|21|28|36|0|1|2|3|4|5|6|7|8|9|10|11,undefined,36,1|3|6|10|15|21|28|36|9|0|1|2|3|4|5|6|7|8|9|10|11,36,1|3|6|10|15|21|28|36|0|1|2|3|4|5|6|7|8|9|10|11,freeze,36:36,1|3|3|4|5|6|7|8,undefined,36,1|3|3|4|5|6|7|8|9,TypeError,1|2|3|4|5|6|7|8,share,36:36,1|3|6|10|15|21|28|36,1,3,3,4,5,6,7,8,36,1|3|6|10|15|21|28|36|9,36,1|3|6|10|15|21|28|36,set1010,accessor,1031:1031,1|3|6|10|1000|1016|1023|1031,undefined,set1010,1031,1|3|6|10|1000|1016|1023|1031|9,set1010,1031,1|3|6|10|1000|1016|1023|1031,hole,NaN:NaN,1|3|6|10|NaN|NaN|NaN|NaN,undefined,NaN,1|3|6|10|NaN|NaN|NaN|NaN|9,NaN,1|3|6|10|NaN|NaN|NaN|NaN,splice,NaN:NaN,1|4|6|12|19|27|NaN|NaN,undefined,NaN,1|4|6|12|19|27|36|NaN,NaN,1|3|8|14|21|29|NaN|NaN,inherit,37:37,1|3|6|10|15|22|29|37,undefined,37,1|3|6|10|15|22|29|37|9,37,1|3|6|10|15|22|29|37,1|1|1|1|1|1|1|1|0|-3|-6,2|3|4|5|1|-2|NaN|-5|NaN|NaN|-8|NaN,NaN:1|2|3,2:4,3:6,3:3,0ab:NaN"]);
+}
+
+#[test]
 fn lane_regexp_exec_keeps_last_index_and_coercion_order() {
     // Exec calls made from frameless activations: a global pattern advances `lastIndex`,
     // an object `lastIndex` is still converted exactly once per call, and a frozen global

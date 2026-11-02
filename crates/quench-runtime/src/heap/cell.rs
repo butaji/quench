@@ -1651,9 +1651,17 @@ impl ArrayObject {
     }
 
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
+        super::array_proofs::retire_array_storage_proofs();
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
         &mut self.elements
+    }
+
+    /// Exclusive storage for replacement; growing or shrinking still requires `elements_mut`.
+    #[inline(always)]
+    pub(crate) fn storage_in_place(&mut self) -> Option<(*mut Value, usize)> {
+        self.object.note_prototype_elements_change();
+        self.elements.unique_storage()
     }
 }
 
@@ -2420,6 +2428,7 @@ impl Object {
 
     pub(crate) fn mark_as_prototype(&mut self) {
         if !self.was_used_as_prototype() {
+            super::array_proofs::retire_array_storage_proofs();
             self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
         }
     }
@@ -2473,6 +2482,7 @@ impl Object {
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.note_prototype_layout_change();
+        super::array_proofs::retire_array_storage_proofs();
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
@@ -2491,6 +2501,7 @@ impl Object {
             .map(usize::from)
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
+        super::array_proofs::retire_array_storage_proofs();
         self.extras_mut().arguments_map = Some(mapping);
     }
     pub(crate) fn set_arguments_object(&mut self) {
@@ -2515,6 +2526,7 @@ impl Object {
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.note_prototype_layout_change();
+        super::array_proofs::retire_array_storage_proofs();
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {

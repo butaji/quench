@@ -606,6 +606,7 @@ impl Heap {
     /// toward the next collection (`charge_payload_growth`) at the weight `alloc` gives a
     /// cell's own payload. A live array's element storage grows only through here, so a loop
     /// that only stores into arrays still makes collections due (TOD-125).
+    #[inline(always)]
     pub(crate) fn grow_array_elements<R>(
         &mut self,
         array: Value,

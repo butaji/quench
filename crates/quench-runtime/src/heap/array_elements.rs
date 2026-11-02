@@ -19,6 +19,15 @@ struct Header {
     others: u32,
 }
 
+impl Header {
+    #[inline(always)]
+    fn recount(&mut self, added: u32, removed: u32) {
+        if added != removed {
+            self.others = self.others.saturating_add(added).saturating_sub(removed);
+        }
+    }
+}
+
 /// The `others` count native code stores when it may write values it does not count: above
 /// any length, so the backing stays `Tagged`, and saturating arithmetic keeps it so.
 pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
@@ -213,6 +222,27 @@ impl ArrayElements {
         self.header().owners as usize
     }
 
+    /// The pointer and bound for in-place replacement when this backing has one owner.
+    #[inline(always)]
+    pub(crate) fn unique_storage(&mut self) -> Option<(*mut Value, usize)> {
+        self.is_unique().then(|| (self.values(), self.len()))
+    }
+
+    /// Replaces an initialized element and maintains its backing's kind count.
+    ///
+    /// # Safety
+    /// `values` starts a live, exclusively writable backing and `index` is below its
+    /// length. No reference to the replaced value or header may overlap this store.
+    #[inline(always)]
+    pub(crate) unsafe fn replace_in_place(values: *mut Value, index: usize, value: Value) {
+        unsafe {
+            let element = values.add(index);
+            let header = values.cast::<u8>().sub(VALUES_OFFSET).cast::<Header>();
+            (*header).recount(other(value), other(*element));
+            element.write(value);
+        }
+    }
+
     /// This array's values for writing: its own backing, copied first when shared (or when it
     /// is the shared empty header).
     #[inline(always)]
@@ -253,6 +283,8 @@ impl From<Vec<Value>> for ArrayElements {
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
         if self.capacity() != 0 {
+            // An owner more makes in-place replacement reach another array.
+            super::array_proofs::retire_array_storage_proofs();
             let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
             // SAFETY: arrays are single-threaded; the header is live and only owners write it.
             unsafe { (*self.header.as_ptr()).owners = owners };
@@ -314,9 +346,9 @@ impl UniqueElements {
     /// Counts `added` other values in and `removed` out.
     #[inline(always)]
     fn recount(&mut self, added: u32, removed: u32) {
-        if added != removed {
-            let others = self.0.header().others;
-            self.set_others(others.saturating_add(added).saturating_sub(removed));
+        if self.0.capacity() != 0 {
+            // SAFETY: a nonempty unique backing owns a writable header.
+            unsafe { (*self.0.header.as_ptr()).recount(added, removed) };
         }
     }
 
@@ -324,9 +356,8 @@ impl UniqueElements {
     #[inline(always)]
     pub(crate) fn set(&mut self, index: usize, value: Value) {
         assert!(index < self.0.len(), "array store index out of bounds");
-        self.recount(other(value), other(self.0[index]));
         // SAFETY: the index is below the length of this unique backing.
-        unsafe { self.0.values().add(index).write(value) };
+        unsafe { ArrayElements::replace_in_place(self.0.values(), index, value) };
     }
 
     /// `value` at every index of `range`.

@@ -460,16 +460,23 @@ impl<H: Host> Vm<H> {
         if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
             return false;
         }
-        let elements = array.elements_mut();
-        if !elements.get(index).is_some_and(|value| !value.is_deleted())
-            || (!DETACH && elements.owner_count() != 1)
-        {
+        if !array.elements().get(index).is_some_and(|value| !value.is_deleted()) {
             return false;
         }
         #[cfg(feature = "profile-aggregate")]
-        self.profile
-            .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements).set(index, value);
+        let shared = array.elements().owner_count() != 1;
+        if DETACH {
+            mutable_array_elements(array.elements_mut()).set(index, value);
+        } else {
+            let Some((values, _)) = array.storage_in_place() else {
+                return false;
+            };
+            // SAFETY: the present element was checked above, the backing is exclusive,
+            // and no intervening operation can change it or run guest code.
+            unsafe { crate::heap::ArrayElements::replace_in_place(values, index, value) };
+        }
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.array_write_ownership(shared);
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
         true
