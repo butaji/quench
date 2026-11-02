@@ -301,6 +301,29 @@ impl From<Vec<Value>> for PropertyBuffer {
     }
 }
 
+impl Drop for PropertyBuffer {
+    fn drop(&mut self) {
+        match self.allocation {
+            #[cfg(unix)]
+            Allocation::Reserved { bytes, .. } => {
+                // SAFETY: the entire reservation is owned here; Value is Copy
+                // and has no destructor, including values in discarded ranges.
+                unsafe {
+                    libc::munmap(self.base.as_ptr().cast(), bytes);
+                }
+            }
+            Allocation::Heap => {
+                // SAFETY: exactly the Vec allocation adopted above, still owned
+                // by this buffer with its current initialized length/capacity.
+                drop(unsafe {
+                    Vec::from_raw_parts(self.base.as_ptr(), self.length, self.capacity)
+                });
+            }
+            Allocation::Unallocated => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,28 +460,5 @@ mod tests {
         let reused = arena.with_values(1, &values);
         assert!(!reused.is_dictionary());
         assert_eq!(reused.start(), first.start());
-    }
-}
-
-impl Drop for PropertyBuffer {
-    fn drop(&mut self) {
-        match self.allocation {
-            #[cfg(unix)]
-            Allocation::Reserved { bytes, .. } => {
-                // SAFETY: the entire reservation is owned here; Value is Copy
-                // and has no destructor, including values in discarded ranges.
-                unsafe {
-                    libc::munmap(self.base.as_ptr().cast(), bytes);
-                }
-            }
-            Allocation::Heap => {
-                // SAFETY: exactly the Vec allocation adopted above, still owned
-                // by this buffer with its current initialized length/capacity.
-                drop(unsafe {
-                    Vec::from_raw_parts(self.base.as_ptr(), self.length, self.capacity)
-                });
-            }
-            Allocation::Unallocated => {}
-        }
     }
 }
