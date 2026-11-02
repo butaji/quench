@@ -2308,6 +2308,14 @@ pub(crate) fn https_module(context: &mut Context<'_>) -> Result<RootId, RootedEr
     cached_builtin(context, BuiltinModule::Https)
 }
 
+pub(crate) fn http2_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Http2)
+}
+
+pub(crate) fn tls_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Tls)
+}
+
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Net)
 }
@@ -2772,10 +2780,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             get(context, dns, "promises")
         }
         BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
-        // HTTP/2 has no Rust implementation; its Node-sourced engine was removed.
-        BuiltinModule::Http2Binding | BuiltinModule::Http2 => {
-            Err(RootedError::host("node:http2 is not implemented".to_owned()))
-        }
+        BuiltinModule::Http2 => crate::modules::http2_shared_vm::build_module(context),
+        BuiltinModule::Http2Binding => crate::modules::http2_shared_vm::binding(context),
         BuiltinModule::Cluster => node_library_module(context, "cluster.js", "cluster.js"),
         BuiltinModule::Repl => {
             // The internal CJS loader normally initializes this list during
