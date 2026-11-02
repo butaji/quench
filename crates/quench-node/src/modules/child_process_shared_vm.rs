@@ -20,14 +20,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     super::child_process_class_shared_vm::module(context)
 }
 
-pub(crate) fn spawn_child(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    spawn_child_with_stdio(context, args, None)
-}
-
 fn spawn_child_with_stdio(
     context: &mut NativeContext<'_, NodeHost>,
     args: &[RootId],

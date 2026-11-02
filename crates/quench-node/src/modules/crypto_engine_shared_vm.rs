@@ -74,27 +74,6 @@ fn engine_arguments(
     Ok((name, flags))
 }
 
-pub(crate) fn set_engine(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let (name, flags) = engine_arguments(context, args)?;
-    let flags = if flags == 0 { ENGINE_METHOD_ALL } else { flags };
-    if let Err(_failure) = native::set_default(&name, flags) {
-        #[cfg(not(quench_openssl_engine))]
-        if matches!(_failure, Failure::Unsupported) {
-            return Err(error(context, _failure));
-        }
-        let error = context.error_rooted(&format!("Engine \"{name}\" was not found"))?;
-        let key = context.string_rooted("code");
-        let code = context.string_rooted("ERR_CRYPTO_ENGINE_UNKNOWN");
-        context.define_data_property_rooted(error, key, code, true, true, true)?;
-        return Err(context.throw(error));
-    }
-    Ok(context.undefined())
-}
-
 /// The private binding returns the actual native engine-selection result;
 /// the configured standard library owns the public error and warning policy.
 pub(crate) fn set_engine_binding(

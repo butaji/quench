@@ -34,11 +34,6 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     Ok(module)
 }
 
-/// The `util.inspect` an unhandled `'error'` event formats a non-Error value with.
-pub(crate) fn error_inspector(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    crate::modules::util_shared_vm::internal_inspect(context)
-}
-
 fn set(context: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = context.string_rooted(name);
     if context.set_property_rooted(object, key, value, object)? {
@@ -262,26 +257,6 @@ pub(crate) fn abort_listener_dispose(context: &mut Context<'_>, _: RootId, _: &[
         context.call_rooted(remove, signal, &[event, listener])?;
     }
     Ok(context.undefined())
-}
-
-/// Whether `value` is a genuine AbortSignal (the WebIDL converter's brand).
-pub(crate) fn abort_signal_brand(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let value = argument(context, args, 0);
-    let branded = super::abort_controller_shared_vm::is_abort_signal(context, value)?;
-    Ok(context.boolean(branded))
-}
-
-/// The configured Web IDL module converts AbortSignals by the native brand.
-pub(crate) fn adopt_abort_converter(context: &mut Context<'_>, webidl: RootId) -> Result<(), RootedError> {
-    context.with_startup_intrinsics(|context| {
-        let predicate = context.host_function(crate::host::shared_vm::operation("abortSignalBrand"))?;
-        let factory = get(context, webidl, "createInterfaceConverter")?;
-        let name = context.string_rooted("AbortSignal");
-        let undefined = context.undefined();
-        let converter = context.call_rooted(factory, undefined, &[name, predicate])?;
-        let converters = get(context, webidl, "converters")?;
-        set(context, converters, "AbortSignal", converter)
-    })
 }
 
 fn argument(context: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {

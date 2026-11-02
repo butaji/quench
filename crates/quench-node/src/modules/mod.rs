@@ -240,10 +240,6 @@ mod crypto_kdf;
 #[cfg(quench_openssl_provider)]
 mod crypto_pbkdf2;
 
-// `v2-cloud-node`'s Worker, unrouted since `worker_threads` is `worker_shared_vm` (decision 31);
-// the Node lane ports its additions onto that module or removes this one.
-#[allow(dead_code)]
-
 pub(crate) mod ipc_pipe;
 pub(crate) mod pipe_binding;
 pub(crate) mod unix_rights;

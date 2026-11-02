@@ -38,32 +38,6 @@ fn source_keys_reject_unknown_or_noncanonical_shapes() {
 }
 
 #[test]
-fn host_staging_freezes_lazy_sdk_callbacks_without_running_the_entry() {
-    use std::fs;
-    let directory = std::env::temp_dir().join(format!("quench-warning-stage-{}", std::process::id()));
-    fs::create_dir(&directory).unwrap();
-    let entry = directory.join("entry.cjs");
-    fs::write(&entry, "require('node:fs/promises'); require('node:util'); require('node:domain'); throw new Error('application entry must not run');").unwrap();
-    let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
-    let staged = SourceManifest::capture_for_graph(&root, &graph).unwrap();
-    let warning = Path::new("lib/internal/process/warning.js");
-    assert!(staged.assets().files.keys().any(|path| path.ends_with(warning)));
-    assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(warning)));
-    assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/internal/process/report.js")));
-    assert!(staged.assets().files.keys().any(|path| path.ends_with("lib/fs.js")));
-    assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with("lib/fs.js")));
-    for source in ["lib/internal/fs/glob.js", "deps/minimatch/index.js"] {
-        assert!(staged.assets().files.keys().any(|path| path.ends_with(source)), "{source}");
-        assert!(staged.units().any(|unit| Path::new(unit.name()).ends_with(source)), "{source}");
-    }
-    for source in ["lib/internal/fs/promises.js", "lib/internal/abort_controller.js"] {
-        assert!(staged.assets().views.keys().any(|(path, _)| path.ends_with(source)), "{source}");
-    }
-    fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn manifest_retains_full_source_identity_and_compiles_without_guest_execution() {
     let mut manifest = SourceManifest::default();
     let options = HostScriptOptions { typescript: true, ..Default::default() };
@@ -174,8 +148,7 @@ fn framework_graphs_admit_original_js_and_ts_without_running_applications() {
 
 #[test]
 fn node_bootstrap_manifest_compiles_to_native_objects_before_application_entry() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
-    let manifest = SourceManifest::capture_bootstrap(&root).unwrap();
+    let manifest = SourceManifest::capture_bootstrap().unwrap();
     assert!(manifest.units().len() > 0, "bootstrap bypassed the source admission boundary");
     let count = manifest.units().len();
     let compiled = manifest.compile().unwrap();
@@ -198,8 +171,7 @@ fn node_bootstrap_manifest_compiles_to_native_objects_before_application_entry()
 #[ignore = "explicit native executable link check"]
 fn bootstrap_images_link_and_execute_in_node_host() {
     use std::{fs, process::Command};
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node").canonicalize().unwrap();
-    let manifest = SourceManifest::capture_bootstrap(&root).unwrap();
+    let manifest = SourceManifest::capture_bootstrap().unwrap();
     let count = manifest.units().len();
     let directory = std::env::temp_dir().join(format!("quench-native-node-bootstrap-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
@@ -275,10 +247,9 @@ fn bootstrap_images_reject_missing_frozen_sdk_preparation() {
     fs::create_dir(&directory).unwrap();
     let entry = directory.join("entry.cjs");
     fs::write(&entry, "require('node:util');").unwrap();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
     let mut manifest = SourceManifest::default();
     let graph = manifest.add_module_graph(&entry).unwrap();
-    manifest.extend(SourceManifest::capture_for_graph(&root, &graph).unwrap()).unwrap();
+    manifest.extend(SourceManifest::capture_for_graph(&graph).unwrap()).unwrap();
     let mut compiled = manifest.compile().unwrap();
     let (path, file) = compiled.assets.files.iter_mut()
         .find(|(path, _)| path.ends_with("lib/internal/per_context/primordials.js"))
@@ -461,8 +432,7 @@ fn qualify_compile_command_frameworks(profile: &str, support: Option<String>) {
         let executable = directory.join(fixture);
         let report = directory.join(format!("{fixture}.json"));
         let mut compiler = Command::new(env!("CARGO_BIN_EXE_quench-node"));
-        compiler.arg("compile").arg(&entry).arg("-o").arg(&executable).arg("--report").arg(&report)
-            .env_remove(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV);
+        compiler.arg("compile").arg(&entry).arg("-o").arg(&executable).arg("--report").arg(&report);
         if support.is_some() { compiler.args(["--profile", profile]).arg("--sdk-report").arg(&sdk_report); }
         let compiled = compiler.output().unwrap();
         assert!(compiled.status.success(), "compile {fixture}: {}", String::from_utf8_lossy(&compiled.stderr));
@@ -514,7 +484,7 @@ process.exitCode = 7;
     let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
         .arg("compile").arg(&entry).arg("-o").arg(&executable)
         .arg("--report").arg(&report)
-        .env_remove(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV).output().unwrap();
+        .output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
         .arg(&entry).arg("guest value, spaces").output().unwrap();
@@ -534,7 +504,6 @@ process.exitCode = 7;
 #[ignore = "explicit framework native executable link checks"]
 fn framework_images_execute_original_js_and_ts_and_match_node() {
     use std::{fs, process::Command};
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node").canonicalize().unwrap();
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/npm-perf/workloads");
     let node = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
         .args(["-p", "process.execPath"]).output().unwrap();
@@ -546,22 +515,14 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         let original_entry = fixtures.join(fixture).canonicalize().unwrap();
         let mut original = SourceManifest::default();
         let original_graph = original.add_module_graph(&original_entry).unwrap();
-        let sdk = SourceManifest::capture_for_graph(&root, &original_graph).unwrap();
         let source_directory = directory.join(format!("{fixture}-sources"));
         let app_root = source_directory.join("app");
-        let sdk_root = source_directory.join("sdk");
-        fs::create_dir_all(&sdk_root).unwrap();
         let original_app_root = fixtures.parent().unwrap().canonicalize().unwrap();
         copy_graph_sources(&original_graph, &original_app_root, &app_root);
-        for (path, file) in &sdk.assets().files {
-            let copy = sdk_root.join(path.strip_prefix(&root).expect("SDK staging loaded an external application module"));
-            fs::create_dir_all(copy.parent().unwrap()).unwrap();
-            fs::write(copy, file.bytes.as_ref()).unwrap();
-        }
         let entry = app_root.join(original_entry.strip_prefix(&original_app_root).unwrap()).canonicalize().unwrap();
         let mut manifest = SourceManifest::default();
         let graph = manifest.add_module_graph(&entry).unwrap();
-        manifest.extend(SourceManifest::capture_for_graph(&sdk_root, &graph).unwrap()).unwrap();
+        manifest.extend(SourceManifest::capture_for_graph(&graph).unwrap()).unwrap();
         eprintln!("native {fixture}: {} files, {} source units, {} requirements", graph.files.len(), manifest.units().len(), graph.requirements.len());
         let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images"))).unwrap();
         let executable = directory.join(fixture);
@@ -578,7 +539,7 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         };
         let oracle = run(Command::new(&node).arg(&entry));
         fs::remove_dir_all(&source_directory).unwrap();
-        assert!(!entry.exists() && !sdk_root.exists());
+        assert!(!entry.exists());
         let native = run(&mut Command::new(&executable));
         assert_eq!(native, oracle, "{fixture}");
         eprintln!("native {fixture}: Node parity passed; executable={}", executable.display());
@@ -1388,37 +1349,6 @@ fn compile_command_rejects_guest_caught_native_capability_errors() {
 }
 
 #[test]
-#[ignore = "explicit incomplete-image native completion qualification"]
-fn native_completion_rejects_guest_caught_frozen_source_omissions() {
-    use std::{fs, process::Command};
-    let directory = std::env::temp_dir().join(format!("quench-frozen-source-completion-{}", std::process::id()));
-    fs::create_dir(&directory).unwrap();
-    let entry = directory.join("entry.cjs");
-    fs::write(&entry, "try { new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array([255])); } catch (_) {}\n").unwrap();
-    let mut manifest = SourceManifest::default();
-    let graph = manifest.add_module_graph(&entry).unwrap();
-    assert!(graph.requirements.is_empty());
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node");
-    manifest.extend(SourceManifest::capture_for_graph(&root, &graph).unwrap()).unwrap();
-    let mut compiled = manifest.compile().unwrap();
-    // Fault injection: keep the native bodies but omit an SDK loader asset
-    // required only when the decoder constructs its invalid-input error.
-    let omitted = compiled.assets.node_root.as_ref().unwrap().join("lib/util.js");
-    assert!(compiled.assets.files.remove(&omitted).is_some());
-    let inputs = compiled.emit(&directory.join("images")).unwrap();
-    let executable = directory.join("native");
-    link_images(&inputs, &executable);
-    fs::remove_file(&entry).unwrap();
-    let output = Command::new(&executable).env_clear().current_dir(&directory).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("native AOT image omitted required module source:"), "{stderr}");
-    assert!(stderr.contains("lib/util.js"), "{stderr}");
-    fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 #[ignore = "explicit source-independent process and fs stream policy qualification"]
 fn compile_command_preserves_lazy_process_and_fs_stream_policies() {
     use std::{fs, process::Command};
@@ -1909,7 +1839,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
             let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
                 .arg("compile").arg(&entry).arg("-o").arg(&binary).arg("--report").arg(&report)
                 .args(["--profile", profile, "--sdk-report"]).arg(&sdk)
-                .env_remove(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV).output().unwrap();
+                .output().unwrap();
             assert!(compiled.status.success(), "compile {profile}/{extension}: {}", String::from_utf8_lossy(&compiled.stderr));
             fs::remove_dir_all(&sources).unwrap();
             let actual = Command::new(&binary).env_clear().env("NODE_ENV", "production")

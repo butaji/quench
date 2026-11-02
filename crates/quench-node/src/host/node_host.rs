@@ -41,8 +41,6 @@ pub struct NodeHost {
     pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
     #[cfg(feature = "aot")]
     pub(crate) native_source_staging: Option<crate::aot::HostSourceDemands>,
-    /// Immutable installation asset root, independent of guest cwd changes.
-    pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
     pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
     /// Whether bootstrap has finished (`Host::initialize`, or `Host::resume` from a startup
@@ -58,7 +56,6 @@ pub struct NodeHost {
     pub(crate) eval_print: Option<String>,
     /// Whether CommonJS eval source binds `crypto` to `node:crypto` (`names_crypto`).
     pub(crate) eval_crypto: bool,
-    pub(crate) initial_node_debug: Option<String>,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
     pub(crate) net_pending_ends: Vec<(u64, bool)>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
@@ -123,11 +120,6 @@ pub(crate) struct SharedNodeState {
     /// Buffer's allocation pool while the host holds it for `buffer.js` to adopt.
     pub(crate) buffer_pool: crate::modules::buffer_shared_vm::PoolOwner,
     pub(crate) commonjs_cache: Option<CommonJsCache>,
-    /// Node's internal primordial snapshot used when loading `lib/internal/*`.
-    pub(crate) primordials_module: Option<quench_runtime::RootId>,
-    pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
-    /// Library methods as their modules defined them (`commonjs::LibraryOriginal`).
-    pub(crate) library_originals: crate::host::shared_vm::commonjs::LibraryOriginals,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
@@ -177,8 +169,6 @@ pub(crate) struct SharedNodeState {
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
-    /// Whether this isolate participates in worker_threads.SHARE_ENV.
-    pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
     initial_pending_deprecation: bool,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
@@ -301,9 +291,6 @@ impl SharedNodeState {
         self.module_parent_api = None;
         self.active_esm_requires.clear();
         self.module_require_trace_active = false;
-        self.primordials_module = None;
-        self.crypto_handle_symbol = None;
-        self.library_originals = Default::default();
         self.event_targets_api = None;
         self.process_module = None;
         self.process_capture_state = None;
@@ -367,9 +354,6 @@ impl SharedNodeState {
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
             module_require_trace_active: false,
-            primordials_module: None,
-            crypto_handle_symbol: None,
-            library_originals: Default::default(),
             event_targets_api: None,
             util_intrinsics: None,
             node_error_api: None,
@@ -410,7 +394,6 @@ impl SharedNodeState {
             exec_argv: Vec::new(),
             cli_options: Default::default(),
             report_config: Default::default(),
-            process_env_shared: false,
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
                 == Ok("1"),
@@ -442,24 +425,6 @@ impl SharedNodeState {
 
 impl NodeHost {
     pub fn new(argv: Vec<String>) -> Self {
-        let node_library_root = std::env::var_os(crate::shared_run::NODE_LIBRARY_ROOT_ENV)
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(|parent| parent.join("node")))
-                    .unwrap_or_else(|| std::path::PathBuf::from("node"))
-            });
-        let node_library_root = if node_library_root.is_absolute() {
-            node_library_root
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-                .join(node_library_root)
-        };
-        let node_library_root = node_library_root
-            .canonicalize()
-            .unwrap_or(node_library_root);
         // The Node test common/tmpdir helper exposes a per-process host path.
         // Under the test runner, materialize that parent at host construction so
         // fixtures can create files there even when the helper's JS-side refresh
@@ -477,7 +442,6 @@ impl NodeHost {
         Self {
             #[cfg(feature = "native-execution")]
             module_assets: Default::default(),
-            node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
@@ -497,7 +461,6 @@ impl NodeHost {
             eval_source_nonempty: false,
             eval_print: None,
             eval_crypto: false,
-            initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
             resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),

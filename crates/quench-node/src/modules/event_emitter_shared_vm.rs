@@ -187,21 +187,6 @@ fn error_event_name(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId,
     Ok(name)
 }
 
-/// A single listener's result from the JavaScript `emit`: captured rejections apply to it as
-/// `emit_listeners` applies them (`capture_result`).
-pub(crate) fn capture_listener_result(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let missing = context.undefined();
-    let [target, result, event, arguments] =
-        std::array::from_fn(|index| args.get(index).copied().unwrap_or(missing));
-    let data = context.host_function_data()?;
-    super::event_constructor_shared_vm::capture_result(context, data, target, result, event, arguments)?;
-    Ok(missing)
-}
-
 /// The emitting counter belongs to the listener array, including nested emits.
 pub(crate) fn emit_listeners(
     context: &mut NativeContext<'_, NodeHost>,

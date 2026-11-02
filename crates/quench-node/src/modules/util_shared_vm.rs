@@ -966,7 +966,7 @@ pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, NodeHost>) ->
 /// Frames `isInsideNodeModules` inspects without an explicit limit (node_util.cc).
 const DEFAULT_NODE_MODULES_FRAMES: usize = 10;
 
-/// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's own library
+/// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's builtins
 /// runs from a node_modules path.
 pub(crate) fn is_inside_node_modules(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
@@ -975,12 +975,11 @@ pub(crate) fn is_inside_node_modules(
         Some(limit) if limit.fract() == 0.0 && limit >= f64::from(i32::MIN) && limit <= f64::from(i32::MAX) => limit.max(0.0) as usize,
         _ => DEFAULT_NODE_MODULES_FRAMES,
     };
-    let library = context.host_mut().node_library_root.join("lib");
     let inside = context
         .call_stack_source_names()
         .into_iter()
         .take(limit)
-        .find(|name| !name.is_empty() && !name.starts_with("node:") && !name.starts_with('<') && !std::path::Path::new(name).starts_with(&library))
+        .find(|name| !name.is_empty() && !name.starts_with("node:") && !name.starts_with('<'))
         .is_some_and(|name| ["/node_modules/", "\\node_modules\\", "/node_modules\\", "\\node_modules/"].iter().any(|part| name.contains(part)));
     Ok(context.boolean(inside))
 }

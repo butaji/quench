@@ -11,7 +11,6 @@ impl NodeHost {
             #[cfg(feature = "native-execution")]
             module_assets: _,
             // The installation and the process's own entry and environment.
-            node_library_root: _,
             compile_cache: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
@@ -24,7 +23,6 @@ impl NodeHost {
             eval_source_nonempty: _,
             eval_print: _,
             eval_crypto: _,
-            initial_node_debug: _,
             net_pending_writes,
             net_pending_ends,
             net_pending_destroys,
@@ -68,9 +66,6 @@ impl SharedNodeState {
             builtin_cache,
             buffer_pool,
             commonjs_cache,
-            primordials_module,
-            crypto_handle_symbol,
-            library_originals,
             event_targets_api,
             trace,
             util_intrinsics,
@@ -95,7 +90,6 @@ impl SharedNodeState {
             unhandled_rejection_mode: _,
             output: _,
             stdout_output: _,
-            process_env_shared: _,
             module_require_trace_active: _,
             net_auto_select_family_attempt_timeout,
             net_auto_select_family,
@@ -172,11 +166,6 @@ impl SharedNodeState {
         builtin_cache.write(writer)?;
         buffer_pool.write_snapshot(writer)?;
         commonjs_cache.write(writer)?;
-        primordials_module.write(writer)?;
-        crypto_handle_symbol.write(writer)?;
-        for original in &library_originals.0 {
-            original.write(writer)?;
-        }
         event_targets_api.write(writer)?;
         trace.write_snapshot(writer)?;
         util_intrinsics.write(writer)?;
@@ -244,11 +233,6 @@ impl SharedNodeState {
         self.builtin_cache = HostSnap::read(reader)?;
         self.buffer_pool.read_snapshot(reader)?;
         self.commonjs_cache = HostSnap::read(reader)?;
-        self.primordials_module = HostSnap::read(reader)?;
-        self.crypto_handle_symbol = HostSnap::read(reader)?;
-        for original in &mut self.library_originals.0 {
-            *original = HostSnap::read(reader)?;
-        }
         self.event_targets_api = HostSnap::read(reader)?;
         self.trace.read_snapshot(reader)?;
         self.util_intrinsics = HostSnap::read(reader)?;

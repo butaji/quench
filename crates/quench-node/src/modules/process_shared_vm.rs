@@ -2088,32 +2088,6 @@ pub(crate) fn delete_env(
     Ok(context.undefined())
 }
 
-pub(crate) fn get_shared_env(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(key) = args.first().copied() else {
-        return Ok(context.undefined());
-    };
-    let key = context.string_text(key)?.unwrap_or_default();
-    let shared = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_env_shared;
-    if !shared {
-        return Ok(context.undefined());
-    }
-    match std::env::var_os(key) {
-        Some(value) => {
-            let value = value.to_string_lossy();
-            Ok(context.string_rooted(&value))
-        }
-        None => Ok(context.undefined()),
-    }
-}
-
 pub(crate) fn load_env_file(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
