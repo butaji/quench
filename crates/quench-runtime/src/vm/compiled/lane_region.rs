@@ -650,7 +650,7 @@ fn lower(
         if !reachable {
             continue;
         }
-        reachable = lowering.instruction(&mut state, pc, instruction, &instructions);
+        reachable = lowering.instruction(&mut state, pc, instruction);
     }
     if reachable {
         lowering.exit(&mut state, instructions.len() as u32);
@@ -793,7 +793,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
-    fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, instructions: &[WideInstruction]) -> bool {
+    fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
@@ -888,7 +888,7 @@ impl Lowering<'_, '_> {
             }
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
-                self.binary(state, pc, instruction, instructions)
+                self.binary(state, pc, instruction)
             }
             Op::IncDec if plain && instruction.numeric_local_target().is_none() => {
                 let decrement = instruction.boolean_flag();
@@ -1667,19 +1667,19 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, ok, exit);
     }
 
-    fn binary(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, instructions: &[WideInstruction]) -> Option<bool> {
+    fn binary(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let returns = instruction.returns_from_frame();
         if instruction.writes_current_this() || (instruction.result_flags() != 0 && !returns) {
             return None;
         }
-        // A returning result completes at the terminal `Return`, whose register is free.
-        let (destination, after) = if returns {
-            let terminal = instructions.len().checked_sub(1)?;
-            let last = instructions[terminal];
-            (last.op() == Op::Return && last.result_flags() == 0).then_some((last.register_a(), Some(terminal)))?
-        } else {
-            (instruction.result_register(), None)
-        };
+        // A returning result completes the activation from its own register, at its caller
+        // record (`Lowering::complete`); an inlined callee's is the unit's binary, move and
+        // jump (`lane_unit`). A jump to the function's dead terminal `Return` instead would
+        // leave there: no block starts at it.
+        if returns && !matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) {
+            return None;
+        }
+        let destination = instruction.result_register();
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
         if !self.operand_supported(left) || !self.operand_supported(right) {
             return None;
@@ -1700,11 +1700,33 @@ impl Lowering<'_, '_> {
                         .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
                     _ => false,
                 });
+                // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
+                // negative zero, is a value no int32 holds and leaves, rather than every result
+                // becoming a double that the next operation converts back.
+                let proved_int = [left, right].iter().all(|operand| match operand.kind() {
+                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
+                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
+                        .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+                    _ => false,
+                });
                 if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
                     let left = self.operand_number(state, left, exit)?;
                     let right = self.operand_number(state, right, exit)?;
                     let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left, right);
                     self.set_number(state, destination, number);
+                } else if proved_int {
+                    let left_int = self.operand_int(state, left, exit).expect("supported operand");
+                    let right_int = self.operand_int(state, right, exit).expect("supported operand");
+                    let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
+                    emit_js_guard_not(&mut self.builder, overflow, exit);
+                    if arithmetic == super::operations::NumberArithmetic::Multiply {
+                        let zero = self.ins().icmp_imm_u(IntCC::Equal, result, 0);
+                        let signs = self.ins().bor(left_int, right_int);
+                        let negative = self.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
+                        let negative_zero = self.ins().band(zero, negative);
+                        emit_js_guard_not(&mut self.builder, negative_zero, exit);
+                    }
+                    self.set_int(state, destination, result);
                 } else {
                     let float = self.builder.create_block();
                     self.builder.set_cold_block(float);
@@ -1769,10 +1791,8 @@ impl Lowering<'_, '_> {
                 self.set_tagged(state, destination, boolean);
             }
         }
-        if let Some(terminal) = after {
-            self.native += 1;
-            self.continue_at(state, terminal);
-            return Some(false);
+        if returns {
+            return Some(self.complete(state, pc, destination));
         }
         Some(true)
     }
