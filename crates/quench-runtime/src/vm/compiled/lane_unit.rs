@@ -84,17 +84,6 @@ impl Unit {
         chain.reverse();
         chain
     }
-
-    /// The unit PCs that call natively rather than inlined: each `Call` the unit keeps, and the
-    /// marker of a caller call's last alternative, which makes the call for any other callee
-    /// (`lane_region::Lowering::inline_call`).
-    pub(crate) fn native_calls(&self) -> impl Iterator<Item = usize> + '_ {
-        let calls = self.instructions.iter().enumerate().filter(|(_, instruction)| instruction.op() == Op::Call).map(|(pc, _)| pc);
-        let fallbacks = self.frames.iter().zip(&self.markers)
-            .filter(|(frame, _)| frame.parent.is_none() && frame.alternative.is_none())
-            .map(|(_, marker)| *marker);
-        calls.chain(fallbacks)
-    }
 }
 
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at

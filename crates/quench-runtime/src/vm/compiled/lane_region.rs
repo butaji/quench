@@ -108,8 +108,6 @@ struct Lowering<'a, 'f> {
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
     /// callee's identity, which its call guards; null where they are not dense.
     frame_captures: &'a [(usize, usize)],
-    /// The function the unit specializes, whose calls a caller call's fallback makes.
-    root: &'a crate::bytecode::Function,
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -559,8 +557,7 @@ fn lower(
         entry: None,
         native: 0,
         pending: Vec::new(),
-        native_calls: unit.native_calls().next().is_some(),
-        root: function,
+        native_calls: unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
         facts: super::facts::Facts::default(),
         live,
         frame_live,
@@ -1048,21 +1045,6 @@ impl Lowering<'_, '_> {
                 self.continue_at(&mut other_state, next);
                 self.builder.switch_to_block(matched);
             }
-            // Past a caller call's last alternative, any other callee is the call itself, made
-            // natively, which continues where the alternatives join.
-            None if inlined.parent.is_none() => {
-                let (matched, other) = (self.builder.create_block(), self.builder.create_block());
-                self.ins().brif(same, matched, &[], other, &[]);
-                self.builder.switch_to_block(other);
-                let mut other_state = state.clone();
-                let call = self.root.instructions().nth(inlined.call as usize).expect("a marker's call is the function's");
-                if self.call(&mut other_state, pc, call) {
-                    let next = super::lane_unit::Origin::Caller(inlined.call + 1);
-                    let next = self.unit.origins.iter().position(|origin| *origin == next).unwrap_or(self.unit.instructions.len());
-                    self.continue_at(&mut other_state, next);
-                }
-                self.builder.switch_to_block(matched);
-            }
             None => emit_js_guard(&mut self.builder, same, exit),
         }
         let receiver = self.tagged(state, inlined.receiver);
@@ -1416,7 +1398,7 @@ impl Lowering<'_, '_> {
         let entry = self.entry.as_ref().expect("entry facts");
         let properties = self.builder.use_var(entry.receiver.properties);
         let properties_len = self.builder.use_var(entry.receiver.properties_len);
-        if let [field] = shapes {
+        if let [field] = shapes && field.holder.is_none() {
             let known = owner.and_then(|owner| state.layouts.get(&(owner, field.shape)).copied());
             let projection = match known {
                 Some(projection) if usize::from(field.slot) < projection.storage_len => projection,
@@ -1441,15 +1423,61 @@ impl Lowering<'_, '_> {
             let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
             self.ins().brif(same, matched, &[], next, &[]);
             self.builder.switch_to_block(matched);
-            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
-                properties_len, *field, PackedAccess::Reload, exit)?;
-            let read = projection.read(&mut self.builder, field.slot);
+            let read = match field.holder {
+                None => CheckedObject::prove(&mut self.builder, object, inline, properties,
+                    properties_len, *field, PackedAccess::Reload, exit)?.read(&mut self.builder, field.slot),
+                Some(holder) => self.holder_read(object, holder, *field, exit)?,
+            };
             self.ins().jump(join, &[ir::BlockArg::Value(read)]);
             self.builder.switch_to_block(next);
         }
         self.ins().jump(exit, &[]);
         self.builder.switch_to_block(join);
         Some(value)
+    }
+
+    /// The slot `field` names in the prototype of the object record `record`: an object
+    /// record of the exact shape `holder`, else `exit` (`Vm::record_field_entry_hit`).
+    fn holder_read(&mut self, record: ir::Value, holder: u32, field: NativeFieldLoad, exit: ir::Block) -> Option<ir::Value> {
+        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+        let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, OBJECT.meta_offset as i32);
+        let proto = self.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
+        let from = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base));
+        let below = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, proto, i64::from(OBJECT.proto_record_end));
+        let object_proto = self.ins().band(from, below);
+        emit_js_guard(&mut self.builder, object_proto, exit);
+        let id = self.ins().iadd_imm_s(proto, -i64::from(OBJECT.proto_record_base));
+        let id = self.ins().uextend(types::I64, id);
+        let offset = self.ins().imul_imm_u(id, OBJECT.record_size as i64);
+        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+        let prototype = self.ins().iadd(records, offset);
+        let shape = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
+        let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(holder));
+        emit_js_guard(&mut self.builder, same, exit);
+        // A prototype keeps its properties in the arena past its extras (`emit_js_cached_field_slot`).
+        let holder_meta = self.ins().load(types::I32, MemFlagsData::trusted(), prototype, OBJECT.meta_offset as i32);
+        let inline = self.ins().band_imm_u(holder_meta, i64::from(OBJECT.inline_storage_mask));
+        let arena = self.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+        emit_js_guard(&mut self.builder, arena, exit);
+        let storage = self.ins().load(types::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
+        let tag = self.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
+        let tagged = self.ins().icmp_imm_u(IntCC::Equal, tag, OBJECT.extras_tag as i64);
+        emit_js_guard(&mut self.builder, tagged, exit);
+        let extras = self.ins().band_imm_u(storage, !OBJECT.extras_tag_mask as i64);
+        let present = self.ins().icmp_imm_u(IntCC::NotEqual, extras, 0);
+        emit_js_guard(&mut self.builder, present, exit);
+        let start = self.ins().load(types::I32, MemFlagsData::trusted(), extras, OBJECT.extras_arena_start_offset as i32);
+        let start = self.ins().uextend(types::I64, start);
+        let entry = self.entry.as_ref().expect("entry facts");
+        let properties = self.builder.use_var(entry.receiver.properties);
+        let properties_len = self.builder.use_var(entry.receiver.properties_len);
+        let end = self.ins().iadd_imm_u(start, field.storage_len as i64);
+        let inside = self.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, properties_len);
+        emit_js_guard(&mut self.builder, inside, exit);
+        let index = self.ins().iadd_imm_u(start, i64::from(field.slot));
+        let offset = self.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
+        let address = self.ins().iadd(properties, offset);
+        Some(self.ins().load(types::I64, MemFlagsData::trusted(), address, 0))
     }
 
     /// The record of `owner`'s object (a register's, or `this`'s), proved once until an
@@ -1712,7 +1740,7 @@ mod tests {
             if instruction.op() == Op::GetField
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, slot: slot as u16, storage_len: 2, storage: None }]))
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();

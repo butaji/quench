@@ -1448,7 +1448,7 @@ impl<H: Host> Vm<H> {
             .filter(|object| object.exact_shape() == cache.receiver)
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
-            shape: cache.receiver, slot: cache.slot, storage_len, storage,
+            shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
         })
     }
 
@@ -1456,12 +1456,26 @@ impl<H: Host> Vm<H> {
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
     /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
     pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+        self.native_field_descriptors(site, false)
+    }
+
+    /// `native_field_load_descriptors` with the entries whose slot an immediate prototype
+    /// holds (`NativeFieldLoad::holder`): what a read, not a store, may take from the site.
+    pub(super) fn native_field_read_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+        self.native_field_descriptors(site, true)
+    }
+
+    fn native_field_descriptors(&self, site: u16, holders: bool) -> Vec<super::compiled::NativeFieldLoad> {
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
-            return self.native_field_load_descriptor(site, None)
-                .into_iter().collect();
+            let cache = self.field_cache_entry(site);
+            return match cache.holder {
+                NO_FIELD_HOLDER => self.native_field_load_descriptor(site, None).into_iter().collect(),
+                _ if holders => self.native_field_entry(cache).into_iter().collect(),
+                _ => Vec::new(),
+            };
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
@@ -1469,14 +1483,20 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         set.recorded()
-            .filter(|entry| entry.holder == NO_FIELD_HOLDER && entry.receiver != NO_FIELD_RECEIVER)
-            .filter_map(|entry| {
-                let storage_len = self.shapes.get(entry.receiver as usize)?.storage_len();
-                (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
-                    shape: entry.receiver, slot: entry.slot, storage_len, storage: None,
-                })
-            })
+            .filter(|entry| holders || entry.holder == NO_FIELD_HOLDER)
+            .filter_map(|entry| self.native_field_entry(*entry))
             .collect()
+    }
+
+    /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
+    /// one, and the slot, which the shape that holds it must cover.
+    fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
+        if entry.receiver == NO_FIELD_RECEIVER { return None; }
+        let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
+        let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
+        (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
+            shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
+        })
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own

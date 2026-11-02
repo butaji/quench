@@ -7186,7 +7186,7 @@ mod tests {
         for storage in [Some(crate::heap::PlainPropertyStorage::Arena),
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
             let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
-                shape: 0, slot: slot as u16, storage_len: region.fields.len(),
+                shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
                 storage,
             }]).collect();
             let widened = Default::default();

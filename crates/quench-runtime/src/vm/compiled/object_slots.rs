@@ -39,6 +39,9 @@ impl ObjectHeader {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFieldLoad {
     pub(crate) shape: u32,
+    /// The exact shape of the receiver's prototype, an object record, that holds the slot;
+    /// `None` for the receiver's own (`FieldCache::holder`).
+    pub(crate) holder: Option<u32>,
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,

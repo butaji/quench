@@ -6919,26 +6919,28 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
 }
 
 impl<H: Host> Vm<H> {
-    /// The field cache sites `unit` reads or writes, each with the holderless exact shapes and
-    /// slots its entries prove now (`Vm::native_field_load_descriptors`); a nested lookup
-    /// names one site per read of its chain.
+    /// The field cache sites `unit` reads or writes, each with the exact shapes and slots its
+    /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
+    /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
+    /// per read of its chain, and its sink's store.
     fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit) -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
         unit.instructions
             .iter()
-            .flat_map(|instruction| -> Vec<u16> {
+            .flat_map(|instruction| -> Vec<(u16, bool)> {
                 match instruction.op() {
                     Op::GetField => match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { cache_site, .. }) => vec![cache_site],
+                        Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
                         Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
-                            [Some(site.first), site.second, site.sink].into_iter().flatten().map(|(_, cache)| cache).collect()
+                            let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
+                            reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
                         }),
                         None => Vec::new(),
                     },
-                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![instruction.cache_site_index()],
+                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
                     _ => Vec::new(),
                 }
             })
-            .map(|site| (site, self.native_field_load_descriptors(site)))
+            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
             .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
     }
@@ -7005,7 +7007,8 @@ impl<H: Host> Vm<H> {
         let names_shapes = !fields.is_empty() || !direct.is_empty();
         let scratch_width = usize::from(unit.registers - unit.caller_registers);
         let caller_registers = unit.caller_registers;
-        let closed = unit.native_calls().all(|pc| direct_sites.contains_key(&pc));
+        let closed = unit.instructions.iter().enumerate()
+            .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
         let _direct = direct.into_iter().map(|(_, callee)| callee).collect();
         Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed })
     }
