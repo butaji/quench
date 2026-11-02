@@ -104,6 +104,13 @@ pub(super) struct LaneRegion {
     /// Instructions the region runs natively, for admission.
     pub(super) native: usize,
     pub(super) clif: Option<String>,
+    pub(super) fault_poll: bool,
+}
+
+pub(super) struct LoweredRegion {
+    pub(super) function: ir::Function,
+    pub(super) native: usize,
+    pub(super) fault_poll: bool,
 }
 
 struct Lowering<'a, 'f> {
@@ -112,9 +119,9 @@ struct Lowering<'a, 'f> {
     unit: &'a super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &'a [Vec<NativeFieldLoad>],
-    /// The interrupt owner is immutable for this non-reentrant native entry;
-    /// only the flag it points to changes asynchronously.
+    /// An entry-bound poll page, or the ordinary atomic termination flag.
     interrupt: ir::Value,
+    fault_poll: bool,
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
@@ -441,10 +448,10 @@ pub(super) fn compile(
     fields: &[Vec<NativeFieldLoad>],
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa, Coverage::Prefix, Completion::StatusAndPc)?;
-    let clif = native_dump_directory().map(|_| native.to_string());
-    let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
-    Some(LaneRegion { code, native: count, clif })
+    let region = lower(program, function_id, unit, helpers, fields, &*isa, Coverage::Prefix, Completion::StatusAndPc)?;
+    let clif = native_dump_directory().map(|_| region.function.to_string());
+    let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
+    Some(LaneRegion { code, native: region.native, clif, fault_poll: region.fault_poll })
 }
 
 /// Build the typed residual and validate every value/CFG edge before publication.
@@ -457,7 +464,7 @@ pub(super) fn lower(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     coverage: Coverage,
     completion: Completion,
-) -> Option<(ir::Function, usize)> {
+) -> Option<LoweredRegion> {
     let function = program.function_get(function_id as usize)?;
     if fields.iter().flatten().any(|field| !field.valid())
         || (completion == Completion::SourcePc && unit.frames.iter().any(|frame|
@@ -480,8 +487,12 @@ pub(super) fn lower(
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     );
-    let interrupt = builder.ins().load(types::I64, invariant(), context,
-        std::mem::offset_of!(CallContext, interrupt) as i32);
+    let fault_poll = super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
+        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            && instruction.jump_target() as usize <= pc);
+    let interrupt_offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) }
+        else { std::mem::offset_of!(CallContext, interrupt) };
+    let interrupt = builder.ins().load(types::I64, invariant(), context, interrupt_offset as i32);
     #[cfg(feature = "aot")]
     let helpers = if let LaneHelpers::Linked(symbol) = helpers {
         let signature = builder.import_signature(native_lane_helpers_signature(isa));
@@ -523,6 +534,7 @@ pub(super) fn lower(
         helpers,
         fields,
         interrupt,
+        fault_poll,
         payload,
         registers_base,
         result,
@@ -592,6 +604,13 @@ pub(super) fn lower(
     lowering.entry = Some(lowering.entry_facts(&instructions));
     let first = lowering.blocks[0].expect("pc 0 leads");
     let mut state = State::canonical(count);
+    if fault_poll {
+        // Publication lends a resumable page for this entire no-GC entry.
+        // If unavailable, leave before any guest effect through ordinary recovery.
+        let miss = lowering.guard_exit(&state, 0);
+        let available = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, interrupt, 0);
+        emit_js_guard(&mut lowering.builder, available, miss);
+    }
     lowering.conform(&mut state, 0);
     lowering.builder.ins().jump(first, &[]);
     let mut reachable = false;
@@ -670,7 +689,7 @@ pub(super) fn lower(
                     lowering.return_at(u64::from(JS_INLINE_MATERIALIZED_PC));
                     continue;
                 }
-                LaneExit::Inlined { frame, pc: source_pc }.word()
+                LaneExit::inlined_word(frame, source_pc)
             }
         };
         lowering.return_at(word);
@@ -679,7 +698,7 @@ pub(super) fn lower(
     let native_count = lowering.native;
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
-    Some((native, native_count))
+    Some(LoweredRegion { function: native, native: native_count, fault_poll })
 }
 
 impl Lowering<'_, '_> {
@@ -1221,9 +1240,10 @@ impl Lowering<'_, '_> {
     }
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {
-        let exit = self.guard_exit(state, pc);
         let flag = self.interrupt;
         let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
+        if self.fault_poll { return; }
+        let exit = self.guard_exit(state, pc);
         let requested = self.ins().uextend(types::I32, requested);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
         emit_js_guard(&mut self.builder, clear, exit);
@@ -1705,6 +1725,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unavailable_fault_page_declines_before_changing_canonical_registers() {
+        if !super::super::FAULT_POLL_SUPPORTED { return; }
+        let program = crate::Engine::specialize(
+            "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
+            "missing-poll.js").unwrap();
+        let function = program.function(1);
+        let unit = super::super::lane_unit::unit(&program, function, &|_| None, &|_| None).unwrap();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
+        let region = lower(&program, 1, &unit, helpers, &[], &*isa, Coverage::Full, Completion::StatusAndPc).unwrap();
+        assert!(region.fault_poll);
+        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let mut frame = super::super::LaneFrame::new();
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        frame.dispatch.refresh_object_bases(&vm);
+        frame.dispatch.bind_property_buffer(&mut vm);
+        frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
+        assert_eq!(frame.context.poll_start, 0);
+        let before = vec![Value::number(7.0); usize::from(unit.caller_registers)];
+        let mut registers = before.clone();
+        let mut word = u64::MAX;
+        // No resumable page is lent, so this entry must leave before touching a
+        // poll or executing any guest operation. The canonical inputs stay exact.
+        let status = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast(), &mut word) };
+        assert_eq!(status, NATIVE_JS_STOPPED);
+        assert_eq!(word, 0);
+        assert_eq!(registers, before);
+    }
+
+    #[test]
     fn object_shape_proofs_survive_verified_control_flow_edges() {
         let program = crate::Engine::specialize(
             "function subject(o, flag) { let value=o.left; if(flag) value+=1; return value+o.right; }",
@@ -1720,8 +1771,8 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, function, &|_| None, &|_| None).unwrap();
-        let (native, _) = lower(&program, 1, &unit,
-            LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
+        let native = lower(&program, 1, &unit,
+            LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap().function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
                 if i32::from(offset) == crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
@@ -1748,8 +1799,8 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, program.function(id), &|_| None, &|_| None).unwrap();
-        let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
+        let native = lower(&program, id as u32,
+            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap().function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1771,9 +1822,10 @@ mod tests {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, program.function(id), &|_| None, &|_| None).unwrap();
-        let (native, count) = lower(&program, id as u32,
+        let region = lower(&program, id as u32,
             &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc).expect("typed Number residual");
-        assert!(count > 0);
+        assert!(region.native > 0);
+        let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
         dominators.compute(&native, &cfg);

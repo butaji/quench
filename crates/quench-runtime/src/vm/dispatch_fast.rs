@@ -13770,6 +13770,7 @@ script_handler! {
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*cx).code };
             let pc = match vm.run_lane_method(method, program, code, r.0, receiver, captures) {
+                super::compiled::LaneExit::Terminated => return exit(ip),
                 super::compiled::LaneExit::At(pc) => pc,
                 super::compiled::LaneExit::Inlined { frame, pc } => {
                     let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, &method.inlined[frame], pc);

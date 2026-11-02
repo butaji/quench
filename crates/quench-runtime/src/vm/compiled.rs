@@ -69,6 +69,8 @@ mod scalar_region;
 #[cfg(feature = "aot")]
 pub(super) use scalar_region::lower_regions as lower_static_scalar_regions;
 mod wavefront;
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+mod guard_aarch64;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
     ArrayUse, FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
@@ -2275,7 +2277,7 @@ pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: 
                 | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return));
     let lower = |unit: &lane_unit::Unit| lane_region::lower(program, function_id, unit,
         LaneHelpers::Linked(helper_symbol), &[], isa, lane_region::Coverage::Full,
-        lane_region::Completion::SourcePc).filter(|(_, count)| *count != 0).map(|(native, _)| native);
+        lane_region::Completion::SourcePc).filter(|region| region.native != 0).map(|region| region.function);
     if scalar && loop_header.is_some()
         && let Some(function) = lower(&unit) {
         return Some(StaticTypedRegion { header: 0, function });
@@ -7063,6 +7065,8 @@ struct JsStepDispatch {
 pub(super) struct LaneMethod {
     _code: CodeMemory,
     entry: Entry,
+    /// The lowering requires an owned, resumable poll-page capability.
+    fault_poll: bool,
     /// Whether its code names shape ids as constants, which a shape compaction renumbers:
     /// the compaction unlinks it (`LaneView::invalidate_shape_bindings`), so no entry checks them.
     pub(super) names_shapes: bool,
@@ -7096,6 +7100,7 @@ impl PublishedLaneMethod {
 pub(super) enum LaneExit {
     At(usize),
     Inlined { frame: usize, pc: u32 },
+    Terminated,
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
@@ -7105,13 +7110,10 @@ const INLINED_EXIT: u64 = 1 << 63;
 impl LaneExit {
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } => None }
+        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } | Self::Terminated => None }
     }
-    pub(super) fn word(self) -> u64 {
-        match self {
-            Self::At(pc) => pc as u64,
-            Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
-        }
+    pub(super) fn inlined_word(frame: usize, pc: u32) -> u64 {
+        INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc)
     }
 
     fn decode(word: u64) -> Self {
@@ -7294,7 +7296,7 @@ impl<H: Host> Vm<H> {
             let room = self.bind_inlined_call(program, frame.target.identity()?, frame.target.function)?;
             recovery_room = Some(recovery_room.unwrap_or(0).max(room));
         }
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, recovery_room })
+        Some(LaneMethod { _code: code, entry, fault_poll: region.fault_poll, names_shapes, inlined: unit.frames, recovery_room })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -7328,14 +7330,24 @@ impl<H: Host> Vm<H> {
             dispatch.stores_specialized = usize::from(self.specialized && residual.specialized);
             let context = &mut frame.context;
             context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
-            context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            context.interrupt = self.execution_interrupt.atomic_flag();
             let vm = self as *mut Self;
             dispatch.vm = vm as usize;
             dispatch.bind_property_buffer(vm);
             let mut word = 0_u64;
             // SAFETY: the body was compiled for this function, never allocates or
             // collects, and reads only the registers and heap bases set above.
-            let status = unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) };
+            let status = if method.fault_poll {
+                let poll = native_poll_page(&self.execution_interrupt);
+                context.bind_native_adapter((dispatch as *mut JsStepDispatch).cast(),
+                    self.execution_interrupt.atomic_flag(), poll);
+                unsafe { enter_native(context, 0, 0, registers.cast_const().cast(),
+                    &mut word, NativeEntryMode::Resumable, method.entry) }
+            } else {
+                // This lowering has no faulting polls. Keep bounded lane entries
+                // on their existing direct ABI without saving a recovery frame.
+                unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) }
+            };
             (status, word)
         });
         Self::lane_method_exit(status, word)
@@ -7418,6 +7430,7 @@ thread_local! {
 impl<H: Host> Vm<H> {
     fn lane_method_exit(status: u32, word: u64) -> LaneExit {
         match status {
+            status if i64::from(status) == TERMINATED_STATUS => LaneExit::Terminated,
             NATIVE_JS_STOPPED => LaneExit::decode(word),
             status if status >= JS_GENERAL_RETURN_STATUS_BASE => LaneExit::At((status - JS_GENERAL_RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
@@ -13321,13 +13334,44 @@ type Trampoline =
 
 /// The trampoline and its landing, once the fault handler is installed.
 struct GuardSupport {
-    _code: CodeMemory,
+    _code: Option<CodeMemory>,
     trampoline: Trampoline,
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     landing: usize,
     /// Where a fault on the poll page resumes: the terminated status.
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     termination: usize,
+}
+
+/// The host ABI can recover owned guard/poll faults through a native entry.
+const FAULT_POLL_SUPPORTED: bool = cfg!(any(
+    all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "macos"),
+));
+
+/// Compose a host's POSIX signal delivery with owned native-fault recovery.
+/// Prepare before installing the host observer, then let recovery consume its
+/// owned faults before enqueuing ordinary host signal notifications.
+#[cfg(unix)]
+pub struct NativeFaultHandler;
+
+#[cfg(unix)]
+impl NativeFaultHandler {
+    pub fn prepare(signal: i32) {
+        if matches!(signal, libc::SIGSEGV | libc::SIGBUS) { let _ = guard_support(); }
+    }
+
+    /// # Safety
+    /// Arguments must be the original POSIX SA_SIGINFO handler arguments on
+    /// the interrupted thread. No locks, allocation or guest callbacks occur.
+    pub unsafe fn resume(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) -> bool {
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+        if signal == libc::SIGSEGV { return unsafe { resume_guard_fault(info, context) }; }
+        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+        if matches!(signal, libc::SIGSEGV | libc::SIGBUS) { return unsafe { guard_aarch64::resume_fault(info, context) }; }
+        let _ = (signal, info, context);
+        false
+    }
 }
 
 // SAFETY: immutable executable code, shared by every thread.
@@ -13413,6 +13457,57 @@ const TRAMPOLINE_TERMINATION: usize = 49;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
 
+/// Publish forwarding before a handler can run; revoke partial installations.
+#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+fn install_guard_signals(signals: &[(i32, &std::sync::OnceLock<libc::sigaction>)],
+    handler: usize, flags: i32) -> Option<()> {
+    for (index, (signal, saved)) in signals.iter().enumerate() {
+        // SAFETY: sigaction supplies a complete old disposition before we publish
+        // ours. Installation owns this one-time process lifecycle transition.
+        let installed = unsafe {
+            let mut previous: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(*signal, std::ptr::null(), &mut previous) != 0
+                || saved.set(previous).is_err() { false }
+            else {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler;
+                action.sa_flags = flags;
+                libc::sigemptyset(&mut action.sa_mask);
+                libc::sigaction(*signal, &action, std::ptr::null_mut()) == 0
+            }
+        };
+        if !installed {
+            for (signal, saved) in &signals[..index] {
+                // SAFETY: each earlier entry was installed above; restore its owner.
+                if unsafe { libc::sigaction(*signal, saved.get().unwrap(), std::ptr::null_mut()) } != 0 {
+                    std::process::abort();
+                }
+            }
+            return None;
+        }
+    }
+    Some(())
+}
+
+#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+unsafe fn forward_guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void,
+    previous: &libc::sigaction) {
+    // SAFETY: forwarding the original signal ABI to its published disposition.
+    unsafe {
+        match previous.sa_sigaction {
+            libc::SIG_IGN => {},
+            libc::SIG_DFL => {
+                libc::sigaction(signal, previous, std::ptr::null_mut());
+                libc::raise(signal);
+            }
+            handler if previous.sa_flags & libc::SA_SIGINFO != 0 => {
+                std::mem::transmute::<usize, extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void)>(handler)(signal, info, context);
+            }
+            handler => { std::mem::transmute::<usize, extern "C" fn(i32)>(handler)(signal); }
+        }
+    }
+}
+
 /// The guard support of this host, installing the fault handler on first
 /// use; `None` where guard faults cannot be resumed.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -13439,22 +13534,10 @@ fn guard_support() -> Option<&'static GuardSupport> {
             let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer) };
             let landing = memory.pointer as usize + TRAMPOLINE_LANDING;
             let termination = memory.pointer as usize + TRAMPOLINE_TERMINATION;
-            // SAFETY: installs a handler that only redirects faults inside an
-            // active compiled call's guard and forwards every other fault to
-            // the previous handler.
-            unsafe {
-                let mut action: libc::sigaction = std::mem::zeroed();
-                action.sa_sigaction = guard_fault as *const () as usize;
-                action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER;
-                libc::sigemptyset(&mut action.sa_mask);
-                let mut previous: libc::sigaction = std::mem::zeroed();
-                if libc::sigaction(libc::SIGSEGV, &action, &mut previous) != 0 {
-                    return None;
-                }
-                let _ = PREVIOUS_SEGV.set(previous);
-            }
+            install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV)],
+                guard_fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER)?;
             Some(GuardSupport {
-                _code: memory,
+                _code: Some(memory),
                 trampoline,
                 landing,
                 termination,
@@ -13463,7 +13546,10 @@ fn guard_support() -> Option<&'static GuardSupport> {
         .as_ref()
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+fn guard_support() -> Option<&'static GuardSupport> { guard_aarch64::support() }
+
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
 fn guard_support() -> Option<&'static GuardSupport> {
     None
 }
@@ -13635,6 +13721,14 @@ fn run_native_entry(
 /// belongs to the previous handler.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 extern "C" fn guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    // SAFETY: supplied by the signal ABI.
+    if unsafe { resume_guard_fault(info, context) } { return; }
+    let Some(previous) = PREVIOUS_SEGV.get() else { std::process::abort(); };
+    unsafe { forward_guard_fault(signal, info, context, previous); }
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+unsafe fn resume_guard_fault(info: *mut libc::siginfo_t, context: *mut libc::c_void) -> bool {
     let active = ACTIVE_CONTEXT.with(std::cell::Cell::get);
     // SAFETY: the kernel passes valid signal information and context.
     unsafe {
@@ -13653,30 +13747,11 @@ extern "C" fn guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut
                 let context = &mut *context.cast::<libc::ucontext_t>();
                 context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
                 context.uc_mcontext.gregs[libc::REG_RIP as usize] = landing as i64;
-                return;
-            }
-        }
-        let Some(previous) = PREVIOUS_SEGV.get() else {
-            return;
-        };
-        match previous.sa_sigaction {
-            libc::SIG_DFL | libc::SIG_IGN => {
-                // Restore the previous disposition; the fault repeats on return.
-                libc::sigaction(libc::SIGSEGV, previous, std::ptr::null_mut());
-            }
-            handler if previous.sa_flags & libc::SA_SIGINFO != 0 => {
-                let handler = std::mem::transmute::<
-                    usize,
-                    extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void),
-                >(handler);
-                handler(signal, info, context);
-            }
-            handler => {
-                let handler = std::mem::transmute::<usize, extern "C" fn(i32)>(handler);
-                handler(signal);
+                return true;
             }
         }
     }
+    false
 }
 
 /// The name namespace of compiled function bodies; their C entries use
@@ -17208,10 +17283,12 @@ mod tests {
         assert_eq!(comparisons, 2, "the zero-trip guard and rotated latch share the original comparison");
         let entry = native.layout.entry_block().unwrap();
         let context = native.dfg.block_params(entry)[0];
+        let interrupt_offset = if FAULT_POLL_SUPPORTED { std::mem::offset_of!(CallContext, poll_start) }
+            else { std::mem::offset_of!(CallContext, interrupt) };
         let owners: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|instruction| matches!(native.dfg.insts[*instruction],
                 ir::InstructionData::Load { arg, offset, .. } if arg == context
-                    && i32::from(offset) == std::mem::offset_of!(CallContext, interrupt) as i32)).collect();
+                    && i32::from(offset) == interrupt_offset as i32)).collect();
         assert_eq!(owners.len(), 1, "resolve the stable interrupt owner once per region");
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
