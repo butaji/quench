@@ -4571,3 +4571,32 @@ fn cached_holder_matches(holder: &crate::heap::Object, shape: u32) -> bool {
     debug_assert!(!matches || !holder.is_module_namespace(), "a field cache names no module namespace");
     matches
 }
+
+impl<H> Vm<H> {
+    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_JS_JIT_STATS`): the
+    /// polymorphic sites by how many receiver shapes they recorded, how many name only own
+    /// fields and of those how many find the field at one slot in every shape (a layout whose
+    /// subclasses share their parent's prefix reads them at a fixed offset), and how many name
+    /// prototype-held fields.
+    pub(super) fn field_site_report(&self) -> String {
+        let (mut sizes, mut own, mut one_slot, mut holders, mut overflowed) = ([0_usize; 4], 0, 0, 0, 0);
+        for set in &self.megamorphic_fields {
+            let entries: Vec<FieldCache> = match &set.overflow {
+                Some(overflow) => { overflowed += 1; overflow.values().copied().collect() }
+                None => set.recorded().copied().collect(),
+            };
+            let bucket = match entries.len() { 0..=2 => 0, 3..=4 => 1, 5..=16 => 2, _ => 3 };
+            sizes[bucket] += 1;
+            if entries.iter().all(|entry| entry.holder == NO_FIELD_HOLDER) {
+                own += 1;
+                if entries.windows(2).all(|pair| pair[0].slot == pair[1].slot) { one_slot += 1; }
+            } else {
+                holders += 1;
+            }
+        }
+        format!(
+            "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
+            self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
+        )
+    }
+}
