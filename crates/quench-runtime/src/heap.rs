@@ -3521,6 +3521,7 @@ impl Heap {
     /// `note_object_slot` of the object `object` names, before a write of `value` to `slot`.
     #[inline(always)]
     fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
+        if !self.properties.tracks() { return; }
         if let Some(data) = self.object(object) {
             let shape = data.exact_shape();
             if shape == data.shape() && slot < self.properties.shape_length(shape) {
