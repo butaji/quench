@@ -275,6 +275,7 @@ pub(super) fn emit_entry(
             field.cache_site,
             true,
             baseline[range.start],
+            None,
         );
         let bits = builder
             .ins()

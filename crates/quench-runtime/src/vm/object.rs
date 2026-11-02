@@ -1545,7 +1545,7 @@ impl<H: Host> Vm<H> {
         site: u16,
         layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
             return false;
         }

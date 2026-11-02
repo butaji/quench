@@ -218,8 +218,15 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let boolean_base = scalar_base.checked_add(scalar_count)
             .ok_or("native boolean symbol count overflow")?;
         u32::try_from(boolean_base).map_err(|_| "native scalar symbol count exceeds u32")?;
-        let fallback_base = boolean_base.checked_add(boolean_regions.len())
+        let mut typed_units: Vec<_> = (0..program.function_count()).map(|id|
+            if options.regions(program.function(id).code.len()).is_none() {
+                super::compiled::lower_static_typed_loop(program, id as u32, &*isa)
+            } else { None }).collect();
+        let unit_base = boolean_base.checked_add(boolean_regions.len())
+            .ok_or("native typed unit symbol count overflow")?;
+        let fallback_base = unit_base.checked_add(typed_units.iter().flatten().count())
             .ok_or("native fallback symbol count overflow")?;
+        let mut unit_definitions = Vec::new();
         let mut data = Vec::with_capacity(program.function_count());
         let mut region_definitions = Vec::new();
         let mut fallback_definitions = Vec::new();
@@ -237,6 +244,13 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             for site in sites {
                 site.operands.append_native_bytes(&mut bytes);
             }
+            let unit = typed_units[id].take().map(|function| {
+                let symbol = u32::try_from(unit_base + unit_definitions.len())
+                    .expect("validated typed unit symbol index");
+                unit_definitions.push(NativeFunction::Definition {
+                    name: format!("{namespace}_function_{id}_typed_loop"), function });
+                symbol
+            });
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)
                     .checked_add(program.function_count())
@@ -298,7 +312,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                     .ok_or("native fallback symbol count exceeds u32")?;
                 match super::compiled::lower_js_general_dispatch(
                     program, function_id, false, &*isa,
-                    super::compiled::JsGeneralCallout::Relocatable(fallback),
+                    super::compiled::JsGeneralCallout::Relocatable { fallback, unit },
                     &scalar_regions.iter().enumerate().map(|(offset, region)| {
                         super::compiled::StaticRegionEntry {
                             range: region.range.clone(),
@@ -451,6 +465,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         functions.extend(boolean_regions.into_iter().map(|(id, region)| NativeFunction::Definition {
             name: format!("{namespace}_function_{id}_boolean"), function: region.function,
         }));
+        functions.extend(unit_definitions);
         functions.extend(fallback_definitions);
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         let entry_table = data.len();

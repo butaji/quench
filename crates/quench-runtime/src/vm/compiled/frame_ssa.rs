@@ -15,11 +15,12 @@ pub(super) struct FrameFlow {
     count: u16,
     roots: BTreeMap<ir::Inst, u16>,
     residuals: BTreeMap<ir::Inst, BTreeSet<u16>>,
+    recoveries: BTreeSet<ir::Inst>,
 }
 
 impl FrameFlow {
     pub(super) fn new(registers: ir::Value, count: u16) -> Self {
-        Self { registers, count, roots: BTreeMap::new(), residuals: BTreeMap::new() }
+        Self { registers, count, roots: BTreeMap::new(), residuals: BTreeMap::new(), recoveries: BTreeSet::new() }
     }
 
     /// This call targets a verified scalar residual: canonical writes, no GC.
@@ -27,6 +28,10 @@ impl FrameFlow {
     pub(super) fn residual(&mut self, call: ir::Inst, frame: &[Register]) {
         self.residuals.insert(call, frame.iter().copied().collect());
     }
+
+    /// A no-GC typed unit returns through fresh canonical resume entries.
+    #[cfg(feature = "aot")]
+    pub(super) fn recovery(&mut self, call: ir::Inst) { self.recoveries.insert(call); }
 
     pub(super) fn resume(&mut self, builder: &mut FunctionBuilder<'_>,
         live: Option<&crate::compile::liveness::RegisterMasks>, pc: usize) {
@@ -221,7 +226,7 @@ impl FrameFlow {
         // carries a dynamic PC through the same fixed semantic operation table.
         (native.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect
             && native.dfg.resolve_aliases(native.dfg.inst_args(instruction)[0]) == native.dfg.resolve_aliases(callout))
-            || self.residuals.contains_key(&instruction)
+            || self.residuals.contains_key(&instruction) || self.recoveries.contains(&instruction)
     }
 }
 

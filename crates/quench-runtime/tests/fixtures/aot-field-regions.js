@@ -159,5 +159,37 @@ function* invalidParameter(value = (() => { throw Error('parameter'); })()) {
 }
 record(() => invalidParameter());
 output.push(phase);
+function markTail(node) {
+  while (node.next !== null) {
+    node.mark = node.mark + 1;
+    node = node.next;
+  }
+  return node;
+}
+const tailNode = {next: null, mark: 0};
+const middleNode = {next: tailNode, mark: 0};
+const firstNode = {next: middleNode, mark: 0};
+for (let i = 0; i < 40; i++) {
+  if (markTail(firstNode) !== tailNode) throw Error('typed loop identity');
+}
+output.push(JSON.stringify([firstNode.mark, middleNode.mark, tailNode.mark]));
+middleNode.mark = 'x';
+record(() => markTail(firstNode) === tailNode);
+output.push(JSON.stringify([firstNode.mark, middleNode.mark, tailNode.mark]));
+middleNode.mark = 2n;
+record(() => markTail(firstNode));
+output.push(String(firstNode.mark));
+middleNode.mark = 40;
+Object.defineProperty(middleNode, 'next', {
+  configurable: true,
+  get() { events.push('loop-next'); return tailNode; }
+});
+record(() => markTail(firstNode) === tailNode);
+output.push(JSON.stringify([firstNode.mark, middleNode.mark, tailNode.mark]));
+Object.defineProperty(middleNode, 'next', {
+  get() { events.push('loop-throw'); throw TypeError('loop exit'); }
+});
+record(() => markTail(firstNode));
+output.push(JSON.stringify([firstNode.mark, middleNode.mark, tailNode.mark]));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

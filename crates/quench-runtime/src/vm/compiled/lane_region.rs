@@ -24,6 +24,9 @@ use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
+/// Inline scratch capacity for the small field-site sets typical of native units;
+/// larger units spill normally, without a semantic or compilation limit.
+const INLINE_FIELD_BINDINGS: usize = 4;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,6 +87,8 @@ struct Entry {
     /// Per caller (`None`) or inlined closure's capture slot, its value or `DELETED`.
     captures: BTreeMap<(Option<usize>, u16), Variable>,
     this: Variable,
+    /// Flat per-site immutable slot inputs; no per-operation probe.
+    fields: smallvec::SmallVec<[(u16, FieldSlotBinding); INLINE_FIELD_BINDINGS]>,
 }
 
 pub(super) struct LaneRegion {
@@ -115,7 +120,11 @@ struct Lowering<'a, 'f> {
     facts: super::facts::Facts,
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
     valid: bool,
+    coverage: Coverage,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Coverage { Prefix, Full }
 
 fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
@@ -420,20 +429,21 @@ pub(super) fn compile(
     fields: &[Vec<NativeFieldLoad>],
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa, Coverage::Prefix)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
 }
 
 /// Build the typed residual and validate every value/CFG edge before publication.
-fn lower(
+pub(super) fn lower(
     program: &ResidualProgram,
     function_id: u32,
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &[Vec<NativeFieldLoad>],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
+    coverage: Coverage,
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
     if fields.iter().flatten().any(|field| !field.valid()) { return None; }
@@ -499,6 +509,7 @@ fn lower(
         facts: super::facts::Facts::default(),
         live,
         valid: true,
+        coverage,
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
@@ -615,9 +626,28 @@ fn lower(
 
 impl Lowering<'_, '_> {
     fn entry_facts(&mut self, instructions: &[WideInstruction]) -> Entry {
-        let receiver_offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, receiver)).expect("dispatch offset fits i32");
-        let receiver = emit_lane_receiver(&mut self.builder, self.payload, receiver_offset);
-        let this_bits = self.builder.ins().load(types::I64, MemFlagsData::trusted(), self.payload, receiver_offset);
+        let this_bits = match self.helpers {
+            LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
+            #[cfg(feature = "aot")]
+            LaneHelpers::Activation => {
+                let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
+                let present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
+                let bound = self.builder.create_block();
+                let absent = self.builder.create_block();
+                let join = self.builder.create_block();
+                let bits = self.builder.append_block_param(join, types::I64);
+                self.builder.ins().brif(present, bound, &[], absent, &[]);
+                self.builder.switch_to_block(bound);
+                let value = self.builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0);
+                self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+                self.builder.switch_to_block(absent);
+                let deleted = self.builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+                self.builder.ins().jump(join, &[ir::BlockArg::Value(deleted)]);
+                self.builder.switch_to_block(join);
+                bits
+            }
+        };
+        let receiver = emit_lane_receiver(&mut self.builder, self.payload, this_bits);
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let mut receiver_shapes = BTreeMap::new();
@@ -657,15 +687,15 @@ impl Lowering<'_, '_> {
                 let (helper, arguments) = if let Some(frame) = frame {
                     let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
                     let callee = self.builder.ins().iconst(types::I64, self.unit.frames[frame].target.callee.to_bits() as i64);
-                    (self.helpers.function_capture, vec![vm, callee, slot_value])
+                    (LaneHelper::FunctionCapture, vec![vm, callee, slot_value])
                 } else {
                     let slots = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, captures));
-                    (lane_capture_read as unsafe extern "C" fn(u64, u64) -> u64 as usize, vec![slots, slot_value])
+                    (LaneHelper::Capture, vec![slots, slot_value])
                 };
                 signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
                 signature.returns.push(AbiParam::new(types::I64));
                 let signature = self.builder.import_signature(signature);
-                let helper = self.builder.ins().iconst(types::I64, helper as i64);
+                let helper = self.helpers.address(&mut self.builder, self.payload, helper);
                 let call = self.builder.ins().call_indirect(signature, helper, &arguments);
                 let value = self.builder.inst_results(call)[0];
                 let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
@@ -678,8 +708,31 @@ impl Lowering<'_, '_> {
                 captures.insert(key, variable);
             }
         }
+        #[cfg(feature = "aot")]
+        let fields = {
+            let mut fields = smallvec::SmallVec::new();
+            if self.helpers == LaneHelpers::Activation {
+                for instruction in instructions {
+                    let site = match instruction.op() {
+                        Op::GetField => instruction.field_lookup().and_then(|lookup| match lookup {
+                            FieldLookup::Atom { cache_site, .. } => Some(cache_site), _ => None }),
+                        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => Some(instruction.cache_site_index()),
+                        _ => None,
+                    };
+                    let Some(site) = site else { continue };
+                    if fields.iter().any(|(known, _)| *known == site) { continue; }
+                    let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
+                    let binding = emit_js_field_binding(&mut self.builder, self.payload, site, miss);
+                    fields.push((site, binding));
+                }
+            }
+            fields
+        };
+        #[cfg(not(feature = "aot"))]
+        let fields = smallvec::SmallVec::new();
         if let Some(miss) = capture_miss {
-            let admitted = self.builder.current_block().expect("capture admission continuation");
+            let admitted = self.builder.create_block();
+            self.builder.ins().jump(admitted, &[]);
             self.builder.switch_to_block(miss);
             self.builder.set_cold_block(miss);
             // No guest operation has run and canonical registers are untouched.
@@ -690,7 +743,7 @@ impl Lowering<'_, '_> {
             self.builder.ins().return_(&[stopped]);
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, receiver_shapes, store_atoms, captures, this }
+        Entry { receiver, receiver_shapes, store_atoms, captures, this, fields }
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
@@ -882,6 +935,9 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
+                if self.coverage == Coverage::Full && !(instruction.op() == Op::Return && plain) {
+                    self.valid = false;
+                }
                 self.exit(state, pc32);
                 false
             }
@@ -1090,8 +1146,29 @@ impl Lowering<'_, '_> {
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included;
     /// a miss leaves through `exit`.
     fn field_probe(&mut self, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
+        let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
+            .find_map(|(known, binding)| (*known == site).then_some(*binding)));
+        if let Some(binding) = bound {
+            let slow = self.builder.create_block();
+            let done = self.builder.create_block();
+            let result = self.builder.append_block_param(done, types::I64);
+            let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding));
+            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            self.ins().jump(done, &[ir::BlockArg::Value(value)]);
+            self.builder.switch_to_block(slow);
+            let value = self.field_probe_unbound(object, site, exit);
+            self.ins().jump(done, &[ir::BlockArg::Value(value)]);
+            self.builder.switch_to_block(done);
+            return result;
+        }
+        self.field_probe_unbound(object, site, exit)
+    }
+
+    fn field_probe_unbound(&mut self, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
         let site = self.ins().iconst(types::I64, i64::from(site));
-        let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.field_get, &[object, site]);
+        let helper = self.helpers.address(&mut self.builder, self.payload, LaneHelper::FieldGet);
+        let value = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[object, site]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);
         value
@@ -1172,9 +1249,32 @@ impl Lowering<'_, '_> {
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
     /// included; anything else leaves through `exit`.
     fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
+        let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
+            .find_map(|(known, binding)| (*known == site).then_some(*binding)));
+        if let Some(binding) = bound {
+            let slow = self.builder.create_block();
+            let done = self.builder.create_block();
+            let allowed = self.builder.use_var(self.entry.as_ref().expect("entry").store_atoms[&atom]);
+            emit_js_guard(&mut self.builder, allowed, slow);
+            let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding));
+            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
+            self.ins().store(MemFlagsData::trusted(), value, address, 0);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(slow);
+            self.store_helper_unbound(object, atom, site, value, exit);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(done);
+            return;
+        }
+        self.store_helper_unbound(object, atom, site, value, exit);
+    }
+
+    fn store_helper_unbound(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         let atom = self.ins().iconst(types::I64, i64::from(atom));
         let site = self.ins().iconst(types::I64, i64::from(site));
-        let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.field_set, &[object, atom, site, value]);
+        let helper = self.helpers.address(&mut self.builder, self.payload, LaneHelper::FieldSet);
+        let stored = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[object, atom, site, value]);
         let ok = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
         emit_js_guard(&mut self.builder, ok, exit);
     }
@@ -1315,7 +1415,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(function, &[], &|_| None).unwrap();
         let (native, _) = lower(&program, 1, &unit,
-            LaneHelpers { function_capture: 0, field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+            LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix).unwrap();
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
                 if i32::from(offset) == crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
@@ -1343,7 +1443,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { function_capture: 0, field_get: 0, field_set: 0 }, &fields, &*isa).unwrap();
+            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1366,7 +1466,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { function_capture: 0, field_get: 0, field_set: 0 }, &[], &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &[], &*isa, Coverage::Prefix).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

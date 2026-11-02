@@ -234,7 +234,7 @@ pub(super) struct LaneView {
     /// straight-line lane run from it is long enough to repay the lane's
     /// entry cost, and its record does not read the accumulator. Kept apart
     /// from the records, which only the lane reads.
-    entries: Box<[bool]>,
+    entries: Box<[u64]>,
     memory_register: Option<u16>,
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
@@ -10799,9 +10799,12 @@ impl<H: Host> Vm<H> {
     /// Whether `program` runs in the lane when dynamic execution is allowed:
     /// Wasm always, JavaScript where it and the VM are specialized. A lane run keeps its program and the VM's specialization, so the
     /// lane's field caches (`Vm::primary_own_field_hit` and its kin) need not test them.
+    pub(super) fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool {
+        program.kind == crate::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
+    }
+
     pub(super) fn lane_admits(&self, program: &ResidualProgram) -> bool {
-        self.execution_mode.allows_dynamic_execution()
-            && (program.kind == crate::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized))
+        self.execution_mode.allows_dynamic_execution() && self.specialized_operations_enabled(program)
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -18111,11 +18114,13 @@ fn derive_lane_view<'live, H: Host>(
     // of its PCs entries, whose lane runs a `return_call` chain left at once (TOD-19:
     // `return_call_ref.wast` 510 -> 797 ms).
     let runs = lane_runs_ahead(&decoded, &exits, min_run, !wasm);
-    let entries: Box<[bool]> = runs
-        .iter()
-        .zip(&reads_accumulator)
-        .map(|(run, reads)| *run >= min_run && !reads)
-        .collect();
+    let mut entries = vec![0u64; runs.len().div_ceil(u64::BITS as usize)];
+    for (pc, (run, reads)) in runs.iter().zip(&reads_accumulator).enumerate() {
+        if *run >= min_run && !reads {
+            entries[pc / u64::BITS as usize] |= 1 << (pc % u64::BITS as usize);
+        }
+    }
+    let entries = entries.into_boxed_slice();
     let activation = function
         .parameter_registers
         .filter(|_| function.locals == 0)
@@ -19172,8 +19177,9 @@ impl<H: Host> Vm<H> {
         crate::DYNAMIC_EXECUTION_ENABLED
             && !view.is_null()
             && unsafe {
-                let entries: &[bool] = &(*view).entries;
-                *entries.get_unchecked(pc)
+                let entries: &[u64] = &(*view).entries;
+                *entries.get_unchecked(pc / u64::BITS as usize)
+                    & (1 << (pc % u64::BITS as usize)) != 0
             }
     }
 
