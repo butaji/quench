@@ -8115,6 +8115,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     let frame = &mut vm.frames[dispatch.frame];
                     frame.pc = next;
                     frame.pc_is_resume = true;
+                    if guarded_call_result.is_some() {
+                        // A hit is the shared no-frame/no-GC operation's proof:
+                        // only an existing numeric field may have changed. Frame,
+                        // capture, arena and cache storage still use their admitted
+                        // addresses; checking and rebinding them repeats that proof.
+                        return Ok(JsCalloutStep::Continue(next));
+                    }
                     if !js_native_frame_storage_unchanged(frame, dispatch) {
                         // The operation ran once. Return the transition to the
                         // frame owner at its already-computed successor.
