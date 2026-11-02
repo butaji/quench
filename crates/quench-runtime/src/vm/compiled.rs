@@ -16856,6 +16856,90 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn scalar_loop_rotation_preserves_trip_counts_and_exact_header_recovery() {
+        let source = r#"
+            function count(n){n=n|0;let result=0;for(let i=0;i<n;i=(i+1)|0)result=(result+1)|0;return result;}
+            function fractional(){let result=0;for(let i=0;i<2.5;i=(i+1)|0)result=(result+1)|0;return result;}
+            function notANumber(){let result=0;for(let i=0;i<(0/0);i=(i+1)|0)result=(result+1)|0;return result;}
+            function mutable(n,limit){let result=0;for(let i=0;i<n;i=(i+1)|0){result=(result+1)|0;if(i===2)n=limit;}return result;}
+            for(const n of [-1,0,1,2,17])if(count(n)!==(n>0?n:0))throw 'trip count';
+            if(fractional()!==3||notANumber()!==0)throw 'floating condition';
+            let probes=0,limit={valueOf(){probes++;return 3;}};
+            if(mutable(5,limit)!==3||probes!==1)throw 'header recovery';
+            throw 42;
+        "#;
+        let program = crate::Engine::specialize(source, "loop-rotation.cjs").unwrap();
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
+        let targets = static_call_targets(&program);
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let region = lower_static_typed_region(&program, id as u32, &targets[id], &*isa, 0).unwrap();
+        let native = &region.function;
+        let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|instruction| matches!(native.dfg.insts[*instruction],
+                ir::InstructionData::IntCompare { cond: IntCC::SignedLessThan, .. })).count();
+        assert_eq!(comparisons, 2, "the zero-trip guard and rotated latch share the original comparison");
+        let entry = native.layout.entry_block().unwrap();
+        let context = native.dfg.block_params(entry)[0];
+        let owners: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|instruction| matches!(native.dfg.insts[*instruction],
+                ir::InstructionData::Load { arg, offset, .. } if arg == context
+                    && i32::from(offset) == std::mem::offset_of!(CallContext, interrupt) as i32)).collect();
+        assert_eq!(owners.len(), 1, "resolve the stable interrupt owner once per region");
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+        for block in native.layout.blocks() {
+            if !dom.is_reachable(block) { continue; }
+            for header in cfg.succ_iter(block).filter(|target| dom.dominates(*target, block, &native.layout)) {
+                assert!(dom.dominates(owners[0], header, &native.layout), "interrupt owner must precede the loop");
+            }
+        }
+        let native = linked_optimized_test_program(program);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn scalar_rotated_loop_observes_termination_requested_after_entry() {
+        use std::{sync::mpsc, thread, time::Duration};
+        const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+        fn started(context: &mut crate::NativeContext<'_, crate::test_host::TestHost>,
+            _: crate::RootId, _: &[crate::RootId]) -> Result<crate::RootId, crate::RootedError> {
+            context.host_mut().state::<mpsc::Sender<()>>().send(()).unwrap();
+            Ok(context.undefined())
+        }
+        let (ready, entered) = mpsc::channel::<()>();
+        let (handle_sender, handle_receiver) = mpsc::channel();
+        let (completed, completion) = mpsc::channel();
+        let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
+            let source = "function spin(){started();let x=1;for(let i=0;i<1/0;i=(i+1)|0){x=x^(x<<13);}return x;}spin();";
+            let program = crate::Engine::specialize(source, "rotated-interrupt.cjs").unwrap();
+            let native = linked_optimized_test_program(program);
+            let host = crate::test_host::TestHost::default()
+                .with_natives(crate::host_functions![global "started" (0) => started])
+                .with_state(Rc::new(ready));
+            let mut vm = Vm::new(host);
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            handle_sender.send(vm.execution_interrupt.clone()).unwrap();
+            let budget = crate::stack::GuestCallGuard::remaining();
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert!(error.is_execution_terminated(), "{error}");
+            assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
+            completed.send(()).unwrap();
+        }).unwrap();
+        let handle = handle_receiver.recv_timeout(WAIT_TIMEOUT).unwrap();
+        entered.recv_timeout(WAIT_TIMEOUT).unwrap();
+        thread::sleep(Duration::from_millis(20));
+        handle.request_termination();
+        completion.recv_timeout(WAIT_TIMEOUT).expect("native infinite loop must observe the live interrupt");
+        worker.join().unwrap();
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn scalar_word32_pairs_preserve_overflow_rounding_and_live_numbers() {
         let source = r#"
             function add(a,b){let out=0;for(let i=0;i<1;i++){out=(a+b)|0;}return out;}

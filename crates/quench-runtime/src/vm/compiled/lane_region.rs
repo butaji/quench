@@ -112,7 +112,9 @@ struct Lowering<'a, 'f> {
     unit: &'a super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &'a [Vec<NativeFieldLoad>],
-    context: ir::Value,
+    /// The interrupt owner is immutable for this non-reentrant native entry;
+    /// only the flag it points to changes asynchronously.
+    interrupt: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
@@ -478,6 +480,8 @@ pub(super) fn lower(
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     );
+    let interrupt = builder.ins().load(types::I64, invariant(), context,
+        std::mem::offset_of!(CallContext, interrupt) as i32);
     #[cfg(feature = "aot")]
     let helpers = if let LaneHelpers::Linked(symbol) = helpers {
         let signature = builder.import_signature(native_lane_helpers_signature(isa));
@@ -518,7 +522,7 @@ pub(super) fn lower(
         unit,
         helpers,
         fields,
-        context,
+        interrupt,
         payload,
         registers_base,
         result,
@@ -1030,6 +1034,16 @@ impl Lowering<'_, '_> {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {
                     self.interrupt_check(state, pc32);
+                    if let Some(header) = instructions.get(target).copied()
+                        && matches!(header.op(), Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+                        && header.result_flags() == 0
+                        && header.jump_target() as usize > pc
+                    {
+                        // Rotate only the pure header test. The first visit
+                        // keeps the zero-trip guard; each backedge keeps its
+                        // poll and exact source-header recovery state.
+                        return self.instruction(state, target, header, instructions);
+                    }
                 }
                 self.continue_at(state, target);
                 return false;
@@ -1208,14 +1222,9 @@ impl Lowering<'_, '_> {
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         let exit = self.guard_exit(state, pc);
-        let context = self.context;
-        let flag = self.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            context,
-            std::mem::offset_of!(CallContext, interrupt) as i32,
-        );
-        let requested = self.ins().load(types::I8, MemFlagsData::trusted(), flag, 0);
+        let flag = self.interrupt;
+        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
+        let requested = self.ins().uextend(types::I32, requested);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
         emit_js_guard(&mut self.builder, clear, exit);
     }
