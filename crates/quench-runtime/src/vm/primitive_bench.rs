@@ -6,7 +6,9 @@
 extern crate test;
 
 use super::operations::{ADDITION, MULTIPLICATION, integer_operator, number_value_operator};
-use crate::heap::{ArrayElements, ArrayObject, ArrayStorageProofs, Cell, Heap, LaneProofScope, Object};
+use crate::heap::{
+    ArrayElements, ArrayObject, ArrayStorageProofs, Cell, Heap, LaneProofScope, Object,
+};
 use crate::value::Value;
 use std::hint::black_box;
 use test::Bencher;
@@ -28,9 +30,16 @@ impl Inputs {
     fn numbers(self) -> [f64; BATCH_VALUES] {
         let seed = black_box(INPUT_SEED);
         let edges = [
-            0.0, -0.0, f64::from(i32::MIN), f64::from(i32::MAX),
-            f64::from(i32::MIN) - 1.0, f64::from(i32::MAX) + 1.0,
-            f64::MIN_POSITIVE, f64::from_bits(1), f64::INFINITY, f64::NEG_INFINITY,
+            0.0,
+            -0.0,
+            f64::from(i32::MIN),
+            f64::from(i32::MAX),
+            f64::from(i32::MIN) - 1.0,
+            f64::from(i32::MAX) + 1.0,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::INFINITY,
+            f64::NEG_INFINITY,
             f64::NAN,
         ];
         std::array::from_fn(|index| {
@@ -145,7 +154,9 @@ fn primitive_slot_narrow_encode_batch(b: &mut Bencher) {
 
 #[bench]
 fn primitive_slot_narrow_decode_batch(b: &mut Bencher) {
-    let values = Inputs::Integers.values().map(|value| value.to_narrow().unwrap());
+    let values = Inputs::Integers
+        .values()
+        .map(|value| value.to_narrow().unwrap());
     b.iter(|| {
         for &value in &values {
             black_box(Value::from_narrow(black_box(value)));
@@ -190,7 +201,11 @@ fn primitive_array_proved_read_batch(b: &mut Bencher) {
     assert!(heap.prove_array_storage(&mut proofs, 0, array));
     b.iter(|| {
         for index in 0..BATCH_VALUES {
-            black_box(black_box(&*proofs).element(0, black_box(array), black_box(index)).unwrap());
+            black_box(
+                black_box(&*proofs)
+                    .element(0, black_box(array), black_box(index))
+                    .unwrap(),
+            );
         }
     });
 }
@@ -202,7 +217,10 @@ fn primitive_array_unique_store_batch(b: &mut Bencher) {
     let unique = elements.make_mut();
     b.iter(|| {
         for index in 0..BATCH_VALUES {
-            black_box(&mut *unique).set(black_box(index), black_box(values[BATCH_VALUES - 1 - index]));
+            black_box(&mut *unique).set(
+                black_box(index),
+                black_box(values[BATCH_VALUES - 1 - index]),
+            );
         }
     });
 }
@@ -217,7 +235,12 @@ fn primitive_array_proved_store_batch(b: &mut Bencher) {
     assert!(heap.prove_array_storage(&mut proofs, 0, array));
     b.iter(|| {
         for index in 0..BATCH_VALUES {
-            assert!(black_box(&mut *proofs).replace(0, black_box(array), black_box(index), black_box(values[index])));
+            assert!(black_box(&mut *proofs).replace(
+                0,
+                black_box(array),
+                black_box(index),
+                black_box(values[index])
+            ));
         }
     });
 }
