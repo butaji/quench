@@ -2107,6 +2107,7 @@ lane_helper_inventory! { H;
     FunctionCapture => lane_function_capture_read::<H>,
     FieldGet => lane_field_get::<H>,
     FieldSet => lane_field_set::<H>,
+    GuardedCall => lane_guarded_call::<H>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2223,33 +2224,37 @@ enum JsGeneralBranch {
 }
 
 #[cfg(feature = "aot")]
-pub(super) struct StaticTypedLoop {
+pub(super) struct StaticTypedRegion {
     pub(super) header: usize,
     pub(super) function: ir::Function,
 }
 
 #[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_loop(program: &ResidualProgram, function_id: u32,
-    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Option<StaticTypedLoop>
+pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Option<StaticTypedRegion>
 {
     if isa.pointer_type() != types::I64 { return None; }
     let function = program.function_get(function_id as usize)?;
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
     let unit = lane_unit::unit(function, &[], &|_| None)?;
-    let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
-        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
-            .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
-    }).min()?;
+    let has_guarded_calls = unit.instructions.iter().copied().any(guarded_call_instruction);
+    let header = if has_guarded_calls { 0 } else {
+        unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+                .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
+        }).min()?
+    };
     let unit = unit.suffix(header)?;
-    if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) { return None; }
+    if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call
+            && !guarded_call_instruction(*instruction)) { return None; }
     let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
         &[], isa, lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
-    (count != 0).then_some(StaticTypedLoop { header, function: native })
+    (count != 0).then_some(StaticTypedRegion { header, function: native })
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
 #[derive(Clone, Copy)]
-pub(super) struct StaticTypedLoopEntry<'a> {
+pub(super) struct StaticTypedRegionEntry<'a> {
     pub(super) header: usize,
     pub(super) function: &'a ir::Function,
 }
@@ -2328,7 +2333,7 @@ pub(super) fn lower_js_general_dispatch(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     callout_kind: JsGeneralCallout,
     _scalar_regions: &[StaticRegionEntry<'_>],
-    _typed_loop: Option<StaticTypedLoopEntry<'_>>,
+    _typed_region: Option<StaticTypedRegionEntry<'_>>,
 ) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
@@ -2337,8 +2342,8 @@ pub(super) fn lower_js_general_dispatch(
         return Err("general-dispatch-requires-64-bit-pointers");
     }
     #[cfg(feature = "aot")]
-    if _typed_loop.is_some() && !callout_kind.fixed_operations() {
-        return Err("typed-loop-requires-fixed-native-control");
+    if _typed_region.is_some() && !callout_kind.fixed_operations() {
+        return Err("typed-region-requires-fixed-native-control");
     }
     let function = program
         .function_get(function_id as usize)
@@ -2371,7 +2376,7 @@ pub(super) fn lower_js_general_dispatch(
     let continue_block = builder.create_block();
     let continue_pc = builder.append_block_param(continue_block, types::I64);
     #[cfg(feature = "aot")]
-    let typed_continue = _typed_loop.map(|_| {
+    let typed_continue = _typed_region.map(|_| {
         let block = builder.create_block();
         let pc = builder.append_block_param(block, types::I64);
         (block, pc)
@@ -2408,7 +2413,7 @@ pub(super) fn lower_js_general_dispatch(
         for entry in _scalar_regions {
             entries.to_mut()[entry.range.start] = builder.create_block();
         }
-        let typed_entry = if let Some(unit) = _typed_loop {
+        let typed_entry = if let Some(unit) = _typed_region {
             let fallback = entries[unit.header];
             entries.to_mut()[unit.header] = builder.create_block();
             Some((unit, fallback))
@@ -3566,11 +3571,7 @@ pub(super) fn lower_js_general_dispatch(
     for (pc, resume) in resume_entries.iter().copied().enumerate() {
         builder.switch_to_block(resume);
         frame_flow.resume(&mut builder, live, pc);
-        let target = entries[pc];
-        #[cfg(feature = "aot")]
-        let target = typed_entry.filter(|(unit, _)| unit.header == pc)
-            .map_or(target, |(_, fallback)| fallback);
-        builder.ins().jump(target, &[]);
+        builder.ins().jump(entries[pc], &[]);
     }
     builder.switch_to_block(continue_block);
     emit_js_pc_dispatch(&mut builder, continue_pc, &resume_entries, invalid_pc);
@@ -7114,6 +7115,24 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     ))
 }
 
+/// The same guarded call operation used by native callouts. It never creates
+/// a callee frame, invokes guests, collects, or changes a physical layout.
+unsafe extern "C" fn lane_guarded_call<H: Host>(vm: u64, residual: u64, program: u64, callee: u64, receiver: u64) -> u64 {
+    // SAFETY: the admitted VM/program outlive this no-GC native region.
+    let program_id = program as u32;
+    let (vm, program) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    vm.guarded_call_values(program, ProgramId::from_raw(program_id), Value::from_bits(callee), Value::from_bits(receiver))
+        .unwrap_or(Value::DELETED).to_bits()
+}
+
+/// Static call-site obligations discharged once during lowering. The helper
+/// admits the newly dynamic callee/receiver and its no-frame execution plan.
+fn guarded_call_instruction(instruction: WideInstruction) -> bool {
+    instruction.op() == Op::Call && instruction.result_flags() == 0
+        && !instruction.direct_eval() && !instruction.parameter_eval()
+        && instruction.call_window().count == 0
+}
+
 /// A lane body's read of the running function's capture `slot`, by the lane's own rule
 /// (`EnvironmentSlots::dense_plain`); `DELETED` where that rule finds no plain value, which
 /// leaves native code for the lane's full read.
@@ -7172,14 +7191,12 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
         let body = program.function_get(function as usize)?;
-        // A captured-store call already runs through the shared frameless kernel.
-        // Generic unit entry/capture admission costs more than that kernel; keep
-        // its call until the unit can transplant the same compact store proof.
+        // Captured stores already use the shared frameless kernel. Unit entry
+        // and capture admission add work without improving that compact proof.
         let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize)
             .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
-        // Until calls stay native (TOD-1219), a body that calls leaves at every call it does
-        // not inline and pays its entry again in each callee's return; it runs cheaper in
-        // the lane.
+        // Keep unresolved calls in the frameless lane until their verified inputs
+        // can be bound before entry rather than admitted on every invocation.
         if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) {
             self.host.after_native_compilation();
             return None;
@@ -13940,64 +13957,85 @@ impl<H: Host> Vm<H> {
         frame: usize,
         instruction: WideInstruction,
     ) -> Option<Value> {
-        use super::native_program::{NativeBooleanRegion, NativeGuardedCall};
-        use super::js_compiled::JsJitFieldReceiver;
-        if instruction.op() != Op::Call || instruction.direct_eval()
-            || instruction.result_flags() != 0 || instruction.call_window().count != 0
-            || self.direct_eval || self.parameter_eval
+        if !guarded_call_instruction(instruction)
             || frame + 1 != self.frames.len()
             || self.frames[frame].function == super::ROOT_FUNCTION_ID
         {
             return None;
         }
-        let calls = self.programs.native_js_code(program_id)?.guarded_calls()?;
         let callee = *self.frames[frame].registers.get(usize::from(instruction.register_b()))?;
         let receiver = *self.frames[frame].registers.get(usize::from(instruction.register_c()))?;
-        // An ordinary object binds identically for strict and sloppy methods.
+        self.guarded_call_values(program, program_id, callee, receiver)
+    }
+
+    /// One no-frame, no-GC call operation for linked AOT and JIT regions.
+    /// A miss runs no guest operation; a hit preserves every storage layout.
+    fn guarded_call_values(&mut self, program: &ResidualProgram, program_id: ProgramId,
+        callee: Value, receiver: Value) -> Option<Value> {
+        if self.direct_eval || self.parameter_eval { return None; }
         receiver.direct_object_index()?;
         let (target_program, function, env) = self.in_loop_call_target(program, callee)?;
         if target_program != program_id { return None; }
-        let region = match calls.get(function)? {
-            NativeGuardedCall::CapturedStore(store) => {
-                let _guard = crate::stack::GuestCallGuard::enter().ok()?;
-                if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
-                    return None;
-                }
-                self.captured_number_field_store(program, receiver, TierCaptures::Environment(env),
-                    store.capture_slot, store.atom, store.cache_site, store.update())?;
-                return Some(Value::UNDEFINED);
+        #[cfg(feature = "native-execution")]
+        let plan = self.programs.native_js_code(program_id).and_then(|code| code.guarded_calls())
+            .and_then(|calls| calls.get(function));
+        #[cfg(feature = "native-execution")]
+        if let Some(super::native_program::NativeGuardedCall::Boolean(region)) = plan {
+            use super::native_program::NativeBooleanRegion;
+            use super::js_compiled::JsJitFieldReceiver;
+            let _guard = self.enter_guarded_call()?;
+            let captures = region.capture_slots[..usize::from(region.capture_count)]
+                .iter().map(|slot| (0, *slot));
+            let fields = region.field_sites[..usize::from(region.field_count)].iter()
+                .zip(&region.field_sources[..usize::from(region.field_count)])
+                .map(|(site, source)| (*site, JsJitFieldReceiver::This, *source));
+            let scope = TierCaptures::Environment(env);
+            let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
+            self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
+            self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
+            if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
+                && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
+            {
+                return None;
             }
-            NativeGuardedCall::Boolean(region) => region,
+            // SAFETY: the image binds this entry to these validated input descriptors;
+            // the pure region receives only scalar Numbers and performs no callout.
+            let encoded = unsafe { (region.entry)(arguments.as_ptr()) };
+            if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
+            return Some(if encoded & super::js_compiled::BOOLEAN_REGION_RESULT_MASK != 0 {
+                Value::TRUE
+            } else {
+                Value::FALSE
+            })
+        }
+        #[cfg(feature = "native-execution")]
+        let store = match plan {
+            Some(super::native_program::NativeGuardedCall::CapturedStore(store)) =>
+                Some((store.capture_slot, store.atom, store.cache_site, store.update())),
+            _ => None,
         };
-        let captures = region.capture_slots[..usize::from(region.capture_count)]
-            .iter().map(|slot| (0, *slot));
-        let fields = region.field_sites[..usize::from(region.field_count)].iter()
-            .zip(&region.field_sources[..usize::from(region.field_count)])
-            .map(|(site, source)| (*site, JsJitFieldReceiver::This, *source));
-        let scope = TierCaptures::Environment(env);
-        let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-        self.append_numeric_tier_captures(scope, captures, &mut arguments)?;
-        self.append_numeric_tier_fields(program, Some(receiver), &[], scope, fields, &mut arguments)?;
-        if region.flags & NativeBooleanRegion::SIGNED_INT32_INPUTS != 0
-            && !arguments.iter().all(|value| super::js_compiled::is_i32_number(*value))
-        {
-            return None;
-        }
-        let _guard = crate::stack::GuestCallGuard::enter().ok()?;
-        if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
-            return None;
-        }
-        // SAFETY: the image binds this entry to these validated input descriptors;
-        // the pure region receives only scalar Numbers and performs no callout.
-        let encoded = unsafe { (region.entry)(arguments.as_ptr()) };
-        if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {
-            return None;
-        }
-        Some(if encoded & super::js_compiled::BOOLEAN_REGION_RESULT_MASK != 0 {
-            Value::TRUE
-        } else {
-            Value::FALSE
-        })
+        #[cfg(not(feature = "native-execution"))]
+        let store: Option<(u16, Atom, u16, Option<super::operations::NumberBitwise>)> = None;
+        let (slot, atom, site, update) = store.or_else(|| {
+            // Reuse the JIT's authoritative static entry facts; the execution-only
+            // image consumes its bound plans and retains no JIT analysis.
+            if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
+            let facts = self.programs.js_entry_facts(program_id, function)?;
+            let store = facts.captured_store?;
+            Some((store.capture_slot, store.atom, store.cache_site, store.update))
+        })?;
+        let _guard = self.enter_guarded_call()?;
+        self.captured_number_field_store(program, receiver, TierCaptures::Environment(env), slot, atom, site, update)?;
+        Some(Value::UNDEFINED)
+    }
+
+    /// Entry obligations for a selected no-frame callee, before its first effect.
+    #[inline(always)]
+    fn enter_guarded_call(&self) -> Option<crate::stack::GuestCallGuard> {
+        let guard = crate::stack::GuestCallGuard::enter().ok()?;
+        (!self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed)).then_some(guard)
     }
 
     /// The store proof shared by tier entries and statically linked call entries.
@@ -16637,14 +16675,14 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn linked_typed_loops_share_register_ir_and_runtime_bound_helpers() {
+    fn linked_typed_regions_share_register_ir_and_runtime_bound_helpers() {
         let program = crate::Engine::specialize(
             "function tail(node) { node.seen=1; while(node.next!==null) node=node.next; return node; }",
             "typed-loop.js",
         ).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let residual = lower_static_typed_loop(&program, 1, &*isa, 0).expect("call-free typed loop");
+        let residual = lower_static_typed_region(&program, 1, &*isa, 0).expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
         let has_field_helper = |native: &ir::Function, resolver_symbol: u32| {
             let load_base = |value: ir::Value, expected_offset: i32| {
@@ -16677,13 +16715,40 @@ mod tests {
             .filter(|instruction| caller.dfg.insts[*instruction].opcode() == ir::Opcode::BrTable).count();
         assert!(dynamic_pc_tables <= 1, "only canonical source-PC admission may retain a dynamic dispatcher");
         assert!(!module.functions.iter().any(|function| matches!(function,
-            super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_loop"))),
+            super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_region"))),
             "the inlined residual must not retain a second native body");
         let leaf = crate::Engine::specialize("function id(x) { return x; } id(1);", "leaf.js").unwrap();
         let leaf = crate::lower_native_js_module(&leaf, "leaf_test").unwrap();
         assert!(!leaf.functions.iter().any(|function| matches!(function,
             super::super::native_object::NativeFunction::Import { name, .. }
                 if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)), "units alone own helper-resolver imports");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn guarded_calls_form_typed_regions_from_function_entry() {
+        let program = crate::Engine::specialize(
+            "let mask=2; function mark(){this.state=this.state|mask;} function pipe(object){object.mark();return object.state;}",
+            "guarded-pipe.js").unwrap();
+        let function = program.functions.iter().position(|function|
+            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pipe")).unwrap();
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_region(&program, function as u32, &*isa, 0).expect("guarded call region");
+        assert_eq!(region.header, 0, "call pipes start at the function's entry");
+        let helper_offset = LaneHelper::GuardedCall as i32 * std::mem::size_of::<usize>() as i32;
+        assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block)).any(|instruction| {
+            let ir::InstructionData::Load { offset, .. } = region.function.dfg.insts[instruction] else { return false };
+            i32::from(offset) == helper_offset
+        }), "the region must contain the shared no-frame call operation");
+        let module = crate::lower_native_js_module(&program, "guarded_pipe").unwrap();
+        let name = format!("guarded_pipe_function_{function}");
+        let caller = module.functions.iter().find_map(|body| match body {
+            super::super::native_object::NativeFunction::Definition { name: candidate, function } if *candidate == name => Some(function),
+            _ => None,
+        }).unwrap();
+        assert!(caller.layout.blocks().flat_map(|block| caller.layout.block_insts(block)).any(|instruction|
+            caller.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect));
     }
 
     #[cfg(feature = "aot")]

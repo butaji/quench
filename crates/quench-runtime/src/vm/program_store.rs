@@ -903,6 +903,7 @@ pub(crate) enum ModuleImport {
     Binding(ProgramId, u16, Value),
 }
 
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct ProgramId(u32);
 

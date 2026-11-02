@@ -141,7 +141,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
         let typed_units: Vec<_> = (0..program.function_count()).map(|id|
             if options.regions(program.function(id).code.len()).is_none() {
-                super::compiled::lower_static_typed_loop(program, id as u32, &*isa, lane_helpers)
+                super::compiled::lower_static_typed_region(program, id as u32, &*isa, lane_helpers)
             } else { None }).collect();
         if typed_units.iter().any(Option::is_some) {
             functions.push(NativeFunction::Import {
@@ -249,7 +249,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 site.operands.append_native_bytes(&mut bytes);
             }
             let unit = typed_units[id].as_ref().map(|unit|
-                super::compiled::StaticTypedLoopEntry { header: unit.header, function: &unit.function });
+                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function });
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)
                     .checked_add(program.function_count())

@@ -210,5 +210,25 @@ Object.defineProperty(edgeHead, 'next', {
 });
 record(() => enterTail(edgeHead, false) === edgeTail);
 output.push(String(edgeEntries));
+let pipeMask = 2;
+function pipeMark() { this.state = this.state | pipeMask; }
+function pipeRun(object) { object.stamp = object.stamp + 1; object.mark(); return object.state; }
+const pipeObject = {state: 0, mark: pipeMark, stamp: 0, a: 0, b: 0, c: 0};
+for (let i = 0; i < 200; i++) {
+  if (pipeRun(pipeObject) !== 2) throw Error('guarded pipe state');
+}
+output.push(String(pipeObject.state));
+pipeMask = {valueOf() { events.push('pipe-coerce'); return 4; }};
+record(() => pipeRun(pipeObject));
+pipeMask = 2;
+pipeObject.mark = function () { events.push('pipe-replacement'); this.state += 8; };
+record(() => pipeRun(pipeObject));
+Object.defineProperty(pipeObject, 'mark', {
+  get() { events.push('pipe-get'); return pipeMark; }
+});
+record(() => pipeRun(pipeObject));
+Object.defineProperty(pipeObject, 'state', {writable: false});
+record(() => pipeRun(pipeObject));
+output.push(JSON.stringify([pipeObject.state, pipeObject.stamp]));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

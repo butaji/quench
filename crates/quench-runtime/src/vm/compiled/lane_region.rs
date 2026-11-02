@@ -22,6 +22,7 @@ use crate::bytecode::FieldLayout;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
+use cranelift_codegen::bitset::CompoundBitSet;
 
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
@@ -109,9 +110,9 @@ struct Lowering<'a, 'f> {
     registers_base: ir::Value,
     result: ir::Value,
     registers: Registers,
-    written: BTreeSet<Register>,
+    written: CompoundBitSet,
     blocks: Vec<Option<ir::Block>>,
-    exits: BTreeMap<u32, ir::Block>,
+    exits: Vec<Option<ir::Block>>,
     entry: Option<Entry>,
     native: usize,
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
@@ -271,12 +272,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// Leave at `pc` with the interpreter's state: every written register back in the file.
     fn exit(&mut self, state: &mut State, pc: u32) {
         self.canonicalize(state, pc as usize);
-        let block = match self.exits.get(&pc) {
-            Some(block) => *block,
+        let block = match self.exits[pc as usize] {
+            Some(block) => block,
             None => {
                 let block = self.builder.create_block();
                 self.builder.set_cold_block(block);
-                self.exits.insert(pc, block);
+                self.exits[pc as usize] = Some(block);
                 block
             }
         };
@@ -405,19 +406,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
 /// after a jump.
-fn leaders(instructions: &[WideInstruction]) -> Vec<bool> {
-    let mut leaders = vec![false; instructions.len()];
-    if let Some(first) = leaders.first_mut() {
-        *first = true;
-    }
+fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
+    let mut leaders = CompoundBitSet::with_capacity(instructions.len());
+    if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
         if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
-            if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < leaders.len()) {
-                leaders[target] = true;
+            if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < instructions.len()) {
+                leaders.insert(target);
             }
-            if let Some(next) = leaders.get_mut(pc + 1) {
-                *next = true;
-            }
+            if pc + 1 < instructions.len() { leaders.insert(pc + 1); }
         }
     }
     leaders
@@ -504,7 +501,7 @@ pub(super) fn lower(
         builder.def_var(registers.float[register], float_zero);
     }
     let leaders = leaders(&unit.instructions);
-    let blocks: Vec<_> = leaders.iter().map(|leader| leader.then(|| builder.create_block())).collect();
+    let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let mut lowering = Lowering {
         builder,
         program,
@@ -516,9 +513,9 @@ pub(super) fn lower(
         registers_base,
         result,
         registers,
-        written: BTreeSet::new(),
+        written: CompoundBitSet::with_capacity(count),
         blocks,
-        exits: BTreeMap::new(),
+        exits: vec![None; unit.instructions.len() + 1],
         entry: None,
         native: 0,
         pending: Vec::new(),
@@ -530,7 +527,9 @@ pub(super) fn lower(
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
-        lowering.written.extend(writes(*instruction).into_iter().filter(|r| usize::from(*r) < count));
+        for register in writes(*instruction).into_iter().map(usize::from).filter(|r| *r < count) {
+            lowering.written.insert(register);
+        }
     }
     let mut initial = vec![Type::ANY; count];
     for instruction in &instructions {
@@ -563,7 +562,7 @@ pub(super) fn lower(
                 *r >= base && *r - base < function.params)
                 || function.local_registers.iter().any(|entry|
                     entry.local < function.params && entry.register == *r))
-                && !lowering.written.contains(r)) {
+                && !lowering.written.contains(usize::from(*r))) {
             let current = &mut initial[usize::from(register)];
             if *current != Type::INT32 { *current = required; }
         }
@@ -605,10 +604,11 @@ pub(super) fn lower(
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the scratch window it is made from, then leave at the origin.
-    let exits: Vec<_> = lowering.exits.iter().map(|(pc, block)| (*pc, *block)).collect();
-    for (unit_pc, block) in exits {
+    for unit_pc in 0..lowering.exits.len() {
+        let Some(block) = lowering.exits[unit_pc] else { continue };
         lowering.builder.switch_to_block(block);
-        for register in lowering.written.clone().into_iter().filter(|register| *register < unit.caller_registers) {
+        for register in lowering.written.iter().map(|register| register as Register)
+            .take_while(|register| *register < unit.caller_registers) {
             if !lowering.is_live(unit_pc as usize, register) { continue; }
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
@@ -833,6 +833,20 @@ impl Lowering<'_, '_> {
                 self.copy(state, instruction.result_register(), instruction.register_b());
                 Some(true)
             }
+            Op::Call if guarded_call_instruction(instruction) => {
+                let exit = self.guard_exit(state, pc32);
+                let callee = self.tagged(state, instruction.register_b());
+                let receiver = self.tagged(state, instruction.register_c());
+                let helper = self.helpers.address(&mut self.builder, LaneHelper::GuardedCall);
+                let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
+                    std::mem::offset_of!(JsStepDispatch, program_id) as i32);
+                let program = self.builder.ins().uextend(types::I64, program);
+                let result = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, receiver]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, result, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, hit, exit);
+                self.set_tagged(state, instruction.result_register(), result);
+                Some(true)
+            }
             Op::LoadThis if plain && !instruction.writes_current_this() => {
                 let exit = self.guard_exit(state, pc32);
                 let entry = self.entry.as_ref().expect("entry facts");
@@ -965,7 +979,7 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
-                if self.coverage == Coverage::Full && !(instruction.op() == Op::Return && plain) {
+                if self.coverage == Coverage::Full && !((instruction.op() == Op::Return && plain) || instruction.returns_from_frame()) {
                     self.valid = false;
                 }
                 self.exit(state, pc32);
