@@ -21394,6 +21394,40 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
 }
 
 #[test]
+fn lane_field_reads_speculate_on_slot_representations_like_the_interpreter() {
+    // A slot that has held only int32 values is read as one; a lane store of a wider value
+    // joins it, and a read the slot no longer matches leaves, so a field that widens to a
+    // double and then a string mid-run reads as the interpreter does.
+    let source = r#"(function () {
+      function Point(x, y) { this.x = x; this.y = y; }
+      function sum(p, n) { var s = 0; for (var i = 0; i < n; i++) s = (s + p.x + p.y) | 0; return s; }
+      function bump(p, v) { p.y = v; return p.y; }
+      var p = new Point(3, 4), total = 0, mixed = 0;
+      for (var k = 0; k < 3000; k++) total = (total + sum(p, 50)) | 0;
+      for (var k = 0; k < 3000; k++) total += bump(p, k & 7);
+      bump(p, 0.5);
+      for (var k = 0; k < 600; k++) total = (total + sum(p, 50)) | 0;
+      bump(p, "1");
+      for (var k = 0; k < 600; k++) mixed = (mixed + sum(p, 3) + (p.x + p.y).length) | 0;
+      globalThis.answer = total * 7 + mixed;
+    })();"#;
+    let program = Engine::specialize(source, "lane-field-representations.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(vm.heap.unrepresented_slots(), 0);
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(10119300.0); 2]);
+}
+
+#[test]
 fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
     // A sum only `| 0` reads wraps without an overflow exit; an increment its loop's `i < n`
     // bounds runs without one; one no test bounds keeps it and overflows to a double.

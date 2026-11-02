@@ -4410,9 +4410,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     // The caller matched the exact shape, which holds the slot.
-    if properties.tracks() {
-        properties.note_slot_value(data.shape(), slot, value);
-    }
+    properties.note_slot_value(data.shape(), slot, value);
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.

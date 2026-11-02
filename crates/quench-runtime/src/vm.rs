@@ -3025,16 +3025,22 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
+        // A host's bootstrap may run the entry itself, so its realm keeps them from here.
+        self.keep_slot_representations();
         self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
-        // Only native code reads slot representations, so only a runtime that runs lane
-        // bodies keeps them, starting from what its live objects hold.
+        Ok(())
+    }
+
+    /// Only native code reads slot representations, so only a runtime that runs lane bodies
+    /// keeps them, from its shape table and what its live objects hold: once its builtins
+    /// exist or its realm is restored.
+    pub(super) fn keep_slot_representations(&mut self) {
         if self.programs.js_jit_lane_methods_enabled() {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }
-        Ok(())
     }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {

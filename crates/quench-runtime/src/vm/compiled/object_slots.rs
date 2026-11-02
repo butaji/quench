@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::heap::PlainPropertyStorage;
+use crate::value_vec::SlotRepresentation;
 
 #[derive(Clone, Copy)]
 pub(super) struct ObjectHeader {
@@ -45,6 +46,9 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
+    /// The representation of every value the slot has held when the code was compiled
+    /// (`Heap::slot_representation`): a read speculates on it and leaves where it fails.
+    pub(crate) representation: SlotRepresentation,
 }
 
 impl NativeFieldLoad {

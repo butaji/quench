@@ -722,6 +722,15 @@ impl Heap {
         }
     }
 
+    /// The representation every value `slot` of `shape`'s objects has held; `Tagged` where
+    /// representations are not kept or the shape does not register the slot.
+    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> crate::value_vec::SlotRepresentation {
+        if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
+            return crate::value_vec::SlotRepresentation::Tagged;
+        }
+        self.properties.slot_representation(shape, slot)
+    }
+
     /// The slots of live object records whose value its owner's representation does not hold
     /// (`ValueArena::slot_representation`): zero while every write joins its value's class;
     /// zero too where representations are not kept.

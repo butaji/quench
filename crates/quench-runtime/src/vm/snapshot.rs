@@ -586,6 +586,7 @@ impl<H: Host> Vm<H> {
         let main = self.rebased_entry(entry)?;
         self.programs.install_main(Rc::new(main.clone()));
         self.rebuild_program_cache_layouts();
+        self.keep_slot_representations();
         self.materialize_program_constants(ProgramId::MAIN, &main);
         self.set_active_program(ProgramId::MAIN);
         Ok(main)

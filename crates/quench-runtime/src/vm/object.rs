@@ -1466,6 +1466,7 @@ impl<H: Host> Vm<H> {
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
+            representation: self.heap.slot_representation(cache.receiver, usize::from(cache.slot)),
         })
     }
 
@@ -1511,8 +1512,9 @@ impl<H: Host> Vm<H> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
-        (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
+        (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
+            representation: self.heap.slot_representation(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
         })
     }
 

@@ -198,12 +198,6 @@ pub(crate) enum SlotRepresentation {
 }
 
 impl SlotRepresentation {
-    const ALL: [Self; 4] = [Self::None, Self::Int32, Self::Number, Self::Tagged];
-
-    fn from_index(index: u32) -> Option<Self> {
-        Self::ALL.get(index as usize).copied()
-    }
-
     #[inline(always)]
     pub(crate) fn of(value: Value) -> Self {
         if value.as_int().is_some() { Self::Int32 } else if value.as_number().is_some() { Self::Number } else { Self::Tagged }
@@ -263,16 +257,14 @@ impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { values, free, released_values, shape_lengths, shape_chains, chain_owners, owner_reps, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_reps: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
         }
         writer.len(*released_values);
         writer.u32s(shape_lengths);
-        writer.u32s(shape_chains);
-        writer.u32s(chain_owners);
-        writer.u32s(&owner_reps.iter().map(|rep| *rep as u32).collect::<Vec<_>>());
         writer.len(dictionaries.len());
         for (id, entries) in dictionaries {
             writer.u32(*id);
@@ -294,10 +286,6 @@ impl ValueArena {
         }
         let released_values = reader.len()?;
         let shape_lengths = reader.u32s()?;
-        let shape_chains = reader.u32s()?;
-        let chain_owners = reader.u32s()?;
-        let owner_reps = reader.u32s()?.into_iter().map(SlotRepresentation::from_index).collect::<Option<Vec<_>>>()
-            .ok_or_else(|| crate::snapshot::SnapshotError("slot representation out of range".into()))?;
         let dictionaries = crate::snapshot::read_list(reader, |reader| {
             let id = reader.u32()?;
             let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
@@ -310,13 +298,10 @@ impl ValueArena {
             free,
             released_values,
             shape_lengths,
-            shape_chains,
-            chain_owners,
-            owner_reps,
-            tracking: false,
             dictionaries,
             free_dictionaries: reader.u32s()?,
             next_dictionary: reader.u32()?,
+            ..Self::default()
         })
     }
 

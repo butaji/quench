@@ -21,6 +21,7 @@ use super::*;
 use crate::bytecode::FieldLayout;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
 use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
+use crate::value_vec::SlotRepresentation;
 use std::collections::{BTreeMap, BTreeSet};
 
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
@@ -1451,13 +1452,29 @@ impl Lowering<'_, '_> {
             value = self.object_field_read(state, value, *site, exit)?;
         }
         if let Some((atom, site)) = sink {
-            self.store_field(state, sink_owner, atom, site, value, false, exit)?;
+            self.store_field(state, sink_owner, atom, site, value, Type::ANY, exit)?;
         }
         if let Some(record) = completes {
             self.return_value(record, value);
             return Some(false);
         }
+        // A slot that has only held int32 values is read as one: its value's tag is tested
+        // here, once, and a value it no longer holds leaves before the read is defined.
+        let last = *rest.last().unwrap_or(first);
+        let int32 = sink.is_none() && self.fields.get(&last).is_some_and(|shapes| !shapes.is_empty()
+            && shapes.iter().all(|field| field.representation == SlotRepresentation::Int32));
+        if !int32 {
+            self.set_tagged(state, destination, value);
+            return Some(true);
+        }
+        let integer = is_int_tagged(&mut self.builder, value);
+        emit_js_guard(&mut self.builder, integer, exit);
         self.set_tagged(state, destination, value);
+        let int = self.ins().ireduce(types::I32, value);
+        let variable = self.int_var(usize::from(destination));
+        self.builder.def_var(variable, int);
+        state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
+            ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         Some(true)
     }
 
@@ -1694,19 +1711,20 @@ impl Lowering<'_, '_> {
         } else { None };
         if register.is_some_and(|register| register >= self.unit.registers) { return None; }
         let exit = self.guard_exit(state, pc as u32);
-        let barrier_free = state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER);
+        let ty = state.values[usize::from(source)].value.ty;
         let value = self.tagged(state, source);
-        self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, barrier_free, exit)?;
+        self.store_field(state, register, instruction.atom_index(), instruction.cache_site_index(), value, ty, exit)?;
         Some(true)
     }
 
     /// The store of `value` through `site` to the field `atom` of the object `register` names
     /// (`this` for `None`): the site's one proved shape and slot written directly, with the
     /// object's record proved once (the receiver's at entry, in a body that makes no call),
-    /// else the VM's own-field store hit; anything else leaves through `exit`.
+    /// else the VM's own-field store hit; anything else leaves through `exit`. A value of
+    /// type `ty` the slot's representation may not hold takes the hit too, which joins it.
     #[allow(clippy::too_many_arguments)]
     fn store_field(&mut self, state: &mut State, register: Option<Register>, atom: Atom, site: u16,
-        value: ir::Value, barrier_free: bool, exit: ir::Block) -> Option<()> {
+        value: ir::Value, ty: Type, exit: ir::Block) -> Option<()> {
         let receiver = !self.native_calls
             && (register.is_none() || register.is_some_and(|register| state.receivers.contains(&register)));
         let owner = if receiver { None } else { register };
@@ -1746,7 +1764,8 @@ impl Lowering<'_, '_> {
         };
         self.ins().brif(ok, direct, &[], general, &[]);
         self.builder.switch_to_block(direct);
-        if !barrier_free {
+        self.represented(field.representation, ty, value, general);
+        if !ty.is_subtype(Type::NUMBER) {
             let record_id = self.ins().ireduce(types::I32, object_bits);
             let record_id = self.ins().uextend(types::I64, record_id);
             let payload = self.payload;
@@ -1768,6 +1787,19 @@ impl Lowering<'_, '_> {
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(done);
         Some(())
+    }
+
+    /// Continue where the slot representation `representation` holds `value`, of type `ty`,
+    /// else at `otherwise`: statically where `ty` proves it, else by `value`'s int tag.
+    fn represented(&mut self, representation: SlotRepresentation, ty: Type, value: ir::Value, otherwise: ir::Block) {
+        let class = if ty.is_subtype(Type::INT32) { SlotRepresentation::Int32 }
+            else if ty.is_subtype(Type::NUMBER) { SlotRepresentation::Number }
+            else { SlotRepresentation::Tagged };
+        if class <= representation { return; }
+        // An int is held by any representation but `None`, a slot no value reached yet.
+        let held = if representation == SlotRepresentation::None { self.ins().iconst(types::I8, 0) }
+            else { is_int_tagged(&mut self.builder, value) };
+        emit_js_guard(&mut self.builder, held, otherwise);
     }
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
@@ -1967,7 +1999,8 @@ mod tests {
             if instruction.op() == Op::GetField
                 && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
                 && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None }]))
+                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
+                    representation: SlotRepresentation::Tagged }]))
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
