@@ -446,6 +446,14 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
         if !self.tracking { return false; }
+        self.join_slot_value(shape, slot, value)
+    }
+
+    /// `note_slot_value` where representations are kept, out of line: the interpreter's
+    /// store handlers keep only the tracking test, so their own code does not change.
+    #[cold]
+    #[inline(never)]
+    fn join_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
         let owner = self.slot_owner(shape, slot) as usize;
         let held = self.owner_reps[owner];
         // A slot that has held any value holds every value: the common case pays one compare.
