@@ -97,3 +97,28 @@ const iterable = {
 };
 for (const value of iterable) { for (const key in {a: 1}) { break; } break; }
 show(closed);
+
+// Membership and enumerability observe descriptors without invoking accessors.
+const own = Object.prototype.hasOwnProperty;
+const enumerable = Object.prototype.propertyIsEnumerable;
+function query(object, key) { return [own.call(object, key), enumerable.call(object, key), Object.hasOwn(object, key)]; }
+let getterReads = 0;
+const queried = Object.create({inherited: 1});
+Object.defineProperty(queried, 'accessor', {get() { getterReads++; return 1; }, set(value) {}, enumerable: true, configurable: true});
+Object.defineProperty(queried, 'hidden', {value: 2, configurable: true});
+for (let round = 0; round < 100; round++) query(queried, 'accessor');
+show([query(queried, 'accessor'), query(queried, 'hidden'), query(queried, 'inherited'), getterReads]);
+delete queried.accessor;
+show(query(queried, 'accessor'));
+Object.defineProperty(queried, 'hidden', {enumerable: true});
+Object.freeze(queried);
+show(query(queried, 'hidden'));
+show([query([1, , 3], 'length'), query([1, , 3], '1'), query(new Uint8Array([1, 2]), '0'), query('ab', '0')]);
+const symbolKey = Symbol('own');
+show(query({[symbolKey]: 1}, symbolKey));
+function mapped(value) { show(query(arguments, '0')); delete arguments[0]; show(query(arguments, '0')); }
+mapped(1);
+const queryLog = [];
+const queryProxy = new Proxy({a: 1}, {getOwnPropertyDescriptor(target, key) { queryLog.push(key); return Reflect.getOwnPropertyDescriptor(target, key); }});
+show(query(queryProxy, {toString() { queryLog.push('key'); return 'a'; }}));
+show(queryLog);
