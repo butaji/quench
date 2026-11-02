@@ -12,7 +12,8 @@ const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
 const BOOTSTRAP_REPLICATES: usize = 100_000;
 const BOOTSTRAP_INTERVAL_LEVEL: f64 = 0.95;
 const BOOTSTRAP_BASE_SEED: u64 = 0x51A7_BEEF_CAFE_2C31;
-const MINIMUM_JETSTREAM_SCORE_RATIO: f64 = 1.20;
+const MINIMUM_SCORE_RATIO: f64 = 1.20;
+const V8_V7_MAXIMUM_RSS_RATIO: f64 = 0.80;
 const QUENCH: &str = "quench";
 const MEMCPY_DIRECT_OFF: &str = "quench_memcpy_direct_off";
 const MEMCPY_DIRECT_ON: &str = "quench_memcpy_direct_on";
@@ -385,6 +386,7 @@ struct AnalysisReport {
     rounds_per_fixture: usize,
     analysis_runtime: String,
     minimum_score_ratio: f64,
+    maximum_rss_ratio: f64,
     suite_inputs: Vec<ArtifactInput>,
     bootstrap: BootstrapMethod,
     fixtures: BTreeMap<String, FixtureAnalysis>,
@@ -571,7 +573,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                 fixture,
                 input.rounds_requested,
                 &measured,
-                minimum_score_ratio(input.suite),
+                input.suite,
             )?,
         );
     }
@@ -606,7 +608,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let host = input.host;
     let analysis_runtime = format!("quench-bench Rust analyzer; {}", host.rustc);
     let report = AnalysisReport {
-        schema: 3,
+        schema: 4,
         created_unix_ns: now_ns(),
         input_report_path: input_path.display().to_string(),
         input_report_sha256,
@@ -621,7 +623,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         engine_provenance,
         rounds_per_fixture: input.rounds_requested,
         analysis_runtime,
-        minimum_score_ratio: minimum_score_ratio(input.suite),
+        minimum_score_ratio: MINIMUM_SCORE_RATIO,
+        maximum_rss_ratio: maximum_rss_ratio(input.suite),
         suite_inputs: input.suite_inputs,
         bootstrap: BootstrapMethod {
             name: "paired percentile bootstrap of median log-ratios, reported as ratios",
@@ -1440,7 +1443,7 @@ fn analyze_fixture(
     fixture: &FixtureInput,
     requested_rounds: usize,
     engines: &[&str],
-    minimum_score_ratio: f64,
+    suite: crate::Suite,
 ) -> Result<FixtureAnalysis, String> {
     if !fixture.valid || !fixture.output_equal {
         return Err(format!("{path} is invalid or its engine outputs differ"));
@@ -1556,10 +1559,12 @@ fn analyze_fixture(
         let qualified = score_ratio_qualifies(
             score.median_ratio,
             score.paired_ratio_interval_95[0],
-            minimum_score_ratio,
-        )
-            && max_rss.median_ratio < 1.0
-            && max_rss.paired_ratio_interval_95[1] < 1.0;
+            MINIMUM_SCORE_RATIO,
+        ) && rss_ratio_qualifies(
+            max_rss.median_ratio,
+            max_rss.paired_ratio_interval_95[1],
+            maximum_rss_ratio(suite),
+        );
         comparisons.insert(
             (*comparator).to_string(),
             PairAnalysis {
@@ -1580,11 +1585,15 @@ fn analyze_fixture(
     })
 }
 
-fn minimum_score_ratio(suite: crate::Suite) -> f64 {
+fn maximum_rss_ratio(suite: crate::Suite) -> f64 {
     match suite {
-        crate::Suite::JetStream3 => MINIMUM_JETSTREAM_SCORE_RATIO,
-        crate::Suite::V8V7 => 1.0,
+        crate::Suite::JetStream3 => 1.0,
+        crate::Suite::V8V7 => V8_V7_MAXIMUM_RSS_RATIO,
     }
+}
+
+fn rss_ratio_qualifies(median_ratio: f64, upper_bound: f64, maximum_ratio: f64) -> bool {
+    median_ratio <= maximum_ratio && upper_bound < maximum_ratio
 }
 
 fn score_ratio_qualifies(median_ratio: f64, lower_bound: f64, minimum_ratio: f64) -> bool {
@@ -1726,21 +1735,33 @@ mod tests {
         REFERENCE_BODY_CACHE_ON, RoundInput, SELECTIVE_HANDOFF_CONFIG, SELECTIVE_HANDOFF_ENV,
         SELECTIVE_HANDOFF_OFF, SELECTIVE_HANDOFF_ON, SampleInput, SuiteInput,
         analyze_diagnostic_ab_fixture, median, median_log_ratio,
-        minimum_score_ratio, paired_bootstrap_log_ratio_interval, score_ratio_qualifies,
+        maximum_rss_ratio, paired_bootstrap_log_ratio_interval, rss_ratio_qualifies,
+        score_ratio_qualifies, MINIMUM_SCORE_RATIO,
         selected_diagnostic_ab_config, validate_diagnostic_ab, validate_engine, validate_suite,
     };
     use crate::{JitMode, Suite};
     use std::collections::BTreeMap;
 
     #[test]
-    fn jetstream_score_qualification_requires_the_twenty_percent_margin() {
-        let target = minimum_score_ratio(Suite::JetStream3);
+    fn score_qualification_requires_the_twenty_percent_margin() {
+        let target = MINIMUM_SCORE_RATIO;
         assert_eq!(target, 1.20);
         assert!(!score_ratio_qualifies(1.19, 1.18, target));
         assert!(!score_ratio_qualifies(1.20, 1.20, target));
         assert!(score_ratio_qualifies(1.21, 1.2001, target));
-        assert_eq!(minimum_score_ratio(Suite::V8V7), 1.0);
-        assert!(score_ratio_qualifies(1.01, 1.0001, 1.0));
+        assert!(!score_ratio_qualifies(1.01, 1.0001, target));
+    }
+
+    #[test]
+    fn v8_v7_rss_qualification_requires_twenty_percent_less_memory() {
+        let target = maximum_rss_ratio(Suite::V8V7);
+        assert_eq!(target, 0.80);
+        assert!(!rss_ratio_qualifies(0.99, 0.999, target));
+        assert!(!rss_ratio_qualifies(1.0 / 1.2, 0.84, target));
+        assert!(!rss_ratio_qualifies(0.79, 0.80, target));
+        assert!(!rss_ratio_qualifies(0.81, 0.79, target));
+        assert!(rss_ratio_qualifies(0.79, 0.7999, target));
+        assert_eq!(maximum_rss_ratio(Suite::JetStream3), 1.0);
     }
 
     fn engine(
