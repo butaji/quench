@@ -76,6 +76,7 @@ pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod http_status_shared_vm;
+pub(crate) mod http2_shared_vm;
 pub(crate) mod https_shared_vm;
 #[cfg(quench_icu)]
 pub(crate) mod icu_binding_shared_vm;

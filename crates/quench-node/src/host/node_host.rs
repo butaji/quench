@@ -177,6 +177,7 @@ pub(crate) struct SharedNodeState {
     initial_pending_deprecation: bool,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
+    pub(crate) http2: crate::modules::http2_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
@@ -407,6 +408,7 @@ impl SharedNodeState {
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),
+            http2: crate::modules::http2_shared_vm::State::new(),
             tcp: crate::modules::net_shared_vm::Transport::new(),
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),

@@ -110,6 +110,7 @@ impl SharedNodeState {
             initial_pending_deprecation: _,
             diagnostics,
             http,
+            http2,
             tcp,
             net_sockets,
             net_closing_sockets,
@@ -193,6 +194,7 @@ impl SharedNodeState {
         timer_duration_warnings.write(writer)?;
         diagnostics.write(writer)?;
         http.write_snapshot(writer)?;
+        http2.write_snapshot(writer)?;
         tcp.write_snapshot(writer)?;
         net_socket_close_completed.write(writer)?;
         udp.write_snapshot(writer)?;
@@ -260,6 +262,7 @@ impl SharedNodeState {
         self.timer_duration_warnings = HostSnap::read(reader)?;
         self.diagnostics = HostSnap::read(reader)?;
         self.http.read_snapshot(reader)?;
+        self.http2.read_snapshot(reader)?;
         self.tcp.read_snapshot(reader)?;
         self.net_socket_close_completed = HostSnap::read(reader)?;
         self.udp.read_snapshot(reader)?;
