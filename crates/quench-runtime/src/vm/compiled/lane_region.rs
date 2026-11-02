@@ -449,7 +449,8 @@ pub(super) fn lower(
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
     if fields.iter().flatten().any(|field| !field.valid())
-        || (completion == Completion::SourcePc && !unit.frames.is_empty()) { return None; }
+        || (completion == Completion::SourcePc && unit.frames.iter().any(|frame|
+            frame.target.callee != CalleeBinding::Function)) { return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
@@ -617,6 +618,12 @@ pub(super) fn lower(
             super::lane_unit::Origin::Caller(pc) => u64::from(pc),
             super::lane_unit::Origin::Inlined { frame, pc: source_pc } => {
                 let inlined = unit.frames[frame];
+                if lowering.completion == Completion::SourcePc {
+                    // Function-bound units admit only captured stores: every
+                    // possible miss precedes the write; its return cannot fail.
+                    lowering.return_at(u64::from(inlined.call));
+                    continue;
+                }
                 let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
                 for register in 0..inlined.registers {
                     let bits = if lowering.is_live(unit_pc as usize, inlined.base + register) {
@@ -710,25 +717,23 @@ impl Lowering<'_, '_> {
             if instruction.op() == Op::LoadCapture && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 {
                 let key = self.unit.capture_key(pc);
                 let (frame, slot) = key;
+                if frame.is_some_and(|frame| self.unit.frames[frame].target.identity().is_none()) {
+                    continue; // The actual closure exists only at its call edge.
+                }
                 if captures.contains_key(&key) {
                     continue;
                 }
                 let slot_value = self.builder.ins().iconst(types::I64, i64::from(slot));
-                let mut signature = Signature::new(self.builder.func.signature.call_conv);
                 let (helper, arguments) = if let Some(frame) = frame {
                     let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
-                    let callee = self.builder.ins().iconst(types::I64, self.unit.frames[frame].target.callee.to_bits() as i64);
+                    let callee = self.builder.ins().iconst(types::I64, self.unit.frames[frame].target.identity().expect("published capture").to_bits() as i64);
                     (LaneHelper::FunctionCapture, vec![vm, callee, slot_value])
                 } else {
                     let slots = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, captures));
                     (LaneHelper::Capture, vec![slots, slot_value])
                 };
-                signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
-                signature.returns.push(AbiParam::new(types::I64));
-                let signature = self.builder.import_signature(signature);
                 let helper = self.helpers.address(&mut self.builder, helper);
-                let call = self.builder.ins().call_indirect(signature, helper, &arguments);
-                let value = self.builder.inst_results(call)[0];
+                let value = emit_lane_call(&mut self.builder, helper, &arguments);
                 let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
                 let admitted = self.builder.create_block();
                 let read = self.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
@@ -859,12 +864,25 @@ impl Lowering<'_, '_> {
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let key = self.unit.capture_key(pc);
-                let variable = self.entry.as_ref().and_then(|entry| entry.captures.get(&key)).copied();
-                variable.map(|variable| {
-                    let value = self.builder.use_var(variable);
+                if let Some(frame) = key.0.filter(|frame| self.unit.frames[*frame].target.identity().is_none()) {
+                    let exit = self.guard_exit(state, pc32);
+                    let callee = self.tagged(state, self.unit.frames[frame].callee_register);
+                    let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
+                    let slot = self.ins().iconst(types::I64, i64::from(key.1));
+                    let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionCapture);
+                    let value = emit_lane_call(&mut self.builder, helper, &[vm, callee, slot]);
+                    let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                    emit_js_guard(&mut self.builder, hit, exit);
                     self.set_tagged(state, instruction.result_register(), value);
-                    true
-                })
+                    Some(true)
+                } else {
+                    let variable = self.entry.as_ref().and_then(|entry| entry.captures.get(&key)).copied();
+                    variable.map(|variable| {
+                        let value = self.builder.use_var(variable);
+                        self.set_tagged(state, instruction.result_register(), value);
+                        true
+                    })
+                }
             }
             Op::GetField if plain && !instruction.writes_current_this() => self.get_field(state, pc, instruction),
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
@@ -1019,16 +1037,29 @@ impl Lowering<'_, '_> {
         let inlined = self.unit.frames[frame];
         let exit = self.guard_exit(state, pc as u32);
         let callee = self.tagged(state, inlined.callee_register);
-        if state.values[usize::from(inlined.callee_register)].value.ty.function_identity()
-            != Some(inlined.target.callee)
-        {
-            let same = self.ins().icmp_imm_u(IntCC::Equal, callee, inlined.target.callee.to_bits() as i64);
-            emit_js_guard(&mut self.builder, same, exit);
+        if let Some(identity) = inlined.target.identity() {
+            if state.values[usize::from(inlined.callee_register)].value.ty.function_identity() != Some(identity) {
+                let same = self.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64);
+                emit_js_guard(&mut self.builder, same, exit);
+                state.values[usize::from(inlined.callee_register)] = RegisterFact::admit(Fact {
+                    ty: Type::function(identity).expect("admitted callee locator"),
+                    representation: Representation::Tagged,
+                    binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
+                }).expect("published function identity and dominating value check");
+            }
+        } else {
+            let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
+                std::mem::offset_of!(JsStepDispatch, program_id) as i32);
+            let program = self.ins().uextend(types::I64, program);
+            let function = self.ins().iconst(types::I64, i64::from(inlined.target.function));
+            let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionBinding);
+            let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
+            let hit = self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
+            emit_js_guard(&mut self.builder, hit, exit);
             state.values[usize::from(inlined.callee_register)] = RegisterFact::admit(Fact {
-                ty: Type::function(inlined.target.callee).expect("admitted callee locator"),
-                representation: Representation::Tagged,
+                ty: Type::language(crate::ValueType::Function), representation: Representation::Tagged,
                 binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
-            }).expect("published function identity and dominating value check");
+            }).expect("admitted dynamic closure of the static function");
         }
         let receiver = self.tagged(state, inlined.receiver);
         let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
@@ -1470,7 +1501,7 @@ mod tests {
             } else { Vec::new() }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(function, &[], &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(&program, function, &|_| None, &|_| None).unwrap();
         let (native, _) = lower(&program, 1, &unit,
             LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -1498,7 +1529,7 @@ mod tests {
             } else { Vec::new() }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(&program, program.function(id), &|_| None, &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
             &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -1521,7 +1552,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(&program, program.function(id), &|_| None, &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
             &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc).expect("typed Number residual");
         assert!(count > 0);

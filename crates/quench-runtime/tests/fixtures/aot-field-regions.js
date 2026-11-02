@@ -260,5 +260,27 @@ for (let i = 0; i < 200; i++) {
 Object.defineProperty(headerTail, 'left', {get() { events.push('header-get'); return 9; }});
 record(() => headerPivot(headerHead));
 output.push(String(headerTail.a));
+function makeBound(mask) {
+  const object = {state: 0, stamp: 0, changeMask(value) { mask = value; }, a: 0, b: 0, c: 0};
+  object.uniqueBoundMark = function () { this.state = this.state | mask; };
+  return object;
+}
+function runBound(object) { object.stamp = object.stamp + 1; object.uniqueBoundMark(); return object.state; }
+const boundFirst = makeBound(1);
+const boundSecond = makeBound(2);
+for (let i = 0; i < 200; i++) {
+  if (runBound(boundFirst) !== 1 || runBound(boundSecond) !== 2) throw Error('dynamic closure capture');
+}
+boundFirst.changeMask(4);
+record(() => runBound(boundFirst));
+boundFirst.changeMask({valueOf() { events.push('bound-coerce'); return 8; }});
+record(() => runBound(boundFirst));
+Object.defineProperty(boundSecond, 'uniqueBoundMark', {
+  value() { events.push('bound-replacement'); this.state += 16; }
+});
+record(() => runBound(boundSecond));
+Object.defineProperty(boundFirst, 'state', {writable: false});
+record(() => runBound(boundFirst));
+output.push(JSON.stringify([boundFirst.state, boundFirst.stamp, boundSecond.state, boundSecond.stamp]));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

@@ -13893,7 +13893,7 @@ fn lane_call_targets<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecod
                 && target.program == vm.active_program
                 && target.entry == CallEntry::Activates
                 && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
-            .then_some(super::compiled::CallTarget { callee: target.callee, function: target.function })
+            .then_some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(target.callee), function: target.function })
         })
         .collect()
 }
@@ -13926,10 +13926,11 @@ fn lane_body_inlined_activation<H: Host>(
     // Cache eviction is not invalidation of an immutable callee binding. Resolve
     // only when recovery needs the activation, rather than scanning at entry.
     let vm = unsafe { vm(cx) };
-    let target = vm.script_call_entry(call.target.callee)
+    let callee = call.target.identity().expect("published JIT callee identity");
+    let target = vm.script_call_entry(callee)
         // SAFETY: copy the current cache row before any cache mutation.
         .map(|target| unsafe { *target })
-        .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, call.target.callee))
+        .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
         .expect("published inlined callee binding");
     let target = &target;
     // SAFETY: the record is the call's in the running view.

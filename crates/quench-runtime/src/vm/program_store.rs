@@ -1059,7 +1059,7 @@ impl ProgramStore {
         self.native_call_bindings.borrow_mut().retain(|weak| {
             let Some(code) = weak.upgrade() else { return false; };
             let Some(method) = code.method() else { return false; };
-            if method.inlined.iter().any(|call| !live(call.target.callee)) {
+            if method.inlined.iter().any(|call| call.target.identity().is_none_or(|callee| !live(callee))) {
                 // SAFETY: forwarded from the collector's publication boundary.
                 unsafe { code.retire(); }
                 false

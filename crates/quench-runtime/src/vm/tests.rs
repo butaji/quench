@@ -21276,7 +21276,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         let callee_body = program.function(callee_id as usize);
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
-        targets[call] = Some(super::compiled::CallTarget { callee, function: callee_id });
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &targets).expect("legacy-observable inlined unit");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
         let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
@@ -21328,10 +21328,10 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         let other = vm.intern_atom("other");
         let other = vm.get_property(&program, receiver, other).unwrap();
         let crate::heap::FunctionKind::User(_, other_id) = vm.heap.function(other).unwrap().kind else { panic!("other") };
-        targets[call] = Some(super::compiled::CallTarget { callee, function: other_id });
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: other_id });
         assert!(vm.compile_lane_method(&program, caller_id, &targets).is_none(),
             "publication must reject a callee paired with the wrong function body");
-        targets[call] = Some(super::compiled::CallTarget { callee, function: callee_id });
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &targets).unwrap();
         assert_eq!(method.inlined.len(), 1);
         let published = vm.programs.publish_lane_method(method);
@@ -21342,7 +21342,7 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
                 // A second publication names an unrooted function clone. It must
                 // retire without rooting that function or dropping the live proof.
                 let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
-                targets[call] = Some(super::compiled::CallTarget { callee: orphan, function: callee_id });
+                targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
                 let method = vm.compile_lane_method(&program, caller_id, &targets).unwrap();
                 let dead = vm.programs.publish_lane_method(method);
                 vm.collect_now(&program);
@@ -21438,7 +21438,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let body = program.function(caller_id as usize);
         let mut targets = vec![None; body.code.len()];
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
-        targets[call] = Some(super::compiled::CallTarget { callee, function: callee_id });
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
         let method = vm.compile_lane_method(&program, caller_id, &targets).expect("closure capture unit compiles");
         assert_eq!(method.inlined.len(), 1, "callee captures must not retain a guest call");
         let total = vm.intern_atom("total");

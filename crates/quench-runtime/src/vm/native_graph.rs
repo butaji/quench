@@ -139,9 +139,10 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             signature: ir::Signature::new(isa.default_call_conv()),
         });
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
+        let inline_targets = super::compiled::static_call_targets(program);
         let typed_units: Vec<_> = (0..program.function_count()).map(|id|
             if options.regions(program.function(id).code.len()).is_none() {
-                super::compiled::lower_static_typed_region(program, id as u32, &*isa, lane_helpers)
+                super::compiled::lower_static_typed_region(program, id as u32, &inline_targets[id], &*isa, lane_helpers)
             } else { None }).collect();
         if typed_units.iter().any(Option::is_some) {
             functions.push(NativeFunction::Import {

@@ -13,11 +13,22 @@ use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstructio
 use crate::bytecode::Function;
 use crate::value::Value;
 
-/// The script target a call record's inline cache links, as the unit inlines it.
+/// Binding time of a callee: a published closure or a static body whose actual
+/// closure/environment is admitted at the call. Function bindings are accepted
+/// only for a body whose misses precede its sole store and infallible return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CalleeBinding { Identity(Value), Function }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CallTarget {
-    pub(crate) callee: Value,
+    pub(crate) callee: CalleeBinding,
     pub(crate) function: u32,
+}
+
+impl CallTarget {
+    pub(crate) fn identity(self) -> Option<Value> {
+        match self.callee { CalleeBinding::Identity(value) => Some(value), CalleeBinding::Function => None }
+    }
 }
 
 /// Where a unit PC comes from.
@@ -125,7 +136,9 @@ impl Unit {
     /// Source origins survive rebasing, including entry misses and liveness.
     #[cfg(feature = "aot")]
     pub(super) fn suffix(mut self, header: usize) -> Option<Self> {
-        if !self.frames.is_empty() || header >= self.instructions.len() { return None; }
+        if header >= self.instructions.len() { return None; }
+        if header == 0 { return Some(self); }
+        if !self.frames.is_empty() { return None; }
         self.instructions.drain(..header);
         self.origins.drain(..header);
         for instruction in &mut self.instructions {
@@ -145,6 +158,51 @@ impl Unit {
         };
         (frame, self.instructions[pc].capture_slot())
     }
+}
+
+/// Static method-name hints, resolved once per module into flat per-PC targets.
+/// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
+#[cfg(feature = "aot")]
+pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
+    let mut methods = vec![None::<Option<u32>>; program.atoms.len()];
+    for id in 0..program.function_count() {
+        program.with_record(id, |function| {
+            let mut closures = vec![None; usize::from(function.registers)];
+            for instruction in function.instructions() {
+                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
+                    if let Some(id) = closures.get(usize::from(instruction.register_a())).copied().flatten() {
+                        let slot = &mut methods[instruction.atom_index() as usize];
+                        *slot = Some(match *slot { None => Some(id), Some(Some(old)) if old == id => Some(id), _ => None });
+                    }
+                }
+                let value = match instruction.op() {
+                    Op::MakeClosure => Some(instruction.closure_function_index()),
+                    Op::Move => closures.get(usize::from(instruction.register_b())).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(register) = instruction.defined_register() { closures[usize::from(register)] = value; }
+                if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { closures.fill(None); }
+            }
+        });
+    }
+    (0..program.function_count()).map(|id| program.with_record(id, |function| {
+        let mut methods_by_register = vec![None; usize::from(function.registers)];
+        function.instructions().map(|instruction| {
+            let target = (instruction.op() == Op::Call).then(||
+                methods_by_register[usize::from(instruction.register_b())]).flatten();
+            let method = match instruction.op() {
+                Op::GetField => match instruction.field_lookup() {
+                    Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).copied().flatten().flatten(),
+                    _ => None,
+                },
+                Op::Move => methods_by_register[usize::from(instruction.register_b())],
+                _ => None,
+            };
+            if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
+            if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { methods_by_register.fill(None); }
+            target
+        }).collect()
+    })).collect()
 }
 
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at
@@ -182,8 +240,9 @@ fn decoded(function: &Function) -> Vec<WideInstruction> {
 /// `function` with each call `targets` names, whose callee `body` gives and qualifies, spliced
 /// in. A unit with no inlined call is the function itself.
 pub(crate) fn unit<'f>(
+    program: &crate::ResidualProgram,
     function: &Function,
-    targets: &[Option<CallTarget>],
+    target_at: &dyn Fn(usize) -> Option<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller = decoded(function);
@@ -192,11 +251,13 @@ pub(crate) fn unit<'f>(
     let mut inlined: Vec<Option<(Frame, Vec<WideInstruction>)>> = vec![None; caller.len()];
     let mut registers = u32::from(caller_registers);
     for (pc, instruction) in caller.iter().copied().enumerate() {
-        let Some(target) = targets.get(pc).copied().flatten() else { continue };
+        let Some(target) = target_at(pc) else { continue };
         if instruction.op() != Op::Call || instruction.result_flags() != 0 || instruction.direct_eval() || instruction.parameter_eval() {
             continue;
         }
         let Some(callee) = body(target.function) else { continue };
+        if target.callee == CalleeBinding::Function
+            && super::super::js_compiled::captured_field_store_candidate(program, callee).is_none() { continue; }
         let callee_code = decoded(callee);
         let arguments = ImmediateLayout::argument_count(instruction.imm());
         if callee_code.len() > MAX_INLINED_INSTRUCTIONS
@@ -315,8 +376,8 @@ mod tests {
         let body = program.function(caller as usize);
         let call = body.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
-        targets[call] = Some(CallTarget { callee: Value::UNDEFINED, function: leaf });
-        let mut unit = unit(body, &targets, &|function| program.function_get(function as usize)).unwrap();
+        targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
+        let mut unit = unit(&program, body, &|pc| targets.get(pc).copied().flatten(), &|function| program.function_get(function as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
         let masks = unit.register_masks(&program, caller).expect("covered remapped graph");
         for register in unit.caller_registers..unit.registers {

@@ -56,7 +56,9 @@ mod facts;
 mod lane_region;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
-pub(super) use lane_unit::{CallTarget, Frame as InlinedCall};
+pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
+#[cfg(feature = "aot")]
+pub(super) use lane_unit::static_call_targets;
 mod object_slots;
 mod frame_ssa;
 pub(super) use object_slots::NativeFieldLoad;
@@ -1825,24 +1827,27 @@ fn emit_js_guarded_return(
 }
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
+fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
+    let mut signature = Signature::new(builder.func.signature.call_conv);
+    signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
+    signature.returns.push(AbiParam::new(types::I64));
+    let signature = builder.import_signature(signature);
+    let call = builder.ins().call_indirect(signature, helper, arguments);
+    builder.inst_results(call)[0]
+}
+
 fn emit_lane_helper_call(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     helper: ir::Value,
     arguments: &[ir::Value],
 ) -> ir::Value {
-    let mut signature = Signature::new(builder.func.signature.call_conv);
-    for _ in 0..arguments.len() + 2 {
-        signature.params.push(AbiParam::new(types::I64));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    let signature = builder.import_signature(signature);
     let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
     let residual = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
-    let mut values = vec![vm, residual];
+    // All current helpers fit inline; larger future ABIs spill without a limit.
+    let mut values = smallvec::SmallVec::<[ir::Value; 8]>::from_slice(&[vm, residual]);
     values.extend_from_slice(arguments);
-    let call = builder.ins().call_indirect(signature, helper, &values);
-    builder.inst_results(call)[0]
+    emit_lane_call(builder, helper, &values)
 }
 
 /// Lower an own data-field store as the lane's store hit makes it
@@ -2086,6 +2091,7 @@ lane_helper_inventory! { H;
     FieldGet => lane_field_get::<H>,
     FieldSet => lane_field_set::<H>,
     GuardedCall => lane_guarded_call::<H>,
+    FunctionBinding => lane_function_binding::<H>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2208,19 +2214,20 @@ pub(super) struct StaticTypedRegion {
 }
 
 #[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: u32,
+pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: u32, targets: &[Option<u32>],
     isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Option<StaticTypedRegion>
 {
     if isa.pointer_type() != types::I64 { return None; }
     let function = program.function_get(function_id as usize)?;
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
-    let unit = lane_unit::unit(function, &[], &|_| None)?;
+    let unit = lane_unit::unit(program, function, &|pc| targets.get(pc).copied().flatten()
+        .map(|function| CallTarget { function, callee: CalleeBinding::Function }), &|id| program.function_get(id as usize))?;
     // A call-bearing unit starts at entry. Full lowering admits shared no-frame
     // calls and exits before a terminal call; any other unsupported call rejects
     // the unit through that same instruction/effect authority.
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
-    let header = if has_calls { 0 } else {
+    let header = if has_calls || !unit.frames.is_empty() { 0 } else {
         unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
             matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
@@ -7105,6 +7112,17 @@ unsafe extern "C" fn lane_guarded_call<H: Host>(vm: u64, residual: u64, program:
         .unwrap_or(Value::DELETED).to_bits()
 }
 
+/// Admit the actual closure for a statically selected body without entering it.
+unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, program: u64, callee: u64, function: u64) -> u64 {
+    // SAFETY: the linked unit owns this VM/program throughout the no-GC operation.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    let matches = !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
+        .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function);
+    // The admitted body is a leaf. Check its guest-call/interrupt permission
+    // here; no guest operation or nested call occurs before its single store.
+    u64::from(matches && vm.enter_guarded_call().is_some())
+}
+
 /// Static call-site obligations discharged once during lowering. The helper
 /// admits the newly dynamic callee/receiver and its no-frame execution plan.
 fn guarded_call_instruction(instruction: WideInstruction) -> bool {
@@ -7173,7 +7191,7 @@ impl<H: Host> Vm<H> {
         let body = program.function_get(function as usize)?;
         // Captured stores already use the shared frameless kernel. Unit entry
         // and capture admission add work without improving that compact proof.
-        let unit = lane_unit::unit(body, targets, &|callee| program.function_get(callee as usize)
+        let unit = lane_unit::unit(program, body, &|pc| targets.get(pc).copied().flatten(), &|callee| program.function_get(callee as usize)
             .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
         // Keep unresolved calls in the frameless lane until their verified inputs
         // can be bound before entry rather than admitted on every invocation.
@@ -7210,7 +7228,7 @@ impl<H: Host> Vm<H> {
         let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
         let mut recovery_room = None::<u16>;
         for frame in &unit.frames {
-            let room = self.bind_inlined_call(program, frame.target.callee, frame.target.function)?;
+            let room = self.bind_inlined_call(program, frame.target.identity()?, frame.target.function)?;
             recovery_room = Some(recovery_room.unwrap_or(0).max(room));
         }
         Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, recovery_room })
@@ -16669,7 +16687,7 @@ mod tests {
         ).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let residual = lower_static_typed_region(&program, 1, &*isa, 0).expect("call-free typed loop");
+        let residual = lower_static_typed_region(&program, 1, &[], &*isa, 0).expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
         let has_field_helper = |native: &ir::Function, resolver_symbol: u32| {
             let load_base = |value: ir::Value, expected_offset: i32| {
@@ -16713,13 +16731,60 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn function_binding_requires_call_budget_and_clear_interrupt() {
+        let (native, _, _) = linked_test_program("throw function leaf(){};", false);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        let callee = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
+        let (program, function, _) = vm.same_realm_user_target(callee).unwrap();
+        let admitted = |vm: &Vm<crate::test_host::TestHost>| unsafe {
+            lane_function_binding::<crate::test_host::TestHost>(vm as *const _ as u64, 0,
+                u64::from(program.raw()), callee.to_bits(), u64::from(function))
+        };
+        assert_eq!(admitted(&vm), 1);
+        {
+            let _limit = crate::stack::GuestCallLimitGuard::enter(1);
+            let _active = crate::stack::GuestCallGuard::enter().unwrap();
+            assert_eq!(admitted(&vm), 0, "no store may run after call-depth exhaustion");
+        }
+        assert_eq!(admitted(&vm), 1);
+        vm.execution_interrupt.request_termination();
+        assert_eq!(admitted(&vm), 0, "termination must precede the inlined store");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn static_function_bindings_inline_captures_at_the_call_edge_without_scratch_frames() {
+        let program = crate::Engine::specialize(
+            "function make(mask){let o={};o.uniqueMark=function(){this.state=this.state|mask;};return o;} function run(o){o.stamp=o.stamp+1;o.uniqueMark();return o.state;}",
+            "function-binding.js").unwrap();
+        let caller = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+        let targets = static_call_targets(&program);
+        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+            &|id| program.function_get(id as usize)).unwrap();
+        assert_eq!(unit.frames.len(), 1, "the static method hint must reach the shared inliner");
+        assert_eq!(unit.frames[0].target.callee, CalleeBinding::Function);
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0)
+            .expect("restartable captured store inline region");
+        let scratch_offset = std::mem::offset_of!(JsStepDispatch, inlined) as i32;
+        assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
+            .any(|instruction| matches!(region.function.dfg.insts[instruction],
+                ir::InstructionData::Load { offset, .. } if i32::from(offset) == scratch_offset)),
+            "caller-PC recovery needs no materialized callee scratch frame");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn linked_field_probes_share_a_dominating_object_header() {
         let program = crate::Engine::specialize(
             "function sum(o){let a=o.left;let b=o.right;o.mark();return a+b;}",
             "shared-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, 1, &*isa, 0).expect("typed field/call region");
+        let region = lower_static_typed_region(&program, 1, &[], &*isa, 0).expect("typed field/call region");
         let families = region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block))
             .filter(|instruction| matches!(region.function.dfg.insts[*instruction],
@@ -16741,11 +16806,11 @@ mod tests {
         let body = program.function_get(1).unwrap();
         assert!(body.instructions().any(|instruction| instruction.op() == Op::Call
             && instruction.returns_from_frame() && instruction.call_window().count == 1));
-        let region = lower_static_typed_region(&program, 1, &*isa, 0).expect("typed prefix before terminal call");
+        let region = lower_static_typed_region(&program, 1, &[], &*isa, 0).expect("typed prefix before terminal call");
         assert_eq!(region.header, 0);
         let nonterminal = crate::Engine::specialize(
             "function pipe(object){object.finish(3);return object.seen;}", "nonterminal-call.js").unwrap();
-        assert!(lower_static_typed_region(&nonterminal, 1, &*isa, 0).is_none(),
+        assert!(lower_static_typed_region(&nonterminal, 1, &[], &*isa, 0).is_none(),
             "unsupported nonterminal calls still require a full effect/recovery boundary");
     }
 
@@ -16759,7 +16824,7 @@ mod tests {
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pipe")).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, function as u32, &*isa, 0).expect("guarded call region");
+        let region = lower_static_typed_region(&program, function as u32, &[], &*isa, 0).expect("guarded call region");
         assert_eq!(region.header, 0, "call pipes start at the function's entry");
         let helper_offset = LaneHelper::GuardedCall as i32 * std::mem::size_of::<usize>() as i32;
         assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block)).any(|instruction| {
