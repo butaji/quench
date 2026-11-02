@@ -242,14 +242,13 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
-        let epoch = self.heap.collection_epoch();
         let cached = self.call_targets[index];
-        if cached.callee == callee && cached.epoch == epoch && cached.realm == self.realm.globals {
+        if cached.callee == callee {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::call_eligibility(0);
             return Some(cached);
         }
-        let target = self.resolve_in_loop_call_target(p, callee, index, epoch);
+        let target = self.resolve_in_loop_call_target(p, callee, index);
         #[cfg(feature = "profile-lane-exits")]
         if target.is_some() {
             super::lane_exits::call_eligibility(1);
@@ -302,7 +301,6 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         callee: Value,
         index: usize,
-        epoch: u64,
     ) -> Option<super::InLoopCallTarget> {
         let (program, function, env) = self.same_realm_user_target(callee)?;
         let owner = if program == self.active_program {
@@ -324,8 +322,6 @@ impl<H: Host> Vm<H> {
         };
         let target = super::InLoopCallTarget {
             callee,
-            epoch,
-            realm: self.realm.globals,
             program,
             function,
             env,

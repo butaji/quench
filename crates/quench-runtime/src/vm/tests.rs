@@ -41,6 +41,79 @@ fn fresh_execution_does_not_reuse_a_capture_walk_from_the_previous_heap() {
 }
 
 #[test]
+fn in_loop_callee_bindings_retire_at_collection_and_heap_reset() {
+    let program = Engine::specialize(
+        "function make(n) { return function read() { return n; }; } globalThis.kept = make(7);",
+        "callee-proof-lifetime.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let atom = vm.lookup_atom("kept").unwrap();
+    for full in [false, true] {
+        let callee = vm.own_property(vm.realm.globals, atom).unwrap();
+        let target = vm.in_loop_call_target(&program, callee).unwrap();
+        assert!(vm.call_targets.iter().any(|entry| entry.callee == callee));
+        assert_eq!(vm.call_value(&program, callee, Value::UNDEFINED, &[]).unwrap(), Value::number(7.0));
+        vm.collect_slow(&program, full);
+        assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+        let callee = vm.own_property(vm.realm.globals, atom).unwrap();
+        let rebound = vm.in_loop_call_target(&program, callee).unwrap();
+        assert_eq!((rebound.0, rebound.1), (target.0, target.1));
+        assert_eq!(vm.call_value(&program, callee, Value::UNDEFINED, &[]).unwrap(), Value::number(7.0));
+    }
+    vm.initialize(&program).unwrap();
+    assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+}
+
+#[test]
+fn retired_callee_bindings_do_not_survive_function_record_reuse() {
+    let program = Engine::specialize(
+        "globalThis.first = function first() { return 7; }; globalThis.second = function second() { return 9; };",
+        "callee-record-reuse.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    vm.collect_now(&program);
+    let first = vm.lookup_atom("first").unwrap();
+    let second = vm.lookup_atom("second").unwrap();
+    let first = vm.own_property(vm.realm.globals, first).unwrap();
+    let second = vm.own_property(vm.realm.globals, second).unwrap();
+    let orphan = vm.heap.alloc_function(vm.heap.function(first).unwrap().clone());
+    let old = vm.in_loop_call_target(&program, orphan).unwrap();
+    vm.collect_now(&program);
+    assert!(!vm.heap.is_live(orphan), "the binding must remain weak");
+    let replacement = vm.heap.alloc_function(vm.heap.function(second).unwrap().clone());
+    assert_eq!(replacement, orphan, "the swept function locator is reused");
+    let new = vm.in_loop_call_target(&program, replacement).unwrap();
+    assert_ne!(new.1, old.1, "the reused locator must resolve its new function");
+    assert_eq!(vm.call_value(&program, replacement, Value::UNDEFINED, &[]).unwrap(), Value::number(9.0));
+}
+
+#[test]
+fn in_loop_callee_bindings_retire_only_when_the_realm_changes() {
+    let program = Engine::specialize(
+        "globalThis.kept = function value() { return 7; };", "callee-proof-realm.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let original = vm.realm.globals;
+    let atom = vm.lookup_atom("kept").unwrap();
+    let callee = vm.own_property(original, atom).unwrap();
+    vm.in_loop_call_target(&program, callee).unwrap();
+    vm.switch_realm_global(original);
+    assert!(vm.call_targets.iter().any(|entry| entry.callee == callee));
+    let foreign = vm.create_realm_global(&program).unwrap();
+    vm.switch_realm_global(foreign);
+    assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+    assert!(vm.in_loop_call_target(&program, callee).is_none());
+    assert_eq!(vm.call_value(&program, callee, Value::UNDEFINED, &[]).unwrap(), Value::number(7.0));
+    assert_eq!(vm.realm.globals, foreign, "cross-realm return restores its caller");
+    assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+    vm.switch_realm_global(original);
+    assert!(vm.in_loop_call_target(&program, callee).is_some());
+}
+
+#[test]
 fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
     let source = r#"
       function exercise() {

@@ -396,6 +396,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
+        self.clear_call_targets();
         self.resolved_module_requests.clear();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);

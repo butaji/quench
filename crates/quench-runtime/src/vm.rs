@@ -1114,13 +1114,11 @@ impl std::ops::Index<WellKnownSymbol> for WellKnownSymbols {
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
 /// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
-/// for `callee` in `realm` until the collection after `epoch`: until then the callee's index
-/// names the same function cell, whose kind, environment and realm never change.
+/// for `callee` until collection, realm transition or heap reset clears the cache.
+/// Its function kind, environment and realm are immutable during that lifetime.
 #[derive(Clone, Copy)]
 struct InLoopCallTarget {
     callee: Value,
-    epoch: u64,
-    realm: Value,
     program: ProgramId,
     function: u32,
     env: Value,
@@ -1138,8 +1136,6 @@ enum InLoopPush {
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
-    epoch: 0,
-    realm: Value::UNDEFINED,
     program: ProgramId::MAIN,
     function: 0,
     env: Value::UNDEFINED,
@@ -2164,6 +2160,12 @@ impl<H: Host> Vm<H> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
     }
 
+    /// Retire weak callee bindings at their lifetime-changing edge. The fixed
+    /// direct-mapped cache pays no generation/realm polling on a hit.
+    fn clear_call_targets(&mut self) {
+        self.call_targets.fill(EMPTY_CALL_TARGET);
+    }
+
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
     #[inline]
@@ -2178,6 +2180,7 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
+        self.clear_call_targets();
         let leaving = ParkedRealm {
             global: previous,
             state: GlobalLexicalState {
@@ -2954,7 +2957,7 @@ impl<H: Host> Vm<H> {
         self.string_concats = None;
         self.string_atoms = None;
         self.recent_atom_strings = None;
-        *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
+        self.clear_call_targets();
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
