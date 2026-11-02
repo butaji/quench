@@ -1,997 +1,1083 @@
-use crate::host::{NodeHost, SharedNodeState};
-use crate::modules::net_shared_vm;
-use quench_runtime::{NativeContext, RootId, RootedError, Value};
-use std::time::{Duration, Instant};
+//! `ClientRequest` (lib/_http_client.js): an `OutgoingMessage` that renders a request head,
+//! takes a socket from its agent (or a connection of its own), and reads the response with
+//! a response parser, handing a reusable socket back to the agent.
 
-type Context<'a> = NativeContext<'a, NodeHost>;
+use super::outgoing;
+use super::parser::{is_informational, HeadOutcome, Kind};
+use super::parsing::{self, Executed};
+use super::{captured, class, current, function, get_slot, put_slot, throw_coded, Class, ErrorClass, Slot};
+use crate::modules::stream_shared_vm::{
+    arg, call_method, emit, get, is_nullish, is_string, is_undefined, listener_count, next_tick, number, on, once,
+    put, put_bool, remove_listener, truthy_member, Context, Outcome,
+};
+use quench_runtime::{RootId, RootedError};
 
+crate::modules::host_members::members!(Member, "httpClient", [
+    Construct,
+    Finish,
+    ImplicitHeader,
+    Abort,
+    Destroy,
+    OnSocket,
+    DeferToConnect,
+    SetTimeout,
+    SetNoDelay,
+    SetSocketKeepAlive,
+    ClearTimeout,
+    /// `emitAbortNT(req)`.
+    EmitAbort,
+    /// `onSocketNT(req, socket, err)`.
+    OnSocketTick,
+    /// `_destroy(req, err)` once a socket destroyed for a destroyed request finishes.
+    SocketDestroyed,
+    /// The socket listeners a request installs: `socketCloseListener`,
+    /// `socketErrorListener`, `socketOnEnd`, `socketOnData` and `ondrain`.
+    SocketClose,
+    SocketError,
+    SocketEnd,
+    SocketData,
+    SocketDrain,
+    /// `responseOnTimeout` and `emitRequestTimeout`, on the socket.
+    ResponseTimeout,
+    RequestTimeout,
+    /// `responseOnEnd`, on the response; `requestOnFinish`, on the request.
+    ResponseEnd,
+    RequestFinish,
+    /// `emitFreeNT(req)`.
+    EmitFree,
+    /// `listenSocketTimeout`'s `socket` listener.
+    ListenSocketTimeout,
+    /// `setSocketTimeout(sock, msecs)`, once a socket is assigned or connects.
+    SocketSetTimeout,
+    /// `_deferToConnect`'s `onSocket` and `callSocketMethod`, each over the request, the
+    /// method name and its arguments.
+    DeferredOnSocket,
+    DeferredCall,
+    /// The `createConnection` callback, called at most once.
+    ConnectionCreated,
+]);
 
-pub(crate) fn request_function(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let create = context.host_function(crate::host::shared_vm::operation("httpRequestCreate"))?;
-    let write = context.host_function(crate::host::shared_vm::operation("httpRequestWrite"))?;
-    let set_header =
-        context.host_function(crate::host::shared_vm::operation("httpRequestSetHeader"))?;
-    let remove_header =
-        context.host_function(crate::host::shared_vm::operation("httpRequestRemoveHeader"))?;
-    let end = context.host_function(crate::host::shared_vm::operation("httpRequestEnd"))?;
-    let destroy = context.host_function(crate::host::shared_vm::operation("httpRequestDestroy"))?;
-    let normalize_url =
-        context.host_function(crate::host::shared_vm::operation("httpRequestNormalizeUrl"))?;
-    let publish_diagnostics =
-        context.host_function(crate::host::shared_vm::operation("diagnosticsPublish"))?;
-    let symbols = super::super::util_shared_vm::symbols_binding(context)?;
-    let async_id_key = context.string_rooted("async_id_symbol");
-    let async_id_symbol = context.get_property_rooted(symbols, async_id_key)?;
-    let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let writable_key = context.string_rooted("Writable");
-    let writable = context.get_property_rooted(stream, writable_key)?;
-    let readable_key = context.string_rooted("Readable");
-    let readable = context.get_property_rooted(stream, readable_key)?;
-    let factory = crate::host::removed_javascript("node:http/request.js")?;
-    let undefined = context.undefined();
-    context.call_rooted(
-        factory,
-        undefined,
-        &[
-            writable,
-            readable,
-            create,
-            write,
-            set_header,
-            remove_header,
-            end,
-            destroy,
-            normalize_url,
-            publish_diagnostics,
-            async_id_symbol,
-        ],
-    )
+/// The methods whose requests carry no body by default.
+const BODYLESS_METHODS: [&str; 6] = ["GET", "HEAD", "DELETE", "OPTIONS", "TRACE", "CONNECT"];
+/// The port a request defaults to without an agent's.
+const DEFAULT_PORT: f64 = 80.0;
+/// The largest timer duration (`TIMEOUT_MAX`).
+const TIMEOUT_MAX: f64 = 2_147_483_647.0;
+/// The bytes a request path may hold (`INVALID_PATH_REGEX` rejects the rest).
+const PATH_BYTES: std::ops::RangeInclusive<u16> = 0x21..=0xff;
+
+pub(crate) fn build(c: &mut Context<'_>, outgoing: RootId) -> Outcome {
+    let class = super::constructor(c, Member::Construct, "ClientRequest")?;
+    super::inherit(c, class, outgoing)?;
+    let prototype = get(c, class, "prototype")?;
+    super::methods(c, prototype, &[
+        ("_finish", Member::Finish),
+        ("_implicitHeader", Member::ImplicitHeader),
+        ("abort", Member::Abort),
+        ("destroy", Member::Destroy),
+        ("onSocket", Member::OnSocket),
+        ("_deferToConnect", Member::DeferToConnect),
+        ("setTimeout", Member::SetTimeout),
+        ("setNoDelay", Member::SetNoDelay),
+        ("setSocketKeepAlive", Member::SetSocketKeepAlive),
+        ("clearTimeout", Member::ClearTimeout),
+    ])?;
+    for (which, member, name) in [
+        (Class::ClientSocketClose, Member::SocketClose, "socketCloseListener"),
+        (Class::ClientSocketError, Member::SocketError, "socketErrorListener"),
+        (Class::ClientSocketEnd, Member::SocketEnd, "socketOnEnd"),
+        (Class::ClientSocketData, Member::SocketData, "socketOnData"),
+        (Class::ClientSocketDrain, Member::SocketDrain, "ondrain"),
+        (Class::ClientResponseTimeout, Member::ResponseTimeout, "responseOnTimeout"),
+        (Class::ClientRequestTimeout, Member::RequestTimeout, "emitRequestTimeout"),
+        (Class::ClientResponseEnd, Member::ResponseEnd, "responseOnEnd"),
+        (Class::ClientRequestFinish, Member::RequestFinish, "requestOnFinish"),
+    ] {
+        let listener = function(c, member, name, &[])?;
+        super::set_class(c, which, listener)?;
+    }
+    Ok(class)
 }
 
-pub(crate) fn normalize_url(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let input = match args.first().copied() {
-        Some(root) => context.string_text(root)?,
-        None => None,
-    };
-    let Some(input) = input else {
-        return invalid_url(context, "The \"url\" argument must be of type string");
-    };
-    let parsed = match url::Url::parse(&input) {
-        Ok(parsed) => parsed,
-        Err(_) => return invalid_url(context, "Invalid URL"),
-    };
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        let error = context.type_error_rooted(&format!(
-            "Protocol \"{}:\" not supported. Expected \"http:\" or \"https:\"",
-            parsed.scheme()
-        ))?;
-        set_text(context, error, "code", "ERR_INVALID_PROTOCOL")?;
-        return Err(context.throw(error));
-    }
-    let Some(hostname) = parsed.host_str() else {
-        return invalid_url(context, "Invalid URL");
-    };
-    let port = parsed.port_or_known_default().unwrap_or(80);
-    let mut path = parsed.path().to_owned();
-    if let Some(query) = parsed.query() {
-        path.push('?');
-        path.push_str(query);
-    }
-    let options = context.object_rooted()?;
-    set_text(context, options, "hostname", hostname)?;
-    let port = context.number(f64::from(port));
-    set(context, options, "port", port)?;
-    set_text(
-        context,
-        options,
-        "protocol",
-        &format!("{}:", parsed.scheme()),
-    )?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        let username = decode_url_auth_component(parsed.username());
-        let password = parsed.password().map(decode_url_auth_component).unwrap_or_default();
-        set_text(context, options, "auth", &format!("{username}:{password}"))?;
-    }
-    set_text(context, options, "path", &path)?;
-    set_text(context, options, "method", "GET")?;
-    Ok(options)
-}
-
-fn decode_url_auth_component(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let high = (bytes[index + 1] as char).to_digit(16);
-            let low = (bytes[index + 2] as char).to_digit(16);
-            if let (Some(high), Some(low)) = (high, low) {
-                decoded.push(((high << 4) | low) as u8);
-                index += 3;
-                continue;
+pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    let undefined = c.undefined();
+    let at = |index: usize| args.get(index).copied().unwrap_or(undefined);
+    match current::<Member>(c)? {
+        Member::Construct => {
+            construct(c, this, args)?;
+            Ok(c.undefined())
+        }
+        Member::Finish => {
+            emit(c, this, "prefinish", &[])?;
+            Ok(c.undefined())
+        }
+        Member::ImplicitHeader => {
+            implicit_header(c, this)?;
+            Ok(c.undefined())
+        }
+        Member::Abort => {
+            if !truthy_member(c, this, "aborted")? {
+                put_bool(c, this, "aborted", true)?;
+                let abort = function(c, Member::EmitAbort, "emitAbortNT", &[this])?;
+                next_tick(c, abort, &[])?;
+                call_method(c, this, "destroy", &[])?;
             }
+            Ok(c.undefined())
         }
-        decoded.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&decoded).into_owned()
-}
-
-fn invalid_url(context: &mut Context<'_>, message: &str) -> Result<RootId, RootedError> {
-    let error = context.type_error_rooted(message)?;
-    set_text(context, error, "code", "ERR_INVALID_URL")?;
-    Err(context.throw(error))
-}
-
-fn set_text(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-    value: &str,
-) -> Result<(), RootedError> {
-    let value = context.string_rooted(value);
-    set(context, object, name, value)
-}
-
-fn set(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-    value: RootId,
-) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    if context.set_property_rooted(object, key, value, object)? {
-        Ok(())
-    } else {
-        Err(RootedError::host(format!(
-            "cannot initialize shared HTTP request option {name}"
-        )))
-    }
-}
-
-pub(crate) fn create(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let options = args
-        .first()
-        .copied()
-        .ok_or_else(|| RootedError::host("http.request options are missing"))?;
-    let host = text_property(context, options, "hostname")?
-        .or(text_property(context, options, "host")?)
-        .unwrap_or_else(|| "localhost".to_owned());
-    let port = port_property(context, options)?
-        .filter(|port| port.is_finite() && (0.0..=u16::MAX as f64).contains(port))
-        .unwrap_or(80.0) as u16;
-    let method = text_property(context, options, "method")?.unwrap_or_else(|| "GET".to_owned());
-    let path = text_property(context, options, "path")?.unwrap_or_else(|| "/".to_owned());
-    let validation = text_property(context, options, "httpValidation")?;
-    let relaxed = matches!(validation.as_deref(), Some("relaxed" | "insecure"));
-    let headers = read_headers(context, args.get(1).copied(), relaxed)?;
-    let set_default_headers = args
-        .get(2)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let omit_host = args
-        .get(3)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let agent_object = object_property(context, options, "agent")?;
-    let agent = agent_object
-        .map(|agent| property_id(context, agent, "_quenchSharedAgentId"))
-        .transpose()?
-        .flatten();
-    let (keep_alive, idle_timeout, max_sockets, max_free_sockets) = match agent {
-        Some(_) => {
-            let agent = agent_object.expect("an agent id has an agent object");
-            // Node's `Agent.keepSocketAlive` arms the free-socket timer with
-            // `agent.options.timeout` (`keepAliveMsecs` is the TCP probe delay),
-            // where 0 leaves it disarmed.
-            let timeout = match object_property(context, agent, "options")? {
-                Some(options) => number_property(context, options, "timeout")?,
-                None => None,
-            };
-            (
-                boolean_property(context, agent, "keepAlive")?.unwrap_or(false),
-                timeout
-                    .filter(|msecs| msecs.is_finite() && *msecs > 0.0)
-                    .map(|msecs| Duration::from_millis(msecs as u64)),
-                socket_limit(context, agent, "maxSockets")?.unwrap_or(usize::MAX),
-                number_property(context, agent, "maxFreeSockets")?
-                    .map(|value| {
-                        if value.is_finite() && value >= 0.0 {
-                            value as usize
-                        } else {
-                            usize::MAX
-                        }
-                    })
-                    .unwrap_or(256),
-            )
-        }
-        None => (false, None, usize::MAX, 256),
-    };
-    let origin = super::state::OriginKey::new(agent, &host, port);
-    let state = context.host_mut().shared_state();
-    let id = state
-        .borrow_mut()
-        .http
-        .request_id()
-        .map_err(RootedError::host)?;
-    // Bind the response callbacks to the async context that created this
-    // ClientRequest so AsyncLocalStorage survives the transport boundary.
-    let async_id = super::super::async_hooks_shared_vm::create_context(&state);
-    let mut host_state = state.borrow_mut();
-    host_state.http.requests.insert(
-        id,
-        super::state::OutgoingRequest {
-            async_id,
-            host,
-            port,
-            method,
-            path,
-            headers,
-            trailers: Vec::new(),
-            set_default_headers,
-            omit_host,
-            body: Default::default(),
-            origin,
-            keep_alive,
-            max_sockets,
-            max_free_sockets,
-            idle_timeout,
-        },
-    );
-    Ok(context.number(id as f64))
-}
-
-pub(crate) fn write(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let chunk = args
-        .get(1)
-        .copied()
-        .ok_or_else(|| RootedError::host("HTTP request chunk is missing"))?;
-    let chunk = context.to_string(chunk)?.into_bytes();
-    let explicit = args
-        .get(2)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let state = context.host_mut().shared_state();
-    let mut host = state.borrow_mut();
-    let Some(request) = host.http.requests.get_mut(&id) else {
-        return Err(RootedError::host(
-            "shared HTTP request is no longer writable",
-        ));
-    };
-    request.body.push(chunk, explicit);
-    Ok(context.boolean(true))
-}
-
-pub(crate) fn remove_header(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let name = args
-        .get(1)
-        .copied()
-        .ok_or_else(|| RootedError::host("HTTP request header name is missing"))?;
-    let name = context.to_string(name)?;
-    if let Some(request) = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .http
-        .requests
-        .get_mut(&id)
-    {
-        request
-            .headers
-            .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
-    }
-    Ok(context.undefined())
-}
-
-pub(crate) fn set_header(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let relaxed = args
-        .get(2)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let headers = read_headers(context, args.get(1).copied(), relaxed)?;
-    let state = context.host_mut().shared_state();
-    if let Some(request) = state.borrow_mut().http.requests.get_mut(&id) {
-        let header_count = headers.len();
-        let mut replacements: Vec<(String, Vec<(String, String)>)> = Vec::new();
-        for (name, value) in headers {
-            if let Some((_, values)) = replacements
-                .iter_mut()
-                .find(|(key, _)| key.eq_ignore_ascii_case(&name))
-            {
-                values.push((name, value));
-            } else {
-                replacements.push((name.clone(), vec![(name, value)]));
+        Member::Destroy => {
+            if truthy_member(c, this, "destroyed")? {
+                return Ok(this);
             }
+            let error = at(0);
+            put_bool(c, this, "destroyed", true)?;
+            let response = get(c, this, "res")?;
+            if c.truthy_rooted(response)? {
+                call_method(c, response, "_dump", &[])?;
+            }
+            put_slot(c, this, Slot::Error, error)?;
+            let socket = outgoing::socket(c, this)?;
+            if !is_nullish(c, socket) {
+                call_method(c, socket, "destroy", &[error])?;
+            }
+            Ok(this)
         }
-        let mut inserted = vec![false; replacements.len()];
-        let mut updated = Vec::with_capacity(request.headers.len() + header_count);
-        for (name, value) in std::mem::take(&mut request.headers) {
-            if let Some(index) = replacements
-                .iter()
-                .position(|(key, _)| key.eq_ignore_ascii_case(&name))
-            {
-                if !inserted[index] {
-                    updated.append(&mut replacements[index].1);
-                    inserted[index] = true;
+        Member::OnSocket => {
+            let (socket, error) = (at(0), at(1));
+            let tick = function(c, Member::OnSocketTick, "onSocketNT", &[this, socket, error])?;
+            next_tick(c, tick, &[])?;
+            Ok(c.undefined())
+        }
+        Member::DeferToConnect => {
+            let (method, values) = (at(0), at(1));
+            defer_to_connect(c, this, method, values)?;
+            Ok(c.undefined())
+        }
+        Member::SetTimeout => set_timeout(c, this, at(0), at(1)),
+        Member::SetNoDelay => {
+            let value = at(0);
+            let method = c.string_rooted("setNoDelay");
+            let values = c.array_rooted(&[value])?;
+            defer_to_connect(c, this, method, values)?;
+            Ok(c.undefined())
+        }
+        Member::SetSocketKeepAlive => {
+            let (enable, delay) = (at(0), at(1));
+            let method = c.string_rooted("setKeepAlive");
+            let values = c.array_rooted(&[enable, delay])?;
+            defer_to_connect(c, this, method, values)?;
+            Ok(c.undefined())
+        }
+        Member::ClearTimeout => {
+            let zero = c.number(0.0);
+            set_timeout(c, this, zero, at(0))?;
+            Ok(c.undefined())
+        }
+        Member::EmitAbort => {
+            let [request] = captured(c)?;
+            emit(c, request, "abort", &[])?;
+            Ok(c.undefined())
+        }
+        Member::OnSocketTick => {
+            let [request, socket, error] = captured(c)?;
+            on_socket_tick(c, request, socket, error)?;
+            Ok(c.undefined())
+        }
+        Member::SocketDestroyed => {
+            let [request, error] = captured(c)?;
+            let mut failure = at(0);
+            if crate::modules::stream_shared_vm::errors::has_code(c, failure, "ERR_STREAM_PREMATURE_CLOSE")? {
+                failure = c.null();
+            }
+            let error = if c.truthy_rooted(failure)? { failure } else { error };
+            destroyed(c, request, error)?;
+            Ok(c.undefined())
+        }
+        Member::SocketClose => {
+            socket_close(c, this)?;
+            Ok(c.undefined())
+        }
+        Member::SocketError => {
+            socket_error(c, this, at(0))?;
+            Ok(c.undefined())
+        }
+        Member::SocketEnd => {
+            socket_end(c, this)?;
+            Ok(c.undefined())
+        }
+        Member::SocketData => {
+            socket_data(c, this, at(0))?;
+            Ok(c.undefined())
+        }
+        Member::SocketDrain => {
+            let message = get(c, this, "_httpMessage")?;
+            if c.truthy_rooted(message)? && !truthy_member(c, message, "finished")? {
+                let need = get_slot(c, message, Slot::NeedDrain)?;
+                if c.truthy_rooted(need)? {
+                    let no = c.boolean(false);
+                    put_slot(c, message, Slot::NeedDrain, no)?;
+                    emit(c, message, "drain", &[])?;
                 }
+            }
+            Ok(c.undefined())
+        }
+        Member::ResponseTimeout => {
+            let request = get(c, this, "_httpMessage")?;
+            if c.truthy_rooted(request)? {
+                let response = get(c, request, "res")?;
+                if c.truthy_rooted(response)? {
+                    emit(c, response, "timeout", &[])?;
+                }
+            }
+            Ok(c.undefined())
+        }
+        Member::RequestTimeout => {
+            let request = get(c, this, "_httpMessage")?;
+            if c.truthy_rooted(request)? {
+                emit(c, request, "timeout", &[])?;
+            }
+            Ok(c.undefined())
+        }
+        Member::ResponseEnd => {
+            response_end(c, this)?;
+            Ok(c.undefined())
+        }
+        Member::RequestFinish => {
+            if truthy_member(c, this, "shouldKeepAlive")? && truthy_member(c, this, "_ended")? {
+                response_keep_alive(c, this)?;
+            }
+            Ok(c.undefined())
+        }
+        Member::EmitFree => {
+            let [request] = captured(c)?;
+            put_bool(c, request, "_closed", true)?;
+            emit(c, request, "close", &[])?;
+            let socket = outgoing::socket(c, request)?;
+            if c.truthy_rooted(socket)? {
+                emit(c, socket, "free", &[])?;
+            }
+            Ok(c.undefined())
+        }
+        Member::ListenSocketTimeout => {
+            let socket = at(0);
+            let listener = class(c, Class::ClientRequestTimeout)?;
+            once(c, socket, "timeout", listener)?;
+            Ok(c.undefined())
+        }
+        Member::SocketSetTimeout => {
+            let [msecs, known] = captured(c)?;
+            let socket = if is_undefined(c, known) { at(0) } else { known };
+            set_socket_timeout(c, socket, msecs)?;
+            Ok(c.undefined())
+        }
+        Member::DeferredOnSocket => {
+            let [request, method, values] = captured(c)?;
+            on_socket_deferred(c, request, method, values)?;
+            Ok(c.undefined())
+        }
+        Member::DeferredCall => {
+            let [request, method, values] = captured(c)?;
+            let socket = outgoing::socket(c, request)?;
+            call_socket_method(c, socket, method, values)?;
+            Ok(c.undefined())
+        }
+        Member::ConnectionCreated => {
+            let [request, called] = captured(c)?;
+            if truthy_member(c, called, "0")? {
+                return Ok(c.undefined());
+            }
+            put_bool(c, called, "0", true)?;
+            let (error, socket) = (at(0), at(1));
+            if c.truthy_rooted(error)? {
+                let nop = crate::modules::stream_shared_vm::intrinsics(c)?.nop;
+                let emit_error = function(c, super::outgoing::Member::EmitError, "", &[request, error, nop])?;
+                next_tick(c, emit_error, &[])?;
             } else {
-                updated.push((name, value));
+                call_method(c, request, "onSocket", &[socket])?;
             }
-        }
-        for (index, (_, values)) in replacements.iter_mut().enumerate() {
-            if !inserted[index] {
-                updated.append(values);
-            }
-        }
-        request.headers = updated;
-    }
-    Ok(context.undefined())
-}
-
-pub(crate) fn end(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let request_root = args
-        .get(1)
-        .copied()
-        .ok_or_else(|| RootedError::host("HTTP ClientRequest is missing"))?;
-    let mut request = {
-        let state = context.host_mut().shared_state();
-        let mut guard = state.borrow_mut();
-        if !guard.http.requests.contains_key(&id) {
-            return Err(RootedError::host("shared HTTP request has already ended"));
-        }
-        guard.http.requests.remove(&id).unwrap()
-    };
-    let trailers_key = context.string_rooted("__quenchTrailers");
-    let trailers_root = context.get_property_rooted(request_root, trailers_key)?;
-    context.release_root(trailers_key);
-    let trailers = read_headers(context, Some(trailers_root), false);
-    context.release_root(trailers_root);
-    request.trailers = trailers?;
-    let socket_key = context.string_rooted("socket");
-    let socket_object = context.get_property_rooted(request_root, socket_key)?;
-    let supplied_socket = if context.is_object_rooted(socket_object)? {
-        property_id(context, socket_object, "__quenchNetSocketId")?
-    } else {
-        None
-    };
-    let request_bytes = serialize(&request);
-    let request_root = context.retain(request_root)?;
-    let client = super::state::Client {
-        request_id: id,
-        async_id: request.async_id,
-        request_root,
-        request: request_bytes,
-        response_parser: super::protocol::ResponseParser::for_method(&request.method),
-        response_root: None,
-        origin: request.origin,
-        keep_alive: request.keep_alive,
-        max_sockets: request.max_sockets,
-        max_free_sockets: request.max_free_sockets,
-        idle_timeout: request.idle_timeout,
-        reused: false,
-        supplied_socket: supplied_socket.is_some(),
-    };
-    let state = context.host_mut().shared_state();
-    if let Some(socket) = supplied_socket {
-        // The request's socket is a public net.Socket (`Agent.createConnection`), whose
-        // owner keeps or closes it. HTTP takes it over for this exchange: a connected
-        // socket gets its reads restarted (stream delivery stopped them) and the request
-        // written; a connecting one is written once it connects (poll's `Connected`).
-        let mut host = state.borrow_mut();
-        if net_shared_vm::is_connected(&host.tcp, socket) {
-            if !net_shared_vm::read_active(&host.tcp, socket) {
-                net_shared_vm::start_read(&mut host.tcp, socket)
-                    .map_err(|error| RootedError::host(error.to_string()))?;
-            }
-            net_shared_vm::write(&mut host.tcp, socket, &client.request).map_err(RootedError::host)?;
-        }
-        host.http.clients.insert(socket, client);
-        return Ok(context.undefined());
-    }
-    let outcome = start_client(&mut state.borrow_mut(), client);
-    match outcome {
-        Ok(StartOutcome::Started { reused: true }) => {
-            mark_reused_socket(context, request_root)?;
-            Ok(context.undefined())
-        }
-        Ok(_) => Ok(context.undefined()),
-        Err(failure) => {
-            let (client, error) = *failure;
-            context.release_root(client.request_root);
-            Err(RootedError::host(error))
+            Ok(c.undefined())
         }
     }
 }
 
-/// Node's `ClientRequest.reusedSocket`: false until the agent hands the request a
-/// socket from its free pool (`Agent.prototype.reuseSocket`).
-fn mark_reused_socket(context: &mut Context<'_>, request: RootId) -> Result<(), RootedError> {
-    let reused = context.boolean(true);
-    set(context, request, "reusedSocket", reused)
-}
-
-/// Where a completed request runs: a free keep-alive socket, a fresh socket, or
-/// the origin's queue when its agent is at `maxSockets`.
-enum StartOutcome {
-    Started { reused: bool },
-    Queued,
-}
-
-fn start_client(
-    host: &mut SharedNodeState,
-    mut client: super::state::Client,
-) -> Result<StartOutcome, Box<(super::state::Client, String)>> {
-    if client.origin.pooled() {
-        // Node's agent takes a socket from `freeSockets[name]` for this origin and
-        // destroys one it cannot use (peer closed, stray bytes, mid-delivery).
-        while let Some(idle) = host.http.take_free_socket(&client.origin) {
-            if free_socket_is_usable(host, idle.socket)
-                && net_shared_vm::write(&mut host.tcp, idle.socket, &client.request).is_ok()
-            {
-                client.reused = true;
-                // Node's `reuseSocket` re-refs the socket `keepSocketAlive` unref'd.
-                net_shared_vm::socket_reference(&mut host.tcp, idle.socket, true);
-                start_read_if_idle(host, idle.socket);
-                host.http.clients.insert(idle.socket, client);
-                return Ok(StartOutcome::Started { reused: true });
-            }
-            close_agent_socket(host, Some(&client.origin), idle.socket);
-        }
-        if !host.http.has_capacity(&client.origin, client.max_sockets) {
-            host.http
-                .pending
-                .push_back(super::state::PendingRequest { client });
-            return Ok(StartOutcome::Queued);
-        }
-    }
-    let host_name = client.origin.host.clone();
-    let port = client.origin.port;
-    match net_shared_vm::connect(&mut host.tcp, host_name, port) {
-        Ok(socket) => {
-            if client.origin.pooled() {
-                host.http.own_socket(&client.origin, socket);
-            }
-            host.http.clients.insert(socket, client);
-            Ok(StartOutcome::Started { reused: false })
-        }
-        Err(error) => Err(Box::new((client, error))),
-    }
-}
-
-/// Whether a free socket can carry a new exchange: it is still open, and the
-/// transport has delivered every byte it already read for it. A socket in
-/// delivery still owns a queued transport event, whose bytes would be parsed as
-/// the next exchange's response.
-fn free_socket_is_usable(host: &SharedNodeState, socket: u64) -> bool {
-    net_shared_vm::socket_is_open(&host.tcp, socket)
-        && net_shared_vm::delivery_delivered(&host.tcp, socket)
-}
-
-/// Start queued requests whose origin now has a free socket or room under
-/// `maxSockets`, as Node's agent does when a request frees a socket. Returns the
-/// exchanges whose fresh connection failed, and whether any started.
-pub(crate) fn drain_pending(
-    host: &mut SharedNodeState,
-) -> (Vec<(super::state::Client, String)>, bool) {
-    let mut failures = Vec::new();
-    let mut progressed = false;
-    loop {
-        let index = host.http.pending.iter().position(|pending| {
-            let origin = &pending.client.origin;
-            host.http.has_free_socket(origin)
-                || host.http.has_capacity(origin, pending.client.max_sockets)
+/// `validateHost(host, name)`.
+fn validate_host(c: &mut Context<'_>, host: RootId, name: &str) -> Outcome {
+    if !is_nullish(c, host) && !is_string(c, host) {
+        return Err(match crate::modules::util_shared_vm::argument_type_error_with_expected(
+            c,
+            host,
+            &format!("options.{name}"),
+            "of type string or one of undefined or null",
+        ) {
+            Ok(error) | Err(error) => error,
         });
-        let Some(index) = index else { break };
-        let Some(pending) = host.http.pending.remove(index) else {
-            break;
-        };
-        // Node's agent hands a freed socket to the queued request through its
-        // `free` handler, which leaves `reusedSocket` false: only a request that
-        // finds a free socket when the agent adds it is flagged.
-        match start_client(host, pending.client) {
-            Ok(StartOutcome::Started { .. }) => progressed = true,
-            // Capacity disappeared between the check and the start; the client is
-            // back in the queue.
-            Ok(StartOutcome::Queued) => break,
-            Err(failure) => {
-                progressed = true;
-                failures.push(*failure);
-            }
-        }
     }
-    (failures, progressed)
+    Ok(host)
 }
 
-/// Apply the two pool facts time and the transport own: a socket the transport
-/// already dropped holds no `maxSockets` slot, and a free socket past its agent
-/// timeout is destroyed (Node's `keepSocketAlive` timer).
-pub(crate) fn maintain_agent_pools(host: &mut SharedNodeState) {
-    let now = Instant::now();
-    let mut expired = Vec::new();
-    for (key, origin) in host.http.origins.iter_mut() {
-        origin
-            .sockets
-            .retain(|socket| net_shared_vm::socket_is_open(&host.tcp, *socket));
-        let mut kept = Vec::with_capacity(origin.idle.len());
-        for idle in origin.idle.drain(..) {
-            if !origin.sockets.contains(&idle.socket) {
-                continue;
-            }
-            if idle.expires_at.is_some_and(|expires_at| expires_at <= now) {
-                expired.push((key.clone(), idle.socket));
-            } else {
-                kept.push(idle);
-            }
-        }
-        origin.idle = kept;
-    }
-    for (key, socket) in expired {
-        close_agent_socket(host, Some(&key), socket);
-    }
-}
-
-/// Leave `socket` free on its agent when the exchange permits reuse.
-pub(crate) fn release_agent_socket(
-    host: &mut SharedNodeState,
-    socket: u64,
-    client: &super::state::Client,
-) {
-    // A public net.Socket's agent pools it in its own `freeSockets`; one the exchange
-    // cannot keep alive ends here, as for an unpooled socket.
-    if client.supplied_socket {
-        if !client.keep_alive {
-            net_shared_vm::close_socket(&mut host.tcp, socket);
-        }
-        return;
-    }
-    let origin = &client.origin;
-    if !origin.pooled() {
-        net_shared_vm::close_socket(&mut host.tcp, socket);
-        return;
-    }
-    // A destroyed agent, a `Connection: close` exchange, or a socket that already
-    // left the transport all end the socket instead of pooling it.
-    if !client.keep_alive
-        || !free_socket_is_usable(host, socket)
-        || !host.http.owns_socket(origin, socket)
-    {
-        close_agent_socket(host, Some(origin), socket);
-        return;
-    }
-    let expires_at = client.idle_timeout.map(|timeout| Instant::now() + timeout);
-    if !host
-        .http
-        .free_socket(origin, socket, expires_at, client.max_free_sockets)
-    {
-        close_agent_socket(host, Some(origin), socket);
-        return;
-    }
-    // Node's `keepSocketAlive` unrefs a free socket: it keeps no process alive,
-    // while the transport still reports its end or stray bytes whenever the loop
-    // runs for another reason.
-    net_shared_vm::socket_reference(&mut host.tcp, socket, false);
-    start_read_if_idle(host, socket);
-}
-
-/// Destroy a socket the caller found free on its agent: Node's free-socket guards
-/// destroy a socket that ends or receives data instead of reusing it. Returns
-/// whether the socket was free.
-pub(crate) fn destroy_free_socket(host: &mut SharedNodeState, socket: u64) -> bool {
-    let Some(origin) = host.http.take_free_socket_by_id(socket) else {
-        return false;
+/// `getTimerDuration(msecs, name)`.
+fn timer_duration(c: &mut Context<'_>, msecs: RootId, name: &str) -> Result<f64, RootedError> {
+    let Some(value) = c.rooted_value(msecs).and_then(|value| value.as_number()) else {
+        return Err(match crate::modules::util_shared_vm::argument_type_error(c, msecs, name, "number") {
+            Ok(error) | Err(error) => error,
+        });
     };
-    close_agent_socket(host, Some(&origin), socket);
-    true
-}
-
-fn start_read_if_idle(host: &mut SharedNodeState, socket: u64) {
-    if !net_shared_vm::read_active(&host.tcp, socket) {
-        let _ = net_shared_vm::start_read(&mut host.tcp, socket);
-    }
-}
-
-/// The pool `client`'s socket belongs to, when it has an agent.
-pub(crate) fn pooled_origin(client: &super::state::Client) -> Option<&super::state::OriginKey> {
-    client.origin.pooled().then_some(&client.origin)
-}
-
-/// Drop every pool record of `socket` and close it. A socket no agent owns is
-/// simply closed.
-fn close_agent_socket(
-    host: &mut SharedNodeState,
-    origin: Option<&super::state::OriginKey>,
-    socket: u64,
-) {
-    if let Some(origin) = origin {
-        host.http.forget_socket(origin, socket);
-    }
-    net_shared_vm::close_socket(&mut host.tcp, socket);
-}
-
-pub(crate) fn destroy(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let state = context.host_mut().shared_state();
-    let (client, cancelled_async_id) = {
-        let mut host = state.borrow_mut();
-        let request_async_id = host
-            .http
-            .requests
-            .remove(&id)
-            .map(|request| request.async_id);
-        let pending = host
-            .http
-            .pending
-            .iter()
-            .position(|pending| pending.client.request_id == id);
-        let client = if let Some(pending) = pending {
-            host.http
-                .pending
-                .remove(pending)
-                .map(|pending| pending.client)
-        } else {
-            let socket = host
-                .http
-                .clients
-                .iter()
-                .find_map(|(socket, client)| (client.request_id == id).then_some(*socket));
-            socket.and_then(|socket| {
-                let client = host.http.clients.remove(&socket)?;
-                close_agent_socket(&mut host, pooled_origin(&client), socket);
-                Some(client)
-            })
-        };
-        (client, request_async_id)
-    };
-    if let Some(client) = client {
-        if let Some(response) = client.response_root {
-            let supplied_error = args.get(1).copied().filter(|error| {
-                context
-                    .rooted_value(*error)
-                    .is_some_and(|value| !value.is_undefined() && !value.is_null())
-            });
-            let error = if let Some(error) = supplied_error {
-                error
-            } else {
-                let error = context.error_rooted("socket hang up")?;
-                set_text(context, error, "code", "ECONNRESET")?;
-                error
-            };
-            let destroy_key = context.string_rooted("destroy");
-            let destroy = context.get_property_rooted(response, destroy_key)?;
-            context.call_rooted(destroy, response, &[error])?;
-            context.release_root(destroy);
-            context.release_root(destroy_key);
-            if supplied_error.is_none() {
-                context.release_root(error);
-            }
-            context.release_root(response);
-        }
-        context.release_root(client.request_root);
-        super::super::async_hooks_shared_vm::complete_callback_context(context, client.async_id)?;
-    } else if let Some(async_id) = cancelled_async_id {
-        super::super::async_hooks_shared_vm::complete_callback_context(context, async_id)?;
-    }
-    Ok(context.undefined())
-}
-
-pub(crate) fn abort_exchange(
-    context: &mut Context<'_>,
-    client: super::state::Client,
-) -> Result<(), RootedError> {
-    let result = {
-        let _scope = super::super::async_hooks_shared_vm::enter_context(
-            &context.host_mut().shared_state(),
-            client.async_id,
-        );
-        abort_exchange_stream(context, &client)
-    };
-    if let Some(response) = client.response_root {
-        context.release_root(response);
-    }
-    context.release_root(client.request_root);
-    super::super::async_hooks_shared_vm::complete_callback_context(context, client.async_id)?;
-    result
-}
-
-fn abort_exchange_stream(
-    context: &mut Context<'_>,
-    client: &super::state::Client,
-) -> Result<(), RootedError> {
-    // Once response headers have been delivered, an early transport close is
-    // an aborted IncomingMessage. Before headers, it remains a ClientRequest
-    // socket hang-up error.
-    let error = context.error_rooted(if client.response_root.is_some() {
-        "aborted"
-    } else {
-        "socket hang up"
-    })?;
-    if let Err(failure) = set_text(context, error, "code", "ECONNRESET") {
-        context.release_root(error);
-        return Err(failure);
-    }
-    let stream = client.response_root.unwrap_or(client.request_root);
-    let destroy_key = context.string_rooted("destroy");
-    let destroy = match context.get_property_rooted(stream, destroy_key) {
-        Ok(destroy) => destroy,
-        Err(failure) => {
-            context.release_root(destroy_key);
-            context.release_root(error);
-            return Err(failure);
-        }
-    };
-    let result = context.call_rooted(destroy, stream, &[error]);
-    context.release_root(destroy);
-    context.release_root(destroy_key);
-    context.release_root(error);
-    match result {
-        Ok(value) => {
-            context.release_root(value);
-            Ok(())
-        }
-        Err(failure) => Err(failure),
-    }
-}
-
-pub(crate) fn destroy_response(
-    context: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let id = argument_id(context, args.first().copied())?;
-    let state = context.host_mut().shared_state();
-    let client = {
-        let mut host = state.borrow_mut();
-        let socket = host
-            .http
-            .clients
-            .iter()
-            .find_map(|(socket, client)| (client.request_id == id).then_some(*socket));
-        socket.and_then(|socket| {
-            let client = host.http.clients.remove(&socket)?;
-            close_agent_socket(&mut host, pooled_origin(&client), socket);
-            Some(client)
-        })
-    };
-    if let Some(client) = client {
-        if let Some(response) = client.response_root {
-            context.release_root(response);
-        }
-        context.release_root(client.request_root);
-    }
-    Ok(context.undefined())
-}
-
-fn serialize(request: &super::state::OutgoingRequest) -> Vec<u8> {
-    let body_len = request.body.len();
-    let has_length = request
-        .headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("content-length"));
-    let has_chunked = request.headers.iter().any(|(name, value)| {
-        name.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
-    });
-    let chunked = has_chunked
-        || (request.set_default_headers
-            && request.body.has_writes()
-            && !has_length
-            && crate::modules::http_protocol::default_request_chunking(&request.method));
-    let host_header = if request.port == 80 {
-        request.host.clone()
-    } else {
-        format!("{}:{}", request.host, request.port)
-    };
-    let head = crate::modules::http_protocol::request_head_with_chunking(
-        &host_header,
-        &request.method,
-        &request.path,
-        &request.headers,
-        body_len,
-        request.omit_host
-            || !request.set_default_headers
-            || request
-                .headers
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case("host")),
-        request.set_default_headers,
-        chunked,
-    );
-    let mut bytes = head.into_bytes();
-    if chunked {
-        for chunk in request.body.chunks() {
-            bytes.extend_from_slice(&crate::modules::http_protocol::chunk_frame(chunk));
-        }
-        bytes.extend_from_slice(&crate::modules::http_protocol::chunk_terminator(
-            &request.trailers,
+    if value < 0.0 || !value.is_finite() {
+        let received = crate::modules::util_shared_vm::range_error_received(c, msecs)?;
+        return Err(throw_coded(
+            c,
+            ErrorClass::RangeError,
+            "ERR_OUT_OF_RANGE",
+            &format!("The value of \"{name}\" is out of range. It must be a non-negative finite number. Received {received}"),
         ));
+    }
+    Ok(value.min(TIMEOUT_MAX))
+}
+
+/// The request options from `(input, options, cb)`: a URL string or object, options, or
+/// both merged.
+fn request_options(c: &mut Context<'_>, args: &[RootId]) -> Result<(RootId, RootId), RootedError> {
+    let (mut input, mut options, mut callback) = (arg(c, args, 0), arg(c, args, 1), arg(c, args, 2));
+    if is_string(c, input) {
+        let global = c.global_root()?;
+        let url_class = get(c, global, "URL")?;
+        let url = c.construct_rooted(url_class, url_class, &[input])?;
+        let undefined = c.undefined();
+        input = crate::modules::url_shared_vm::url_to_http_options(c, undefined, &[url])?;
+    } else if crate::modules::url_shared_vm::is_url_like(c, input)? {
+        let undefined = c.undefined();
+        input = crate::modules::url_shared_vm::url_to_http_options(c, undefined, &[input])?;
     } else {
-        bytes.extend_from_slice(&request.body.bytes());
+        callback = options;
+        options = input;
+        input = c.null();
     }
-    bytes
+    if c.is_callable_rooted(options)? {
+        callback = options;
+        options = if is_nullish(c, input) { c.object_rooted()? } else { input };
+    } else {
+        let target = if is_nullish(c, input) { c.object_rooted()? } else { input };
+        if !is_nullish(c, options) {
+            for key in c.enumerable_own_keys_rooted(options, true, true)? {
+                let value = c.get_property_rooted(options, key)?;
+                c.set_property_rooted(target, key, value, target)?;
+            }
+        }
+        options = target;
+    }
+    Ok((options, callback))
 }
 
-pub(crate) fn read_headers(
-    context: &mut Context<'_>,
-    headers: Option<RootId>,
-    relaxed: bool,
-) -> Result<Vec<(String, String)>, RootedError> {
-    let Some(headers) = headers else {
-        return Ok(Vec::new());
+/// `new ClientRequest(input, options, cb)`.
+pub(crate) fn construct(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<(), RootedError> {
+    let undefined = c.undefined();
+    outgoing::initialize(c, this, undefined)?;
+    let (options, callback) = request_options(c, args)?;
+    let mut agent = get(c, options, "agent")?;
+    let default_agent = get(c, options, "_defaultAgent")?;
+    let default_agent = if c.truthy_rooted(default_agent)? { default_agent } else { class(c, Class::GlobalAgent)? };
+    let create_connection = get(c, options, "createConnection")?;
+    if c.rooted_value(agent).and_then(|value| value.as_bool()) == Some(false) {
+        let constructor = get(c, default_agent, "constructor")?;
+        agent = c.construct_rooted(constructor, constructor, &[])?;
+    } else if is_nullish(c, agent) {
+        if !c.is_callable_rooted(create_connection)? {
+            agent = default_agent;
+        }
+    } else {
+        let add_request = get(c, agent, "addRequest")?;
+        if !c.is_callable_rooted(add_request)? {
+            return Err(match crate::modules::util_shared_vm::argument_type_error_with_expected(
+                c,
+                agent,
+                "options.agent",
+                "one of Agent-like Object, undefined, or false",
+            ) {
+                Ok(error) | Err(error) => error,
+            });
+        }
+    }
+    put(c, this, "agent", agent)?;
+    let has_agent = c.truthy_rooted(agent)?;
+    let protocol = get(c, options, "protocol")?;
+    let default_protocol = get(c, default_agent, "protocol")?;
+    let protocol = if c.truthy_rooted(protocol)? { protocol } else { default_protocol };
+    let agent_protocol = if has_agent { get(c, agent, "protocol")? } else { c.undefined() };
+    let expected = if c.truthy_rooted(agent_protocol)? { agent_protocol } else { default_protocol };
+    let path = get(c, options, "path")?;
+    if c.truthy_rooted(path)? {
+        let units = c.to_string_code_units(path)?;
+        if units.iter().any(|unit| !PATH_BYTES.contains(unit)) {
+            return Err(throw_coded(c, ErrorClass::TypeError, "ERR_UNESCAPED_CHARACTERS", "Request path contains unescaped characters"));
+        }
+    }
+    if !c.strict_equal_rooted(protocol, expected)? {
+        let message = super::format(c, "Protocol \"%s\" not supported. Expected \"%s\"", &[protocol, expected])?;
+        return Err(throw_coded(c, ErrorClass::TypeError, "ERR_INVALID_PROTOCOL", &message));
+    }
+    let default_port = get(c, options, "defaultPort")?;
+    let default_port = if c.truthy_rooted(default_port)? {
+        default_port
+    } else if has_agent {
+        get(c, agent, "defaultPort")?
+    } else {
+        c.undefined()
     };
-    let items = context.array_like_values_rooted(headers)?;
-    let (pairs, remainder) = items.as_chunks::<HEADER_PAIR_FIELDS>();
-    if !remainder.is_empty() {
-        return Err(RootedError::host("HTTP header pair list is malformed"));
+    let connect_options = c.null_object_rooted()?;
+    for key in c.enumerable_own_keys_rooted(options, true, true)? {
+        let value = c.get_property_rooted(options, key)?;
+        c.set_property_rooted(connect_options, key, value, connect_options)?;
     }
-    let mut result = Vec::with_capacity(pairs.len());
-    for &[name, value] in pairs {
-        let name = context.to_string(name)?;
-        let value = context.to_string(value)?;
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(crate::modules::http_protocol::is_http_token_char)
-        {
-            let error = context.type_error_rooted("Invalid HTTP header name")?;
-            return Err(context.throw(error));
+    let port = get(c, options, "port")?;
+    let port = if c.truthy_rooted(port)? {
+        port
+    } else if c.truthy_rooted(default_port)? {
+        default_port
+    } else {
+        c.number(DEFAULT_PORT)
+    };
+    put(c, connect_options, "port", port)?;
+    let hostname = get(c, options, "hostname")?;
+    let hostname = validate_host(c, hostname, "hostname")?;
+    let host_option = get(c, options, "host")?;
+    let host = if c.truthy_rooted(hostname)? {
+        hostname
+    } else {
+        let host = validate_host(c, host_option, "host")?;
+        if c.truthy_rooted(host)? { host } else { c.string_rooted("localhost") }
+    };
+    put(c, connect_options, "host", host)?;
+    let set_host = get(c, options, "setHost")?;
+    let set_host = is_undefined(c, set_host) || c.truthy_rooted(set_host)?;
+    let socket_path = get(c, options, "socketPath")?;
+    put(c, this, "socketPath", socket_path)?;
+    let timeout = get(c, options, "timeout")?;
+    if !is_undefined(c, timeout) {
+        let duration = timer_duration(c, timeout, "timeout")?;
+        let duration = c.number(duration);
+        put(c, this, "timeout", duration)?;
+    }
+    let signal = get(c, options, "signal")?;
+    if c.truthy_rooted(signal)? {
+        let stream_module = crate::modules::stream_shared_vm::module(c)?;
+        call_method(c, stream_module, "addAbortSignal", &[signal, this])?;
+        let key = c.string_rooted("signal");
+        c.delete_property_rooted(connect_options, key)?;
+    }
+    let method = get(c, options, "method")?;
+    let method_text = if is_nullish(c, method) {
+        None
+    } else if is_string(c, method) {
+        c.string_text(method)?.filter(|method| !method.is_empty())
+    } else {
+        return Err(match crate::modules::util_shared_vm::argument_type_error(c, method, "options.method", "string") {
+            Ok(error) | Err(error) => error,
+        });
+    };
+    let method_text = match method_text {
+        Some(text) => {
+            if !text.chars().all(crate::modules::http_protocol::is_http_token_char) {
+                let label = c.string_rooted("Method");
+                let message = super::format(c, "%s must be a valid HTTP token [\"%s\"]", &[label, method])?;
+                return Err(throw_coded(c, ErrorClass::TypeError, "ERR_INVALID_HTTP_TOKEN", &message));
+            }
+            text.to_uppercase()
         }
-        if !value
-            .encode_utf16()
-            .all(|unit| crate::modules::http_protocol::valid_header_unit(unit, relaxed))
-        {
-            let error = context.type_error_rooted("Invalid HTTP header value")?;
-            return Err(context.throw(error));
+        None => "GET".to_owned(),
+    };
+    let method_value = c.string_rooted(&method_text);
+    put(c, this, "method", method_value)?;
+    let max_header_size = get(c, options, "maxHeaderSize")?;
+    if !is_undefined(c, max_header_size) {
+        let maximum = c.number(super::MAX_SAFE_INTEGER);
+        crate::modules::util_shared_vm::validate_integer(c, max_header_size, "maxHeaderSize", 0.0, maximum)?;
+    }
+    put(c, this, "maxHeaderSize", max_header_size)?;
+    let insecure = get(c, options, "insecureHTTPParser")?;
+    if !is_undefined(c, insecure) && c.rooted_value(insecure).and_then(|value| value.as_bool()).is_none() {
+        return Err(match crate::modules::util_shared_vm::argument_type_error(c, insecure, "options.insecureHTTPParser", "boolean") {
+            Ok(error) | Err(error) => error,
+        });
+    }
+    put(c, this, "insecureHTTPParser", insecure)?;
+    let join = get(c, options, "joinDuplicateHeaders")?;
+    if !is_undefined(c, join) && c.rooted_value(join).and_then(|value| value.as_bool()).is_none() {
+        return Err(match crate::modules::util_shared_vm::argument_type_error(c, join, "options.joinDuplicateHeaders", "boolean") {
+            Ok(error) | Err(error) => error,
+        });
+    }
+    put(c, this, "joinDuplicateHeaders", join)?;
+    let path = if c.truthy_rooted(path)? { path } else { c.string_rooted("/") };
+    put(c, this, "path", path)?;
+    if c.truthy_rooted(callback)? {
+        once(c, this, "response", callback)?;
+    }
+    put_bool(c, this, "useChunkedEncodingByDefault", !BODYLESS_METHODS.contains(&method_text.as_str()))?;
+    put_bool(c, this, "_ended", false)?;
+    let null = c.null();
+    put(c, this, "res", null)?;
+    put_bool(c, this, "aborted", false)?;
+    put(c, this, "timeoutCb", null)?;
+    put_bool(c, this, "upgradeOrConnect", false)?;
+    put(c, this, "parser", null)?;
+    put(c, this, "maxHeadersCount", null)?;
+    put_bool(c, this, "reusedSocket", false)?;
+    put(c, this, "host", host)?;
+    put(c, this, "protocol", protocol)?;
+    if has_agent {
+        let keep_alive = truthy_member(c, agent, "keepAlive")?;
+        let max_sockets = number(c, agent, "maxSockets")?;
+        let reusable = keep_alive || max_sockets.is_finite();
+        put_bool(c, this, "_last", !reusable)?;
+        put_bool(c, this, "shouldKeepAlive", reusable)?;
+    }
+    let headers = get(c, options, "headers")?;
+    if c.is_array_rooted(headers)? {
+        let first_line = format!("{method_text} {} HTTP/1.1\r\n", c.to_string(path)?);
+        outgoing::store_header(c, this, first_line, headers)?;
+    } else {
+        if c.truthy_rooted(headers)? {
+            for key in c.enumerable_own_keys_rooted(headers, false, true)? {
+                let value = c.get_property_rooted(headers, key)?;
+                outgoing::set_header(c, this, key, value)?;
+            }
         }
-        result.push((name, value));
-    }
-    Ok(result)
-}
-
-/// A header pair list's values per header: its name and its value.
-const HEADER_PAIR_FIELDS: usize = 2;
-
-fn argument_id(context: &mut Context<'_>, root: Option<RootId>) -> Result<u64, RootedError> {
-    root.and_then(|root| context.rooted_value(root))
-        .and_then(Value::as_number)
-        .filter(|id| id.is_finite() && *id >= 0.0)
-        .map(|id| id as u64)
-        .ok_or_else(|| RootedError::host("invalid shared HTTP request identifier"))
-}
-
-fn port_property(context: &mut Context<'_>, object: RootId) -> Result<Option<f64>, RootedError> {
-    // Node's client option normalization reads own options only, as `text_property`.
-    if !context.has_own_property_rooted(object, "port")? {
-        return Ok(None);
-    }
-    let key = context.string_rooted("port");
-    let value_root = context.get_property_rooted(object, key)?;
-    match context.rooted_value(value_root) {
-        Some(value) => match value.as_number() {
-            Some(number) => Ok(Some(number)),
-            None => Ok(context
-                .string_text(value_root)?
-                .and_then(|port| port.parse::<u16>().ok())
-                .map(f64::from)),
-        },
-        None => Ok(None),
-    }
-}
-
-fn text_property(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<String>, RootedError> {
-    if !context.has_own_property_rooted(object, name)? {
-        return Ok(None);
-    }
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    match context.rooted_value(value) {
-        Some(rooted_value) if !rooted_value.is_undefined() && !rooted_value.is_null() => {
-            context.to_string(value).map(Some)
+        let existing_host = header(c, this, "host")?;
+        if c.truthy_rooted(host)? && !c.truthy_rooted(existing_host)? && set_host {
+            let mut host_header = c.to_string(host)?;
+            if let Some(colon) = host_header.find(':') {
+                if host_header[colon + 1..].contains(':') && !host_header.starts_with('[') {
+                    host_header = format!("[{host_header}]");
+                }
+            }
+            let port_number = c.to_number(port)?;
+            let default_number = if c.truthy_rooted(default_port)? { c.to_number(default_port)? } else { f64::NAN };
+            if c.truthy_rooted(port)? && port_number != default_number {
+                host_header.push(':');
+                host_header.push_str(&c.to_string(port)?);
+            }
+            let name = c.string_rooted("Host");
+            let value = c.string_rooted(&host_header);
+            outgoing::set_header(c, this, name, value)?;
         }
-        _ => Ok(None),
+        let auth = get(c, options, "auth")?;
+        let authorization = header(c, this, "authorization")?;
+        if c.truthy_rooted(auth)? && !c.truthy_rooted(authorization)? {
+            let global = c.global_root()?;
+            let buffer = get(c, global, "Buffer")?;
+            let bytes = call_method(c, buffer, "from", &[auth])?;
+            let base64 = c.string_rooted("base64");
+            let encoded = call_method(c, bytes, "toString", &[base64])?;
+            let encoded = c.to_string(encoded)?;
+            let name = c.string_rooted("Authorization");
+            let value = c.string_rooted(&format!("Basic {encoded}"));
+            outgoing::set_header(c, this, name, value)?;
+        }
+        let expect = header(c, this, "expect")?;
+        if c.truthy_rooted(expect)? {
+            if truthy_member(c, this, "_header")? {
+                return Err(throw_coded(
+                    c,
+                    ErrorClass::Error,
+                    "ERR_HTTP_HEADERS_SENT",
+                    "Cannot render headers after they are sent to the client",
+                ));
+            }
+            implicit_header(c, this)?;
+        }
     }
-}
-
-fn object_property(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<RootId>, RootedError> {
-    if !context.has_own_property_rooted(object, name)? {
-        return Ok(None);
+    if has_agent {
+        call_method(c, agent, "addRequest", &[this, connect_options])?;
+        return Ok(());
     }
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    Ok(context
-        .rooted_value(value)
-        .filter(|value| !value.is_undefined() && !value.is_null())
-        .map(|_| value))
-}
-
-fn number_property(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<f64>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    Ok(context.rooted_value(value).and_then(Value::as_number))
-}
-
-fn boolean_property(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<bool>, RootedError> {
-    let key = context.string_rooted(name);
-    let value = context.get_property_rooted(object, key)?;
-    Ok(context.rooted_value(value).and_then(Value::as_bool))
-}
-
-/// A positive socket count; non-finite or non-positive values mean no limit, as
-/// Node's `Agent.defaultMaxSockets` does.
-fn socket_limit(
-    context: &mut Context<'_>,
-    object: RootId,
-    name: &str,
-) -> Result<Option<usize>, RootedError> {
-    Ok(number_property(context, object, name)?.map(|value| {
-        if value.is_finite() && value >= 1.0 {
-            value as usize
+    put_bool(c, this, "_last", true)?;
+    put_bool(c, this, "shouldKeepAlive", false)?;
+    let path = get(c, connect_options, "path")?;
+    if c.truthy_rooted(path)? || c.truthy_rooted(socket_path)? {
+        let key = c.string_rooted("path");
+        if c.truthy_rooted(socket_path)? {
+            c.set_property_rooted(connect_options, key, socket_path, connect_options)?;
         } else {
-            usize::MAX
+            c.delete_property_rooted(connect_options, key)?;
         }
-    }))
+    }
+    if c.is_callable_rooted(create_connection)? {
+        let called = c.array_rooted(&[])?;
+        let created = function(c, Member::ConnectionCreated, "", &[this, called])?;
+        let undefined = c.undefined();
+        match crate::modules::stream_shared_vm::attempt(c.call_rooted(create_connection, undefined, &[connect_options, created]))? {
+            Ok(socket) => {
+                if c.truthy_rooted(socket)? {
+                    let null = c.null();
+                    c.call_rooted(created, undefined, &[null, socket])?;
+                }
+            }
+            Err(error) => {
+                c.call_rooted(created, undefined, &[error])?;
+            }
+        }
+    } else {
+        let net = class(c, Class::Net)?;
+        let socket = call_method(c, net, "createConnection", &[connect_options])?;
+        call_method(c, this, "onSocket", &[socket])?;
+    }
+    Ok(())
 }
 
-fn property_id(
-    context: &mut Context<'_>,
-    object: RootId,
-    property: &str,
-) -> Result<Option<u64>, RootedError> {
-    let key = context.string_rooted(property);
-    let value = context.get_property_rooted(object, key)?;
-    Ok(context
-        .rooted_value(value)
-        .and_then(Value::as_number)
-        .filter(|id| id.is_finite() && *id >= 0.0)
-        .map(|id| id as u64))
+fn header(c: &mut Context<'_>, this: RootId, name: &str) -> Outcome {
+    let name = c.string_rooted(name);
+    call_method(c, this, "getHeader", &[name])
+}
+
+pub(crate) fn implicit_header(c: &mut Context<'_>, this: RootId) -> Result<(), RootedError> {
+    if truthy_member(c, this, "_header")? {
+        return Err(throw_coded(
+            c,
+            ErrorClass::Error,
+            "ERR_HTTP_HEADERS_SENT",
+            "Cannot render headers after they are sent to the client",
+        ));
+    }
+    let method = get(c, this, "method")?;
+    let path = get(c, this, "path")?;
+    let first_line = format!("{} {} HTTP/1.1\r\n", c.to_string(method)?, c.to_string(path)?);
+    let headers = get_slot(c, this, Slot::OutHeaders)?;
+    outgoing::store_header(c, this, first_line, headers)
+}
+
+fn destroyed(c: &mut Context<'_>, request: RootId, error: RootId) -> Result<(), RootedError> {
+    let error = if !truthy_member(c, request, "aborted")? && !c.truthy_rooted(error)? {
+        super::connection_reset(c, "socket hang up")?
+    } else {
+        error
+    };
+    if c.truthy_rooted(error)? {
+        emit(c, request, "error", &[error])?;
+    }
+    put_bool(c, request, "_closed", true)?;
+    emit(c, request, "close", &[]).map(drop)
+}
+
+/// `onSocketNT(req, socket, err)`.
+fn on_socket_tick(c: &mut Context<'_>, request: RootId, socket: RootId, error: RootId) -> Result<(), RootedError> {
+    if truthy_member(c, request, "destroyed")? || c.truthy_rooted(error)? {
+        put_bool(c, request, "destroyed", true)?;
+        if c.truthy_rooted(socket)? {
+            let agent = get(c, request, "agent")?;
+            if !c.truthy_rooted(error)? && c.truthy_rooted(agent)? && !truthy_member(c, socket, "destroyed")? {
+                emit(c, socket, "free", &[])?;
+            } else {
+                let cause = if c.truthy_rooted(error)? { error } else { get_slot(c, request, Slot::Error)? };
+                let destroyed_socket = call_method(c, socket, "destroy", &[cause])?;
+                let done = function(c, Member::SocketDestroyed, "", &[request, error])?;
+                let undefined = c.undefined();
+                crate::modules::stream_shared_vm::eos::eos(c, destroyed_socket, undefined, done)?;
+                return Ok(());
+            }
+        }
+        let error = if c.truthy_rooted(error)? { error } else { get_slot(c, request, Slot::Error)? };
+        return destroyed(c, request, error);
+    }
+    tick_on_socket(c, request, socket)?;
+    outgoing::flush(c, request)
+}
+
+/// `tickOnSocket(req, socket)`: the response parser and the socket listeners.
+fn tick_on_socket(c: &mut Context<'_>, request: RootId, socket: RootId) -> Result<(), RootedError> {
+    let parser = parsing::create(c, Kind::Response, socket, request)?;
+    let method = get(c, request, "method")?;
+    let head_request = c.string_text(method)?.as_deref() == Some("HEAD");
+    parsing::set_head_request(c, parser, head_request)?;
+    put(c, request, "socket", socket)?;
+    put(c, parser, "outgoing", request)?;
+    put(c, request, "parser", parser)?;
+    put(c, socket, "parser", parser)?;
+    put(c, socket, "_httpMessage", request)?;
+    let max_headers = get(c, request, "maxHeadersCount")?;
+    if let Some(count) = c.rooted_value(max_headers).and_then(|value| value.as_number()) {
+        crate::modules::stream_shared_vm::put_number(c, parser, "maxHeaderPairs", count * 2.0)?;
+    }
+    let join = get(c, request, "joinDuplicateHeaders")?;
+    put(c, parser, "joinDuplicateHeaders", join)?;
+    for (event, listener) in [
+        ("error", Class::ClientSocketError),
+        ("data", Class::ClientSocketData),
+        ("end", Class::ClientSocketEnd),
+        ("close", Class::ClientSocketClose),
+        ("drain", Class::ClientSocketDrain),
+    ] {
+        let listener = class(c, listener)?;
+        on(c, socket, event, listener)?;
+    }
+    let timeout = get(c, request, "timeout")?;
+    let agent = get(c, request, "agent")?;
+    let agent_timeout = if c.truthy_rooted(agent)? {
+        let options = get(c, agent, "options")?;
+        if c.truthy_rooted(options)? { get(c, options, "timeout")? } else { c.undefined() }
+    } else {
+        c.undefined()
+    };
+    if !is_undefined(c, timeout) || c.truthy_rooted(agent_timeout)? {
+        listen_socket_timeout(c, request)?;
+    }
+    emit(c, request, "socket", &[socket]).map(drop)
+}
+
+/// `listenSocketTimeout(req)`: the request's `timeout` follows its socket's.
+fn listen_socket_timeout(c: &mut Context<'_>, request: RootId) -> Result<(), RootedError> {
+    if truthy_member(c, request, "timeoutCb")? {
+        return Ok(());
+    }
+    let listener = class(c, Class::ClientRequestTimeout)?;
+    put(c, request, "timeoutCb", listener)?;
+    let socket = outgoing::socket(c, request)?;
+    if c.truthy_rooted(socket)? {
+        once(c, socket, "timeout", listener)
+    } else {
+        let on_socket = function(c, Member::ListenSocketTimeout, "", &[])?;
+        on(c, request, "socket", on_socket)
+    }
+}
+
+fn set_socket_timeout(c: &mut Context<'_>, socket: RootId, msecs: RootId) -> Result<(), RootedError> {
+    if truthy_member(c, socket, "connecting")? {
+        let later = function(c, Member::SocketSetTimeout, "", &[msecs, socket])?;
+        once(c, socket, "connect", later)
+    } else {
+        call_method(c, socket, "setTimeout", &[msecs]).map(drop)
+    }
+}
+
+fn set_timeout(c: &mut Context<'_>, this: RootId, msecs: RootId, callback: RootId) -> Outcome {
+    if truthy_member(c, this, "_ended")? {
+        return Ok(this);
+    }
+    listen_socket_timeout(c, this)?;
+    let duration = timer_duration(c, msecs, "msecs")?;
+    let msecs = c.number(duration);
+    if c.truthy_rooted(callback)? {
+        once(c, this, "timeout", callback)?;
+    }
+    let socket = outgoing::socket(c, this)?;
+    if c.truthy_rooted(socket)? {
+        set_socket_timeout(c, socket, msecs)?;
+    } else {
+        let undefined = c.undefined();
+        let later = function(c, Member::SocketSetTimeout, "", &[msecs, undefined])?;
+        once(c, this, "socket", later)?;
+    }
+    Ok(this)
+}
+
+fn call_socket_method(c: &mut Context<'_>, socket: RootId, method: RootId, values: RootId) -> Result<(), RootedError> {
+    if !c.truthy_rooted(method)? {
+        return Ok(());
+    }
+    let function = c.get_property_rooted(socket, method)?;
+    let values = if is_nullish(c, values) { Vec::new() } else { c.array_like_values_rooted(values)? };
+    c.call_rooted(function, socket, &values).map(drop)
+}
+
+/// `_deferToConnect(method, arguments_)`: a socket call once the socket is writable.
+fn defer_to_connect(c: &mut Context<'_>, this: RootId, method: RootId, values: RootId) -> Result<(), RootedError> {
+    let socket = outgoing::socket(c, this)?;
+    if !c.truthy_rooted(socket)? {
+        let later = function(c, Member::DeferredOnSocket, "onSocket", &[this, method, values])?;
+        return once(c, this, "socket", later);
+    }
+    on_socket_deferred(c, this, method, values)
+}
+
+/// `_deferToConnect`'s `onSocket`: the call now if the request's socket is writable, else
+/// once it connects.
+fn on_socket_deferred(c: &mut Context<'_>, request: RootId, method: RootId, values: RootId) -> Result<(), RootedError> {
+    let socket = outgoing::socket(c, request)?;
+    if truthy_member(c, socket, "writable")? {
+        call_socket_method(c, socket, method, values)
+    } else {
+        let later = function(c, Member::DeferredCall, "callSocketMethod", &[request, method, values])?;
+        once(c, socket, "connect", later)
+    }
+}
+
+fn hang_up(c: &mut Context<'_>, request: RootId, socket: RootId) -> Result<(), RootedError> {
+    let carrier = outgoing::socket(c, request)?;
+    let carrier = if c.truthy_rooted(carrier)? { carrier } else { socket };
+    if !truthy_member(c, carrier, "_hadError")? {
+        put_bool(c, carrier, "_hadError", true)?;
+        let error = super::connection_reset(c, "socket hang up")?;
+        emit(c, request, "error", &[error])?;
+    }
+    Ok(())
+}
+
+fn socket_close(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
+    let request = get(c, socket, "_httpMessage")?;
+    if is_nullish(c, request) {
+        return Ok(());
+    }
+    let parser = get(c, socket, "parser")?;
+    let response = get(c, request, "res")?;
+    put_bool(c, request, "destroyed", true)?;
+    if c.truthy_rooted(response)? {
+        if !truthy_member(c, response, "complete")? {
+            let error = super::connection_reset(c, "aborted")?;
+            call_method(c, response, "destroy", &[error])?;
+        }
+        put_bool(c, request, "_closed", true)?;
+        emit(c, request, "close", &[])?;
+        if !truthy_member(c, response, "aborted")? && truthy_member(c, response, "readable")? {
+            let null = c.null();
+            call_method(c, response, "push", &[null])?;
+        }
+    } else {
+        hang_up(c, request, socket)?;
+        put_bool(c, request, "_closed", true)?;
+        emit(c, request, "close", &[])?;
+    }
+    let output = get(c, request, "outputData")?;
+    if c.truthy_rooted(output)? {
+        crate::modules::stream_shared_vm::put_number(c, output, "length", 0.0)?;
+    }
+    if !is_nullish(c, parser) {
+        parsing::finish(c, parser)?;
+        parsing::free(c, parser, Some(request), socket)?;
+    }
+    Ok(())
+}
+
+fn detach_parser_listeners(c: &mut Context<'_>, socket: RootId, events: &[(&str, Class)]) -> Result<(), RootedError> {
+    for &(event, listener) in events {
+        let listener = class(c, listener)?;
+        remove_listener(c, socket, event, listener)?;
+    }
+    Ok(())
+}
+
+fn socket_error(c: &mut Context<'_>, socket: RootId, error: RootId) -> Result<(), RootedError> {
+    let request = get(c, socket, "_httpMessage")?;
+    if c.truthy_rooted(request)? {
+        let carrier = outgoing::socket(c, request)?;
+        let carrier = if c.truthy_rooted(carrier)? { carrier } else { socket };
+        put_bool(c, carrier, "_hadError", true)?;
+        emit(c, request, "error", &[error])?;
+    }
+    let parser = get(c, socket, "parser")?;
+    if !is_nullish(c, parser) {
+        parsing::finish(c, parser)?;
+        let request = if c.truthy_rooted(request)? { Some(request) } else { None };
+        parsing::free(c, parser, request, socket)?;
+    }
+    detach_parser_listeners(c, socket, &[("data", Class::ClientSocketData), ("end", Class::ClientSocketEnd)])?;
+    call_method(c, socket, "destroy", &[]).map(drop)
+}
+
+fn socket_end(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
+    let request = get(c, socket, "_httpMessage")?;
+    let parser = get(c, socket, "parser")?;
+    if c.truthy_rooted(request)? {
+        let response = get(c, request, "res")?;
+        if !c.truthy_rooted(response)? {
+            hang_up(c, request, socket)?;
+        }
+    }
+    if !is_nullish(c, parser) {
+        parsing::finish(c, parser)?;
+        let request = if c.truthy_rooted(request)? { Some(request) } else { None };
+        parsing::free(c, parser, request, socket)?;
+    }
+    call_method(c, socket, "destroy", &[]).map(drop)
+}
+
+fn socket_data(c: &mut Context<'_>, socket: RootId, data: RootId) -> Result<(), RootedError> {
+    let request = get(c, socket, "_httpMessage")?;
+    let parser = get(c, socket, "parser")?;
+    if is_nullish(c, parser) {
+        return Ok(());
+    }
+    match parsing::execute(c, parser, data)? {
+        Executed::Failed(error) => {
+            put(c, error, "rawPacket", data)?;
+            parsing::free(c, parser, Some(request), socket)?;
+            detach_parser_listeners(c, socket, &[("data", Class::ClientSocketData), ("end", Class::ClientSocketEnd)])?;
+            call_method(c, socket, "destroy", &[])?;
+            put_bool(c, socket, "_hadError", true)?;
+            emit(c, request, "error", &[error])?;
+        }
+        Executed::Upgraded(rest) => {
+            let response = get(c, parser, "incoming")?;
+            put(c, request, "res", response)?;
+            detach_parser_listeners(c, socket, &[
+                ("data", Class::ClientSocketData),
+                ("end", Class::ClientSocketEnd),
+                ("drain", Class::ClientSocketDrain),
+                ("timeout", Class::ClientRequestTimeout),
+                ("timeout", Class::ClientResponseTimeout),
+            ])?;
+            parsing::finish(c, parser)?;
+            parsing::free(c, parser, Some(request), socket)?;
+            let head = crate::modules::buffer_shared_vm::from_vec(c, rest)?;
+            let method = get(c, request, "method")?;
+            let event = if c.string_text(method)?.as_deref() == Some("CONNECT") { "connect" } else { "upgrade" };
+            if listener_count(c, request, event)? > 0.0 {
+                put_bool(c, request, "upgradeOrConnect", true)?;
+                emit(c, socket, "agentRemove", &[])?;
+                detach_parser_listeners(c, socket, &[("close", Class::ClientSocketClose), ("error", Class::ClientSocketError)])?;
+                let null = c.null();
+                put(c, socket, "_httpMessage", null)?;
+                put(c, socket, "readableFlowing", null)?;
+                emit(c, request, event, &[response, socket, head])?;
+                put_bool(c, request, "destroyed", true)?;
+                put_bool(c, request, "_closed", true)?;
+                emit(c, request, "close", &[])?;
+            } else {
+                call_method(c, socket, "destroy", &[])?;
+            }
+        }
+        Executed::Consumed => {
+            let response = get(c, parser, "incoming")?;
+            if c.truthy_rooted(response)? && truthy_member(c, response, "complete")? {
+                let status = number(c, response, "statusCode")?;
+                if !is_informational(status as u16) {
+                    detach_parser_listeners(c, socket, &[
+                        ("data", Class::ClientSocketData),
+                        ("end", Class::ClientSocketEnd),
+                        ("drain", Class::ClientSocketDrain),
+                    ])?;
+                    parsing::free(c, parser, Some(request), socket)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `parserOnIncomingClient(res, shouldKeepAlive)`.
+pub(crate) fn on_incoming(c: &mut Context<'_>, socket: RootId, response: RootId, keep_alive: bool) -> Result<HeadOutcome, RootedError> {
+    let request = get(c, socket, "_httpMessage")?;
+    if truthy_member(c, request, "res")? {
+        call_method(c, socket, "destroy", &[])?;
+        return Ok(HeadOutcome::Body);
+    }
+    put(c, request, "res", response)?;
+    if truthy_member(c, response, "upgrade")? {
+        return Ok(HeadOutcome::Upgrade);
+    }
+    let method = get(c, request, "method")?;
+    let method = c.string_text(method)?.unwrap_or_default();
+    if method == "CONNECT" {
+        put_bool(c, response, "upgrade", true)?;
+        return Ok(HeadOutcome::Upgrade);
+    }
+    const STATUS_CONTINUE: f64 = 100.0;
+    const STATUS_NOT_MODIFIED: f64 = 304.0;
+    let status = number(c, response, "statusCode")?;
+    if is_informational(status as u16) {
+        let null = c.null();
+        put(c, request, "res", null)?;
+        if status == STATUS_CONTINUE {
+            emit(c, request, "continue", &[])?;
+        }
+        let information = c.object_rooted()?;
+        for name in ["statusCode", "statusMessage", "httpVersion", "httpVersionMajor", "httpVersionMinor", "headers", "rawHeaders"] {
+            let value = get(c, response, name)?;
+            put(c, information, name, value)?;
+        }
+        emit(c, request, "information", &[information])?;
+        return Ok(HeadOutcome::SkipBody);
+    }
+    if truthy_member(c, request, "shouldKeepAlive")? && !keep_alive && !truthy_member(c, request, "upgradeOrConnect")? {
+        put_bool(c, request, "shouldKeepAlive", false)?;
+    }
+    put(c, request, "res", response)?;
+    put(c, response, "req", request)?;
+    let end = class(c, Class::ClientResponseEnd)?;
+    on(c, response, "end", end)?;
+    let finish = class(c, Class::ClientRequestFinish)?;
+    on(c, request, "finish", finish)?;
+    let timeout = class(c, Class::ClientResponseTimeout)?;
+    on(c, socket, "timeout", timeout)?;
+    if truthy_member(c, request, "aborted")? || !emit(c, request, "response", &[response])? {
+        call_method(c, response, "_dump", &[])?;
+    }
+    if method == "HEAD" {
+        return Ok(HeadOutcome::SkipBody);
+    }
+    if status == STATUS_NOT_MODIFIED {
+        put_bool(c, response, "complete", true)?;
+        return Ok(HeadOutcome::SkipBody);
+    }
+    Ok(HeadOutcome::Body)
+}
+
+/// `responseKeepAlive(req)`: the socket goes back to the agent once the exchange is over.
+fn response_keep_alive(c: &mut Context<'_>, request: RootId) -> Result<(), RootedError> {
+    let socket = outgoing::socket(c, request)?;
+    let timeout = get(c, request, "timeoutCb")?;
+    if c.truthy_rooted(timeout)? {
+        let zero = c.number(0.0);
+        call_method(c, socket, "setTimeout", &[zero, timeout])?;
+        let null = c.null();
+        put(c, request, "timeoutCb", null)?;
+    }
+    detach_parser_listeners(c, socket, &[
+        ("close", Class::ClientSocketClose),
+        ("error", Class::ClientSocketError),
+        ("data", Class::ClientSocketData),
+        ("end", Class::ClientSocketEnd),
+    ])?;
+    let free = function(c, Member::EmitFree, "emitFreeNT", &[request])?;
+    next_tick(c, free, &[])?;
+    put_bool(c, request, "destroyed", true)?;
+    let response = get(c, request, "res")?;
+    if c.truthy_rooted(response)? {
+        let null = c.null();
+        put(c, response, "socket", null)?;
+    }
+    Ok(())
+}
+
+/// `responseOnEnd`: `this` is the response.
+fn response_end(c: &mut Context<'_>, response: RootId) -> Result<(), RootedError> {
+    let request = get(c, response, "req")?;
+    let socket = outgoing::socket(c, request)?;
+    if c.truthy_rooted(socket)? {
+        let timeout = get(c, request, "timeoutCb")?;
+        if c.truthy_rooted(timeout)? {
+            let listener = class(c, Class::ClientRequestTimeout)?;
+            remove_listener(c, socket, "timeout", listener)?;
+        }
+        let listener = class(c, Class::ClientResponseTimeout)?;
+        remove_listener(c, socket, "timeout", listener)?;
+    }
+    put_bool(c, request, "_ended", true)?;
+    if !truthy_member(c, request, "shouldKeepAlive")? {
+        if c.truthy_rooted(socket)? && truthy_member(c, socket, "writable")? {
+            let destroy_soon = get(c, socket, "destroySoon")?;
+            if c.is_callable_rooted(destroy_soon)? {
+                c.call_rooted(destroy_soon, socket, &[])?;
+            } else {
+                call_method(c, socket, "end", &[])?;
+            }
+        }
+    } else {
+        let finished = get(c, request, "writableFinished")?;
+        if c.truthy_rooted(finished)? && !truthy_member(c, response, "aborted")? {
+            response_keep_alive(c, request)?;
+        }
+    }
+    Ok(())
+}
+
+/// `http.request(url[, options][, callback])`.
+pub(crate) fn request(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
+    let class = class(c, Class::ClientRequest)?;
+    let values: Vec<RootId> = (0..3).map(|index| arg(c, args, index)).collect();
+    c.construct_rooted(class, class, &values)
+}
+
+/// `http.get(url[, options][, callback])`: a request ended at once.
+pub(crate) fn get_request(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
+    let request = request(c, args)?;
+    call_method(c, request, "end", &[])?;
+    Ok(request)
 }

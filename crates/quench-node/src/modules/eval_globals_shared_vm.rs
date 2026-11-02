@@ -38,12 +38,7 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
         let reflect = get(c, global, "Reflect")?;
         get(c, reflect, "deleteProperty")
     })?;
-    let vfs = c.host_mut().vfs_enabled();
-    for name in super::module_shared_vm::BUILTIN_MODULES
-        .iter()
-        .copied()
-        .chain(vfs.then_some("node:vfs"))
-    {
+    for name in super::module_shared_vm::BUILTIN_MODULES.iter().copied() {
         if name.starts_with('_') || name.contains('/') {
             continue;
         }
@@ -133,4 +128,63 @@ pub(crate) fn replace(
         return Err(c.throw(error));
     }
     Ok(c.undefined())
+}
+
+const CRYPTO: &str = "crypto";
+
+/// Whether CommonJS eval source has its `crypto` bound to `node:crypto` while
+/// `globalThis.crypto` stays WebCrypto: Node binds it around source naming `crypto` as a
+/// word (`/\bcrypto\b/`), and source declaring its own top-level `crypto` shadows that.
+pub(crate) fn binds_crypto(source: &str) -> bool {
+    let word = |character: Option<char>| character.is_some_and(|character| character.is_ascii_alphanumeric() || character == '_');
+    let names = source.match_indices(CRYPTO).any(|(index, _)| {
+        !word(source[..index].chars().next_back()) && !word(source[index + CRYPTO.len()..].chars().next())
+    });
+    names && {
+        let allocator = oxc_allocator::Allocator::default();
+        let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
+        let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
+        semantic.semantic.scoping().get_root_binding(CRYPTO.into()).is_none()
+    }
+}
+
+/// Binds the eval script's `crypto` to `node:crypto`, as Node's `let crypto =
+/// require("node:crypto")` ahead of the eval source does.
+#[cfg(quench_openssl_provider)]
+pub(crate) fn bind_crypto(c: &mut Context<'_>) -> Result<(), RootedError> {
+    let crypto = crate::host::shared_vm::commonjs::crypto_module(c)?;
+    c.define_global_lexical_rooted(CRYPTO, crypto)
+}
+
+/// `--print`: evaluates the eval source as a Script and logs its completion value when the
+/// process exits, as Node's `evalScript` does.
+pub(crate) fn print(c: &mut Context<'_>, source: &str, name: &str) -> Result<(), RootedError> {
+    let result = c.evaluate_script_rooted(source, name)?;
+    let log = c.with_startup_intrinsics(|c| {
+        let global = c.global_root()?;
+        let console = get(c, global, "console")?;
+        get(c, console, "log")
+    })?;
+    let data = c.array_rooted(&[log, result])?;
+    let listener = c.host_function_with_data(crate::host::shared_vm::operation("nodePrintEvalResult"), data)?;
+    let process = c
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process is not initialized"))?;
+    let on = get(c, process, "on")?;
+    let exit = c.string_rooted("exit");
+    c.call_rooted(on, process, &[exit, listener])?;
+    Ok(())
+}
+
+/// The `--print` exit listener: `log(result)`.
+pub(crate) fn print_result(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let log = get(c, data, "0")?;
+    let result = get(c, data, "1")?;
+    let undefined = c.undefined();
+    c.call_rooted(log, undefined, &[result])?;
+    Ok(undefined)
 }

@@ -170,12 +170,32 @@ pub(crate) fn disallowed_node_option(environment: &str) -> Option<String> {
         })
 }
 
+/// Node's `OptionType` (src/node_options.h) for the kinds of option this parser knows.
+#[derive(Clone, Copy)]
+pub(crate) enum OptionType {
+    Boolean = 2,
+    UInteger = 4,
+    String = 5,
+    StringList = 7,
+}
+
+/// Every parsed option with its Node type and whether it defaults to true; a repeated
+/// option is a string list whatever its single-value entry says.
+pub(crate) fn option_types() -> impl Iterator<Item = (&'static str, OptionType, bool)> {
+    let list = |name: &&str| EMPTY_STRING_LIST_OPTIONS.contains(name);
+    BOOLEAN_OPTIONS
+        .iter()
+        .map(|&(name, default)| (name, OptionType::Boolean, default))
+        .chain(STRING_OPTIONS.iter().filter(move |(name, _)| !list(name)).map(|&(name, _)| (name, OptionType::String, false)))
+        .chain(NUMBER_OPTIONS.iter().map(|&(name, _)| (name, OptionType::UInteger, false)))
+        .chain(EMPTY_STRING_LIST_OPTIONS.iter().map(|&name| (name, OptionType::StringList, false)))
+}
+
+/// Node's option aliases this parser accepts, each with the option it stands for.
+pub(crate) const OPTION_ALIASES: &[(&str, &str)] = &[("-r", "--require"), ("--report-directory", "--report-dir")];
+
 fn canonical_option(option: &str) -> &str {
-    if option == "--report-directory" {
-        "--report-dir"
-    } else {
-        option
-    }
+    OPTION_ALIASES.iter().find(|(alias, _)| *alias == option).map_or(option, |(_, name)| name)
 }
 pub(crate) fn takes_string_value(option: &str) -> bool {
     STRING_OPTIONS
@@ -273,7 +293,6 @@ impl CliOptions {
                     .split_once('=')
                     .map_or(argument.as_str(), |(flag, _)| flag),
             );
-            let flag = if flag == "-r" { "--require" } else { flag };
             if let Some(values) = self.repeated.get_mut(flag) {
                 let value = argument
                     .split_once('=')

@@ -4,12 +4,13 @@ use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub(crate) mod encrypted;
+pub(crate) mod transport_poll;
 
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
@@ -167,6 +168,13 @@ impl SocketStream {
     }
     fn shutdown_write_raw(&self) -> std::io::Result<()> {
         self.raw().shutdown(std::net::Shutdown::Write)
+    }
+    /// Announce the TLS sessions the peer issued, as `session` events of `socket`.
+    fn announce_sessions(&self, socket: u64, events: &mut Vec<TransportEvent>) {
+        if let Self::Encrypted(tls) = self {
+            let sessions = tls.take_announcements(|announcements| std::mem::take(&mut announcements.sessions));
+            events.extend(sessions.into_iter().map(|session| TransportEvent::Session { socket, session }));
+        }
     }
 }
 
@@ -351,6 +359,16 @@ pub(crate) enum TransportEvent {
     Secure {
         socket: u64,
     },
+    /// A TLS session (DER) the peer issued to a verified client.
+    Session {
+        socket: u64,
+        session: Vec<u8>,
+    },
+    /// An NSS key log line of a TLS socket that listens for them.
+    Keylog {
+        socket: u64,
+        line: Vec<u8>,
+    },
     WriteComplete {
         socket: u64,
     },
@@ -424,14 +442,6 @@ impl Default for Transport {
     }
 }
 
-pub(crate) fn listen_with_backlog(
-    transport: &mut Transport,
-    address: SocketAddr,
-    backlog: i32,
-) -> Result<u64, std::io::Error> {
-    listen_with_reuse_port(transport, address, false, backlog)
-}
-
 pub(super) fn listen_with_reuse_port(
     transport: &mut Transport,
     address: SocketAddr,
@@ -449,21 +459,6 @@ pub(super) fn listen_with_reuse_port(
 
 // Node's net.Server.listen uses 511 when no backlog was supplied.
 pub(super) const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
-
-pub(crate) fn listen_backlog(
-    context: &mut NativeContext<'_, NodeHost>,
-    options: Option<RootId>,
-) -> Result<i32, RootedError> {
-    let Some(options) = options else {
-        return Ok(DEFAULT_TCP_LISTEN_BACKLOG);
-    };
-    let key = context.string_rooted("backlog");
-    let value = context.get_property_rooted(options, key)?;
-    if !context.truthy_rooted(value)? {
-        return Ok(DEFAULT_TCP_LISTEN_BACKLOG);
-    }
-    convert_listen_backlog(context, value)
-}
 
 pub(super) fn convert_listen_backlog(
     context: &mut NativeContext<'_, NodeHost>,
@@ -537,39 +532,6 @@ fn bind_listener(
     socket.bind(&address.into())?;
     socket.listen(backlog)?;
     Ok(socket.into())
-}
-
-pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
-    let id = transport.id()?;
-    let (sender, receiver) = mpsc::channel();
-    let wake = crate::modules::napi::thread_wake().ok();
-    std::thread::Builder::new()
-        .name(format!("quench-node-tcp-{id}"))
-        .spawn(move || {
-            let result = connect_with_timeout(&host, port)
-                .map(|stream| SocketStream::Plain(RawStream::Tcp(stream)))
-                .and_then(|stream| {
-                    stream
-                        .set_nonblocking(true)
-                        .map(|()| stream)
-                        .map_err(TcpConnectFailure::Setup)
-                });
-            let _ = sender.send(result.map_err(ConnectFailure::Tcp));
-            if let Some(wake) = &wake { crate::modules::napi::notify_wake(wake); }
-        })
-        .map_err(|error| format!("cannot start TCP connect: {error}"))?;
-    transport.connecting.insert(
-        id,
-        ConnectingSocket {
-            completion: ConnectCompletion::NativeRequest(receiver),
-            referenced: true,
-            protocol: SocketProtocol::Tcp,
-            options: TcpOptions::default(),
-            read_demand: ReadDemand::Active,
-            pending_write: Vec::new(),
-        },
-    );
-    Ok(id)
 }
 
 pub(super) fn reserve_lookup(transport: &mut Transport) -> Result<u64, String> {
@@ -692,115 +654,6 @@ pub(crate) fn write_with(
     Err("shared TCP socket is not connected".to_owned())
 }
 
-/// Attempt a socket write synchronously before falling back to the normal
-/// event-loop queue. Node's `net.Socket.write()` reaches the kernel in the
-/// caller's turn when possible; this matters for callers that immediately
-/// inspect pending receive data on the peer without allowing an I/O poll.
-pub(crate) fn write_immediate(
-    transport: &mut Transport,
-    socket: u64,
-    bytes: &[u8],
-) -> Result<(), String> {
-    let stream = transport
-        .sockets
-        .get_mut(&socket)
-        .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
-    if bytes.is_empty() {
-        return Ok(());
-    }
-    if stream.write_offset < stream.pending_write.len() {
-        stream.pending_write.extend_from_slice(bytes);
-        return Ok(());
-    }
-    if !stream.pending_write.is_empty() {
-        stream.pending_write.clear();
-        stream.write_offset = 0;
-        stream.raw_write = false;
-    }
-    match stream.stream.write(bytes, 0) {
-        Ok(written) if written == bytes.len() => Ok(()),
-        Ok(0) => Err(std::io::Error::from(std::io::ErrorKind::WriteZero).to_string()),
-        Ok(written) => {
-            stream.pending_write.extend_from_slice(bytes);
-            stream.write_offset = written;
-            stream.raw_write = false;
-            Ok(())
-        }
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-            ) =>
-        {
-            stream.pending_write.extend_from_slice(bytes);
-            stream.write_offset = 0;
-            stream.raw_write = false;
-            Ok(())
-        }
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-/// Queue `parts` in order, first offering them to the kernel in one vectored write when
-/// the socket has nothing queued, as libuv's `uv_try_write` does before queueing a stream
-/// write: only the bytes the kernel declines are copied into the pending output. Failures
-/// and completion delivery stay with `poll`, which retries the queued bytes.
-pub(crate) fn write_parts<const N: usize>(
-    transport: &mut Transport,
-    socket: u64,
-    parts: [&[u8]; N],
-) -> Result<(), String> {
-    let stream = transport
-        .sockets
-        .get_mut(&socket)
-        .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
-    let mut written = 0;
-    let admitted = stream.write_offset == stream.pending_write.len()
-        && stream.completions.is_empty()
-        && stream.write_failure.is_none()
-        && matches!(stream.delivery, DeliveryPhase::Delivered);
-    if let (true, SocketStream::Plain(raw)) = (admitted, &mut stream.stream) {
-        written = raw.write_vectored(&parts.map(std::io::IoSlice::new)).unwrap_or(0);
-    }
-    for part in parts {
-        let skipped = written.min(part.len());
-        written -= skipped;
-        stream.pending_write.extend_from_slice(&part[skipped..]);
-    }
-    Ok(())
-}
-
-/// Bytes a socket has queued that the kernel has not yet accepted; the
-/// writable length Node's stream backpressure compares to its high-water mark.
-pub(crate) fn queued_bytes(transport: &Transport, socket: u64) -> Option<usize> {
-    transport
-        .sockets
-        .get(&socket)
-        .map(|stream| stream.pending_write.len() - stream.write_offset)
-}
-
-/// Offer a plain socket's queued bytes to the kernel now, as libuv's
-/// `uv_try_write` does before queueing a stream write. Failures and completion
-/// delivery stay with `poll`, which retries the remaining bytes.
-pub(crate) fn try_flush(transport: &mut Transport, socket: u64) {
-    let Some(stream) = transport.sockets.get_mut(&socket) else {
-        return;
-    };
-    if !matches!(stream.delivery, DeliveryPhase::Delivered)
-        || !matches!(stream.stream, SocketStream::Plain(_))
-        || stream.write_offset == stream.pending_write.len()
-    {
-        return;
-    }
-    if let Ok(written) = stream.stream.write(&stream.pending_write, stream.write_offset) {
-        stream.write_offset += written;
-    }
-    if stream.write_offset == stream.pending_write.len() && stream.completions.is_empty() {
-        stream.pending_write.clear();
-        stream.write_offset = 0;
-    }
-}
-
 /// Record the byte boundary for a guest stream write. Raw protocol writes
 /// share the transport without creating guest completion callbacks.
 pub(crate) fn write_with_completion(
@@ -878,15 +731,6 @@ pub(crate) fn socket_is_open(transport: &Transport, id: u64) -> bool {
 
 pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
     transport.sockets.contains_key(&socket)
-}
-
-/// Whether `socket` has delivered every byte the transport already read for it. A
-/// socket in another phase still owns a queued transport event.
-pub(crate) fn delivery_delivered(transport: &Transport, socket: u64) -> bool {
-    transport
-        .sockets
-        .get(&socket)
-        .is_some_and(|socket| matches!(socket.delivery, DeliveryPhase::Delivered))
 }
 
 pub(crate) fn end(transport: &mut Transport, socket: u64, raw: bool) -> Result<(), String> {
@@ -967,13 +811,6 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
     events.extend(poll_accepts(transport));
     events.extend(poll_sockets(transport));
     events
-}
-
-pub(crate) fn queue_http_data(transport: &mut Transport, socket: u64) {
-    transport.pending_events.push_back(TransportEvent::Data {
-        socket,
-        bytes: Vec::new(),
-    });
 }
 
 pub(crate) fn has_work(transport: &Transport) -> bool {
@@ -1213,7 +1050,11 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
             continue;
         }
         if let SocketStream::Encrypted(tls) = &mut socket.stream {
-            match tls.handshake() {
+            let handshake = tls.handshake();
+            // The handshake writes its key log lines as it runs, ahead of its outcome.
+            let lines = tls.take_announcements(|announcements| announcements.keylog.as_mut().map(std::mem::take).unwrap_or_default());
+            events.extend(lines.into_iter().map(|line| TransportEvent::Keylog { socket: id, line }));
+            match handshake {
                 Ok(true) => events.push(TransportEvent::Secure { socket: id }),
                 Ok(false) => {}
                 Err(error) => {
@@ -1323,6 +1164,8 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
             }
         }
+        // Sessions issued during the handshake wait for its verification.
+        socket.stream.announce_sessions(id, &mut events);
         // Writes and TLS handshakes have independent progress; application
         // bytes are consumed only while the native read request is active.
         if socket.read_demand == ReadDemand::Idle {
@@ -1351,6 +1194,8 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
             }
         }
+        // A read processes the tickets ahead of the bytes it returns.
+        socket.stream.announce_sessions(id, &mut events);
         if !received.is_empty() {
             events.push(TransportEvent::Data {
                 socket: id,
@@ -1375,29 +1220,6 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         close_socket(transport, id);
     }
     events
-}
-
-fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, TcpConnectFailure> {
-    let addresses = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| TcpConnectFailure::Resolve {
-            error,
-            hostname: host.to_owned(),
-        })?;
-    let mut last_error = None;
-    for address in addresses {
-        match TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT) {
-            Ok(stream) => return Ok(stream),
-            Err(error) => last_error = Some(TcpConnectFailure::Connect { error, address }),
-        }
-    }
-    Err(last_error.unwrap_or_else(|| TcpConnectFailure::Resolve {
-        error: std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "resolver returned no addresses",
-        ),
-        hostname: host.to_owned(),
-    }))
 }
 
 fn connect_resolved_address(
@@ -1446,73 +1268,9 @@ fn connect_resolved_address(
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
-    let initialize = context.host_function_with_data(
-        crate::host::shared_vm::operation("netBoundSocketProjection"),
-        module,
-    )?;
-    context.define_lazy_data_properties_rooted(
-        module,
-        &["BoundSocket", "_TransferredBoundSocket"],
-        true,
-        initialize,
-    )?;
-
-    for (name, operation) in [
-        ("isIP", "netIsIP"),
-        ("isIPv4", "netIsIPv4"),
-        ("isIPv6", "netIsIPv6"),
-    ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let key = context.string_rooted(name);
-        if !context.set_property_rooted(module, key, function, module)? {
-            return Err(RootedError::host(format!("cannot install net.{name}")));
-        }
-    }
-    for (name, operation) in [
-        ("getDefaultAutoSelectFamily", "netGetAutoSelectFamily"),
-        ("setDefaultAutoSelectFamily", "netSetAutoSelectFamily"),
-        (
-            "getDefaultAutoSelectFamilyAttemptTimeout",
-            "netGetAutoSelectFamilyAttemptTimeout",
-        ),
-        (
-            "setDefaultAutoSelectFamilyAttemptTimeout",
-            "netSetAutoSelectFamilyAttemptTimeout",
-        ),
-    ] {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        let key = context.string_rooted(name);
-        if !context.set_property_rooted(module, key, function, module)? {
-            return Err(RootedError::host("cannot install shared net binding"));
-        }
-    }
-    // Ordinary function facades preserve Node's public constructibility and metadata.
-    let callable_names = [
-        "isIP",
-        "isIPv4",
-        "isIPv6",
-        "getDefaultAutoSelectFamily",
-        "setDefaultAutoSelectFamily",
-        "getDefaultAutoSelectFamilyAttemptTimeout",
-        "setDefaultAutoSelectFamilyAttemptTimeout",
-    ];
-    let mut callables = Vec::new();
-    for name in callable_names {
-        let key = context.string_rooted(name);
-        callables.push(context.get_property_rooted(module, key)?);
-    }
-    let facade_factory =
-        crate::host::removed_javascript("node:net/callable-facade.js")?;
-    let undefined = context.undefined();
-    let facade = context.call_rooted(facade_factory, undefined, &callables)?;
-    for name in callable_names {
-        let key = context.string_rooted(name);
-        let function = context.get_property_rooted(facade, key)?;
-        context.set_property_rooted(module, key, function, module)?;
-    }
-    let connect = context.host_function(crate::host::shared_vm::operation("netConnect"))?;
-    let write = context.host_function(crate::host::shared_vm::operation("netSocketWrite"))?;
-    let end = context.host_function(crate::host::shared_vm::operation("netSocketEnd"))?;
+    let operation = |context: &mut NativeContext<'_, NodeHost>, name: &str| {
+        context.host_function(crate::host::shared_vm::operation(name))
+    };
     // Destruction latches its outcome before guest error handlers run.
     let close_outcome = context.symbol_rooted(Some("kSocketCloseHadError"));
     let destroy = context.host_function_with_data(
@@ -1529,8 +1287,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .shared_state()
         .borrow_mut()
         .net_socket_close_completed = Some(close_completed);
-    let encoding =
-        context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
     let listen =
         context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
     let close =
@@ -1538,132 +1294,136 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let address = context
         .host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let duplex_key = context.string_rooted("Duplex");
-    let duplex = context.get_property_rooted(stream, duplex_key)?;
-    let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
-    let key = context.string_rooted("Buffer");
-    let buffer = context.get_property_rooted(buffer_module, key)?;
-    let key = context.string_rooted("byteLength");
-    let byte_length = context.get_property_rooted(buffer, key)?;
+    let duplex = context.get_named_property_rooted(stream, "Duplex")?;
+    let global = context.global_root()?;
+    let buffer = context.get_named_property_rooted(global, "Buffer")?;
+    let byte_length = context.get_named_property_rooted(buffer, "byteLength")?;
     let account = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketAccountWrite"),
         byte_length,
     )?;
-    let endpoint =
-        context.host_function(crate::host::shared_vm::operation("netNormalizeEndpoint"))?;
-    let reference =
-        context.host_function(crate::host::shared_vm::operation("netServerReference"))?;
-    let socket_reference =
-        context.host_function(crate::host::shared_vm::operation("netSocketReference"))?;
-    let unref_timeout =
-        context.host_function(crate::host::shared_vm::operation("netSocketUnrefTimeout"))?;
-    let socket_options =
-        context.host_function(crate::host::shared_vm::operation("netSocketOptions"))?;
-    let server_options =
-        context.host_function(crate::host::shared_vm::operation("netServerOptions"))?;
     let fin = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketWriteAfterFin"),
         duplex,
     )?;
-    let facade = crate::host::removed_javascript("node:net/write-after-fin.js")?;
-    let undefined = context.undefined();
-    let fin = context.call_rooted(facade, undefined, &[fin])?;
+    let fin = super::net_internal_shared_vm::method(context, fin, "writeAfterFIN")?;
     let readable_end = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketReadableEnd"),
         fin,
     )?;
-    let facade = crate::host::removed_javascript("node:net/readable-end.js")?;
-    let readable_end = context.call_rooted(facade, undefined, &[readable_end])?;
-    let init_end = context.host_function(crate::host::shared_vm::operation("netSocketInitEnd"))?;
+    let readable_end =
+        super::net_internal_shared_vm::method(context, readable_end, "onReadableStreamEnd")?;
     let emitter_api = context
         .host_mut()
         .shared_state()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
-    let key = context.string_rooted("emitterCtor");
-    let emitter = context.get_property_rooted(emitter_api, key)?;
+    let emitter = context.get_named_property_rooted(emitter_api, "emitterCtor")?;
     let init_server_emitter = context.host_function_with_data(
         crate::host::shared_vm::operation("netServerInitEmitter"),
         emitter,
     )?;
-    let internal_net = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "net.js",
-        "internal/net.js",
-    )?;
+    let internal_net = super::net_internal_shared_vm::module(context)?;
     let [init_socket_options, set_no_delay, set_keep_alive, init_server_options] =
         super::net_socket_options::install(context, internal_net)?;
-    let connections =
-        context.host_function(crate::host::shared_vm::operation("netServerGetConnections"))?;
-    let connections_factory = crate::host::removed_javascript("node:net/get-connections.js")?;
-    let get_connections = context.call_rooted(connections_factory, undefined, &[connections])?;
-    let initialize_read =
-        context.host_function(crate::host::shared_vm::operation("netSocketInitializeRead"))?;
-    let read_operation =
-        context.host_function(crate::host::shared_vm::operation("netSocketRead"))?;
-    let read_factory = crate::host::removed_javascript("node:net/read.js")?;
-    let read_socket = context.call_rooted(read_factory, undefined, &[read_operation])?;
-    let end_key = context.string_rooted("end");
-    let prototype_key = context.string_rooted("prototype");
-    let prototype = context.get_property_rooted(duplex, prototype_key)?;
-    let original_end = context.get_property_rooted(prototype, end_key)?;
+    let duplex_prototype = context.get_named_property_rooted(duplex, "prototype")?;
+    let original_end = context.get_named_property_rooted(duplex_prototype, "end")?;
     let end_data = context.array_rooted(&[original_end, byte_length])?;
     let end_stream = context.host_function_with_data(
         crate::host::shared_vm::operation("netSocketEndStream"),
         end_data,
     )?;
-    let normalized_args_key = context.string_rooted("normalizedArgsSymbol");
-    let normalized_args_symbol = context.get_property_rooted(internal_net, normalized_args_key)?;
-    let async_hooks = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "async_hooks.js",
-        "internal/async_hooks.js",
+    let normalized_args =
+        context.get_named_property_rooted(internal_net, "normalizedArgsSymbol")?;
+    let symbols = crate::modules::util_shared_vm::symbols_binding(context)?;
+    let async_id = context.get_named_property_rooted(symbols, "async_id_symbol")?;
+    let operations = super::net_class_shared_vm::Operations {
+        connect: operation(context, "netConnect")?,
+        write: operation(context, "netSocketWrite")?,
+        end: operation(context, "netSocketEnd")?,
+        destroy,
+        encoding: operation(context, "netSocketSetEncoding")?,
+        listen,
+        close,
+        address,
+        account,
+        endpoint: operation(context, "netNormalizeEndpoint")?,
+        server_reference: operation(context, "netServerReference")?,
+        socket_reference: operation(context, "netSocketReference")?,
+        unref_timeout: operation(context, "netSocketUnrefTimeout")?,
+        socket_options: operation(context, "netSocketOptions")?,
+        server_options: operation(context, "netServerOptions")?,
+        init_end: operation(context, "netSocketInitEnd")?,
+        readable_end,
+        init_server_emitter,
+        init_socket_options,
+        set_no_delay,
+        set_keep_alive,
+        init_server_options,
+        get_connections: operation(context, "netServerGetConnections")?,
+        initialize_read: operation(context, "netSocketInitializeRead")?,
+        read: {
+            let read = operation(context, "netSocketRead")?;
+            super::net_internal_shared_vm::method(context, read, "_read")?
+        },
+        end_stream,
+        duplex,
+        emitter,
+        normalized_args,
+        async_id,
+    };
+    let surface = super::net_class_shared_vm::build(context, &operations)?;
+    let export = |context: &mut NativeContext<'_, NodeHost>, name: &str, value: RootId| {
+        context.assign_named_property_rooted(module, name, value).map(drop)
+    };
+    let find = |name: &str| {
+        surface
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| *value)
+            .expect("built net export")
+    };
+    let simultaneous_accepts = context.host_function_named(
+        crate::host::shared_vm::operation("streamNop"),
+        "_setSimultaneousAccepts",
     )?;
-    let symbols_key = context.string_rooted("symbols");
-    let symbols = context.get_property_rooted(async_hooks, symbols_key)?;
-    let owner_symbol_key = context.string_rooted("owner_symbol");
-    let owner_symbol = context.get_property_rooted(symbols, owner_symbol_key)?;
-    let async_id_symbol_key = context.string_rooted("async_id_symbol");
-    let async_id_symbol = context.get_property_rooted(symbols, async_id_symbol_key)?;
-    let factory = crate::host::removed_javascript("node:net/module.js")?;
-    let undefined = context.undefined();
-    let surface = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            duplex,
-            connect,
-            write,
-            end,
-            destroy,
-            encoding,
-            listen,
-            close,
-            address,
-            account,
-            endpoint,
-            reference,
-            socket_reference,
-            unref_timeout,
-            socket_options,
-            server_options,
-            init_end,
-            readable_end,
-            init_server_emitter,
-            init_socket_options,
-            set_no_delay,
-            set_keep_alive,
-            init_server_options,
-            get_connections,
-            initialize_read,
-            read_socket,
-            end_stream,
-            normalized_args_symbol,
-            owner_symbol,
-            async_id_symbol,
-        ],
-    )?;
+    let (block_list, socket_address) = super::net_block_list::classes(context)?;
+    export(context, "_normalizeArgs", find("_normalizeArgs"))?;
+    export(context, "_setSimultaneousAccepts", simultaneous_accepts)?;
+    export(context, "BlockList", block_list)?;
+    export(context, "SocketAddress", socket_address)?;
+    for name in ["connect", "createConnection", "createServer"] {
+        export(context, name, find(name))?;
+    }
+    for (name, operation) in [
+        ("isIP", "netIsIP"),
+        ("isIPv4", "netIsIPv4"),
+        ("isIPv6", "netIsIPv6"),
+    ] {
+        let function =
+            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        export(context, name, function)?;
+    }
+    for name in ["Server", "Socket", "Stream"] {
+        export(context, name, find(name))?;
+    }
+    for (name, operation) in [
+        ("getDefaultAutoSelectFamily", "netGetAutoSelectFamily"),
+        ("setDefaultAutoSelectFamily", "netSetAutoSelectFamily"),
+        (
+            "getDefaultAutoSelectFamilyAttemptTimeout",
+            "netGetAutoSelectFamilyAttemptTimeout",
+        ),
+        (
+            "setDefaultAutoSelectFamilyAttemptTimeout",
+            "netSetAutoSelectFamilyAttemptTimeout",
+        ),
+    ] {
+        let function =
+            context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        export(context, name, function)?;
+    }
     let options_data = context
         .host_mut()
         .shared_state()
@@ -1671,36 +1431,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .net_socket_option_keys
         .ok_or_else(|| RootedError::host("socket option metadata missing"))?;
     let key = context.string_rooted("module");
-    context.define_data_property_rooted(options_data, key, surface, false, false, false)?;
-    let key = context.string_rooted("Server");
-    let server = context.get_property_rooted(surface, key)?;
-    let key = context.string_rooted("prototype");
-    let server_prototype = context.get_property_rooted(server, key)?;
-    let emitter_prototype = context.get_property_rooted(emitter, key)?;
-    context.set_prototype_rooted(server_prototype, emitter_prototype)?;
-    context.set_prototype_rooted(server, emitter)?;
-    super::net_server_listen::install(context, server_prototype)?;
-    for name in [
-        "Socket",
-        "Stream",
-        "Server",
-        "BlockList",
-        "SocketAddress",
-        "connect",
-        "createConnection",
-        "createServer",
-        "_normalizeArgs",
-    ] {
-        let key = context.string_rooted(name);
-        let value = context.get_property_rooted(surface, key)?;
-        if !context.set_property_rooted(module, key, value, module)? {
-            return Err(RootedError::host(format!("cannot install net.{name}")));
-        }
-    }
-    let socket_key = context.string_rooted("Socket");
-    let socket_constructor = context.get_property_rooted(surface, socket_key)?;
-    super::net_socket_address::install(context, socket_constructor)?;
-    let retained = context.retain(socket_constructor)?;
+    context.define_data_property_rooted(options_data, key, module, false, false, false)?;
+    let retained = context.retain(find("Socket"))?;
     context
         .host_mut()
         .shared_state()
@@ -2136,37 +1868,14 @@ pub(super) fn listen_local_server(
     }
 }
 
-/// Bind a Unix-domain listener for a consumer that owns its own public server
-/// bookkeeping (for example HTTP). Unlike `listen_local_server`, this leaves
-/// registration of the accepted listener to the caller.
-#[cfg(unix)]
-pub(crate) fn listen_local_endpoint(
-    context: &mut NativeContext<'_, NodeHost>,
-    path: &str,
-    backlog: i32,
-) -> Result<u64, String> {
-    let shared = context.host_mut().shared_state();
-    let cwd = shared.borrow().cwd.clone();
-    let bind_path = resolve_local_path(&cwd, path).map_err(|error| error.to_string())?;
-    let cleanup_path = cleanup_local_path(&cwd, path).map_err(|error| error.to_string())?;
-    let result = {
-        let mut state = shared.borrow_mut();
-        listen_local(
-            &mut state.tcp,
-            bind_path,
-            path.to_owned(),
-            cleanup_path,
-            backlog,
-        )
-    };
-    result.map_err(|error| error.to_string())
-}
-
 pub(crate) fn server_address_operation(
     context: &mut NativeContext<'_, NodeHost>,
     server: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    if let Some(address) = crate::modules::cluster::child::server_address(context, server)? {
+        return Ok(address);
+    }
     let Some(id) = optional_server_id(context, server)? else {
         return Ok(context.null());
     };
@@ -3399,23 +3108,6 @@ pub(crate) fn udp_close_has_ref(transport: &Transport, id: u64) -> Option<bool> 
         .closing_sockets
         .iter()
         .find_map(|(key, owner)| (*key == CloseTarget::Datagram(id)).then_some(owner.referenced))
-}
-
-/// Load the unchanged SDK owner of BoundSocket's private handle and bind policy.
-pub(crate) fn bound_socket_projection(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let owner = context.host_function_data()?;
-    let policy =
-        crate::host::shared_vm::commonjs::node_library_module(context, "net.js", "net.js")?;
-    for name in ["BoundSocket", "_TransferredBoundSocket"] {
-        let key = context.string_rooted(name);
-        let constructor = context.get_property_rooted(policy, key)?;
-        context.define_data_property_rooted(owner, key, constructor, true, true, true)?;
-    }
-    Ok(context.undefined())
 }
 
 /// New kernel descriptor received over SCM_RIGHTS becomes this endpoint's sole

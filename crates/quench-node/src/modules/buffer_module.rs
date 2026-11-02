@@ -10,7 +10,7 @@ use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 /// `buffer.kMaxLength`: the largest typed array the engine makes.
-const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
+pub(crate) const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
 /// `buffer.INSPECT_MAX_BYTES`.
 const INSPECT_MAX_BYTES: usize = 50;
 /// `Buffer.poolSize`.
@@ -20,6 +20,13 @@ const MAX_VARIABLE_WIDTH: usize = 6;
 /// `bidirectionalIndexOf` clamps a numeric byte offset to the int32 range.
 const INDEX_OFFSET_MAX: f64 = 2_147_483_647.0;
 const INDEX_OFFSET_MIN: f64 = -2_147_483_648.0;
+/// `Buffer()`'s deprecation warning and code.
+const DEPRECATION: (&str, &str) = (
+    "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.",
+    "DEP0005",
+);
+/// The frames `showFlaggedDeprecation` searches for a node_modules caller.
+const DEPRECATION_FRAMES: f64 = 3.0;
 /// Bytes per character `toString` and `write` default to.
 const DEFAULT_ENCODING: &str = "utf8";
 
@@ -177,16 +184,42 @@ fn from_bytes(c: &mut Context<'_>, bytes: Vec<u8>) -> Result<RootId, RootedError
 /// argument list (a length, or an ArrayBuffer with offset and length) makes it as
 /// `Uint8Array` does, anything else as `Buffer.from` does.
 pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    show_flagged_deprecation(c)?;
     let first = arg(c, args, 0);
     if number_of(c, first).is_some() {
-        let size = validate_offset(c, first, "size", MAX_LENGTH)?;
-        return zeroed(c, size);
+        let second = arg(c, args, 1);
+        if c.string_text(second)?.is_some() {
+            return Err(super::util_shared_vm::argument_type_error(c, first, "string", "string")?);
+        }
+        return alloc(c, first, &[first]);
     }
     if c.has_builtin_brand_rooted(first, BuiltinBrand::AnyArrayBuffer)? && c.new_target_rooted().is_some() {
         return construct_view(c, args);
     }
     let (second, third) = (arg(c, args, 1), arg(c, args, 2));
     from(c, first, second, third)
+}
+
+/// `showFlaggedDeprecation`: `Buffer()` warns once (DEP0005), unless its caller runs from
+/// node_modules without `--pending-deprecation`.
+fn show_flagged_deprecation(c: &mut Context<'_>) -> Result<(), RootedError> {
+    let pending = c.host_mut().shared_state().borrow().cli_options.enabled("--pending-deprecation");
+    if !pending {
+        let frames = c.number(DEPRECATION_FRAMES);
+        let undefined = c.undefined();
+        let inside = super::util_shared_vm::is_inside_node_modules(c, undefined, &[frames])?;
+        if c.truthy_rooted(inside)? {
+            return Ok(());
+        }
+    }
+    let undefined = c.undefined();
+    super::fs_shared_vm::emit_deprecation(c, DEPRECATION.0, DEPRECATION.1, undefined)
+}
+
+/// `new FastBuffer(bufferOrLength, byteOffset, length)`: a Buffer made as `Uint8Array` makes
+/// a view.
+pub(crate) fn fast_constructor(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    construct_view(c, args)
 }
 
 /// `Buffer.from(value[, encodingOrOffset[, length]])`.
@@ -516,8 +549,18 @@ pub(crate) fn to_string(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> R
         return Ok(c.string_rooted(""));
     }
     let encoding = arg(c, args, 0);
-    let encoding = required_encoding(c, encoding)?;
-    binding::decode_bytes(c, &bytes[start..end], encoding)
+    if is_undefined(c, encoding) {
+        return binding::decode_bytes(c, &bytes[start..end], DEFAULT_ENCODING);
+    }
+    // `getEncodingOps` coerces the encoding (`encoding += ''`); no name is no encoding.
+    let name = c.to_string(encoding)?;
+    match codec::canonical_encoding(&name) {
+        Some(encoding) => binding::decode_bytes(c, &bytes[start..end], encoding),
+        None => {
+            let name = c.string_rooted(&name);
+            Err(unknown_encoding(c, name)?)
+        }
+    }
 }
 
 /// `buf.equals(otherBuffer)`.
@@ -997,9 +1040,9 @@ fn bounds_error(c: &mut Context<'_>, value: RootId, last: isize, name: Option<&s
 }
 
 /// The accessor's offset, checked as Node checks it: a number naming `width` bytes inside the
-/// buffer.
-fn checked_offset(c: &mut Context<'_>, offset: RootId, width: usize, length: usize) -> Result<usize, RootedError> {
-    let number = if is_undefined(c, offset) { 0.0 } else { validate_number(c, offset, "offset")? };
+/// buffer. Only the fixed-width accessors default it to 0.
+fn checked_offset(c: &mut Context<'_>, offset: RootId, width: usize, length: usize, defaulted: bool) -> Result<usize, RootedError> {
+    let number = if defaulted && is_undefined(c, offset) { 0.0 } else { validate_number(c, offset, "offset")? };
     if number.floor() != number || number < 0.0 || number + width as f64 > length as f64 {
         return Err(bounds_error(c, offset, length as isize - width as isize, None)?);
     }
@@ -1078,7 +1121,7 @@ pub(crate) fn numeric(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Res
         (None, arg(c, args, 0), width)
     };
     let Some(value) = value else {
-        let offset = checked_offset(c, offset, width, length)?;
+        let offset = checked_offset(c, offset, width, length, spec.width != 0)?;
         let bytes = c.view_bytes_rooted(this).unwrap_or_default();
         let raw = read_bytes(&bytes[offset..offset + width], spec.little);
         let bits = (width * 8) as u32;
@@ -1097,7 +1140,7 @@ pub(crate) fn numeric(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Res
     let raw = match spec.kind {
         Number::Float => {
             let number = c.to_number(value)?;
-            let offset = checked_offset(c, offset, width, length)?;
+            let offset = checked_offset(c, offset, width, length, spec.width != 0)?;
             let raw = if width == 4 { u128::from((number as f32).to_bits()) } else { u128::from(number.to_bits()) };
             return store(c, this, offset, width, raw, spec.little);
         }
@@ -1129,7 +1172,7 @@ pub(crate) fn numeric(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Res
             integer as u128
         }
     };
-    let offset = checked_offset(c, offset, width, length)?;
+    let offset = checked_offset(c, offset, width, length, spec.width != 0)?;
     store(c, this, offset, width, raw, spec.little)
 }
 
@@ -1154,14 +1197,15 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let uint8_prototype = get(c, uint8, "prototype")?;
     c.set_prototype_rooted(buffer, uint8)?;
     c.set_prototype_rooted(prototype, uint8_prototype)?;
-    let method = |c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, data: Option<RootId>| -> Result<(), RootedError> {
+    let method = |c: &mut Context<'_>, target: RootId, name: &str, operation_name: &str, data: Option<RootId>| -> Result<RootId, RootedError> {
         let function = match data {
             Some(data) => c.host_function_named_with_data(operation(operation_name), name, data)?,
             None => c.host_function_named(operation(operation_name), name)?,
         };
+        // Node assigns its Buffer methods, so they are ordinary enumerable data properties.
         let key = c.string_rooted(name);
-        c.define_data_property_rooted(target, key, function, true, false, true)?;
-        Ok(())
+        c.define_data_property_rooted(target, key, function, true, true, true)?;
+        Ok(function)
     };
     for (name, operation_name) in [
         ("from", "bufferFrom"),
@@ -1189,6 +1233,7 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         ("fill", "bufferFill"),
         ("write", "bufferWrite"),
         ("toJSON", "bufferToJson"),
+        ("subarray", "bufferSlice"),
         ("slice", "bufferSlice"),
         ("inspect", "bufferInspect"),
     ] {
@@ -1209,11 +1254,11 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     for (index, accessor) in ACCESSORS.iter().enumerate() {
         let data = c.number(index as f64);
-        method(c, prototype, accessor.name, "bufferNumeric", Some(data))?;
-        // Node aliases each `UInt` accessor as `Uint`.
+        let function = method(c, prototype, accessor.name, "bufferNumeric", Some(data))?;
+        // Node aliases each `UInt` accessor as `Uint`: the same function under a second name.
         if accessor.name.contains("UInt") {
-            let alias = accessor.name.replace("UInt", "Uint");
-            method(c, prototype, &alias, "bufferNumeric", Some(data))?;
+            let alias = c.string_rooted(&accessor.name.replace("UInt", "Uint"));
+            c.define_data_property_rooted(prototype, alias, function, true, true, true)?;
         }
     }
     let util = get(c, global, "Symbol")?;
@@ -1221,7 +1266,21 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let custom = c.string_rooted("nodejs.util.inspect.custom");
     let custom = c.call_rooted(registry, util, &[custom])?;
     let inspect = c.host_function_named(operation("bufferInspect"), "inspect")?;
-    c.define_data_property_rooted(prototype, custom, inspect, true, false, true)?;
+    c.define_data_property_rooted(prototype, custom, inspect, true, true, true)?;
+    // `Buffer[Symbol.species]` is `FastBuffer`, which typed-array methods construct without
+    // `Buffer()`'s deprecation; the two share one prototype.
+    let fast = c.host_constructor_named(operation("bufferFastConstructor"), "FastBuffer")?;
+    let retained = c.retain(fast)?;
+    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(super::buffer_shared_vm::FAST_BUFFER_CONSTRUCTOR.to_owned(), retained);
+    c.set_prototype_rooted(fast, uint8)?;
+    c.define_named_data_property_rooted(fast, "prototype", prototype, false, false, false)?;
+    let species_getter = c.host_function_named_with_data(operation("streamConstant"), "get", fast)?;
+    let species = get(c, util, "species")?;
+    let descriptor = c.null_object_rooted()?;
+    c.assign_named_property_rooted(descriptor, "get", species_getter)?;
+    let yes = c.boolean(true);
+    c.assign_named_property_rooted(descriptor, "configurable", yes)?;
+    c.define_property_descriptor_rooted(buffer, species, descriptor)?;
     for (name, target) in [("parent", "buffer"), ("offset", "byteOffset")] {
         let data = c.string_rooted(target);
         let getter = c.host_function_named_with_data(operation("bufferAliasGet"), "get", data)?;
@@ -1258,18 +1317,12 @@ pub(crate) fn exports(c: &mut Context<'_>, buffer: RootId) -> Result<RootId, Roo
         let value = get(c, binding, source)?;
         c.assign_named_property_rooted(module, name, value)?;
     }
-    let initialize = c.host_function_with_data(operation("bufferWebExports"), module)?;
-    c.define_lazy_data_properties_rooted(module, &["Blob", "File"], true, initialize)?;
-    Ok(module)
-}
-
-pub(crate) fn web_exports(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let module = c.host_function_data()?;
-    for (name, source) in [("Blob", "internal/blob.js"), ("File", "internal/file.js")] {
-        let value = crate::host::shared_vm::commonjs::node_library_export(c, "buffer.js", source, name)?;
+    let (blob, file) = crate::modules::blob_shared_vm::classes(c)?;
+    let resolve = crate::modules::blob_shared_vm::resolve_object_url_function(c)?;
+    for (name, value) in [("Blob", blob), ("resolveObjectURL", resolve), ("File", file)] {
         c.assign_named_property_rooted(module, name, value)?;
     }
-    Ok(c.undefined())
+    Ok(module)
 }
 
 #[cfg(test)]

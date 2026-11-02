@@ -162,6 +162,14 @@ fn check_net_permission(
     context: &mut Context<'_>,
     resource: Option<&str>,
 ) -> Result<(), RootedError> {
+    let model = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        state.cli_options.enabled("--permission") || state.cli_options.enabled("--permission-audit")
+    };
+    if !model {
+        return Ok(());
+    }
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
     let permission = get(context, process, "permission")?;
@@ -334,6 +342,17 @@ pub(crate) fn listen(
         .and_then(|value| value.as_number())
         .unwrap_or(0.0) as u16;
     let host = get(context, plan, "host")?;
+    // Node's `listenInCluster`: a worker's non-exclusive server listens through the primary.
+    let exclusive = if context.is_object_rooted(options)? {
+        let exclusive = get(context, options, "exclusive")?;
+        context.truthy_rooted(exclusive)?
+    } else {
+        false
+    };
+    if !exclusive && crate::modules::cluster::worker_active(context) {
+        let host = context.string_text(host)?;
+        return crate::modules::cluster::child::listen(context, server, host, f64::from(port), backlog);
+    }
     if context.truthy_rooted(host)? {
         let data = context.null_object_rooted()?;
         let port = context.number(f64::from(port));
@@ -512,6 +531,7 @@ pub(crate) fn close(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     advance(context, server)?;
+    crate::modules::cluster::child::server_closed(context, server)?;
     let handle = get(context, server, "_handle")?;
     let active = context.truthy_rooted(handle)?;
     if let Some(callback) = args

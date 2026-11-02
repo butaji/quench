@@ -32,7 +32,7 @@ macro_rules! linked_native_sources {
 /// Derive a static loader archive from compiler-owned raw inputs and edges.
 #[macro_export]
 macro_rules! linked_module_assets {
-    ($factory:ident; root $root:expr; entry $entry:expr; files {
+    ($factory:ident; entry $entry:expr; files {
         $($path:literal => ($bytes:literal, $kind:ident, $prepared:expr),)*
     } resolutions {
         $(($parent:literal, $specifier:literal) => $target:literal,)*
@@ -40,7 +40,7 @@ macro_rules! linked_module_assets {
         $(($view_path:literal, $view_key:literal) => $view_source:literal,)*
     }) => {
         $crate::linked_module_assets! {
-            values $factory; root $root; entry $entry; files {
+            values $factory; entry $entry; files {
                 $($path => (bytes include_bytes!($bytes), $kind, $prepared),)*
             } resolutions {
                 $(($parent, $specifier) => $target,)*
@@ -49,7 +49,7 @@ macro_rules! linked_module_assets {
             }
         }
     };
-    (values $factory:ident; root $root:expr; entry $entry:expr; files {
+    (values $factory:ident; entry $entry:expr; files {
         $($path:literal => (bytes $bytes:expr, $kind:ident, $prepared:expr),)*
     } resolutions {
         $(($parent:literal, $specifier:literal) => $target:literal,)*
@@ -62,7 +62,7 @@ macro_rules! linked_module_assets {
     })?) => {
         pub fn $factory() -> &'static $crate::aot::EmbeddedModules {
             static MODULES: $crate::aot::EmbeddedModules = $crate::aot::EmbeddedModules {
-                node_root: $root, entry: $entry,
+                entry: $entry,
                 files: &[$($crate::aot::EmbeddedModuleFile {
                     path: $path, bytes: $bytes, kind: quench_runtime::SourceKind::$kind, prepared: $prepared,
                 },)*],

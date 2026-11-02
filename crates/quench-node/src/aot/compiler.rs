@@ -103,9 +103,8 @@ impl CompiledSources {
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
-        let node_root = self.assets.node_root.as_deref().map(|path| path.to_str().ok_or("module root is not UTF-8")).transpose()?;
         let entry_path = self.assets.entry.as_deref().map(|path| path.to_str().ok_or("module entry is not UTF-8")).transpose()?;
-        writeln!(catalog, "quench_node::linked_module_assets! {{ values embedded_modules; root {node_root:?}; entry {entry_path:?}; files {{")
+        writeln!(catalog, "quench_node::linked_module_assets! {{ values embedded_modules; entry {entry_path:?}; files {{")
             .map_err(|error| error.to_string())?;
         for (index, (path, file)) in self.assets.files.iter().enumerate() {
             let bytes = match std::str::from_utf8(&file.bytes) {
@@ -174,19 +173,19 @@ impl SourceManifest {
     /// Stage only Node's existing pre-entry bootstrap lifecycle. The snapshot
     /// boundary forbids process-state capture and stops before user preloads,
     /// entry loading, IPC activation and event-loop execution.
-    pub fn capture_bootstrap(library_root: &Path) -> Result<Self, String> {
-        Self::capture(library_root, crate::host::startup_snapshot::SnapshotKind::Bootstrap)
+    pub fn capture_bootstrap() -> Result<Self, String> {
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Bootstrap)
     }
 
     /// The existing Node snapshot preload set, staged before any application.
-    pub fn capture_preloaded(library_root: &Path) -> Result<Self, String> {
-        Self::capture(library_root, crate::host::startup_snapshot::SnapshotKind::Preloaded)
+    pub fn capture_preloaded() -> Result<Self, String> {
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Preloaded)
     }
 
     /// Node SDK policies are Rust; only startup inputs can contribute guest source.
     /// Keep this entry point for callers combining bootstrap and application manifests.
-    pub fn capture_for_graph(library_root: &Path, _graph: &DependencyGraph) -> Result<Self, String> {
-        Self::capture_bootstrap(library_root)
+    pub fn capture_for_graph(_graph: &DependencyGraph) -> Result<Self, String> {
+        Self::capture_bootstrap()
     }
 
     pub fn extend(&mut self, other: Self) -> Result<(), String> {
@@ -195,7 +194,7 @@ impl SourceManifest {
         Ok(())
     }
 
-    fn capture(library_root: &Path, stage: crate::host::startup_snapshot::SnapshotKind) -> Result<Self, String> {
+    fn capture(stage: crate::host::startup_snapshot::SnapshotKind) -> Result<Self, String> {
         let inputs = Rc::new(RefCell::new(Self::default()));
         let captured = inputs.clone();
         let mut host = NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?
@@ -203,9 +202,8 @@ impl SourceManifest {
                 captured.borrow_mut().insert(name, parts)?;
                 Ok(None)
             });
-        host.node_library_root = library_root.canonicalize().map_err(|error| error.to_string())?;
         host.building_snapshot = Some(stage);
-        let assets = Rc::new(RefCell::new(ModuleAssets { node_root: Some(host.node_library_root.clone()), ..Default::default() }));
+        let assets = Rc::new(RefCell::new(ModuleAssets::default()));
         host.module_assets = ModuleAssetState::Capture(assets.clone());
         let mut runtime = Runtime::new(host);
         let entry = Engine::specialize("", NATIVE_ENTRY_NAME).map_err(|errors| format!("{errors:?}"))?;

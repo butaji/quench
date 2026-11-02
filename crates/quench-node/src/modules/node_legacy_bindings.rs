@@ -25,7 +25,29 @@ const PROCESS_BINDING_ALLOW_LIST: &[&str] = &[
 ];
 const RUNTIME_DEPRECATED_BINDINGS: &[&str] = &[
 ];
+/// The bindings lib/internal/legacy/processbinding.js wraps.
 const LEGACY_WRAPPER_BINDINGS: &[&str] = &[
-    "natives",
-    "util",
+    NATIVES_BINDING,
+    UTIL_BINDING,
+];
+const NATIVES_BINDING: &str = "natives";
+const UTIL_BINDING: &str = "util";
+/// The `util.types` predicates `process.binding('util')` exposes, in its order.
+const LEGACY_UTIL_TYPES: &[&str] = &[
+    "isArrayBuffer",
+    "isAsyncFunction",
+    "isDataView",
+    "isDate",
+    "isExternal",
+    "isMap",
+    "isMapIterator",
+    "isNativeError",
+    "isPromise",
+    "isRegExp",
+    "isSet",
+    "isSetIterator",
+    "isAnyArrayBuffer",
+    "isArrayBufferView",
+    "isTypedArray",
+    "isUint8Array",
 ];

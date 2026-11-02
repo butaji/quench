@@ -1,27 +1,38 @@
-//! Pure JavaScript HTTP protocol helpers exposed by `node:_http_common`.
-//!
-//! The socket parser remains owned by the HTTP host. This module centralizes
-//! the Node-visible token and header-value rules used by the public HTTP API.
+//! `node:_http_common` (and the `http_parser` binding's method lists): the HTTP token and
+//! header-value rules, the patterns the HTTP classes match header values with, and the
+//! parser helpers.
 
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+/// Node's `chunkExpression` and `continueExpression`.
+const EXPRESSIONS: [(&str, &str); 2] = [
+    ("chunkExpression", "(?:^|\\W)chunked(?:$|\\W)"),
+    ("continueExpression", "(?:^|\\W)100-continue(?:$|\\W)"),
+];
 
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    const CACHE_KEY: &str = "\0binding:http_parser";
-    let shared = context.host_mut().shared_state();
-    if let Some(value) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
-        return Ok(value);
-    }
-    let factory = crate::host::removed_javascript("node:_http_common/shared.js")?;
-    let undefined = context.undefined();
-    let owner_symbol = super::net_reference_shared_vm::owner_symbol(context)?;
-    let module = context.call_rooted(factory, undefined, &[owner_symbol])?;
-    context.release_root(factory);
-    let retained = context.retain(module)?;
-    shared
-        .borrow_mut()
-        .builtin_cache
-        .insert(CACHE_KEY.to_owned(), retained);
-    Ok(module)
+pub(crate) fn module(c: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:http_parser", |c| {
+        let module = c.object_rooted()?;
+        crate::modules::http_shared_vm::common_members(c, module)?;
+        let global = c.global_root()?;
+        let regexp = c.get_named_property_rooted(global, "RegExp")?;
+        let flags = c.string_rooted("i");
+        for (name, pattern) in EXPRESSIONS {
+            let pattern = c.string_rooted(pattern);
+            let expression = c.construct_rooted(regexp, regexp, &[pattern, flags])?;
+            c.assign_named_property_rooted(module, name, expression)?;
+        }
+        let crlf = c.string_rooted("\r\n");
+        c.assign_named_property_rooted(module, "CRLF", crlf)?;
+        let methods = crate::modules::http_protocol::HTTP_METHODS
+            .iter()
+            .map(|method| c.string_rooted(method))
+            .collect::<Vec<_>>();
+        for name in ["methods", "allMethods"] {
+            let list = c.array_rooted(&methods)?;
+            c.assign_named_property_rooted(module, name, list)?;
+        }
+        Ok(module)
+    })
 }

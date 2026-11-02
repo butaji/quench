@@ -11,7 +11,6 @@ impl NodeHost {
             #[cfg(feature = "native-execution")]
             module_assets: _,
             // The installation and the process's own entry and environment.
-            node_library_root: _,
             compile_cache: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
@@ -20,7 +19,8 @@ impl NodeHost {
             inline_source: _,
             eval_builtin_globals: _,
             eval_source_nonempty: _,
-            initial_node_debug: _,
+            eval_print: _,
+            eval_crypto: _,
             net_pending_writes,
             net_pending_ends,
             net_pending_destroys,
@@ -45,7 +45,6 @@ impl NodeHost {
 impl SharedNodeState {
     fn write_snapshot(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         let Self {
-            workers,
             vm_scripts,
             async_hooks,
             native_tasks,
@@ -57,8 +56,7 @@ impl SharedNodeState {
             tls_contexts,
             #[cfg(quench_icu)]
             icu_converters,
-            fs_stats,
-            fs_policy,
+            fs_classes,
             fs_stat_watch,
             cwd: _,
             module_parent_api,
@@ -66,9 +64,6 @@ impl SharedNodeState {
             builtin_cache,
             buffer_pool,
             commonjs_cache,
-            primordials_module,
-            crypto_handle_symbol,
-            library_originals,
             event_targets_api,
             trace,
             util_intrinsics,
@@ -78,8 +73,13 @@ impl SharedNodeState {
             process_signals,
             stdin,
             process_ipc,
+            node_test: _,
+            cluster: _,
+            repl_resources: _,
             #[cfg(quench_openssl_provider)]
             crypto_hashes,
+            #[cfg(quench_openssl_provider)]
+            crypto,
             crypto_key_material,
             #[cfg(quench_openssl_provider)]
             crypto_signatures,
@@ -91,8 +91,6 @@ impl SharedNodeState {
             unhandled_rejection_mode: _,
             output: _,
             stdout_output: _,
-            process_env_override: _,
-            process_env_shared: _,
             module_require_trace_active: _,
             net_auto_select_family_attempt_timeout,
             net_auto_select_family,
@@ -108,9 +106,9 @@ impl SharedNodeState {
             report_config: _,
             initial_node_options: _,
             initial_pending_deprecation: _,
-            fetch,
             diagnostics,
             http,
+            http2,
             tcp,
             net_sockets,
             net_closing_sockets,
@@ -131,6 +129,8 @@ impl SharedNodeState {
             net_handle_identities,
             net_handle_close_callbacks,
             error_event_name,
+            stream_intrinsics,
+            stream_high_water_marks,
         } = self;
         require_quiescent(native_tasks.snapshot_quiescent(), "the native task pool")?;
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
@@ -152,28 +152,22 @@ impl SharedNodeState {
         #[cfg(quench_openssl_provider)]
         {
             crypto_hashes.write_snapshot(writer)?;
+            crypto.write_snapshot(writer)?;
             crypto_signatures.write_snapshot(writer)?;
         }
         dns_channels.write_snapshot(writer)?;
-        workers.write_snapshot(writer)?;
         vm_scripts.write_snapshot(writer)?;
         async_hooks.write_snapshot(writer)?;
         dns.write_snapshot(writer)?;
         performance_native.write_snapshot(writer)?;
         fs_watch.write_snapshot(writer)?;
         tls_contexts.write_snapshot(writer)?;
-        fs_stats.write_snapshot(writer)?;
-        fs_policy.write_snapshot(writer)?;
+        fs_classes.write_snapshot(writer)?;
         fs_stat_watch.write_snapshot(writer)?;
         module_parent_api.write(writer)?;
         builtin_cache.write(writer)?;
         buffer_pool.write_snapshot(writer)?;
         commonjs_cache.write(writer)?;
-        primordials_module.write(writer)?;
-        crypto_handle_symbol.write(writer)?;
-        for original in &library_originals.0 {
-            original.write(writer)?;
-        }
         event_targets_api.write(writer)?;
         trace.write_snapshot(writer)?;
         util_intrinsics.write(writer)?;
@@ -193,10 +187,12 @@ impl SharedNodeState {
         timer_handle_api.write(writer)?;
         emitter_keys.write(writer)?;
         tick_invocation.write(writer)?;
+        stream_intrinsics.write(writer)?;
+        stream_high_water_marks.write(writer)?;
         timer_duration_warnings.write(writer)?;
-        fetch.write_snapshot(writer)?;
         diagnostics.write(writer)?;
         http.write_snapshot(writer)?;
+        http2.write_snapshot(writer)?;
         tcp.write_snapshot(writer)?;
         net_socket_close_completed.write(writer)?;
         udp.write_snapshot(writer)?;
@@ -224,28 +220,22 @@ impl SharedNodeState {
         #[cfg(quench_openssl_provider)]
         {
             self.crypto_hashes.read_snapshot(reader)?;
+            self.crypto.read_snapshot(reader)?;
             self.crypto_signatures.read_snapshot(reader)?;
         }
         self.dns_channels.read_snapshot(reader)?;
-        self.workers.read_snapshot(reader)?;
         self.vm_scripts.read_snapshot(reader)?;
         self.async_hooks.read_snapshot(reader)?;
         self.dns.read_snapshot(reader)?;
         self.performance_native.read_snapshot(reader)?;
         self.fs_watch.read_snapshot(reader)?;
         self.tls_contexts.read_snapshot(reader)?;
-        self.fs_stats.read_snapshot(reader)?;
-        self.fs_policy.read_snapshot(reader)?;
+        self.fs_classes.read_snapshot(reader)?;
         self.fs_stat_watch.read_snapshot(reader)?;
         self.module_parent_api = HostSnap::read(reader)?;
         self.builtin_cache = HostSnap::read(reader)?;
         self.buffer_pool.read_snapshot(reader)?;
         self.commonjs_cache = HostSnap::read(reader)?;
-        self.primordials_module = HostSnap::read(reader)?;
-        self.crypto_handle_symbol = HostSnap::read(reader)?;
-        for original in &mut self.library_originals.0 {
-            *original = HostSnap::read(reader)?;
-        }
         self.event_targets_api = HostSnap::read(reader)?;
         self.trace.read_snapshot(reader)?;
         self.util_intrinsics = HostSnap::read(reader)?;
@@ -265,10 +255,12 @@ impl SharedNodeState {
         self.timer_handle_api = HostSnap::read(reader)?;
         self.emitter_keys = HostSnap::read(reader)?;
         self.tick_invocation = HostSnap::read(reader)?;
+        self.stream_intrinsics = HostSnap::read(reader)?;
+        self.stream_high_water_marks = HostSnap::read(reader)?;
         self.timer_duration_warnings = HostSnap::read(reader)?;
-        self.fetch.read_snapshot(reader)?;
         self.diagnostics = HostSnap::read(reader)?;
         self.http.read_snapshot(reader)?;
+        self.http2.read_snapshot(reader)?;
         self.tcp.read_snapshot(reader)?;
         self.net_socket_close_completed = HostSnap::read(reader)?;
         self.udp.read_snapshot(reader)?;

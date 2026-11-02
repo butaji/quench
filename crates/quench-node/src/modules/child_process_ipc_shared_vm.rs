@@ -442,64 +442,135 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .and_then(|fd| fd.parse::<i32>().ok())
         .filter(|fd| *fd >= 0)
     {
-        use std::os::fd::FromRawFd;
-        // Only claim a socket. A malformed external bootstrap variable must
-        // never transfer ownership of an unrelated inherited descriptor.
-        let mut kind: libc::c_int = 0;
-        let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
-        let valid = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_TYPE,
-                (&mut kind as *mut libc::c_int).cast(),
-                &mut length,
-            )
-        } == 0;
-        if valid {
-            let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
-            socket
-                .set_nonblocking(true)
-                .map_err(|error| RootedError::host(error.to_string()))?;
-            let serialization = std::env::var(SERIALIZATION_MODE_VARIABLE)
-                .ok()
-                .and_then(|mode| Serialization::from_mode(&mode))
-                .unwrap_or_default();
-            let mut channel = IpcChannel::new(socket, serialization);
-            channel.counted_references = CountedReferences::Process { count: 0.0 };
-            state.borrow_mut().process_ipc.channel = Some(channel);
-        }
+        let serialization = std::env::var(SERIALIZATION_MODE_VARIABLE)
+            .ok()
+            .and_then(|mode| Serialization::from_mode(&mode))
+            .unwrap_or_default();
+        open_process_channel(context, fd, serialization)?;
     }
     Ok(())
 }
 
-pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner:u64, target:RootId) -> Result<(),RootedError> {
-    let taken={let state=context.host_mut().shared_state();let mut state=state.borrow_mut();channel(&mut state,owner).and_then(|channel|{let serialization=channel.serialization;channel.take_socket().map(|socket|(socket,serialization))})};
-    let Some((socket,serialization))=taken else {return Ok(())};
-    let constructor=super::pipe_binding::constructor(context)?;
-    let kind=context.number(2.0);
-    let pipe=context.construct_rooted(constructor,constructor,&[kind])?;
-    super::pipe_binding::adopt(context,pipe,socket)?;
-    let resource=super::pipe_binding::resource_view(context,pipe)?;
-    if let super::native_async_wrap::View::Active(resource)=resource {
-        if let Some(child)=context.host_mut().shared_state().borrow_mut().child_processes.get_mut(&owner){child.ipc_pipe=Some(resource.id);}
+/// Makes the socket at `fd` the process's IPC channel. Only a socket is claimed: a
+/// malformed bootstrap variable must never take ownership of an unrelated descriptor.
+#[cfg(unix)]
+fn open_process_channel(
+    context: &mut NativeContext<'_, NodeHost>,
+    fd: i32,
+    serialization: Serialization,
+) -> Result<(), RootedError> {
+    use std::os::fd::FromRawFd;
+    let mut kind: libc::c_int = 0;
+    let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
+    let valid = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut kind as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    } == 0;
+    if !valid {
+        return Ok(());
     }
-    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","internal/child_process.js")?;
-    let setup=super::event_constructor_shared_vm::get(context,policy,"setupChannel")?;
-    let mode=context.string_rooted(serialization.mode());let undefined=context.undefined();
-    let count=context.number(2.0);set(context,target,"_closesNeeded",count)?;
-    let count=context.number(0.0);set(context,target,"_closesGot",count)?;
-    context.call_rooted(setup,undefined,&[target,pipe,mode])?;
+    let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    socket
+        .set_nonblocking(true)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let mut channel = IpcChannel::new(socket, serialization);
+    channel.counted_references = CountedReferences::Process { count: 0.0 };
+    context.host_mut().shared_state().borrow_mut().process_ipc.channel = Some(channel);
     Ok(())
 }
 
-pub(crate) fn activate_process(context:&mut NativeContext<'_,NodeHost>)->Result<(),RootedError>{
-    let (process,channel)={let shared=context.host_mut().shared_state();let state=shared.borrow();(state.process_module,state.process_ipc.channel.as_ref().filter(|c|!c.closed()).map(|c|(c.fd(),c.serialization)))};
-    let (Some(process),Some((fd,serialization)))=(process,channel) else{return Ok(())};
-    let policy=crate::host::shared_vm::commonjs::node_library_module(context,"child_process.js","child_process.js")?;
-    let fork=super::event_constructor_shared_vm::get(context,policy,"_forkChild")?;
-    let fd=context.number(fd as f64);let mode=context.string_rooted(serialization.mode());
-    context.call_rooted(fork,process,&[fd,mode])?;Ok(())
+/// `child_process._forkChild(fd, serializationMode)`: the IPC channel a forked child's
+/// `process` sends and receives on.
+#[cfg(unix)]
+pub(crate) fn fork_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let fd = args.first().copied().unwrap_or(undefined);
+    let fd = context.to_number(fd)? as i32;
+    let mode = args.get(1).copied().unwrap_or(undefined);
+    let serialization = match context.string_text(mode)? {
+        Some(mode) => Serialization::from_mode(&mode).unwrap_or_default(),
+        None => Serialization::default(),
+    };
+    open_process_channel(context, fd, serialization)?;
+    activate_process(context)?;
+    Ok(context.undefined())
+}
+
+/// Give `target` (a ChildProcess, or `process` in a forked child) the channel's surface:
+/// `send`, `disconnect`, `connected`, and `channel`, an EventEmitter whose reference
+/// methods and `fd` project the host channel.
+pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner: u64, target: RootId) -> Result<(), RootedError> {
+    let state = context.host_mut().shared_state();
+    if channel(&mut state.borrow_mut(), owner).is_none() {
+        return Ok(());
+    }
+    let owner = context.number(owner as f64);
+    let data = context.array_rooted(&[owner, target])?;
+    for (name, operation) in [("send", "ipcSend"), ("disconnect", "ipcDisconnect")] {
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        set(context, target, name, function)?;
+    }
+    let emitter_api = state
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
+    let emitter = super::event_constructor_shared_vm::get(context, emitter_api, "emitterCtor")?;
+    let control = context.construct_rooted(emitter, emitter, &[])?;
+    for (name, operation, refed) in [
+        ("ref", "ipcReference", true),
+        ("unref", "ipcReference", false),
+        ("refCounted", "ipcReferenceCounted", true),
+        ("unrefCounted", "ipcReferenceCounted", false),
+    ] {
+        let refed = context.boolean(refed);
+        let data = context.array_rooted(&[owner, target, refed])?;
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(control, key, function, true, false, true)?;
+    }
+    let descriptor = context.host_function_named_with_data(crate::host::shared_vm::operation("ipcDescriptor"), "get fd", data)?;
+    let fields = quench_runtime::DescriptorFields {
+        get: Some(descriptor),
+        enumerable: Some(true),
+        configurable: Some(true),
+        ..quench_runtime::DescriptorFields::default()
+    };
+    let key = context.string_rooted("fd");
+    context.define_property_fields_rooted(control, key, fields)?;
+    set(context, target, "channel", control)?;
+    let connected = context.boolean(true);
+    set(context, target, "connected", connected)
+}
+
+/// A forked child's `process` channel: the surface, and listener counting that keeps the
+/// channel referenced while `message` or `disconnect` listeners exist.
+pub(crate) fn activate_process(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let (process, open) = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        (state.process_module, state.process_ipc.channel.as_ref().is_some_and(|channel| !channel.closed()))
+    };
+    let (Some(process), true) = (process, open) else { return Ok(()) };
+    install(context, PROCESS_OWNER, process)?;
+    let control = super::event_constructor_shared_vm::get(context, process, "channel")?;
+    let on = super::event_constructor_shared_vm::get(context, process, "on")?;
+    for (event, name, add) in [("newListener", "onNewListener", true), ("removeListener", "onRemoveListener", false)] {
+        let event = context.string_rooted(event);
+        let add = context.boolean(add);
+        let data = context.array_rooted(&[control, add])?;
+        let callback = context.host_function_named_with_data(crate::host::shared_vm::operation("processIpcListenerReference"), name, data)?;
+        context.call_rooted(on, process, &[event, callback])?;
+    }
+    Ok(())
 }
 
 pub(crate) fn take_socket(
@@ -677,9 +748,7 @@ pub(crate) fn send(
         }
         // Buffer writes always attempt a synchronous write first.
         Serialization::Advanced => {
-            let undefined = context.undefined();
-            let buffer = super::buffer_shared_vm::constructor(context, undefined, &[])?;
-            (super::ipc_serdes_shared_vm::serialize(context, message, buffer)?, true)
+            (super::ipc_serdes_shared_vm::serialize(context, message)?, true)
         }
     };
     // Node closes a sent handle once its frame is written unless `options.keepOpen`.
@@ -1112,22 +1181,8 @@ pub(crate) fn destroy_transferred_public_socket(
     // which owned it. Drop the HTTP bookkeeping alongside the native handle so
     // the source Socket does not retain a parser, response, or timeout after
     // the transfer has completed.
-    let timers = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "net.js",
-        "internal/timers.js",
-    )?;
-    let timeout_key = context.string_rooted("kTimeout");
-    let timeout_symbol = context.get_property_rooted(timers, timeout_key)?;
-    let timeout = context.get_property_rooted(socket, timeout_symbol)?;
-    let global = context.global_root()?;
-    let clear_timeout_key = context.string_rooted("clearTimeout");
-    let clear_timeout = context.get_property_rooted(global, clear_timeout_key)?;
-    if context.is_callable_rooted(clear_timeout)? {
-        context.call_rooted(clear_timeout, global, &[timeout])?;
-    }
+    super::net_class_shared_vm::clear_timeout_timer(context, socket)?;
     let null = context.null();
-    context.set_property_rooted(socket, timeout_symbol, null, socket)?;
     for name in ["parser", "_httpMessage"] {
         let key = context.string_rooted(name);
         context.set_property_rooted(socket, key, null, socket)?;

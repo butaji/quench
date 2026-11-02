@@ -110,6 +110,16 @@ impl<T: HostSnap> HostSnap for Vec<T> {
     }
 }
 
+impl<T: HostSnap, const N: usize> HostSnap for [T; N] {
+    fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
+        self.iter().try_for_each(|value| value.write(writer))
+    }
+    fn read(reader: &mut SnapshotReader<'_, '_>) -> Result<Self, String> {
+        let values = (0..N).map(|_| T::read(reader)).collect::<Result<Vec<_>, _>>()?;
+        values.try_into().map_err(|_| "snapshot array length".to_owned())
+    }
+}
+
 impl<A: HostSnap, B: HostSnap> HostSnap for (A, B) {
     fn write(&self, writer: &mut SnapshotWriter<'_>) -> Result<(), String> {
         self.0.write(writer)?;
@@ -354,12 +364,6 @@ pub(crate) fn preload_named(
             context.call_rooted(require, undefined, &[specifier]).map(drop)
         })?;
     }
-    // Node's `fs` loads its option policy and defines its members with it; Quench's at their
-    // first use.
-    if builtins.iter().any(|name| name.strip_prefix("node:").unwrap_or(name) == "fs") {
-        context.scoped(crate::modules::fs_policy_shared_vm::capture)?;
-        context.scoped(crate::modules::fs_shared_vm::materialize)?;
-    }
     Ok(())
 }
 
@@ -404,7 +408,6 @@ pub(crate) fn snapshot_path(
         .join(SNAPSHOT_SUBDIRECTORY)
         .join(format!("{:016x}", host.compile_cache.build()));
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&host.node_library_root, &mut hasher);
     for name in KEYED_VARIABLES {
         std::hash::Hash::hash(&std::env::var_os(name), &mut hasher);
     }

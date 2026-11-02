@@ -15,20 +15,13 @@ pub(crate) fn constrained(
 ) -> Result<RootId, RootedError> {
     Ok(context.number(super::memory_facts::constrained() as f64))
 }
+
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let process = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_module
+    let process = context.host_mut().shared_state().borrow().process_module
         .ok_or_else(|| RootedError::host("process memory surface has no process owner"))?;
     for name in ["availableMemory", "constrainedMemory"] {
+        let function = context.host_function_named(crate::host::shared_vm::operation(name), name)?;
         let key = context.string_rooted(name);
-        let existing = context.get_property_rooted(process, key)?;
-        if context.truthy_rooted(existing)? {
-            continue;
-        }
-        let function = context.host_function(crate::host::shared_vm::operation(name))?;
         context.define_data_property_rooted(process, key, function, true, true, true)?;
     }
     Ok(())

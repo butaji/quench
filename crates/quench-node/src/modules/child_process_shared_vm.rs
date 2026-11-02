@@ -17,138 +17,7 @@ static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let global = context.global_root()?;
-    let key = context.string_rooted("Buffer");
-    let buffer = context.get_property_rooted(global, key)?;
-    let prototype = property(context, buffer, "prototype")?;
-    let spawn_sync = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessSpawnSync"),
-        prototype,
-    )?;
-    let spawn_data = context.object_rooted()?;
-    let spawn = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessConstruct"),
-        spawn_data,
-    )?;
-    let register =
-        context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
-    let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
-    let end = context.host_function(crate::host::shared_vm::operation("childProcessEnd"))?;
-    let write_extra =
-        context.host_function(crate::host::shared_vm::operation("childProcessWriteExtra"))?;
-    let end_extra =
-        context.host_function(crate::host::shared_vm::operation("childProcessEndExtra"))?;
-    let warning = context.host_function(crate::host::shared_vm::operation(
-        "childProcessShellArgsWarning",
-    ))?;
-    let key = context.string_rooted("isBuffer");
-    let is_buffer = context.get_property_rooted(buffer, key)?;
-    let fork_plan = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessForkPlan"),
-        is_buffer,
-    )?;
-    let flush_stdio =
-        context.host_function(crate::host::shared_vm::operation("childProcessFlushStdio"))?;
-    let read = context.host_function(crate::host::shared_vm::operation("childProcessRead"))?;
-    let read_extra =
-        context.host_function(crate::host::shared_vm::operation("childProcessReadExtra"))?;
-    let prepare_options = context.host_function(crate::host::shared_vm::operation(
-        "childProcessPrepareOptions",
-    ))?;
-    let validate_file = context.host_function(crate::host::shared_vm::operation(
-        "childProcessValidateFile",
-    ))?;
-    let sync_options =
-        context.host_function(crate::host::shared_vm::operation("childProcessSyncOptions"))?;
-    let dispose =
-        context.host_function(crate::host::shared_vm::operation("childProcessDispose"))?;
-    let operations = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .event_targets_api
-        .ok_or_else(|| RootedError::host("child disposal symbol owner missing"))?;
-    let dispose_key = property(context, operations, "disposeKey")?;
-    let reference =
-        context.host_function(crate::host::shared_vm::operation("childProcessReference"))?;
-    let destroy_input = context.host_function(crate::host::shared_vm::operation(
-        "childProcessDestroyInput",
-    ))?;
-    let prepare_exit =
-        context.host_function(crate::host::shared_vm::operation("childProcessPrepareExit"))?;
-    let spawn_failed =
-        context.host_function(crate::host::shared_vm::operation("childProcessSpawnFailed"))?;
-    let spawn_succeeded = context.host_function(crate::host::shared_vm::operation(
-        "childProcessSpawnSucceeded",
-    ))?;
-    let factory = crate::host::removed_javascript("node:child_process/shared.js")?;
-    let undefined = context.undefined();
-    let factory_result = context.call_rooted(
-        factory,
-        undefined,
-        &[
-            spawn_sync,
-            spawn,
-            register,
-            write,
-            end,
-            write_extra,
-            end_extra,
-            buffer,
-            warning,
-            fork_plan,
-            read,
-            read_extra,
-            flush_stdio,
-            prepare_options,
-            validate_file,
-            sync_options,
-            dispose,
-            dispose_key,
-            reference,
-            destroy_input,
-            prepare_exit,
-            spawn_failed,
-            spawn_succeeded,
-        ],
-    )?;
-    let module = property(context, factory_result, "0")?;
-    let initialize = property(context, factory_result, "1")?;
-    let constructor = property(context, module, "ChildProcess")?;
-    set(context, spawn_data, "constructor", constructor)?;
-    let prototype = property(context, constructor, "prototype")?;
-    let method = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessPrototypeSpawn"),
-        initialize,
-    )?;
-    let key = context.string_rooted("name");
-    let name = context.string_rooted("spawn");
-    context.define_data_property_rooted(method, key, name, false, false, true)?;
-    let key = context.string_rooted("spawn");
-    context.define_data_property_rooted(prototype, key, method, true, true, true)?;
-    let spawn = context.get_property_rooted(module, key)?;
-    let exec_file = super::child_process_exec_shared_vm::function(context, spawn, buffer)?;
-    let key = context.string_rooted("execFile");
-    context.set_property_rooted(module, key, exec_file, module)?;
-    let exec =
-        context.host_function_with_data(crate::host::shared_vm::operation("exec"), module)?;
-    let key = context.string_rooted("exec");
-    context.set_property_rooted(module, key, exec, module)?;
-    super::child_process_exec_shared_vm::install_promisified(context, &[exec, exec_file])?;
-    let initializer = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessForkChildProjection"),
-        module,
-    )?;
-    context.define_lazy_data_properties_rooted(module, &["_forkChild"], true, initializer)?;
-    Ok(module)
-}
-
-pub(crate) fn spawn_child(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    spawn_child_with_stdio(context, args, None)
+    super::child_process_class_shared_vm::module(context)
 }
 
 fn spawn_child_with_stdio(
@@ -728,14 +597,10 @@ pub(crate) fn write_child(
     }) else {
         return Err(RootedError::host("child process write has no id"));
     };
-    let encoded = args
+    let bytes = args
         .get(1)
-        .and_then(|root| context.string_text(*root).ok().flatten())
+        .and_then(|root| context.view_bytes_rooted(*root))
         .unwrap_or_default();
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|error| RootedError::host(error.to_string()))?;
     let callback = args
         .get(2)
         .copied()
@@ -779,14 +644,10 @@ pub(crate) fn write_extra_child(
         .and_then(quench_runtime::Value::as_number)
         .ok_or_else(|| RootedError::host("child extra-stdio write has no index"))?
         as usize;
-    let encoded = args
+    let bytes = args
         .get(2)
-        .and_then(|root| context.string_text(*root).ok().flatten())
+        .and_then(|root| context.view_bytes_rooted(*root))
         .unwrap_or_default();
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|error| RootedError::host(error.to_string()))?;
     let callback = args
         .get(3)
         .copied()
@@ -1111,32 +972,26 @@ pub(crate) fn poll(
             progressed = true;
             match event {
                 ChildProcessEvent::Stdout(bytes) => {
-                    use base64::Engine;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    dispatch(runtime, program, child, "stdout", Some(&encoded), None)?;
+                    dispatch(runtime, program, child, "stdout", Payload::Bytes(bytes), Payload::None)?;
                 }
                 ChildProcessEvent::Stderr(bytes) => {
-                    use base64::Engine;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    dispatch(runtime, program, child, "stderr", Some(&encoded), None)?;
+                    dispatch(runtime, program, child, "stderr", Payload::Bytes(bytes), Payload::None)?;
                 }
                 ChildProcessEvent::ExtraStdout(index, bytes) => {
-                    use base64::Engine;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
                     dispatch(
                         runtime,
                         program,
                         child,
                         "extraStdout",
-                        Some(&encoded),
-                        Some(&index.to_string()),
+                        Payload::Bytes(bytes),
+                        Payload::Index(index),
                     )?;
                 }
                 ChildProcessEvent::StdoutEnd => {
-                    dispatch(runtime, program, child, "stdoutEnd", None, None)?;
+                    dispatch(runtime, program, child, "stdoutEnd", Payload::None, Payload::None)?;
                 }
                 ChildProcessEvent::StderrEnd => {
-                    dispatch(runtime, program, child, "stderrEnd", None, None)?;
+                    dispatch(runtime, program, child, "stderrEnd", Payload::None, Payload::None)?;
                 }
                 ChildProcessEvent::ExtraStdoutEnd(index) => {
                     dispatch(
@@ -1144,8 +999,8 @@ pub(crate) fn poll(
                         program,
                         child,
                         "extraStdoutEnd",
-                        Some(&index.to_string()),
-                        None,
+                        Payload::Index(index),
+                        Payload::None,
                     )?;
                 }
                 ChildProcessEvent::Exit(_, _) => {
@@ -1196,23 +1051,34 @@ pub(crate) fn poll(
     Ok(progressed)
 }
 
+/// A value an output event carries: the bytes read, or an extra pipe's stdio index.
+enum Payload {
+    None,
+    Bytes(Vec<u8>),
+    Index(usize),
+}
+
+fn payload_root(runtime: &mut quench_runtime::Runtime<NodeHost>, payload: Payload) -> Result<RootId, String> {
+    Ok(match payload {
+        Payload::None => runtime.root(quench_runtime::Value::NULL),
+        Payload::Bytes(bytes) => runtime
+            .uint8_array_from_rooted(bytes)
+            .map_err(|error| error.to_string())?,
+        Payload::Index(index) => runtime.root(quench_runtime::Value::number(index as f64)),
+    })
+}
+
 fn dispatch(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     child: RootId,
     event: &str,
-    value: Option<&str>,
-    value2: Option<&str>,
+    value: Payload,
+    value2: Payload,
 ) -> Result<(), String> {
     let event = runtime.string_rooted(event);
-    let value = match value {
-        Some(value) => runtime.string_rooted(value),
-        None => runtime.root(quench_runtime::Value::NULL),
-    };
-    let value2 = match value2 {
-        Some(value) => runtime.string_rooted(value),
-        None => runtime.root(quench_runtime::Value::NULL),
-    };
+    let value = payload_root(runtime, value)?;
+    let value2 = payload_root(runtime, value2)?;
     let key = runtime.string_rooted("__quenchDispatch");
     let dispatch = runtime
         .get_property_rooted(child, key)
@@ -1840,7 +1706,7 @@ fn unreaped_exit_status(_: u32) -> Option<std::process::ExitStatus> {
     None
 }
 
-fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
+pub(crate) fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
     use std::os::unix::process::ExitStatusExt;
     let signal = status.signal()?;
     #[cfg(target_os = "linux")]
@@ -1861,7 +1727,7 @@ fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
 }
 
 #[cfg(not(unix))]
-fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> {
+pub(crate) fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> {
     None
 }
 
@@ -2677,22 +2543,5 @@ pub(crate) fn spawn_succeeded_run(
 ) -> Result<RootId, RootedError> {
     let child = context.host_function_data()?;
     emit_failure_event(context, child, "spawn", &[])?;
-    Ok(context.undefined())
-}
-
-pub(crate) fn fork_child_projection(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let owner = context.host_function_data()?;
-    let policy = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "child_process.js",
-        "child_process.js",
-    )?;
-    let function = property(context, policy, "_forkChild")?;
-    let key = context.string_rooted("_forkChild");
-    context.define_data_property_rooted(owner, key, function, true, true, true)?;
     Ok(context.undefined())
 }

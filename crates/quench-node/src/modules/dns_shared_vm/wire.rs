@@ -19,8 +19,6 @@ const FLAG_RD: u16 = 0x0100;
 const RCODE_MASK: u16 = 0x000F;
 /// The Internet class.
 pub(crate) const CLASS_IN: u16 = 1;
-/// c-ares' default EDNS(0) advertised UDP payload (`EDNSPACKETSZ`).
-pub(crate) const EDNS_PAYLOAD: u16 = 1232;
 const IPV4_LEN: usize = 4;
 const IPV6_LEN: usize = 16;
 
@@ -38,16 +36,15 @@ pub(crate) enum RecordType {
     Aaaa = 28,
     Srv = 33,
     Naptr = 35,
-    Opt = 41,
     Tlsa = 52,
     Any = 255,
     Caa = 257,
 }
 
 impl RecordType {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 13] = [
         Self::A, Self::Ns, Self::Cname, Self::Soa, Self::Ptr, Self::Mx, Self::Txt, Self::Aaaa,
-        Self::Srv, Self::Naptr, Self::Opt, Self::Tlsa, Self::Any, Self::Caa,
+        Self::Srv, Self::Naptr, Self::Tlsa, Self::Any, Self::Caa,
     ];
 
     fn from_number(number: u16) -> Option<Self> {
@@ -123,34 +120,25 @@ pub(crate) struct Response {
     /// The first question's name, as presentation text.
     pub(crate) question: Option<String>,
     pub(crate) answers: Vec<Record>,
-    /// The response carried an EDNS(0) OPT record.
-    pub(crate) has_opt: bool,
 }
 
 /// Encoding a query name failed: an empty interior label, an over-long label or name, or
 /// a malformed escape.
 pub(crate) struct BadName;
 
-/// Encode a recursive query for `name` (presentation form, escapes allowed).
-pub(crate) fn encode_query(id: u16, name: &str, kind: RecordType, edns: bool) -> Result<Vec<u8>, BadName> {
+/// Encode a recursive query for `name` (presentation form, escapes allowed). Node's
+/// channel sets its own flags, which turns off c-ares' default EDNS(0), so the query
+/// carries one question and no OPT record.
+pub(crate) fn encode_query(id: u16, name: &str, kind: RecordType) -> Result<Vec<u8>, BadName> {
     let mut message = Vec::with_capacity(HEADER_LEN + name.len() + 2 + QUESTION_FIXED_LEN);
     message.extend_from_slice(&id.to_be_bytes());
     message.extend_from_slice(&FLAG_RD.to_be_bytes());
-    let additional = u16::from(edns);
-    for count in [1, 0, 0, additional] {
+    for count in [1, 0, 0, 0] {
         message.extend_from_slice(&u16::to_be_bytes(count));
     }
     encode_name(name, &mut message)?;
     message.extend_from_slice(&(kind as u16).to_be_bytes());
     message.extend_from_slice(&CLASS_IN.to_be_bytes());
-    if edns {
-        // Root owner, OPT type, payload size as class, zero extended flags and no options.
-        message.push(0);
-        message.extend_from_slice(&(RecordType::Opt as u16).to_be_bytes());
-        message.extend_from_slice(&EDNS_PAYLOAD.to_be_bytes());
-        message.extend_from_slice(&0u32.to_be_bytes());
-        message.extend_from_slice(&0u16.to_be_bytes());
-    }
     Ok(message)
 }
 
@@ -325,9 +313,8 @@ pub(crate) fn decode(message: &[u8]) -> Result<Response, BadResponse> {
     for _ in 0..answers {
         records.push(record(&mut reader)?);
     }
-    let mut has_opt = false;
     for _ in 0..u32::from(authorities) + u32::from(additional) {
-        has_opt |= record(&mut reader)?.kind == Some(RecordType::Opt);
+        record(&mut reader)?;
     }
     Ok(Response {
         id,
@@ -335,7 +322,6 @@ pub(crate) fn decode(message: &[u8]) -> Result<Response, BadResponse> {
         code: ResponseCode::from_bits(flags),
         question,
         answers: records,
-        has_opt,
     })
 }
 
@@ -396,7 +382,7 @@ fn record(reader: &mut Reader<'_>) -> Result<Record, BadResponse> {
             let value = reader.take(end.checked_sub(reader.offset).ok_or(BadResponse)?)?.to_vec();
             RecordData::Caa { flags, tag, value }
         }
-        Some(RecordType::Opt | RecordType::Any) | None => {
+        Some(RecordType::Any) | None => {
             reader.take(length)?;
             RecordData::Other
         }
@@ -413,9 +399,9 @@ mod tests {
 
     #[test]
     fn query_names_reject_bad_labels_and_accept_escapes() {
-        assert!(encode_query(1, "a..b", RecordType::A, false).is_err());
-        assert!(encode_query(1, &"x".repeat(MAX_LABEL_LEN + 1), RecordType::A, false).is_err());
-        let query = encode_query(7, "a\\.b.test.", RecordType::Txt, true).ok().unwrap();
+        assert!(encode_query(1, "a..b", RecordType::A).is_err());
+        assert!(encode_query(1, &"x".repeat(MAX_LABEL_LEN + 1), RecordType::A).is_err());
+        let query = encode_query(7, "a\\.b.test.", RecordType::Txt).ok().unwrap();
         assert_eq!(&query[HEADER_LEN..HEADER_LEN + 10], b"\x03a.b\x04test\x00");
     }
 

@@ -2,6 +2,18 @@
 use super::socket::{get, method, set};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+
+/// The handshake deadline a server gives each connection unless `handshakeTimeout` sets
+/// one, in milliseconds (`120 * 1000`).
+const DEFAULT_HANDSHAKE_TIMEOUT: f64 = 120_000.0;
+
+/// The private slot holding a server's effective handshake timeout (`kHandshakeTimeout`).
+fn handshake_timeout_slot(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::cached_native_binding(context, "\0tls:handshakeTimeout", |context| {
+        Ok(context.private_symbol_rooted(Some("kHandshakeTimeout")))
+    })
+}
+
 pub(crate) fn create(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -61,6 +73,13 @@ pub(crate) fn construct(
             "number",
         )?);
     }
+    let handshake_timeout = if context.truthy_rooted(handshake_timeout)? {
+        handshake_timeout
+    } else {
+        context.number(DEFAULT_HANDSHAKE_TIMEOUT)
+    };
+    let slot = handshake_timeout_slot(context)?;
+    context.define_data_property_rooted(receiver, slot, handshake_timeout, true, false, true)?;
     let sni_callback = get(context, options, "SNICallback")?;
     if context.truthy_rooted(sni_callback)? && !context.is_callable_rooted(sni_callback)? {
         return Err(super::super::util_shared_vm::argument_type_error(
@@ -103,16 +122,6 @@ pub(crate) fn construct(
     let connection =
         context.host_function(crate::host::shared_vm::operation("tlsServerConnection"))?;
     context.call_rooted(base, receiver, &[options, connection])?;
-    // Node exposes TLS ticket rotation on the Server as a thin projection of
-    // its shared SecureContext. The SecureContext operation is already backed
-    // by OpenSSL; installing the forwarding method here makes that session
-    // control reachable through tls.Server/https.Server as expected.
-    let ticket_keys_factory = crate::host::removed_javascript("node:tls/server-ticket-keys.js")?;
-    let ticket_keys = context.call_rooted(ticket_keys_factory, undefined, &[receiver])?;
-    set(context, receiver, "setTicketKeys", ticket_keys)?;
-    let get_ticket_keys_factory = crate::host::removed_javascript("node:tls/server-get-ticket-keys.js")?;
-    let get_ticket_keys = context.call_rooted(get_ticket_keys_factory, undefined, &[receiver])?;
-    set(context, receiver, "getTicketKeys", get_ticket_keys)?;
     if context.truthy_rooted(listener)? {
         let secure = context.string_rooted("secureConnection");
         method(context, receiver, "on", &[secure, listener])?;
@@ -153,12 +162,26 @@ pub(crate) fn connection(
         let value = get(context, server, name)?;
         set(context, options, name, value)?;
     }
+    let slot = handshake_timeout_slot(context)?;
+    let handshake_timeout = context.get_property_rooted(server, slot)?;
+    set(context, options, "handshakeTimeout", handshake_timeout)?;
     let socket = context.construct_rooted(constructor, constructor, &[args[0], options])?;
     super::sessions::set_purpose(context, socket, super::sessions::Purpose::Server)?;
-    let event = context.string_rooted("error");
-    let callback =
-        context.host_function(crate::host::shared_vm::operation("tlsServerSocketError"))?;
-    method(context, socket, "on", &[event, callback])?;
+    // `onSocketTLSError` hears the TLS errors of a socket that has not released control;
+    // once released, its unestablished socket's errors still reach the server.
+    for (event, controlled) in [("_tlsError", true), ("error", false)] {
+        let event = context.string_rooted(event);
+        let controlled = context.boolean(controlled);
+        let callback = context
+            .host_function_with_data(crate::host::shared_vm::operation("tlsServerSocketError"), controlled)?;
+        method(context, socket, "on", &[event, callback])?;
+    }
+    let event = context.string_rooted("keylog");
+    let listeners = method(context, server, "listenerCount", &[event])?;
+    if context.truthy_rooted(listeners)? {
+        let forward = get(context, api, super::surface::SERVER_SOCKET_KEYLOG)?;
+        method(context, socket, "on", &[event, forward])?;
+    }
     let undefined = context.undefined();
     super::socket::start(context, undefined, &[socket])?;
     Ok(context.undefined())
@@ -168,8 +191,11 @@ pub(crate) fn socket_error(
     socket: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    let controlled = context.host_function_data()?;
+    let controlled = context.truthy_rooted(controlled)?;
+    let released = get(context, socket, "_controlReleased")?;
     let established = get(context, socket, "_secureEstablished")?;
-    if !context.truthy_rooted(established)? {
+    if controlled != context.truthy_rooted(released)? && !context.truthy_rooted(established)? {
         let options = get(context, socket, "_tlsOptions")?;
         let server = get(context, options, "server")?;
         let event = context.string_rooted("tlsClientError");
@@ -177,12 +203,4 @@ pub(crate) fn socket_error(
         method(context, server, "emit", &[event, error, socket])?;
     }
     Ok(context.undefined())
-}
-
-pub(crate) fn set_context_operation(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    set_context(context, args[0], &args[1..])
 }

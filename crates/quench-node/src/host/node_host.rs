@@ -39,8 +39,6 @@ pub struct NodeHost {
     pub(crate) module_assets: crate::aot::ModuleAssetState,
     #[cfg(feature = "native-execution")]
     pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
-    /// Immutable installation asset root, independent of guest cwd changes.
-    pub(crate) node_library_root: std::path::PathBuf,
     /// Compiled library modules kept across runs (`compile_cache`).
     pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
     /// Whether bootstrap has finished (`Host::initialize`, or `Host::resume` from a startup
@@ -52,7 +50,10 @@ pub struct NodeHost {
     pub(crate) eval_builtin_globals: bool,
     /// Node's default argument slice uses the normalized, nonempty eval source.
     pub(crate) eval_source_nonempty: bool,
-    pub(crate) initial_node_debug: Option<String>,
+    /// `--print`'s source, which the host evaluates as the entry (`eval_globals_shared_vm::print`).
+    pub(crate) eval_print: Option<String>,
+    /// Whether CommonJS eval source binds `crypto` to `node:crypto` (`names_crypto`).
+    pub(crate) eval_crypto: bool,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>, bool)>,
     pub(crate) net_pending_ends: Vec<(u64, bool)>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
@@ -96,7 +97,6 @@ pub(crate) enum CommonJsCache {
 
 /// Host-owned state and lifecycle data for the shared VM path.
 pub(crate) struct SharedNodeState {
-    pub(crate) workers: crate::modules::worker_threads_shared_vm::State,
     pub(crate) vm_scripts: crate::modules::contextify_shared_vm::State,
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) native_tasks: crate::modules::native_task_pool::Pool,
@@ -108,8 +108,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
     #[cfg(quench_icu)]
     pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
-    pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
-    pub(crate) fs_policy: crate::modules::fs_policy_shared_vm::State,
+    pub(crate) fs_classes: crate::modules::fs_shared_vm::classes::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) module_parent_api: Option<quench_runtime::RootId>,
@@ -119,11 +118,6 @@ pub(crate) struct SharedNodeState {
     /// Buffer's allocation pool while the host holds it for `buffer.js` to adopt.
     pub(crate) buffer_pool: crate::modules::buffer_shared_vm::PoolOwner,
     pub(crate) commonjs_cache: Option<CommonJsCache>,
-    /// Node's internal primordial snapshot used when loading `lib/internal/*`.
-    pub(crate) primordials_module: Option<quench_runtime::RootId>,
-    pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
-    /// Library methods as their modules defined them (`commonjs::LibraryOriginal`).
-    pub(crate) library_originals: crate::host::shared_vm::commonjs::LibraryOriginals,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
@@ -134,9 +128,15 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
+    pub(crate) node_test: crate::modules::test_runner::State,
+    pub(crate) cluster: crate::modules::cluster::State,
+    /// REPL inputs evaluated so far: each is the resource `REPL<n>`.
+    pub(crate) repl_resources: u32,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_hashes: crate::modules::crypto_hash_shared_vm::State,
     pub(crate) crypto_key_material: crate::modules::crypto_key_material_shared_vm::State,
+    #[cfg(quench_openssl_provider)]
+    pub(crate) crypto: crate::modules::crypto_node::State,
     #[cfg(quench_openssl_provider)]
     pub(crate) crypto_signatures: crate::modules::crypto_signature_shared_vm::State,
     pub(crate) crypto_secret_jobs: crate::modules::crypto_secret_job_shared_vm::State,
@@ -162,20 +162,20 @@ pub(crate) struct SharedNodeState {
     pub(crate) tick_invocation: Option<quench_runtime::RootId>,
     /// The string `"error"`, which every EventEmitter `emit` compares its event with.
     pub(crate) error_event_name: Option<quench_runtime::RootId>,
+    /// The `stream` module's symbols, classes and scheduled operations (`stream_shared_vm`).
+    pub(crate) stream_intrinsics: Option<crate::modules::stream_shared_vm::Intrinsics>,
+    /// The high water marks `stream.getDefaultHighWaterMark` returns.
+    pub(crate) stream_high_water_marks: crate::modules::stream_shared_vm::state::DefaultHighWaterMarks,
     pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
     pub(crate) cli_options: crate::modules::cli_options::CliOptions,
     pub(crate) report_config: crate::modules::report_configuration_shared_vm::State,
-    /// Per-worker process.env snapshot, when Worker({ env }) supplied one.
-    pub(crate) process_env_override: Option<std::collections::HashMap<String, String>>,
-    /// Whether this isolate participates in worker_threads.SHARE_ENV.
-    pub(crate) process_env_shared: bool,
     initial_node_options: Option<String>,
     initial_pending_deprecation: bool,
-    pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
+    pub(crate) http2: crate::modules::http2_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
@@ -294,10 +294,6 @@ impl SharedNodeState {
         self.module_parent_api = None;
         self.active_esm_requires.clear();
         self.module_require_trace_active = false;
-        self.workers.reset_vm_roots();
-        self.primordials_module = None;
-        self.crypto_handle_symbol = None;
-        self.library_originals = Default::default();
         self.event_targets_api = None;
         self.process_module = None;
         self.process_capture_state = None;
@@ -305,6 +301,8 @@ impl SharedNodeState {
         self.timer_handle_api = None;
         self.tick_invocation = None;
         self.error_event_name = None;
+        self.stream_intrinsics = None;
+        self.stream_high_water_marks = Default::default();
         self.emitter_keys = None;
         self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
@@ -325,8 +323,7 @@ impl SharedNodeState {
         {
             self.icu_converters = crate::modules::icu_binding_shared_vm::State::default();
         }
-        self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
-        self.fs_policy = crate::modules::fs_policy_shared_vm::State::default();
+        self.fs_classes = crate::modules::fs_shared_vm::classes::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
     }
 
@@ -338,7 +335,6 @@ impl SharedNodeState {
         async_identity: crate::modules::async_hooks_state::AsyncIdentity,
     ) -> Self {
         Self {
-            workers: Default::default(),
             vm_scripts: Default::default(),
             async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState::new(
                 async_identity,
@@ -352,8 +348,7 @@ impl SharedNodeState {
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
             #[cfg(quench_icu)]
             icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
-            fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
-            fs_policy: crate::modules::fs_policy_shared_vm::State::default(),
+            fs_classes: crate::modules::fs_shared_vm::classes::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
             builtin_cache: std::collections::HashMap::new(),
@@ -362,9 +357,6 @@ impl SharedNodeState {
             module_parent_api: None,
             active_esm_requires: std::collections::HashMap::new(),
             module_require_trace_active: false,
-            primordials_module: None,
-            crypto_handle_symbol: None,
-            library_originals: Default::default(),
             event_targets_api: None,
             util_intrinsics: None,
             node_error_api: None,
@@ -374,8 +366,13 @@ impl SharedNodeState {
             process_signals: crate::modules::process_signals_state::SignalState::default(),
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
+            node_test: crate::modules::test_runner::State::default(),
+            cluster: crate::modules::cluster::State::default(),
+            repl_resources: 0,
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),
+            #[cfg(quench_openssl_provider)]
+            crypto: crate::modules::crypto_node::State::default(),
             crypto_key_material: crate::modules::crypto_key_material_shared_vm::State::default(),
             #[cfg(quench_openssl_provider)]
             crypto_signatures: crate::modules::crypto_signature_shared_vm::State::default(),
@@ -396,20 +393,20 @@ impl SharedNodeState {
             timer_handle_api: None,
             tick_invocation: None,
             error_event_name: None,
+            stream_intrinsics: None,
+            stream_high_water_marks: Default::default(),
             emitter_keys: None,
             timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             cli_options: Default::default(),
             report_config: Default::default(),
-            process_env_override: None,
-            process_env_shared: false,
             initial_node_options: std::env::var("NODE_OPTIONS").ok(),
             initial_pending_deprecation: std::env::var("NODE_PENDING_DEPRECATION").as_deref()
                 == Ok("1"),
-            fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),
+            http2: crate::modules::http2_shared_vm::State::new(),
             tcp: crate::modules::net_shared_vm::Transport::new(),
             net_sockets: std::collections::HashMap::new(),
             net_closing_sockets: std::collections::HashMap::new(),
@@ -435,24 +432,6 @@ impl SharedNodeState {
 
 impl NodeHost {
     pub fn new(argv: Vec<String>) -> Self {
-        let node_library_root = std::env::var_os(crate::shared_run::NODE_LIBRARY_ROOT_ENV)
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(|parent| parent.join("node")))
-                    .unwrap_or_else(|| std::path::PathBuf::from("node"))
-            });
-        let node_library_root = if node_library_root.is_absolute() {
-            node_library_root
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-                .join(node_library_root)
-        };
-        let node_library_root = node_library_root
-            .canonicalize()
-            .unwrap_or(node_library_root);
         // The Node test common/tmpdir helper exposes a per-process host path.
         // Under the test runner, materialize that parent at host construction so
         // fixtures can create files there even when the helper's JS-side refresh
@@ -470,7 +449,6 @@ impl NodeHost {
         Self {
             #[cfg(feature = "native-execution")]
             module_assets: Default::default(),
-            node_library_root,
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
@@ -486,7 +464,8 @@ impl NodeHost {
             inline_source: InlineSource::default(),
             eval_builtin_globals: false,
             eval_source_nonempty: false,
-            initial_node_debug: std::env::var_os("NODE_DEBUG").map(|value| value.to_string_lossy().into_owned()),
+            eval_print: None,
+            eval_crypto: false,
             resolved_imports: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
@@ -498,14 +477,6 @@ impl NodeHost {
     /// Select Node's Script/Module parse goal from its filename and package type.
     pub fn source_kind(path: &std::path::Path) -> Result<quench_runtime::SourceKind, String> {
         super::shared_vm::source_kind(path)
-    }
-
-    /// The last VFS CLI switch owns feature availability for this logical process.
-    pub(crate) fn vfs_enabled(&self) -> bool {
-        self.shared_state
-            .borrow()
-            .cli_options
-            .enabled("--experimental-vfs")
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.

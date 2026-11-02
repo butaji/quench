@@ -51,19 +51,6 @@ pub(crate) fn install(
     );
     install_handle(context, id, server, EndpointKind::Listener)
 }
-pub(crate) fn install_socket(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let socket = args[0];
-    let id = context
-        .rooted_value(args[1])
-        .and_then(|value| value.as_number())
-        .ok_or_else(|| RootedError::host("socket owner missing"))? as u64;
-    install_handle(context, id, socket, EndpointKind::Socket)?;
-    Ok(socket)
-}
 pub(crate) fn install_socket_handle(
     context: &mut NativeContext<'_, NodeHost>,
     id: u64,
@@ -261,26 +248,6 @@ fn owner(
         EndpointKind::Listener
     };
     Ok((id, data, kind))
-}
-pub(crate) fn reference_handle(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let (id, data, kind) = owner(context, receiver)?;
-    let value = get(context, data, "3")?;
-    let referenced = context.truthy_rooted(value)?;
-    let state = context.host_mut().shared_state();
-    let mut state = state.borrow_mut();
-    match kind {
-        EndpointKind::Listener => {
-            super::net_shared_vm::listener_reference(&mut state.tcp, id, referenced)
-        }
-        EndpointKind::Socket => {
-            super::net_shared_vm::socket_reference(&mut state.tcp, id, referenced)
-        }
-    }
-    Ok(context.undefined())
 }
 pub(crate) fn handle_has_ref(
     context: &mut NativeContext<'_, NodeHost>,
@@ -605,9 +572,7 @@ fn on_connection(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
     }
     let operation =
         context.host_function(crate::host::shared_vm::operation("netServerOnConnection"))?;
-    let factory = crate::host::removed_javascript("node:net/onconnection.js")?;
-    let undefined = context.undefined();
-    let callback = context.call_rooted(factory, undefined, &[operation])?;
+    let callback = super::net_internal_shared_vm::method(context, operation, "onconnection")?;
     let retained = context.retain(callback)?;
     shared.borrow_mut().net_server_on_connection = Some(retained);
     Ok(callback)

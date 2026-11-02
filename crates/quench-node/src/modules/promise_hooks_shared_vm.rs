@@ -54,6 +54,14 @@ fn bind_registry(
     Ok(())
 }
 
+/// No hook is subscribed: promises are no longer observed.
+pub(crate) fn clear_registry(context: &mut NativeContext<'_, NodeHost>) {
+    let previous = context.host_mut().shared_state().borrow_mut().async_hooks.promise_hook_registry.take();
+    if let Some(previous) = previous {
+        context.release_root(previous);
+    }
+}
+
 pub(crate) fn emit(
     context: &mut NativeContext<'_, NodeHost>,
     kind: Kind,

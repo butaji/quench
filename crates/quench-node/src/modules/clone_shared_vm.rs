@@ -58,85 +58,87 @@ pub(crate) fn structured_clone(
             .rooted_value(*root)
             .is_some_and(|value| !value.is_undefined())
     });
-    let transfers = if let Some(options) = options {
-        let converters = context.with_startup_intrinsics(|context| {
-            crate::host::shared_vm::commonjs::node_library_export(
-                context,
-                "internal/worker/js_transferable.js",
-                "internal/webidl.js",
-                "converters",
-            )
-        })?;
-        let key = context.string_rooted("StructuredSerializeOptions");
-        let converter = context.get_property_rooted(converters, key)?;
-        let conversion = context.null_object_rooted()?;
-        for (name, value) in [
-            ("prefix", "Failed to execute 'structuredClone'"),
-            ("context", "Options"),
-        ] {
-            let key = context.string_rooted(name);
-            let value = context.string_rooted(value);
-            context.define_data_property_rooted(conversion, key, value, true, true, true)?;
-        }
-        let undefined = context.undefined();
-        let options = context.call_rooted(converter, undefined, &[options, conversion])?;
-        let key = context.string_rooted("transfer");
-        let array = context.get_property_rooted(options, key)?;
-        let key = context.string_rooted("length");
-        let length = context.get_property_rooted(array, key)?;
-        let length = context
-            .rooted_value(length)
-            .and_then(|value| value.as_number())
-            .ok_or_else(|| RootedError::host("Web IDL transfer sequence lost its array length"))?
-            as usize;
-        let mut transfers = Vec::with_capacity(length);
-        for index in 0..length {
-            let key = context.number(index as f64);
-            transfers.push(context.get_property_rooted(array, key)?);
-        }
-        transfers
-    } else {
-        Vec::new()
+    let transfers = match options {
+        Some(options) => serialize_options_transfer(context, options)?,
+        None => Vec::new(),
     };
     #[cfg(quench_openssl_provider)]
     if transfers.is_empty() && context.is_object_rooted(value)? {
-        // KeyObjects nested in a payload need the same transport records as
-        // Worker messages. The direct same-realm clone path below only sees a
-        // KeyObject at the root, so otherwise a nested KeyObject becomes an
-        // empty ordinary object before MessagePort delivery.
-        if contains_nested_key_object(context, value, &mut Vec::new())? {
-            let prepared = crate::modules::crypto_key_shared_vm::prepare_key_objects_for_transport(
-                context, value,
-            )?;
+        use crate::modules::crypto_node::clone;
+        // A KeyObject or CryptoKey below the root travels as a record of its material:
+        // the generic clone would copy it as an empty ordinary object.
+        if clone::contains_nested_key(context, value)? {
+            let prepared = clone::prepare(context, value)?;
             let cloned = match context.structured_clone_with_transfers_rooted(prepared, &[]) {
                 Ok(cloned) => cloned,
                 Err(error) => return Err(as_dom_exception(context, error)),
             };
-            return crate::modules::crypto_key_shared_vm::revive_key_objects_after_transport(
-                context, cloned,
-            );
+            return clone::restore(context, cloned);
         }
-    }
-    if transfers.is_empty() && context.is_object_rooted(value)? {
-        if let Some(cloned_key_object) =
-            crate::modules::crypto_key_shared_vm::clone_key_object(context, value)?
-        {
-            return Ok(cloned_key_object);
-        }
-        if let Some(cloned_key) =
-            crate::modules::crypto_key_shared_vm::clone_crypto_key(context, value)?
-        {
-            return Ok(cloned_key);
+        if let Some(cloned) = clone::clone_key(context, value)? {
+            return Ok(cloned);
         }
     }
     if transfers.is_empty() {
         if let Some(clone) = clone_dom_exception(context, global, value)? {
             return Ok(clone);
         }
+        if let Some(clone) = super::blob_shared_vm::clone(context, value)? {
+            return Ok(clone);
+        }
     }
     context
         .structured_clone_with_transfers_rooted(value, &transfers)
         .map_err(|error| as_dom_exception(context, error))
+}
+
+/// What the Web IDL conversion of `StructuredSerializeOptions` reports, by failure.
+const OPTIONS_PREFIX: &str = "Failed to execute 'structuredClone'";
+const NOT_DICTIONARY: &str = "Options cannot be converted to a dictionary";
+const NOT_SEQUENCE: &str = "transfer in Options can not be converted to sequence.";
+/// Node's object converter reports a non-object element without the prefix.
+const NOT_OBJECT: &str = "Value is not an object";
+
+/// `webidl.converters.StructuredSerializeOptions(options).transfer`: the transfer list as
+/// a `sequence<object>`.
+fn serialize_options_transfer(context: &mut NativeContext<'_, NodeHost>, options: RootId) -> Result<Vec<RootId>, RootedError> {
+    let conversion_error = |context: &mut NativeContext<'_, NodeHost>, message: &str| -> RootedError {
+        let message = if message == NOT_OBJECT { message.to_owned() } else { format!("{OPTIONS_PREFIX}: {message}") };
+        match context.type_error_rooted(&message) {
+            Ok(error) => {
+                let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+                let _ = context.assign_named_property_rooted(error, "code", code);
+                context.throw(error)
+            }
+            Err(error) => error,
+        }
+    };
+    if context.rooted_value(options).is_some_and(|value| value.is_null()) {
+        return Ok(Vec::new());
+    }
+    if !context.is_object_rooted(options)? && !context.is_callable_rooted(options)? {
+        return Err(conversion_error(context, NOT_DICTIONARY));
+    }
+    let transfer = context.get_named_property_rooted(options, "transfer")?;
+    if context.rooted_value(transfer).is_some_and(|value| value.is_undefined()) {
+        return Ok(Vec::new());
+    }
+    if !context.is_object_rooted(transfer)? {
+        return Err(conversion_error(context, NOT_SEQUENCE));
+    }
+    let iterator = match context.iterator_rooted(transfer) {
+        Ok(iterator) => iterator,
+        Err(RootedError { exception: Some(_), .. }) => return Err(conversion_error(context, NOT_SEQUENCE)),
+        Err(error) => return Err(error),
+    };
+    let mut transfers = Vec::new();
+    while let Some(item) = context.iterator_step_rooted(&iterator)? {
+        if !context.is_object_rooted(item)? && !context.is_callable_rooted(item)? {
+            return Err(conversion_error(context, NOT_OBJECT));
+        }
+        transfers.push(item);
+    }
+    Ok(transfers)
 }
 
 fn clone_dom_exception(
@@ -174,54 +176,6 @@ fn clone_dom_exception(
     Ok(Some(clone))
 }
 
-#[cfg(quench_openssl_provider)]
-fn contains_nested_key_object(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-    seen: &mut Vec<RootId>,
-) -> Result<bool, RootedError> {
-    if !context.is_object_rooted(value)? {
-        return Ok(false);
-    }
-    if let Some(clone) = crate::modules::crypto_key_shared_vm::clone_key_object(context, value)? {
-        context.release_root(clone);
-        return Ok(true);
-    }
-    if let Some(clone) = crate::modules::crypto_key_shared_vm::clone_crypto_key(context, value)? {
-        context.release_root(clone);
-        return Ok(true);
-    }
-    if context.clone_metadata_rooted(value)?.is_some()
-        || context.builtin_data_rooted(value)?.is_some()
-    {
-        return Ok(false);
-    }
-    for previous in seen.iter() {
-        if context.strict_equal_rooted(*previous, value)? {
-            return Ok(false);
-        }
-    }
-    seen.push(value);
-    for key in context.enumerable_own_keys_rooted(value, false, true)? {
-        let descriptor = context.own_property_descriptor_rooted(value, key)?;
-        if !context.is_object_rooted(descriptor)? {
-            continue;
-        }
-        let value_key = context.string_rooted("value");
-        let field = context.own_property_descriptor_rooted(descriptor, value_key)?;
-        if !context.is_object_rooted(field)? {
-            continue;
-        }
-        let descriptor_value_key = context.string_rooted("value");
-        let field_value = context.get_property_rooted(field, descriptor_value_key)?;
-        context.release_root(descriptor_value_key);
-        if contains_nested_key_object(context, field_value, seen)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// A `DataCloneError` DOMException, as Node's serializer throws.
 pub(crate) fn data_clone_exception(context: &mut NativeContext<'_, NodeHost>, message: &str) -> RootedError {
     let built = context.with_startup_intrinsics(|context| {
@@ -236,29 +190,6 @@ pub(crate) fn data_clone_exception(context: &mut NativeContext<'_, NodeHost>, me
         Ok(error) => context.throw(error),
         Err(error) => error,
     }
-}
-
-/// One Node policy boundary for clone failures from structuredClone and Workers.
-pub(crate) fn translate_clone_failure(
-    context: &mut NativeContext<'_, NodeHost>,
-    error: RootedError,
-) -> Result<RootedError, RootedError> {
-    let Some(message) = error.error.data_clone_failure_message() else {
-        return Ok(error);
-    };
-    let message = message.to_owned();
-    if let Some(exception) = error.exception {
-        context.release_root(exception);
-    }
-    let constructor = context.with_startup_intrinsics(|context| {
-        let global = context.global_root()?;
-        let key = context.string_rooted("DOMException");
-        context.get_property_rooted(global, key)
-    })?;
-    let message = context.string_rooted(&message);
-    let name = context.string_rooted("DataCloneError");
-    let error = context.construct_rooted(constructor, constructor, &[message, name])?;
-    Ok(context.throw(error))
 }
 
 /// Report the runtime's structured-serialization failures as Node's DOMException.

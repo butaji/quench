@@ -163,6 +163,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     name_function(context, module, "Module")?;
     crate::host::shared_vm::commonjs::attach_module_cache(context, module)?;
     set(context, module, "Module", module)?;
+    let module_extensions = extensions(context)?;
+    set(context, module, "_extensions", module_extensions)?;
     let prototype = get(context, module, "prototype")?;
     let constructor = context.host_function_with_data(
         crate::host::shared_vm::operation("moduleConstructorGet"),
@@ -201,26 +203,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         name_function(context, method, name)?;
         set(context, prototype, name, method)?;
     }
-    let stream_iter = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-stream-iter");
-    let experimental_bench = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-bench");
-    let mut names = BUILTIN_MODULES
+    let names = BUILTIN_MODULES
         .iter()
         .copied()
         .filter(|name| !name.starts_with("node:"))
-        .chain(stream_iter.then_some("stream/iter"))
-        .chain(stream_iter.then_some("zlib/iter"))
-        .chain(experimental_bench.then_some("node:bench"))
-        .chain(experimental_bench.then_some("node:bench/reporters"))
         .chain(
             BUILTIN_MODULES
                 .iter()
@@ -229,9 +215,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         )
         .map(|name| context.string_rooted(name))
         .collect::<Vec<_>>();
-    if context.host_mut().vfs_enabled() {
-        names.push(context.string_rooted("node:vfs"));
-    }
     let names = context.array_rooted(&names)?;
     set(context, module, "builtinModules", names)?;
     let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
@@ -264,6 +247,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let find_package_json =
         context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
+    super::source_map_shared_vm::install(context, module, true)?;
     Ok(module)
 }
 
@@ -296,6 +280,79 @@ pub(crate) fn deprecated_parent<H: quench_runtime::Host>(context: &mut NativeCon
     }
     let callback = context.get_named_property_rooted(data, "callback")?;
     context.call_rooted(callback, receiver, args)
+}
+
+/// `Module._extensions`' key in the builtin cache; each default handler is cached under the
+/// key with its extension appended.
+const EXTENSIONS_KEY: &str = "\0builtin:module/_extensions";
+/// The extensions Node's loader registers, each with its own default handler.
+const DEFAULT_EXTENSIONS: [&str; 3] = [".js", ".json", ".node"];
+/// The handler `findLongestRegisteredExtension` falls back to.
+const FALLBACK_EXTENSION: &str = ".js";
+
+fn cached(context: &mut NativeContext<'_, NodeHost>, key: &str) -> Option<RootId> {
+    context.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+}
+
+fn cache(context: &mut NativeContext<'_, NodeHost>, key: String, value: RootId) -> Result<(), RootedError> {
+    let value = context.retain(value)?;
+    context.host_mut().shared_state().borrow_mut().builtin_cache.insert(key, value);
+    Ok(())
+}
+
+/// `Module._extensions` (also `require.extensions`): a null-prototype object of loaders by
+/// extension, holding Node's defaults until script replaces or adds one.
+pub(crate) fn extensions(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    if let Some(extensions) = cached(context, EXTENSIONS_KEY) {
+        return Ok(extensions);
+    }
+    let extensions = context.null_object_rooted()?;
+    for extension in DEFAULT_EXTENSIONS {
+        let handler = context.host_function_named(crate::host::shared_vm::operation("moduleExtensionDefault"), "")?;
+        set(context, extensions, extension, handler)?;
+        cache(context, format!("{EXTENSIONS_KEY}{extension}"), handler)?;
+    }
+    cache(context, EXTENSIONS_KEY.to_owned(), extensions)?;
+    Ok(extensions)
+}
+
+/// `findLongestRegisteredExtension(filename)`: the longest registered suffix of the base
+/// name starting at a dot other than its first character, else `.js`.
+fn registered_extension(context: &mut NativeContext<'_, NodeHost>, extensions: RootId, filename: &Path) -> Result<String, RootedError> {
+    let name = filename.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    for (index, _) in name.match_indices('.').filter(|&(index, _)| index > 0) {
+        let handler = get(context, extensions, &name[index..])?;
+        if context.truthy_rooted(handler)? {
+            return Ok(name[index..].to_owned());
+        }
+    }
+    Ok(FALLBACK_EXTENSION.to_owned())
+}
+
+/// `Module.prototype.load`'s dispatch: the handler script registered for `filename`'s
+/// extension, or `None` while it is still Node's own, which the loader runs in place.
+pub(crate) fn replaced_extension_handler(
+    context: &mut NativeContext<'_, NodeHost>,
+    filename: &Path,
+) -> Result<Option<RootId>, RootedError> {
+    let extensions = extensions(context)?;
+    let extension = registered_extension(context, extensions, filename)?;
+    let handler = get(context, extensions, &extension)?;
+    let default = cached(context, &format!("{EXTENSIONS_KEY}{extension}"));
+    match default {
+        Some(default) if context.strict_equal_rooted(default, handler)? => Ok(None),
+        _ => Ok(Some(handler)),
+    }
+}
+
+/// Node's own `Module._extensions[ext](module, filename)`, called by script.
+pub(crate) fn extension_default(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let module = args.first().copied().unwrap_or(undefined);
+    let filename = args.get(1).copied().unwrap_or(undefined);
+    let filename = context.to_string(filename)?;
+    crate::host::shared_vm::commonjs::execute_user_module(context, module, Path::new(&filename))?;
+    Ok(undefined)
 }
 
 fn name_function(
@@ -835,38 +892,10 @@ pub(crate) fn is_builtin(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let vfs_enabled = context.host_mut().vfs_enabled();
-    let stream_iter = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-stream-iter");
-    let experimental_bench = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cli_options
-        .enabled("--experimental-bench");
     let result = args
         .first()
         .and_then(|argument| context.string_text(*argument).ok().flatten())
         .is_some_and(|specifier| {
-            // These experimental modules are intentionally only exposed with
-            // the `node:` prefix. `isBuiltin('bench')` must remain false even
-            // when `node:bench` is enabled, like Node's public builtin list.
-            if matches!(specifier.as_str(), "node:bench" | "node:bench/reporters") {
-                return experimental_bench;
-            }
-            if specifier == "node:vfs" {
-                return vfs_enabled;
-            }
-            if matches!(
-                specifier.as_str(),
-                "stream/iter" | "node:stream/iter" | "zlib/iter" | "node:zlib/iter"
-            ) {
-                return stream_iter;
-            }
             if let Some(name) = specifier.strip_prefix("node:") {
                 BUILTIN_MODULES.contains(&specifier.as_str())
                     || BUILTIN_MODULES.contains(&name)
@@ -900,53 +929,93 @@ fn get(
     context.get_named_property_rooted(object, name)
 }
 
-pub(crate) fn initialize_compile_cache_exports(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let module = context.host_function_data()?;
+/// `module.constants.compileCacheStatus`.
+const COMPILE_CACHE_STATUS: &[(&str, f64)] = &[("FAILED", 0.0), ("ENABLED", 1.0), ("ALREADY_ENABLED", 2.0), ("DISABLED", 3.0)];
+const COMPILE_CACHE_FAILED: f64 = 0.0;
+const COMPILE_CACHE_DISABLED: f64 = 3.0;
+
+fn process_env(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<Option<String>, RootedError> {
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
-    // The public `node:module` builtin is constructed here rather than from
-    // lib/module.js, so its compile-cache methods must explicitly forward to
-    // the same internal helpers used by the Node library and module loaders.
-    // Keeping a second native stub here shadowed those helpers with an
-    // always-failed API and bypassed their diagnostics and directory state.
-    let helpers = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "internal/modules/helpers.js",
-        "internal/modules/helpers.js",
-    )?;
-    for name in [
-        "constants",
-        "enableCompileCache",
-        "flushCompileCache",
-        "getCompileCacheDir",
-    ] {
-        let key = context.string_rooted(name);
-        let mut value = context.get_property_rooted(helpers, key)?;
-        if name == "enableCompileCache" {
-            // Node's native modules binding validates the cache directory
-            // type. Quench does not yet implement native compile-cache entry
-            // points, so preserve this observable validation at the public
-            // API boundary rather than leaking a generic call error.
-            let wrap = crate::host::removed_javascript("node:module/compile-cache-validation.js")?;
-            let this_value = context.undefined();
-            let constants = get(context, helpers, "constants")?;
-            value = context.call_rooted(wrap, this_value, &[value, constants, process])?;
-        } else if name == "flushCompileCache" {
-            // With no native cache backend there is nothing to flush. Preserve
-            // the public API's void return and avoid exposing an internal
-            // missing-binding TypeError.
-            let wrap = crate::host::removed_javascript("node:module/compile-cache-flush.js")?;
-            let this_value = context.undefined();
-            value = context.call_rooted(wrap, this_value, &[value])?;
-        } else if name == "getCompileCacheDir" {
-            // The modules binding reports an active directory only when a
-            // cache backend actually enabled one. NODE_COMPILE_CACHE alone
-            // cannot make this runtime claim that a bytecode cache is active.
-            let wrap = crate::host::removed_javascript("node:module/compile-cache-env.js")?;
-            let this_value = context.undefined();
-            value = context.call_rooted(wrap, this_value, &[value, process])?;
+    let env = get(context, process, "env")?;
+    let value = get(context, env, name)?;
+    if context.rooted_value(value).is_some_and(|value| value.is_undefined()) {
+        return Ok(None);
+    }
+    context.to_string(value).map(Some)
+}
+
+
+fn compile_cache_result(context: &mut NativeContext<'_, NodeHost>, status: f64, message: Option<&str>) -> Result<RootId, RootedError> {
+    let result = context.object_rooted()?;
+    let status = context.number(status);
+    set(context, result, "status", status)?;
+    if let Some(message) = message {
+        let message = context.string_rooted(message);
+        set(context, result, "message", message)?;
+    }
+    Ok(result)
+}
+
+/// `module.enableCompileCache([directory | options])`: quench has no compile cache, so a
+/// valid request reports `FAILED`, or `DISABLED` under `NODE_DISABLE_COMPILE_CACHE`.
+pub(crate) fn enable_compile_cache(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let options = match args.first() {
+        Some(options) => *options,
+        None => context.undefined(),
+    };
+    let invalid = |context: &mut NativeContext<'_, NodeHost>| -> Result<RootedError, RootedError> {
+        let error = context.type_error_rooted("The \"directory\" argument must be of type string.")?;
+        let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+        set(context, error, "code", code)?;
+        Ok(context.throw(error))
+    };
+    let undefined = context.rooted_value(options).is_some_and(|value| value.is_undefined());
+    let null = context.rooted_value(options).is_some_and(|value| value.is_null());
+    let object = context.is_object_rooted(options)?;
+    if null || (!undefined && !object && context.string_text(options)?.is_none()) {
+        return Err(invalid(context)?);
+    }
+    let directory = if object { get(context, options, "directory")? } else { options };
+    if !context.rooted_value(directory).is_some_and(|value| value.is_undefined()) && context.string_text(directory)?.is_none() {
+        return Err(invalid(context)?);
+    }
+    if process_env(context, "NODE_DISABLE_COMPILE_CACHE")?.is_some_and(|value| !value.is_empty()) {
+        if process_env(context, "NODE_DEBUG_NATIVE")?.unwrap_or_default().contains("COMPILE_CACHE") {
+            eprintln!("Disabled by NODE_DISABLE_COMPILE_CACHE");
         }
-        set(context, module, name, value)?;
+        return compile_cache_result(context, COMPILE_CACHE_DISABLED, None);
+    }
+    compile_cache_result(context, COMPILE_CACHE_FAILED, Some("Compile cache is not supported by this runtime."))
+}
+
+/// `module.flushCompileCache()`: nothing to flush.
+pub(crate) fn flush_compile_cache(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
+/// `module.getCompileCacheDir()`: no cache directory is ever active.
+pub(crate) fn get_compile_cache_dir(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
+pub(crate) fn initialize_compile_cache_exports(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let constants = context.object_rooted()?;
+    let status = context.object_rooted()?;
+    for (name, value) in COMPILE_CACHE_STATUS {
+        let value = context.number(*value);
+        set(context, status, name, value)?;
+    }
+    set(context, constants, "compileCacheStatus", status)?;
+    set(context, module, "constants", constants)?;
+    for (name, operation) in [
+        ("enableCompileCache", "moduleEnableCompileCache"),
+        ("flushCompileCache", "moduleFlushCompileCache"),
+        ("getCompileCacheDir", "moduleGetCompileCacheDir"),
+    ] {
+        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        set(context, module, name, function)?;
     }
     Ok(context.undefined())
 }

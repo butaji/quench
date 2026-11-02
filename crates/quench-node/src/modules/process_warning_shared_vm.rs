@@ -2,12 +2,10 @@
 
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-use crate::host::shared_vm::commonjs;
 use crate::host::NodeHost;
+use std::io::Write;
 
 
-/// Node's warning module, relative to the library's `lib`.
-const WARNING_MODULE: &str = "internal/process/warning.js";
 
 #[cfg(test)]
 mod scheduling_tests {
@@ -191,11 +189,39 @@ pub(crate) fn on(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Root
         text.extend(format!("\n(Use `{} {flag} ...` to show where the warning was created)", basename(&argv, ".exe")).encode_utf16());
         let yes = c.boolean(true); c.assign_named_property_rooted(state, "hintShown", yes)?;
     }
+    let redirect = c.host_mut().shared_state().borrow().cli_options
+        .string_value("--redirect-warnings").map(str::to_owned);
+    if let Some(path) = redirect.filter(|path| !path.is_empty()) {
+        // UTF-8 output replaces isolated surrogates, as the process stream does.
+        let message = String::from_utf16_lossy(&text);
+        let written = std::fs::OpenOptions::new().create(true).append(true).open(path)
+            .and_then(|mut file| writeln!(file, "{message}"));
+        if written.is_ok() { return Ok(missing); }
+    }
     let message = c.string_units_rooted(&text);
     let mut writer = get(c, state, "writer")?;
     if undefined(c, writer) { writer = super::console_shared_vm::warning_writer(c, missing, &[])?; c.assign_named_property_rooted(state, "writer", writer)?; }
     c.call_rooted(writer, missing, &[message])?;
     Ok(missing)
+}
+
+/// Per-VM experimental warning markers, stored with the native builtin state.
+const EXPERIMENTAL_WARNING: &str = "\0warning:experimental/";
+
+/// Node emits an experimental warning once per feature in each process.
+pub(crate) fn emit_experimental(c: &mut Context<'_>, feature: &'static str) -> Result<(), RootedError> {
+    let state = c.host_mut().shared_state();
+    let key = format!("{EXPERIMENTAL_WARNING}{feature}");
+    if state.borrow().builtin_cache.contains_key(&key) { return Ok(()); }
+    let yes = c.boolean(true);
+    let yes = c.retain(yes)?;
+    state.borrow_mut().builtin_cache.insert(key, yes);
+    let process = state.borrow().process_module.ok_or_else(|| RootedError::host("warning process missing"))?;
+    let emit = get(c, process, "emitWarning")?;
+    let message = c.string_rooted(&format!("{feature} is an experimental feature and might change at any time"));
+    let kind = c.string_rooted("ExperimentalWarning");
+    c.call_rooted(emit, process, &[message, kind])?;
+    Ok(())
 }
 
 /// Builds the functions ahead of a warning that follows a release of the compiler's pages
@@ -218,37 +244,6 @@ pub(crate) fn emit_warning(context: &mut NativeContext<'_, NodeHost>) -> Result<
 /// The default `warning` listener's implementation: Node's `onWarning`.
 pub(crate) fn on_warning(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     member(context, 1)
-}
-
-fn string_argument(context: &mut NativeContext<'_, NodeHost>, args: &[RootId], index: usize) -> Result<String, RootedError> {
-    let undefined = context.undefined();
-    context.to_string(args.get(index).copied().unwrap_or(undefined))
-}
-
-/// `library(id)`: Node's library module `id`, loaded as the warning module would require it.
-pub(crate) fn library(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let id = string_argument(context, args, 0)?;
-    commonjs::node_library_module(context, WARNING_MODULE, &format!("{id}.js"))
-}
-
-/// `getOptionValue(name)` for the options the module reads.
-pub(crate) fn option(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let name = string_argument(context, args, 0)?;
-    let (string, repeated) = {
-        let state = context.host_mut().shared_state();
-        let state = state.borrow();
-        let options = &state.cli_options;
-        let repeated = options.repeated_values().find(|(option, _)| *option == name).map(|(_, values)| values.to_vec());
-        (options.string_value(&name).map(str::to_owned), repeated)
-    };
-    match (string, repeated) {
-        (Some(value), _) => Ok(context.string_rooted(&value)),
-        (None, Some(values)) => {
-            let values: Vec<RootId> = values.iter().map(|value| context.string_rooted(value)).collect();
-            context.array_rooted(&values)
-        }
-        (None, None) => Err(RootedError::host(format!("the warning module reads no option {name}"))),
-    }
 }
 
 /// `path.posix.basename(path, suffix)` (`lib/path.js`) over UTF-8 text. The module passes
@@ -312,13 +307,6 @@ fn basename<'a>(path: &'a str, suffix: &str) -> &'a str {
         }
     }
     end.map_or("", |end| &path[start..end])
-}
-
-/// `require('path').basename(path, suffix)`.
-pub(crate) fn path_basename(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let path = string_argument(context, args, 0)?;
-    let suffix = string_argument(context, args, 1)?;
-    Ok(context.string_rooted(basename(&path, &suffix)))
 }
 
 #[cfg(test)]

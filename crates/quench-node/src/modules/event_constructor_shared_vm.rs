@@ -10,8 +10,6 @@ pub(crate) fn get(
 ) -> Result<RootId, RootedError> {
     context.get_named_property_rooted(object, name)
 }
-/// Strict-mode `object[key] = value`, the assignment the event configuration's guest
-/// `assign` operation performs.
 fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
@@ -68,30 +66,7 @@ fn validate_boolean(
 }
 
 pub(crate) fn bootstrap(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<(), RootedError> {
-    // Both the callable constructor and its init operation close over the same configuration.
-    let constructor = context.host_constructor_named_with_data(
-        crate::host::shared_vm::operation("emitterConstruct"), "EventEmitter", data,
-    )?;
-    context.assign_named_property_rooted(data, "emitterCtor", constructor)?;
-    let init = context.host_function_named_with_data(crate::host::shared_vm::operation("emitterInitialize"), "", data)?;
-    context.assign_named_property_rooted(constructor, "init", init)?;
-    let prototype = get(context, constructor, "prototype")?;
-    let bridge = context.host_function_named_with_data(crate::host::shared_vm::operation("emitterBridge"), "emit", data)?;
-    let key = context.string_rooted("emit");
-    context.define_data_property_rooted(prototype, key, bridge, true, false, true)?;
-    let rejection = get(context, data, "rejectionKey")?;
-    context.assign_named_property_rooted(constructor, "captureRejectionSymbol", rejection)?;
-    let no = context.boolean(false);
-    context.assign_named_property_rooted(constructor, "usingDomains", no)?;
-    let global = context.global_root()?;
-    let symbol = get(context, global, "Symbol")?;
-    let registry = get(context, symbol, "for")?;
-    let description = context.string_rooted("quench.internal.streamOwner");
-    let owner = context.call_rooted(registry, symbol, &[description])?;
-    context.assign_named_property_rooted(data, "streamOwnerKey", owner)?;
-    let key = context.string_rooted("__nodeEventEmitter");
-    context.define_data_property_rooted(global, key, constructor, false, false, true)?;
-    Ok(())
+    super::event_emitter_shared_vm::install_class(context, data).map(drop)
 }
 
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
@@ -183,18 +158,6 @@ pub(crate) fn init(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, 
     let key = get(context, data, "captureKey")?;
     context.assign_property_rooted(receiver, key, capture)?;
     Ok(undefined)
-}
-
-/// The `options.captureRejections` check of `EventEmitter.init`: a non-boolean throws Node's
-/// argument type error.
-pub(crate) fn validate_capture_rejections(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    validate_boolean(context, value, "options.captureRejections")?;
-    Ok(context.undefined())
 }
 
 pub(crate) fn default_get(

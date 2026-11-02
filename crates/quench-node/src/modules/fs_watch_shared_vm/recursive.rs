@@ -6,44 +6,6 @@ use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 pub(crate) mod iterator;
 
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) fn install(
-    context: &mut NativeContext<'_, NodeHost>,
-    parent: RootId,
-    fs: RootId,
-    emitter: RootId,
-) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let map = get(context, global, "Map")?;
-    let prototype = get(context, map, "prototype")?;
-    let mut arguments = vec![emitter];
-    for name in [
-        "fsRecursiveInitialize",
-        "fsRecursiveStart",
-        "fsRecursiveClose",
-        "fsRecursiveRef",
-        "fsRecursiveNotify",
-        "fsRecursiveIterate",
-        "fsRecursiveNext",
-        "fsRecursiveReturn",
-    ] {
-        arguments.push(context.host_function(crate::host::shared_vm::operation(name))?);
-    }
-    arguments.push(context.symbol_rooted(Some("kFSWatchStart")));
-    arguments.push(map);
-    for name in ["get", "set", "delete"] {
-        arguments.push(get(context, prototype, name)?);
-    }
-    arguments.push(fs);
-    let path = crate::modules::path_shared_vm::module(context)?;
-    for name in ["resolve", "join", "relative", "basename"] {
-        arguments.push(get(context, path, name)?);
-    }
-    let factory = crate::host::removed_javascript("node:fs/recursive-watch-facade.js")?;
-    let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &arguments)?;
-    set(context, parent, "recursive", api)
-}
 fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
     let parent = shared
@@ -68,8 +30,7 @@ fn fs_call(
     name: &str,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let api = api(context)?;
-    let fs = get(context, api, "fs")?;
+    let fs = crate::host::shared_vm::commonjs::fs_module(context)?;
     let function = get(context, fs, name)?;
     let undefined = context.undefined();
     context.call_rooted(function, undefined, args)

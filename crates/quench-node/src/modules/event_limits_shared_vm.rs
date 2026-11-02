@@ -78,8 +78,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let emitter = get(context, global, "__nodeEventEmitter")?;
     let prototype = get(context, emitter, "prototype")?;
     for (target, name, operation, function_name) in [
-        (prototype, "getMaxListeners", "emitterPublicMaxGet", "getMaxListeners"),
-        (prototype, "setMaxListeners", "emitterPublicMaxSet", "setMaxListeners"),
+        (prototype, "getMaxListeners", "emitterProtoMaxGet", "getMaxListeners"),
+        (prototype, "setMaxListeners", "emitterProtoMaxSet", "setMaxListeners"),
         (emitter, "getMaxListeners", "eventsMaxGet", "getMaxListeners"),
         (emitter, "setMaxListeners", "eventsPublicMaxSet", ""),
     ] {
@@ -153,12 +153,12 @@ pub(crate) fn emitter_get(
     emitter_max(context, data, target)
 }
 
-pub(crate) fn public_get(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_max_get(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     emitter_get(context, undefined, &[receiver])
 }
 
-pub(crate) fn public_set(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn proto_max_set(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     emitter_set(context, undefined, &[receiver, args.first().copied().unwrap_or(undefined)])
 }
@@ -201,7 +201,7 @@ pub(crate) fn global_get(
     Err(super::util_shared_vm::argument_type_error(
         context,
         target,
-        "emitterOrTarget",
+        "emitter",
         "EventEmitter or EventTarget",
     )?)
 }

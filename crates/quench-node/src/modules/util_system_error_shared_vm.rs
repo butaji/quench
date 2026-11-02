@@ -133,3 +133,116 @@ fn pending_errname_warning(c: &mut Context<'_>) -> Result<(), RootedError> {
     c.call_rooted(emit, process, &[message, kind, code])?;
     Ok(())
 }
+
+/// The cache key of the `SystemError` class.
+const SYSTEM_ERROR_CLASS: &str = "\0node/errors/SystemError";
+
+/// `new ERR_SYSTEM_ERROR(ctx)` (Node's `SystemError`), thrown: a message naming the
+/// syscall, code and message, `info` holding `ctx`, and `errno`, `syscall`, `path` and
+/// `dest` reading and writing it.
+pub(crate) fn system_error(c: &mut Context<'_>, ctx: RootId) -> Result<RootedError, RootedError> {
+    coded_system_error(c, ctx, "ERR_SYSTEM_ERROR", "A system error occurred")
+}
+
+/// A `SystemError` of Node's coded subclass `code`, its message led by `prefix`.
+pub(crate) fn coded_system_error(
+    c: &mut Context<'_>,
+    ctx: RootId,
+    code: &str,
+    prefix: &str,
+) -> Result<RootedError, RootedError> {
+    let field = |c: &mut Context<'_>, name: &str| c.get_named_property_rooted(ctx, name);
+    let mut message = format!("{prefix}: ");
+    for (name, prefix, suffix) in [("syscall", "", " returned "), ("code", "", " ("), ("message", "", ")")] {
+        let value = field(c, name)?;
+        message.push_str(prefix);
+        message.push_str(&c.to_string(value)?);
+        message.push_str(suffix);
+    }
+    let mut extras = Vec::new();
+    for (name, separator) in [("path", " "), ("dest", " => ")] {
+        let value = field(c, name)?;
+        if c.rooted_value(value).is_some_and(|value| !value.is_undefined()) {
+            message.push_str(separator);
+            message.push_str(&c.to_string(value)?);
+            extras.push(name);
+        }
+    }
+    let error = c.error_rooted(&message)?;
+    let prototype = system_error_prototype(c)?;
+    c.set_prototype_rooted(error, prototype)?;
+    let stack = c.get_named_property_rooted(error, "stack")?;
+    if let Some(stack) = c.string_text(stack)? {
+        let stack = c.string_rooted(&stack.replacen("Error", &format!("SystemError [{code}]"), 1));
+        let key = c.string_rooted("stack");
+        c.define_data_property_rooted(error, key, stack, true, false, true)?;
+    }
+    let message_key = c.string_rooted("message");
+    c.delete_property_rooted(error, message_key)?;
+    let code = c.string_rooted(code);
+    c.assign_named_property_rooted(error, "code", code)?;
+    let name = c.string_rooted("SystemError");
+    let key = c.string_rooted("name");
+    c.define_data_property_rooted(error, key, name, true, false, true)?;
+    let message = c.string_rooted(&message);
+    c.define_data_property_rooted(error, message_key, message, true, false, true)?;
+    let key = c.string_rooted("info");
+    c.define_data_property_rooted(error, key, ctx, false, true, true)?;
+    for name in ["errno", "syscall"].into_iter().chain(extras) {
+        let key = c.string_rooted(name);
+        let data = c.array_rooted(&[ctx, key])?;
+        let accessor = c.host_function_with_data(crate::host::shared_vm::operation("systemErrorField"), data)?;
+        let descriptor = c.null_object_rooted()?;
+        c.assign_named_property_rooted(descriptor, "get", accessor)?;
+        c.assign_named_property_rooted(descriptor, "set", accessor)?;
+        let yes = c.boolean(true);
+        c.assign_named_property_rooted(descriptor, "enumerable", yes)?;
+        c.assign_named_property_rooted(descriptor, "configurable", yes)?;
+        c.define_property_descriptor_rooted(error, key, descriptor)?;
+    }
+    Ok(c.throw(error))
+}
+
+/// `SystemError.prototype`: an `Error` whose `toString` names the code.
+fn system_error_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let state = c.host_mut().shared_state();
+    if let Some(prototype) = state.borrow().builtin_cache.get(SYSTEM_ERROR_CLASS).copied() {
+        return Ok(prototype);
+    }
+    let class = c.host_constructor_named(crate::host::shared_vm::operation("systemErrorConstructor"), "SystemError")?;
+    let prototype = c.get_named_property_rooted(class, "prototype")?;
+    let global = c.global_root()?;
+    let error = c.get_named_property_rooted(global, "Error")?;
+    let error_prototype = c.get_named_property_rooted(error, "prototype")?;
+    c.set_prototype_rooted(prototype, error_prototype)?;
+    c.set_prototype_rooted(class, error)?;
+    let code = c.string_rooted("ERR_SYSTEM_ERROR");
+    let to_string = c.host_function_named_with_data(crate::host::shared_vm::operation("nodeErrorToString"), "toString", code)?;
+    let key = c.string_rooted("toString");
+    c.define_data_property_rooted(prototype, key, to_string, true, false, true)?;
+    let prototype = c.retain(prototype)?;
+    state.borrow_mut().builtin_cache.insert(SYSTEM_ERROR_CLASS.to_owned(), prototype);
+    Ok(prototype)
+}
+
+/// `new SystemError()` from script: Node's class takes a key and context; script code
+/// cannot reach it except through an instance's constructor.
+pub(crate) fn system_error_constructor(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let _ = c;
+    Ok(this)
+}
+
+/// A system error's `errno`, `syscall`, `path` or `dest` accessor over its `info`: a call
+/// with a value sets the field.
+pub(crate) fn system_error_field(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let ctx = c.get_named_property_rooted(data, "0")?;
+    let key = c.get_named_property_rooted(data, "1")?;
+    match args.first() {
+        Some(&value) => {
+            c.set_property_rooted(ctx, key, value, ctx)?;
+            Ok(c.undefined())
+        }
+        None => c.get_property_rooted(ctx, key),
+    }
+}

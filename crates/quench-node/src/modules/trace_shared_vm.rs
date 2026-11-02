@@ -1,5 +1,7 @@
-//! Native trace category policy. The syntax bridge supplies ordinary methods
-//! and private WeakMap storage; enabled objects are retained by the process.
+//! `trace_events` (`lib/trace_events.js`) and the internal bindings the host serves.
+//!
+//! A `Tracing` keeps its handle, categories and category snapshot in a private slot; the
+//! process retains each enabled one (`TraceState::enabled`).
 use super::event_constructor_shared_vm::get;
 use super::trace_state::EnabledTracing;
 use crate::host::NodeHost;
@@ -41,8 +43,12 @@ fn brand(
     member: &str,
 ) -> Result<RootId, RootedError> {
     let api = context.host_function_data()?;
-    let map = get(context, api, "states")?;
-    let state = context.weak_map_get_rooted(map, object)?;
+    let slot = get(context, api, "slot")?;
+    let state = if context.is_object_rooted(object)? {
+        context.get_property_rooted(object, slot)?
+    } else {
+        context.undefined()
+    };
     if undefined(context, state) {
         let error = context.type_error_rooted(&format!(
             "Cannot read private member #{member} from an object whose class did not declare it"
@@ -109,48 +115,58 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Node disables trace_events inside Worker isolates because the tracing
     // provider is owned by the process main thread. Keep the module unavailable
     // in the same way instead of exposing an isolated per-worker trace facade.
-    if crate::modules::worker_threads_shared_vm::is_child(context) {
+    if context.host_mut().shared_state().borrow().messaging.is_worker() {
         let error = context.error_rooted("Trace events are unavailable")?;
         let code = context.string_rooted("ERR_TRACE_EVENTS_UNAVAILABLE");
         put(context, error, "code", code)?;
         return Err(context.throw(error));
     }
     let api = context.null_object_rooted()?;
-    let state =
-        crate::host::removed_javascript("node:trace_events/private-state")?;
+    let slot = context.private_symbol_rooted(Some("Tracing"));
+    put(context, api, "slot", slot)?;
     let global = context.global_root()?;
-    let weak_map = get(context, global, "WeakMap")?;
-    let weak_prototype = get(context, weak_map, "prototype")?;
-    let map_set = get(context, weak_prototype, "set")?;
     let array = get(context, global, "Array")?;
     let array_prototype = get(context, array, "prototype")?;
-    let join = get(context, array_prototype, "join")?;
-    put(context, api, "states", state)?;
+    let join = context.startup_data_property_rooted(array_prototype, "join").map_or_else(|| get(context, array_prototype, "join"), Ok)?;
+    put(context, api, "join", join)?;
+    let class = context.host_constructor_named_with_data(crate::host::shared_vm::operation("traceInitialize"), "Tracing", api)?;
+    let prototype = get(context, class, "prototype")?;
+    for (name, operation) in TRACING_METHODS {
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, api)?;
+        context.define_named_data_property_rooted(prototype, name, function, true, false, true)?;
+    }
+    for (name, operation) in TRACING_GETTERS {
+        let getter = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), &format!("get {name}"), api)?;
+        let key = context.string_rooted(name);
+        let undefined = context.undefined();
+        let fields = quench_runtime::DescriptorFields {
+            get: Some(getter),
+            set: Some(undefined),
+            enumerable: Some(false),
+            configurable: Some(true),
+            ..Default::default()
+        };
+        context.define_property_fields_rooted(prototype, key, fields)?;
+    }
     let symbol = get(context, global, "Symbol")?;
     let symbol_for = get(context, symbol, "for")?;
     let inspect_name = context.string_rooted("nodejs.util.inspect.custom");
     let inspect_symbol = context.call_rooted(symbol_for, symbol, &[inspect_name])?;
-    put(context, api, "inspectSymbol", inspect_symbol)?;
-    put(context, api, "mapSet", map_set)?;
-    put(context, api, "join", join)?;
-    for (name, operation) in [
-        ("initialize", "traceInitialize"),
-        ("inspect", "traceInspect"),
-        ("create", "traceCreate"),
-        ("enable", "traceEnable"),
-        ("disable", "traceDisable"),
-        ("categories", "traceCategories"),
-        ("enabled", "traceEnabled"),
-        ("getEnabledCategories", "traceGetEnabledCategories"),
-    ] {
-        let function =
-            context.host_function_with_data(crate::host::shared_vm::operation(operation), api)?;
-        put(context, api, name, function)?;
+    let inspect = context.host_function_named_with_data(crate::host::shared_vm::operation("traceInspect"), "[nodejs.util.inspect.custom]", api)?;
+    context.define_data_property_rooted(prototype, inspect_symbol, inspect, true, false, true)?;
+    put(context, api, "constructor", class)?;
+    let module = context.object_rooted()?;
+    for (name, operation) in MODULE_FUNCTIONS {
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, api)?;
+        put(context, module, name, function)?;
     }
-    let factory = crate::host::removed_javascript("node:trace_events/methods")?;
-    let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[api])
+    Ok(module)
 }
+
+/// `Tracing.prototype`'s methods and getters, and the module's functions.
+const TRACING_METHODS: [(&str, &str); 2] = [("enable", "traceEnable"), ("disable", "traceDisable")];
+const TRACING_GETTERS: [(&str, &str); 2] = [("enabled", "traceEnabled"), ("categories", "traceCategories")];
+const MODULE_FUNCTIONS: [(&str, &str); 2] = [("createTracing", "traceCreate"), ("getEnabledCategories", "traceGetEnabledCategories")];
 
 pub(crate) fn create(
     context: &mut NativeContext<'_, NodeHost>,
@@ -181,14 +197,14 @@ pub(crate) fn create(
     context.construct_rooted(constructor, constructor, &[original])
 }
 
+/// `new Tracing(categories)`: its handle, `categories` and their snapshot in its slot.
 pub(crate) fn initialize(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
+    object: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
-    let object = args.first().copied().unwrap_or(absent);
-    let original = args.get(1).copied().unwrap_or(absent);
+    let original = args.first().copied().unwrap_or(absent);
     let snapshot = string_array(context, original, false)?;
     let roots: Vec<_> = snapshot.iter().map(|s| context.string_rooted(s)).collect();
     let snapshot = context.array_rooted(&roots)?;
@@ -208,19 +224,17 @@ pub(crate) fn initialize(
     put(context, state, "handle", id)?;
     put(context, state, "original", original)?;
     put(context, state, "snapshot", snapshot)?;
-    let map = get(context, api, "states")?;
-    let set = get(context, api, "mapSet")?;
-    context.call_rooted(set, map, &[object, state])?;
+    let slot = get(context, api, "slot")?;
+    context.define_data_property_rooted(object, slot, state, false, false, false)?;
     Ok(absent)
 }
 
 pub(crate) fn enable(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    object: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
-    let object = args.first().copied().unwrap_or(absent);
     let state = brand(context, object, "enabled")?;
     let id = handle(context, state)?;
     let shared = context.host_mut().shared_state();
@@ -252,11 +266,10 @@ pub(crate) fn enable(
 }
 pub(crate) fn disable(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    object: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
-    let object = args.first().copied().unwrap_or(absent);
     let state = brand(context, object, "enabled")?;
     let id = handle(context, state)?;
     let shared = context.host_mut().shared_state();
@@ -269,11 +282,10 @@ pub(crate) fn disable(
 }
 pub(crate) fn enabled(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    object: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let absent = context.undefined();
-    let state = brand(context, args.first().copied().unwrap_or(absent), "enabled")?;
+    let state = brand(context, object, "enabled")?;
     let id = handle(context, state)?;
     let enabled = context
         .host_mut()
@@ -286,15 +298,10 @@ pub(crate) fn enabled(
 }
 pub(crate) fn categories(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    object: RootId,
+    _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let absent = context.undefined();
-    let state = brand(
-        context,
-        args.first().copied().unwrap_or(absent),
-        "categories",
-    )?;
+    let state = brand(context, object, "categories")?;
     let original = get(context, state, "original")?;
     let api = context.host_function_data()?;
     let join = get(context, api, "join")?;
@@ -320,12 +327,11 @@ pub(crate) fn get_enabled_categories(
 
 pub(crate) fn inspect(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
+    object: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let absent = context.undefined();
-    let object = args.first().copied().unwrap_or(absent);
-    let depth = args.get(1).copied().unwrap_or(absent);
+    let depth = args.first().copied().unwrap_or(absent);
     if context
         .rooted_value(depth)
         .and_then(|v| v.as_number())
@@ -526,13 +532,47 @@ pub(crate) fn cjs_lexer_parse(
     context.array_rooted(&[export_set, reexport_values])
 }
 
-/// Surface the parts of Node's tty_wrap binding used by the public tty module
-/// and by code that inspects native stream prototype descriptors. The runtime
-/// does not expose a terminal handle, so isTTY reports false and the handle
-/// constructor preserves the public shape while its descriptor accessors
-/// reject forged receivers like Node's native accessors do.
-fn tty_binding(_: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    crate::host::removed_javascript("internalBinding/tty_wrap.js")
+/// `tty_wrap`'s handle members: (name, operation, length).
+const TTY_METHODS: [(&str, &str, f64); 2] = [("getWindowSize", "ttyWrapGetWindowSize", 1.0), ("setRawMode", "ttyWrapSetRawMode", 1.0)];
+/// The status libuv's tty calls report: success.
+const UV_OK: f64 = 0.0;
+
+/// Node's `tty_wrap` binding: `isTTY(fd)` as the `tty` module answers it, and a `TTY` handle
+/// with no terminal of its own, whose window has no size and whose mode changes succeed.
+fn tty_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let binding = context.object_rooted()?;
+    let is_tty = context.host_function_named(crate::host::shared_vm::operation("ttyIsatty"), "isTTY")?;
+    put(context, binding, "isTTY", is_tty)?;
+    let class = context.host_constructor_named(crate::host::shared_vm::operation("ttyWrapConstructor"), "TTY")?;
+    let prototype = get(context, class, "prototype")?;
+    for (name, operation, length) in TTY_METHODS {
+        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let length = context.number(length);
+        context.define_named_data_property_rooted(function, "length", length, false, false, true)?;
+        context.define_named_data_property_rooted(prototype, name, function, true, false, true)?;
+    }
+    put(context, binding, "TTY", class)?;
+    Ok(binding)
+}
+
+pub(crate) fn tty_wrap_constructor(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(context.undefined())
+}
+
+/// `getWindowSize(size)`: `size` filled with no columns and no rows.
+pub(crate) fn tty_wrap_get_window_size(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    if let Some(&size) = args.first().filter(|&&size| context.is_object_rooted(size).unwrap_or(false)) {
+        for index in 0..2 {
+            let key = context.number(f64::from(index));
+            let zero = context.number(0.0);
+            context.set_property_rooted(size, key, zero, size)?;
+        }
+    }
+    Ok(context.number(UV_OK))
+}
+
+pub(crate) fn tty_wrap_set_raw_mode(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(context.number(UV_OK))
 }
 
 fn required_string(

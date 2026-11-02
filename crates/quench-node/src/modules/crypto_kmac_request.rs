@@ -3,7 +3,7 @@ use crate::modules::crypto_secret_material::Material;
 use openssl::error::ErrorStack;
 use openssl_sys::{EVP_MAC, EVP_MAC_CTX, OSSL_PARAM};
 use std::{
-    ffi::{c_char, c_void, CString},
+    ffi::{c_char, c_void},
     ptr,
     sync::Arc,
 };
@@ -134,56 +134,4 @@ impl Request {
 
 unsafe extern "C" {
     fn OSSL_PARAM_construct_size_t(name: *const c_char, value: *mut usize) -> OSSL_PARAM;
-    fn OSSL_PARAM_construct_utf8_string(
-        name: *const c_char,
-        value: *mut c_char,
-        size: usize,
-    ) -> OSSL_PARAM;
-}
-
-/// Compute one buffered CMAC value for the public `crypto.createMac` wrapper.
-pub(crate) fn cmac(key: &[u8], cipher: &str, data: &[u8]) -> Result<Vec<u8>, ErrorStack> {
-    let cipher = CString::new(cipher).map_err(|_| ErrorStack::get())?;
-    let mac = unsafe { openssl_sys::EVP_MAC_fetch(ptr::null_mut(), c"CMAC".as_ptr(), ptr::null()) };
-    if mac.is_null() {
-        return Err(ErrorStack::get());
-    }
-    let context = unsafe { openssl_sys::EVP_MAC_CTX_new(mac) };
-    if context.is_null() {
-        unsafe { openssl_sys::EVP_MAC_free(mac) };
-        return Err(ErrorStack::get());
-    }
-    let owner = MacContext { mac, context };
-    let mut cipher = cipher.into_bytes_with_nul();
-    let parameters = [
-        unsafe {
-            OSSL_PARAM_construct_utf8_string(c"cipher".as_ptr(), cipher.as_mut_ptr().cast(), 0)
-        },
-        unsafe { openssl_sys::OSSL_PARAM_construct_end() },
-    ];
-    if unsafe {
-        openssl_sys::EVP_MAC_init(owner.context, key.as_ptr(), key.len(), parameters.as_ptr())
-    } != 1
-    {
-        return Err(ErrorStack::get());
-    }
-    if unsafe { openssl_sys::EVP_MAC_update(owner.context, data.as_ptr(), data.len()) } != 1 {
-        return Err(ErrorStack::get());
-    }
-    let mut output = vec![0; 128];
-    let mut written = 0;
-    if unsafe {
-        openssl_sys::EVP_MAC_final(
-            owner.context,
-            output.as_mut_ptr(),
-            &mut written,
-            output.len(),
-        )
-    } != 1
-        || written > output.len()
-    {
-        return Err(ErrorStack::get());
-    }
-    output.truncate(written);
-    Ok(output)
 }

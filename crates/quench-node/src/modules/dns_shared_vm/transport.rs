@@ -132,23 +132,16 @@ pub(crate) fn query(config: &Config, name: &str, kind: RecordType) -> Result<Res
 }
 
 fn exchange(config: &Config, server: &Server, name: &str, kind: RecordType, timeout: Duration) -> Result<Exchange, Status> {
-    let mut edns = true;
-    loop {
-        let id = query_id();
-        let message = wire::encode_query(id, name, kind, edns).map_err(|_| Status::BadName)?;
-        let outcome = match udp(config, server, &message, id, timeout) {
-            Ok(response) if response.truncated => tcp(config, server, &message, id, timeout),
-            other => other,
-        };
-        return Ok(match outcome {
-            Ok(response) if edns && !response.has_opt && response.code == wire::ResponseCode::FormErr => {
-                edns = false;
-                continue;
-            }
-            Ok(response) => Exchange::Answer(response),
-            Err(status) => Exchange::Failed(status),
-        });
-    }
+    let id = query_id();
+    let message = wire::encode_query(id, name, kind).map_err(|_| Status::BadName)?;
+    let outcome = match udp(config, server, &message, id, timeout) {
+        Ok(response) if response.truncated => tcp(config, server, &message, id, timeout),
+        other => other,
+    };
+    Ok(match outcome {
+        Ok(response) => Exchange::Answer(response),
+        Err(status) => Exchange::Failed(status),
+    })
 }
 
 fn query_id() -> u16 {

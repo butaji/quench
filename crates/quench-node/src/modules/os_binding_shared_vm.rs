@@ -353,7 +353,7 @@ operation!(user_info, c, args, {
             return Ok(c.undefined());
         }
     };
-    let result = c.null_object_rooted()?;
+    let result = c.object_rooted()?;
     number(c, result, "uid", f64::from(user.uid))?;
     number(c, result, "gid", f64::from(user.gid))?;
     for (key, bytes) in [
