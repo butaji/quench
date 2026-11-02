@@ -1293,8 +1293,10 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
-        let length = self.properties.shape_length(header.shape());
-        self.properties.note_shape_values(header.shape(), &inline[..length.min(INLINE_PROPERTY_COUNT)]);
+        if self.properties.tracks() {
+            let length = self.properties.shape_length(header.shape());
+            self.properties.note_shape_values(header.shape(), &inline[..length.min(INLINE_PROPERTY_COUNT)]);
+        }
         let Some(object) = Object::from_inline_header(header, inline) else {
             return self.alloc_object_with_properties_of_header(header, prototype, inline);
         };
