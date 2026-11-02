@@ -414,6 +414,23 @@ pub trait Host {
         None
     }
 
+    /// Whether `initialize_import_meta` adds fields to the `import.meta` objects it creates.
+    fn initializes_import_meta(&self) -> bool {
+        false
+    }
+
+    /// Add host-owned fields to `import_meta` after its standard fields are defined.
+    fn initialize_import_meta(
+        _context: &mut crate::NativeContext<'_, Self>,
+        _source_name: &str,
+        _import_meta: crate::RootId,
+    ) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+
     /// Display identity for source locations in captured stacks. This must not
     /// change the identity used to resolve imports or look up compiled programs.
     fn stack_source_name(&mut self, source_name: &str, _is_module: bool) -> String {

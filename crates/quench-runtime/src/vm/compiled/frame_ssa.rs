@@ -167,9 +167,8 @@ impl FrameFlow {
                 let block_instructions = &instructions[range.clone()];
                 for instruction in block_instructions {
                     if self.effects[*instruction].register().is_some() { current.clear(); }
-                    if let Some((register, _, store)) = self.cell(native, *instruction) {
-                        if store { current.insert(register); }
-                    }
+                    if let Some((register, _, store)) = self.cell(native, *instruction)
+                        && store { current.insert(register); }
                     if native.dfg.insts[*instruction].opcode().is_call() {
                         let effect = self.effects[*instruction];
                         if let Some(frame) = effect.footprint() {
@@ -212,7 +211,7 @@ impl FrameFlow {
             }
             let mut current = dirty[*block].clone();
             for instruction in &instructions[range.clone()] {
-                let data = builder.func.dfg.insts[*instruction].clone();
+                let data = builder.func.dfg.insts[*instruction];
                 let results = builder.func.dfg.inst_results(*instruction).to_vec();
                 let control = builder.func.dfg.ctrl_typevar(*instruction);
                 let cell = self.cell(builder.func, *instruction);

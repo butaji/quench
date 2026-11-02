@@ -16,7 +16,6 @@ mod compiler;
 pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
 #[cfg(feature = "aot")]
 pub use quench_runtime::native_link::NativeImageInputs;
-#[cfg(feature = "aot")]
 
 /// One compiler-owned source pool, shared by all embedding hosts.
 #[macro_export]

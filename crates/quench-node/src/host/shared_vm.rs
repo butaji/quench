@@ -648,6 +648,11 @@ node_bindings! {
         method "processStopListeningSignal" (1) => crate::modules::process_shared_vm::stop_listening_signal,
         method "processIpcListenerReference" (1) => crate::modules::child_process_ipc_shared_vm::listener_reference,
         method "require" (1) => commonjs::require,
+        method "hmrApply" (1) => crate::host::hmr::apply_operation,
+        method "hmrHotAccept" (2) => crate::host::hmr::hot_accept,
+        method "hmrHotDispose" (1) => crate::host::hmr::hot_dispose,
+        method "hmrHotDecline" (0) => crate::host::hmr::hot_decline,
+        method "hmrHotInvalidate" (0) => crate::host::hmr::hot_invalidate,
         method "resolve" (2) => commonjs::resolve,
         method "resolvePaths" (1) => commonjs::resolve_paths,
         method "ipcSerdesSerialize" (2) => crate::modules::ipc_serdes_shared_vm::serialize_native,
@@ -2603,6 +2608,18 @@ impl quench_runtime::Host for NodeHost {
         Some(canonical.to_string_lossy().into_owned())
     }
 
+    fn initializes_import_meta(&self) -> bool {
+        self.shared_state.borrow().hmr.is_some()
+    }
+
+    fn initialize_import_meta(
+        context: &mut NativeContext<'_, Self>,
+        source_name: &str,
+        import_meta: quench_runtime::RootId,
+    ) -> Result<(), RootedError> {
+        crate::host::hmr::initialize_import_meta(context, source_name, import_meta)
+    }
+
     fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
         if is_module {
             self.import_meta_url(source_name)
@@ -2894,21 +2911,36 @@ impl NodeHost {
             },
             _ => format!("module {}: {error}", path.display()).into(),
         })?;
+        if let Some(state) = self.shared_state.borrow_mut().hmr.as_mut() {
+            match referrer_location(referrer) {
+                Ok((_, importer)) => state.record_dependency(&importer, &path, Some(specifier)),
+                Err(_) => state.record_module(&path),
+            }
+            state.record_source_name(&path, &name);
+        }
+        self.module_source(&path, name, bytes).map(Some)
+    }
+
+    /// The module `name` compiles from `path`'s `bytes`: its text, or the facade over a
+    /// CommonJS, JSON or WebAssembly file.
+    pub(crate) fn module_source(
+        &mut self, path: &std::path::Path, name: String, bytes: Vec<u8>,
+    ) -> Result<quench_runtime::ModuleSource, quench_runtime::ModuleLoadError> {
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("");
         if extension == "wasm" {
             #[cfg(feature = "aot")]
-            self.record_module_bytes(&path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
+            self.record_module_bytes(path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
             // Node's `wasm` format: the module record is a facade over the instance.
-            let source = esm_wasm::facade(&name, &path, &bytes)?;
-            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+            let source = esm_wasm::facade(&name, path, &bytes)?;
+            return Ok(quench_runtime::ModuleSource::text(name, source));
         }
         let kind = if extension == "json" { quench_runtime::SourceKind::Script }
-            else { commonjs::source_kind_of_real_bytes(&path, &bytes)? };
+            else { commonjs::source_kind_of_real_bytes(path, &bytes)? };
         #[cfg(feature = "aot")]
-        self.record_module_bytes(&path, kind, &bytes).map_err(|error| error.to_string())?;
+        self.record_module_bytes(path, kind, &bytes).map_err(|error| error.to_string())?;
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
         } else if kind == quench_runtime::SourceKind::Module {
@@ -2916,7 +2948,7 @@ impl NodeHost {
                 .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
         } else {
             #[cfg(feature = "aot")]
-            self.record_module_resolution(&path, &path.to_string_lossy(), &path)?;
+            self.record_module_resolution(path, &path.to_string_lossy(), path)?;
             let filename = serde_json::to_string(&path.to_string_lossy())
                 .map_err(|error| error.to_string())?;
             let mut source = format!(
@@ -2924,7 +2956,7 @@ impl NodeHost {
             );
             source.push_str("export { __quenchModule as 'module.exports' };\n");
             for (index, export) in
-                commonjs_exports::names(&path, &commonjs::source_text(&bytes))
+                commonjs_exports::names(path, &commonjs::source_text(&bytes))
                     .into_iter()
                     .enumerate()
             {
@@ -2949,9 +2981,9 @@ impl NodeHost {
         // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
         // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
         // text it compiles, never the file it wraps.
-        Ok(Some(quench_runtime::ModuleSource::text(name, source).with_typescript(
+        Ok(quench_runtime::ModuleSource::text(name, source).with_typescript(
             kind == quench_runtime::SourceKind::Module && matches!(extension, "ts" | "mts"),
-        )))
+        ))
     }
 }
 

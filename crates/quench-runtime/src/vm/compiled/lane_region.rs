@@ -1039,9 +1039,8 @@ impl Lowering<'_, '_> {
                                 let site = self.program.field_sites[site];
                                 sites.push(site.first.1);
                                 if let Some((_, cache)) = site.second { sites.push(cache); }
-                                if instruction.writes_current_this() {
-                                    if let Some((_, cache)) = site.sink { sites.push(cache); }
-                                }
+                                if instruction.writes_current_this()
+                                    && let Some((_, cache)) = site.sink { sites.push(cache); }
                             }
                             _ => {},
                         },

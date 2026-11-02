@@ -2602,6 +2602,10 @@ fn poll_io(
         let ran = super::fs_stat_watch_shared_vm::poll(runtime, program)?;
         settle(runtime, ran)?;
     }
+    if shared_state.borrow().hmr.is_some() {
+        let ran = crate::host::hmr::poll(runtime, program)?;
+        settle(runtime, ran)?;
+    }
     Ok(progressed)
 }
 
@@ -2784,6 +2788,8 @@ fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState
         || crate::modules::worker_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
+        // The HMR watcher keeps the process alive, as a file watch does.
+        || shared_state.borrow().hmr.is_some()
 }
 
 fn mark_timer_destroyed(
@@ -4299,6 +4305,17 @@ pub(crate) fn initialize_warning_policy(
         install(context, process, "binding", binding)?;
     }
     Ok(())
+}
+
+/// Whether the environment `process.env` starts from (`environment`) holds `name` with a
+/// non-empty value, without copying it.
+pub(crate) fn environment_names(context: &mut NativeContext<'_, NodeHost>, name: &str) -> bool {
+    let shared_state = context.host_mut().shared_state();
+    let state = shared_state.borrow();
+    match state.messaging.context.as_ref() {
+        Some(worker) => worker.env.iter().any(|(key, value)| key == name && !value.is_empty()),
+        None => std::env::var_os(name).is_some_and(|value| !value.is_empty()),
+    }
 }
 
 /// The environment `process.env` starts from: a worker's own, else the OS environment.

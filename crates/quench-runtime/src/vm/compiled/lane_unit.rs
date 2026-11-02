@@ -210,12 +210,11 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
         program.with_record(id, |function| {
             let mut closures = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
-                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict) {
-                    if let Some(id) = closures.get(usize::from(instruction.register_a())).copied().flatten() {
+                if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
+                    && let Some(id) = closures.get(usize::from(instruction.register_a())).copied().flatten() {
                         let slot = &mut methods[instruction.atom_index() as usize];
                         *slot = Some(match *slot { None => Some(id), Some(Some(old)) if old == id => Some(id), _ => None });
                     }
-                }
                 let value = match instruction.op() {
                     Op::MakeClosure => Some(instruction.closure_function_index()),
                     Op::Move => closures.get(usize::from(instruction.register_b())).copied().flatten(),

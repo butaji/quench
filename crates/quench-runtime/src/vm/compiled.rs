@@ -8185,7 +8185,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         {
             let globals = vm.realm.globals;
             let cache_site = instruction.cache_site_index();
-            let probe = vm.cached_field_hit(&program, globals, cache_site);
+            let probe = vm.cached_field_hit(program, globals, cache_site);
             if vm.programs.js_jit_diagnostics_enabled() {
                 vm.programs.record_js_jit_field_cache_probe(
                     dispatch.program_id,
@@ -8241,7 +8241,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 .get(usize::from(receiver_register))
                 .copied()
         {
-            let probe = vm.cached_field_hit(&program, receiver, cache_site);
+            let probe = vm.cached_field_hit(program, receiver, cache_site);
             if vm.programs.js_jit_diagnostics_enabled() {
                 vm.programs.record_js_jit_field_cache_probe(
                     dispatch.program_id,
@@ -8290,7 +8290,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             )
         {
             let hit = vm.cached_field_store_hit(
-                &program,
+                program,
                 receiver,
                 instruction.atom_index(),
                 value,
@@ -8355,7 +8355,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             };
             #[cfg(feature = "native-execution")]
             let guarded_call_result = if SINGLE_OPERATION && dispatch.allow_inline_calls && is_call {
-                vm.native_guarded_call(&program, dispatch.program_id, dispatch.frame, current_instruction)
+                vm.native_guarded_call(program, dispatch.program_id, dispatch.frame, current_instruction)
             } else {
                 None
             };
@@ -8367,7 +8367,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 && dispatch.allow_inline_calls
                 && is_call
             {
-                vm.try_inline_user_call(&program, dispatch.frame, current_instruction, next)
+                vm.try_inline_user_call(program, dispatch.frame, current_instruction, next)
             } else {
                 None
             };
@@ -8390,13 +8390,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 step
             } else if SINGLE_OPERATION {
                 (operation.as_ref().expect("validated semantic operation").execute)(
-                    vm, &program, dispatch.frame, current_instruction, &mut next,
+                    vm, program, dispatch.frame, current_instruction, &mut next,
                     dispatch.allow_inline_calls,
                 )
             } else {
                 (Vm::<H>::resolve_step_operation(current_instruction.op()))(
                     vm,
-                    &program,
+                    program,
                     dispatch.frame,
                     current_instruction,
                     &mut next,

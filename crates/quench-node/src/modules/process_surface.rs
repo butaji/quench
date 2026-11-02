@@ -308,6 +308,9 @@ pub(crate) const NODE_FLAGS: &[&str] = &[
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+/// The variable through which Node's start-up requests V8 coverage.
+const V8_COVERAGE_ENV: &str = "NODE_V8_COVERAGE";
+
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
@@ -406,17 +409,18 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
     }
     // Node's start-up coverage hook warns when NODE_V8_COVERAGE is requested without the
     // inspector profiler, then clears it so further children do not repeat the request.
-    let env = get(c, process, "env")?;
-    if c.is_object_rooted(env)? {
-        let coverage = get(c, env, "NODE_V8_COVERAGE")?;
+    // The host answers whether it is requested, so a run without it never reads `process.env`,
+    // whose first read copies the whole environment.
+    if super::process_shared_vm::environment_names(c, V8_COVERAGE_ENV) {
+        let env = get(c, process, "env")?;
         let inspector = get(c, features, "inspector")?;
-        if c.truthy_rooted(coverage)? && !c.truthy_rooted(inspector)? {
+        if c.is_object_rooted(env)? && !c.truthy_rooted(inspector)? {
             let emit = get(c, process, "emitWarning")?;
             let message = c.string_rooted("The inspector is disabled, coverage could not be collected");
             let kind = c.string_rooted("Warning");
             c.call_rooted(emit, process, &[message, kind])?;
             let empty = c.string_rooted("");
-            c.assign_named_property_rooted(env, "NODE_V8_COVERAGE", empty)?;
+            c.assign_named_property_rooted(env, V8_COVERAGE_ENV, empty)?;
         }
     }
     let cli_title_key = c.string_rooted("__quench_cli_title");

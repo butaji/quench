@@ -31,10 +31,7 @@ pub(super) fn unary(value: &UnaryExpression<'_>) -> Option<Constant> {
     let operand = expression(&value.argument)?;
     let folded = match (value.operator, operand) {
         (UnaryOperator::Void, _) => Constant::Undefined,
-        (UnaryOperator::LogicalNot, operand) => match to_boolean(&operand) {
-            Some(truthy) => Constant::Boolean(!truthy),
-            None => return None,
-        },
+        (UnaryOperator::LogicalNot, operand) => Constant::Boolean(!to_boolean(&operand)?),
         (UnaryOperator::UnaryNegation, Constant::Number(value)) => Constant::Number(-value),
         (UnaryOperator::UnaryPlus, Constant::Number(value)) => Constant::Number(value),
         _ => return None,
