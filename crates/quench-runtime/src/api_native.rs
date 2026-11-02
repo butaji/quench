@@ -115,6 +115,21 @@ pub enum SynchronousModule<T> {
     Evaluating,
 }
 
+/// How one module accept callback receives a replaced module's namespace.
+pub enum ModuleAcceptArguments {
+    /// `accept(callback)` or `accept(specifier, callback)`: the namespace itself.
+    Namespace,
+    /// `accept([specifiers], callback)`: an array of `length` with the namespace at each
+    /// updated specifier's index and `undefined` elsewhere.
+    NamespaceArray { length: usize, updated_indices: Vec<usize> },
+}
+
+/// A module accept callback and the namespace shape it expects.
+pub struct ModuleAcceptCallback {
+    pub callback: RootId,
+    pub arguments: ModuleAcceptArguments,
+}
+
 /// Arithmetic operations at native boundaries use the same guest coercions as code.
 #[derive(Clone, Copy)]
 pub enum NativeArithmetic {
@@ -1917,6 +1932,72 @@ impl<'a, H: Host> NativeContext<'a, H> {
             SynchronousModule::AsyncGraph => SynchronousModule::AsyncGraph,
             SynchronousModule::Evaluating => SynchronousModule::Evaluating,
         })
+    }
+
+    /// Evaluate an already-evaluated synchronous module again from `module`'s source and
+    /// deliver the new namespace to `accept_callbacks`. The prior record is restored when
+    /// evaluation or a callback throws; `None` means the module is not an evaluated
+    /// synchronous graph this operation can replace.
+    pub fn replace_module_sync_rooted(
+        &mut self,
+        module: &crate::ModuleSource,
+        accept_callbacks: &[ModuleAcceptCallback],
+    ) -> Result<Option<RootId>, RootedError> {
+        if !self.vm.begin_module_replacement(module) {
+            return Ok(None);
+        }
+        let namespace = match self.vm.evaluate_module_sync(module) {
+            Ok(SynchronousModule::Namespace(namespace)) => self.scoped_value(namespace),
+            Ok(SynchronousModule::AsyncGraph | SynchronousModule::Evaluating) => {
+                self.vm.rollback_module_replacement(&module.name);
+                return Ok(None);
+            }
+            Err(error) => {
+                let error = self.error(error);
+                self.vm.rollback_module_replacement(&module.name);
+                return Err(error);
+            }
+        };
+        let delivered = self.deliver_module_namespace(namespace, accept_callbacks);
+        match delivered {
+            Ok(()) => {
+                self.vm.commit_module_replacement(&module.name);
+                Ok(Some(namespace))
+            }
+            Err(error) => {
+                self.vm.rollback_module_replacement(&module.name);
+                Err(error)
+            }
+        }
+    }
+
+    fn deliver_module_namespace(
+        &mut self,
+        namespace: RootId,
+        accept_callbacks: &[ModuleAcceptCallback],
+    ) -> Result<(), RootedError> {
+        let receiver = self.undefined();
+        for callback in accept_callbacks {
+            let argument = match &callback.arguments {
+                ModuleAcceptArguments::Namespace => namespace,
+                ModuleAcceptArguments::NamespaceArray { length, updated_indices } => {
+                    let mut values = vec![receiver; *length];
+                    for &index in updated_indices {
+                        *values.get_mut(index).ok_or_else(|| {
+                            RootedError::host("module accept callback index exceeds its array length")
+                        })? = namespace;
+                    }
+                    self.array_rooted(&values)?
+                }
+            };
+            let result = self.call_rooted(callback.callback, receiver, &[argument]);
+            if argument != namespace {
+                self.release_root(argument);
+            }
+            let result = result?;
+            self.release_root(result);
+        }
+        Ok(())
     }
 
     /// Add a constant export while retaining a namespace's original live bindings.

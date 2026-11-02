@@ -130,6 +130,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_ipc: crate::modules::child_process_ipc_shared_vm::State,
     pub(crate) node_test: crate::modules::test_runner::State,
     pub(crate) cluster: crate::modules::cluster::State,
+    /// The application module graph under `--hmr` (`crate::host::hmr`).
+    pub(crate) hmr: Option<crate::host::hmr::HmrState>,
     /// REPL inputs evaluated so far: each is the resource `REPL<n>`.
     pub(crate) repl_resources: u32,
     #[cfg(quench_openssl_provider)]
@@ -368,6 +370,7 @@ impl SharedNodeState {
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),
             node_test: crate::modules::test_runner::State::default(),
             cluster: crate::modules::cluster::State::default(),
+            hmr: None,
             repl_resources: 0,
             #[cfg(quench_openssl_provider)]
             crypto_hashes: crate::modules::crypto_hash_shared_vm::State::default(),

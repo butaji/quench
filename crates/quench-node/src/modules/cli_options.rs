@@ -23,6 +23,8 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     // the original spelling in process.execArgv.
     ("--experimental-web-worker", false),
     ("--experimental-vfs", false),
+    // Quench's opt-in hot module replacement (`crate::host::hmr`).
+    ("--hmr", false),
     // Node's pre-execution setup always reads this option and passes its
     // value to source-map support, even when source maps are disabled.
     ("--enable-source-maps", false),
