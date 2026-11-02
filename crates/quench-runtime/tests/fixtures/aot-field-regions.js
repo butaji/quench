@@ -432,5 +432,23 @@ try { runStrictExact(exactOwner, strictInput); throw Error('missing strict failu
 catch (error) { if (error.name !== 'TypeError') throw error; }
 if (exactOwner.count !== strictBefore + 1) throw Error('strict prefix replay');
 output.push(exactOwner.count);
+function invariantLoop(owner, alias, n) {
+  let sum = 0;
+  while (n > 0) {
+    alias.right = alias.right + 1;
+    sum = sum + owner.left + owner.right;
+    n = n - 1;
+  }
+  return sum;
+}
+const invariantOwner = {left: 2, right: 3, pad: 0, extra: 0};
+for (let i = 0; i < 50; i++) invariantLoop(invariantOwner, invariantOwner, 4);
+const invariantBefore = invariantOwner.right;
+if (invariantLoop(invariantOwner, invariantOwner, 4) !== 4 * invariantBefore + 18) {
+  throw Error('invariant header froze property values');
+}
+Object.defineProperty(invariantOwner, 'left', {get() { events.push('invariant-get'); return 5; }});
+record(() => invariantLoop(invariantOwner, invariantOwner, 2));
+record(() => invariantLoop(invariantOwner, {right: 7}, 2));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

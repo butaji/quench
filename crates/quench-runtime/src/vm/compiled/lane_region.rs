@@ -20,7 +20,7 @@
 use super::*;
 use crate::bytecode::FieldLayout;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type, VerifiedFact};
-use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
+use super::object_slots::{CheckedObject, ObjectHeader, ObjectRecord, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
 
@@ -85,6 +85,9 @@ enum FieldOwner { This, Register(Register), Temporary }
 /// Region-wide facts proved at entry.
 struct Entry {
     receiver: LaneReceiver,
+    /// Entry receiver certificates survive every block in this no-GC,
+    /// layout-preserving unit. Written registers never receive one.
+    records: Vec<Option<ObjectRecord>>,
     /// Per folded receiver shape, whether the receiver has it.
     receiver_shapes: BTreeMap<u32, Variable>,
     /// Per stored atom, whether the run admits direct stores of it.
@@ -815,6 +818,7 @@ impl Lowering<'_, '_> {
         };
         #[cfg(not(feature = "aot"))]
         let fields = smallvec::SmallVec::new();
+        let records = self.invariant_field_records(instructions, &receiver, &mut capture_miss);
         if let Some(miss) = capture_miss {
             let admitted = self.builder.create_block();
             self.builder.ins().jump(admitted, &[]);
@@ -826,7 +830,63 @@ impl Lowering<'_, '_> {
             self.return_at(u64::from(pc));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, receiver_shapes, store_atoms, captures, this, fields }
+        Entry { receiver, records, receiver_shapes, store_atoms, captures, this, fields }
+    }
+
+    /// Bind physical receiver facts once. The expanded unit's write set owns
+    /// invariance, including renamed callee registers and synthesized returns.
+    fn invariant_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
+        miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
+        let count = usize::from(self.unit.registers);
+        let mut owners: CompoundBitSet = CompoundBitSet::with_capacity(count + 1);
+        let mut reachable = false;
+        for (pc, instruction) in instructions.iter().enumerate() {
+            if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
+            if !reachable { continue; }
+            let owner = match instruction.op() {
+                Op::GetField => {
+                    let base = match instruction.field_lookup() {
+                        Some(FieldLookup::Atom { base, .. }) => Some(base),
+                        Some(FieldLookup::Site(site)) => self.program.field_sites.get(site).map(|site| site.base),
+                        _ => None,
+                    };
+                    base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
+                        else { base.register_index().map(usize::from) })
+                }
+                Op::SetField | Op::SetFieldStrict => Some(usize::from(instruction.register_b())),
+                Op::SetThisField | Op::SetThisFieldStrict => Some(match self.unit.origins[pc] {
+                    super::lane_unit::Origin::Inlined { frame, .. } => usize::from(self.unit.frames[frame].receiver),
+                    _ => count,
+                }),
+                _ => None,
+            };
+            if let Some(owner) = owner.filter(|owner| *owner == count
+                || (*owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
+                owners.insert(owner);
+            }
+            if instruction.returns_from_frame() || instruction.op().control_flow_layout() == ControlFlowLayout::Terminal {
+                reachable = false;
+            }
+        }
+        let mut admitted = vec![None; count + 1];
+        let mut records = None;
+        for owner in owners.iter() {
+            let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+            admitted[owner] = Some(if owner == count {
+                // emit_lane_receiver already owns family/range/base admission.
+                let record = self.builder.use_var(receiver.object);
+                let present = self.ins().icmp_imm_u(IntCC::NotEqual, record, 0);
+                emit_js_guard(&mut self.builder, present, exit);
+                ObjectHeader { record, shape: self.builder.use_var(receiver.shape),
+                    inline: self.builder.use_var(receiver.inline) }.record()
+            } else {
+                let records = *records.get_or_insert_with(|| emit_js_payload_word(&mut self.builder,
+                    self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
+                let bits = self.builder.use_var(self.registers.tagged[owner]);
+                ObjectRecord::prove(&mut self.builder, bits, records, None, exit)
+            });
+        }
+        admitted
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
@@ -907,6 +967,7 @@ impl Lowering<'_, '_> {
                 let bound = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, bound, exit);
                 self.set_tagged(state, instruction.result_register(), this);
+                state.headers[usize::from(instruction.result_register())] = state.headers[state.values.len()];
                 state.receivers.insert(instruction.result_register());
                 Some(true)
             }
@@ -1116,9 +1177,15 @@ impl Lowering<'_, '_> {
             }).expect("admitted dynamic closure of the static function");
         }
         let receiver = self.tagged(state, inlined.receiver);
-        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-        emit_js_guard(&mut self.builder, object, exit);
+        let entry = self.entry.as_ref().expect("entry facts");
+        let admitted = state.headers[usize::from(inlined.receiver)].is_some()
+            || entry.records[usize::from(inlined.receiver)].is_some()
+            || (state.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
+        if !admitted {
+            let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            emit_js_guard(&mut self.builder, object, exit);
+        }
         for register in 0..inlined.registers {
             let destination = inlined.base + register;
             let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
@@ -1294,13 +1361,17 @@ impl Lowering<'_, '_> {
     fn object_header(&mut self, state: &mut State, owner: Option<Register>, exit: ir::Block) -> ObjectHeader {
         let index = owner.map_or(state.values.len(), usize::from);
         if let Some(header) = state.headers[index] { return header; }
-        let bits = match owner {
-            Some(register) => self.tagged(state, register),
-            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
-        };
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
         let fact = owner.map(|register| state.values[usize::from(register)].value);
-        let header = ObjectHeader::prove(&mut self.builder, bits, records, fact, exit);
+        let header = if let Some(record) = self.entry.as_ref().expect("entry facts").records[index] {
+            record.header(&mut self.builder, fact)
+        } else {
+            let bits = match owner {
+                Some(register) => self.tagged(state, register),
+                None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+            };
+            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+            ObjectHeader::prove(&mut self.builder, bits, records, fact, exit)
+        };
         state.headers[index] = Some(header);
         if let Some(fact) = fact {
             let ty = fact.ty;

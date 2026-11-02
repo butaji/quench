@@ -16761,6 +16761,38 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn invariant_receiver_headers_dominate_native_loop_backedges() {
+        let program = crate::Engine::specialize(
+            "function scan(o,n,dead){let sum=0;while(n>0){sum=sum+o.left;n=n-1;}return sum;dead.left;}",
+            "invariant-header.js").unwrap();
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_region(&program, 1, &[], &*isa, 0).unwrap();
+        let native = &region.function;
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+        let mut headers = Vec::new();
+        for block in native.layout.blocks() {
+            if !dom.is_reachable(block) { continue; }
+            headers.extend(cfg.succ_iter(block).filter(|target| dom.is_reachable(*target)
+                && dom.dominates(*target, block, &native.layout)));
+        }
+        assert!(!headers.is_empty(), "the regression must contain a native backedge");
+        let families: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter(|instruction| matches!(native.dfg.insts[*instruction],
+                ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
+                    if i64::from(imm) as u64 == crate::value::ValueLayout::DIRECT_OBJECT_TAG)).collect();
+        assert_eq!(families.len(), 2, "one this admission and one invariant argument proof");
+        for proof in families {
+            for header in &headers {
+                assert!(dom.dominates(proof, *header, &native.layout),
+                    "invariant receiver proof {proof} must precede loop {header}:\n{native}");
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn effectful_inline_recovery_materializes_exact_callee_state() {
         let program = crate::Engine::specialize(
             "let p={};p.consume=function(input){this.count=this.count+1;let value=input.value;return value+this.count;};function run(owner,input){let value=owner.consume(input);return value+3;}",

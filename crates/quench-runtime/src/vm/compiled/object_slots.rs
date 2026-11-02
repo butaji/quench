@@ -14,15 +14,19 @@ pub(super) struct ObjectHeader {
     pub(super) inline: ir::Value,
 }
 
-impl ObjectHeader {
+/// One verified direct-object locator. Metadata views can be derived in each
+/// block without retaining three machine values across the entire region.
+#[derive(Clone, Copy)]
+pub(super) struct ObjectRecord(ir::Value);
+
+impl ObjectRecord {
     pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        // Only a dominating verified definition/edge can supply this fact. The
-        // caller's no-safepoint, layout-preserving contract keeps it alive.
-        let shape = known.and_then(|fact| fact.ty.object_shape());
         let id = builder.ins().ireduce(types::I32, bits);
-        if shape.is_none() {
+        // Only a dominating verified definition/edge can supply this fact.
+        // No safepoint or layout-changing operation may cross its lifetime.
+        if known.and_then(|fact| fact.ty.object_shape()).is_none() {
             let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
             let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
             emit_js_guard(builder, object, miss);
@@ -33,14 +37,27 @@ impl ObjectHeader {
         }
         let id = builder.ins().uextend(types::I64, id);
         let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
-        let record = builder.ins().iadd(records, offset);
-        let shape = match shape {
+        Self(builder.ins().iadd(records, offset))
+    }
+
+    pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
+        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+        let shape = match known.and_then(|fact| fact.ty.object_shape()) {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
-            None => builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32),
+            None => builder.ins().load(types::I32, MemFlagsData::trusted(), self.0, layout.auxiliary_offset as i32),
         };
-        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), self.0, layout.meta_offset as i32);
         let inline = builder.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-        Self { record, shape, inline }
+        ObjectHeader { record: self.0, shape, inline }
+    }
+}
+
+impl ObjectHeader {
+    pub(super) fn record(self) -> ObjectRecord { ObjectRecord(self.record) }
+
+    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+        records: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
+        ObjectRecord::prove(builder, bits, records, known, miss).header(builder, known)
     }
 }
 
