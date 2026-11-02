@@ -892,43 +892,23 @@ pub(crate) fn really_exit(
     Ok(context.undefined())
 }
 
-fn exit_code_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    name: &str,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let codes = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "internal/process/per_thread.js",
-        "internal/errors.js",
-        "codes",
-    )?;
-    let key = context.string_rooted(name);
-    let constructor = context.get_property_rooted(codes, key)?;
-    let error = context.construct_rooted(constructor, constructor, args)?;
-    Err(context.throw(error))
-}
 fn invalid_exit_code_type(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
-    let code = context.string_rooted("code");
-    let number = context.string_rooted("number");
-    exit_code_error(context, "ERR_INVALID_ARG_TYPE", &[code, number, value])
+    Err(super::util_shared_vm::argument_type_error(context, value, "code", "number")?)
 }
 fn exit_code_range_error(
     context: &mut NativeContext<'_, NodeHost>,
     number: f64,
 ) -> Result<RootId, RootedError> {
-    let code = context.string_rooted("code");
     let range = if number.is_finite() && number.fract() == 0.0 {
         format!(">= -{MAX_SAFE_EXIT_CODE:.0} && <= {MAX_SAFE_EXIT_CODE:.0}")
     } else {
         "an integer".to_owned()
     };
-    let range = context.string_rooted(&range);
     let value = context.number(number);
-    exit_code_error(context, "ERR_OUT_OF_RANGE", &[code, range, value])
+    Err(super::util_shared_vm::out_of_range_error(context, "code", &range, value)?)
 }
 
 fn throw_with_code(
@@ -1759,6 +1739,16 @@ fn chdir_type_error(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedE
     Ok(context.throw(error))
 }
 
+/// The process binding's raw `umask(mask)`: an explicit undefined mask reads it, as none does.
+pub(crate) fn raw_umask(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let read = args.first().is_none_or(|mask| context.rooted_value(*mask).is_some_and(|value| value.is_undefined()));
+    umask(context, receiver, if read { &[] } else { args })
+}
+
 pub(crate) fn umask(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2096,32 +2086,6 @@ pub(crate) fn delete_env(
         unsafe { tzset() };
     }
     Ok(context.undefined())
-}
-
-pub(crate) fn get_shared_env(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(key) = args.first().copied() else {
-        return Ok(context.undefined());
-    };
-    let key = context.string_text(key)?.unwrap_or_default();
-    let shared = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_env_shared;
-    if !shared {
-        return Ok(context.undefined());
-    }
-    match std::env::var_os(key) {
-        Some(value) => {
-            let value = value.to_string_lossy();
-            Ok(context.string_rooted(&value))
-        }
-        None => Ok(context.undefined()),
-    }
 }
 
 pub(crate) fn load_env_file(
@@ -2462,10 +2426,6 @@ pub(crate) fn finish_after_uncaught_error(
     let routed = emit_uncaught_exception(runtime, program, error);
     if control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
-        if super::worker_threads_shared_vm::runtime_is_child(runtime) {
-            exit?;
-            return Ok(true);
-        }
         if control.fatal_uncaught_requested() {
             return routed.and(exit.map(|_| false));
         }
@@ -2570,9 +2530,6 @@ fn drain_checkpoint(
     super::performance_binding_shared_vm::mark_loop_start(runtime)?;
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
-        if crate::modules::worker_threads_shared_vm::poll(runtime, program)? {
-            continue;
-        }
         if crate::modules::process_stdin_shared_vm::poll(runtime)? {
             continue;
         }
@@ -2852,7 +2809,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
 /// Whether referenced work other than timers and immediates is pending: work the loop polls
 /// for at the subsystems' poll interval. Without it the loop sleeps until the next timer.
 fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
     if crate::modules::dns_shared_vm::has_work(shared_state) { return true; }
     crate::modules::pipe_binding::has_work(&shared_state.borrow())
         || shared_state.borrow().udp.has_work()
@@ -3104,7 +3060,6 @@ pub(super) fn route_callback_failure(
     let result = match routed {
         Ok(true) => Ok(()),
         Ok(false) => {
-            super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
             Err(format_uncaught_error(runtime, program, &mut failure))
         }
         Err(handler_error) => Err(handler_error),
@@ -3346,7 +3301,6 @@ pub(crate) fn run_host_jobs_with_uncaught(
         let result = match routed {
             Ok(true) => Ok(()),
             Ok(false) => {
-                super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
                 Err(format_uncaught_error(runtime, program, &mut failure))
             }
             Err(handler_error) => Err(handler_error),
@@ -3649,9 +3603,6 @@ fn rooted_error_message(
     program: &quench_runtime::ResidualProgram,
     error: RootedError,
 ) -> String {
-    if let Some(exception) = error.exception {
-        super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
-    }
     let message = runtime.format_error(program, &error.error);
     if let Some(exception) = error.exception {
         runtime.release_root(exception);
@@ -3979,9 +3930,6 @@ fn set_shared_property(
         Ok(true) => Ok(()),
         Ok(false) => Err(format!("cannot update process.{name}")),
         Err(error) => {
-            if let Some(exception) = error.exception {
-                super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
-            }
             let message = runtime.format_error(program, &error.error);
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
@@ -4380,17 +4328,11 @@ pub(crate) fn initialize_warning_policy(
     }
     if options.enabled("--pending-deprecation") {
         let binding = get(context, process, "binding")?;
-        let deprecate = crate::host::shared_vm::commonjs::node_library_export(
+        let binding = super::util_module_shared_vm::deprecated_export(
             context,
-            "internal/process/pre_execution.js",
-            "internal/util.js",
-            "deprecate",
+            binding,
+            ("DEP0111", "process.binding() is deprecated. Please use public APIs instead."),
         )?;
-        let message = context
-            .string_rooted("process.binding() is deprecated. Please use public APIs instead.");
-        let code = context.string_rooted("DEP0111");
-        let undefined = context.undefined();
-        let binding = context.call_rooted(deprecate, undefined, &[binding, message, code])?;
         install(context, process, "binding", binding)?;
     }
     Ok(())

@@ -706,6 +706,38 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
     Ok(classes)
 }
 
+/// `isKeyObject(value)` (lib/internal/crypto/keys.js).
+pub(crate) fn is_key_object(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let value = arg(c, args, 0);
+    let found = key_object_key(c, value)?.is_some();
+    Ok(c.boolean(found))
+}
+
+/// `internal/crypto/keys`: the key classes and the public creators, with the predicates.
+pub(crate) fn internal_module(c: &mut Context<'_>) -> Outcome {
+    let crypto = super::module(c)?;
+    let module = c.object_rooted()?;
+    for name in ["createSecretKey", "createPublicKey", "createPrivateKey"] {
+        let function = get(c, crypto, name)?;
+        put(c, module, name, function)?;
+    }
+    for (name, class) in [
+        ("KeyObject", Class::KeyObject),
+        ("CryptoKey", Class::CryptoKey),
+        ("SecretKeyObject", Class::SecretKeyObject),
+        ("PublicKeyObject", Class::PublicKeyObject),
+        ("PrivateKeyObject", Class::PrivateKeyObject),
+    ] {
+        let constructor = super::class(c, class)?;
+        put(c, module, name, constructor)?;
+    }
+    for (name, operation) in [("isKeyObject", "cryptoIsKeyObject"), ("isCryptoKey", "cryptoIsCryptoKey")] {
+        let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        put(c, module, name, function)?;
+    }
+    Ok(module)
+}
+
 // ---- Creating keys -------------------------------------------------------------------
 
 /// `crypto.createSecretKey(key[, encoding])`.

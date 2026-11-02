@@ -60,14 +60,6 @@ pub(crate) fn install(
         let symbol = context.get_property_rooted(internal_net, symbol_key)?;
         context.define_data_property_rooted(data, key, symbol, false, false, false)?;
     }
-    let get_default = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "net.js",
-        "internal/streams/state.js",
-        "getDefaultHighWaterMark",
-    )?;
-    let key = context.string_rooted("getDefaultHighWaterMark");
-    context.define_data_property_rooted(data, key, get_default, false, false, false)?;
     let retained = context.retain(data)?;
     context
         .host_mut()
@@ -336,9 +328,7 @@ pub(crate) fn initialize_server(
             .and_then(|value| value.as_number())
             .is_some_and(|value| value < 0.0)
     {
-        let data = context.host_function_data()?;
-        let get_default = get(context, data, "getDefaultHighWaterMark")?;
-        high_water = context.call_rooted(get_default, undefined, &[object_mode])?;
+        high_water = super::stream_shared_vm::state::get_default_high_water_mark(context, undefined, &[object_mode])?;
     }
     let allow = get(context, options, "allowHalfOpen")?;
     let allow = if context.truthy_rooted(allow)? {

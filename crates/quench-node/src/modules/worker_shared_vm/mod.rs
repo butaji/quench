@@ -17,7 +17,7 @@ mod thread;
 pub(crate) const NATIVE_ENTRY_UNAVAILABLE: &str = "native worker entry is not linked into this image";
 
 pub(crate) use api::{
-    broadcast_close, broadcast_constructor, broadcast_name, broadcast_post_message, broadcast_ref, broadcast_unref,
+    broadcast_close, broadcast_constructor, broadcast_inspect, broadcast_name, broadcast_post_message, broadcast_ref, broadcast_unref,
     channel_constructor, get_environment_data, handler_get, handler_set, message_event_constructor, message_event_field,
     move_message_port_to_context, port_close, port_constructor, port_has_ref, port_listener_hook, port_post_message,
     port_ref, port_start, port_unref, post_message_to_thread, receive_message_on_port, set_environment_data,
@@ -73,6 +73,11 @@ impl State {
         }
         self.workers.clear();
         self.api = None;
+    }
+
+    /// Whether this VM is a worker thread's.
+    pub(crate) fn is_worker(&self) -> bool {
+        self.context.is_some()
     }
 
     fn has_work(&self) -> bool {

@@ -238,6 +238,13 @@ fn crypto_key_state(c: &mut Context<'_>, value: RootId) -> Result<Option<(Arc<Ke
     Ok(found.flatten())
 }
 
+/// `isCryptoKey(value)` (lib/internal/crypto/keys.js).
+pub(crate) fn is_crypto_key(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
+    let value = arg(c, args, 0);
+    let found = crypto_key_state(c, value)?.is_some();
+    Ok(c.boolean(found))
+}
+
 /// The KeyObject a CryptoKey holds (`KeyObject.from`), one per CryptoKey.
 pub(crate) fn crypto_key_object(c: &mut Context<'_>, value: RootId) -> Result<Option<RootId>, RootedError> {
     let Some((key, ..)) = crypto_key_state(c, value)? else {

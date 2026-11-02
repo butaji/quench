@@ -62,7 +62,7 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             "patchProcessObject",
         )?;
         put(c, module, "patchProcessObject", patch_process_object)?;
-        for (name, operation) in [("cwd", "processCwd"), ("umask", "workerRawUmask")] {
+        for (name, operation) in [("cwd", "processCwd"), ("umask", "processRawUmask")] {
             let function =
                 c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
             put(c, module, name, function)?;
@@ -148,7 +148,7 @@ fn micros(value: libc::timeval) -> f64 {
     const MICROS_PER_SECOND: f64 = std::time::Duration::from_secs(1).as_micros() as f64;
     value.tv_sec as f64 * MICROS_PER_SECOND + value.tv_usec as f64
 }
-fn thread_rusage() -> libc::c_int {
+pub(crate) fn thread_rusage() -> libc::c_int {
     // macOS has no RUSAGE_THREAD; the process total is the closest portable
     // approximation and is only used for the diagnostic threadCpuUsage read.
     #[cfg(target_os = "macos")]
@@ -253,7 +253,7 @@ pub(crate) fn resources(
 }
 /// The process's resident set from `/proc/self/statm`, in bytes.
 #[cfg(target_os = "linux")]
-fn resident_bytes() -> Result<f64, RootedError> {
+pub(crate) fn resident_bytes() -> Result<f64, RootedError> {
     let text = std::fs::read_to_string("/proc/self/statm")
         .map_err(|error| RootedError::host(error.to_string()))?;
     let pages = text
@@ -271,7 +271,7 @@ fn resident_bytes() -> Result<f64, RootedError> {
 /// The process's resident set from Mach's basic task info, in bytes.
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
-fn resident_bytes() -> Result<f64, RootedError> {
+pub(crate) fn resident_bytes() -> Result<f64, RootedError> {
     let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::uninit();
     let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
     // SAFETY: `info` points at a `mach_task_basic_info` and `count` is its
@@ -394,8 +394,7 @@ pub(crate) fn public_thread_cpu(c: &mut Context<'_>, _: RootId, args: &[RootId])
 /// `process.execve(execPath[, args[, env]])`: validates, then replaces the process image.
 pub(crate) fn public_execve(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     super::process_warning_shared_vm::emit_experimental(c, "process.execve")?;
-    // A worker thread is the one whose stderr its parent captures.
-    if c.host_mut().shared_state().borrow().workers.captures_stderr() {
+    if c.host_mut().shared_state().borrow().messaging.is_worker() {
         let error = c.type_error_rooted("Calling process.execve is not supported in a worker")?;
         super::node_errors_shared_vm::decorate_type_error(c, error, "ERR_WORKER_UNSUPPORTED_OPERATION")?;
         return Err(c.throw(error));

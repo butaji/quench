@@ -286,16 +286,6 @@ pub(crate) fn upgrade(
     })?;
     Ok(context.undefined())
 }
-pub(crate) fn authorize(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let socket = owner(context, args[0])?;
-    let shared = context.host_mut().shared_state();
-    super::super::net_shared_vm::authorize(&mut shared.borrow_mut().tcp, socket);
-    Ok(context.undefined())
-}
 pub(crate) fn info(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,

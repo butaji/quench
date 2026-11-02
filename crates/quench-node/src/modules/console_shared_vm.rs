@@ -9,15 +9,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 /// The global console (`facade`).
 const CONSOLE: &str = "\0node/console/global";
 
-/// Freeze the writer's lazy color policy, including its environment-dependent TTY
-/// branch, without writing output or keeping the compiler process's color state.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_formatting(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    for relative in ["internal/util/colors.js", "internal/tty.js"] {
-        crate::host::shared_vm::commonjs::node_library_module(context, relative, relative)?;
-    }
-    Ok(())
-}
 /// The process streams the global console writes to, read when first written.
 const STDOUT: &str = "\0node/console/stdout";
 const STDERR: &str = "\0node/console/stderr";
@@ -94,9 +85,6 @@ impl Stream {
 /// `error` for stderr.
 const WRITERS: [Stream; 5] = [Stream::Stdout, Stream::Stdout, Stream::Stdout, Stream::Stderr, Stream::Stderr];
 
-/// Set once `lib/diagnostics_channel.js` has loaded: a `console.*` channel may then have
-/// subscribers, which only the SDK's methods publish to.
-const CHANNELS_LOADED: &str = "\0node/console/channels-loaded";
 
 /// The `%` that starts a format specifier in the SDK's `formatWithOptions`.
 const FORMAT_SPECIFIER: char = '%';
@@ -172,7 +160,7 @@ fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Res
     let index = context.to_number(index)? as usize;
     let stream = *WRITERS.get(index).ok_or_else(|| RootedError::host("console writer index out of range"))?;
     let console = facade(context)?;
-    if cached(context, CHANNELS_LOADED).is_none() && super::console_class_shared_vm::indentation(context, console)?.is_empty() {
+    if super::console_class_shared_vm::indentation(context, console)?.is_empty() {
         if let Some(text) = plain_line(context, stream, args)? {
             return write_stream(context, stream, &text);
         }
@@ -540,12 +528,6 @@ pub(crate) fn note_inspect_loaded(context: &mut NativeContext<'_, NodeHost>) -> 
     cache(context, INSPECT_LOADED, marker)
 }
 
-/// Called as `diagnostics_channel.js` finishes loading (`CHANNELS_LOADED`).
-pub(crate) fn note_channels_loaded(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let marker = context.boolean(true);
-    cache(context, CHANNELS_LOADED, marker)
-}
-
 /// Writes `text` to `process[stream]`, the stream cached once first written, as the SDK
 /// console does, which ignores write errors.
 pub(super) fn write_stream(context: &mut NativeContext<'_, NodeHost>, stream: Stream, text: &str) -> Result<RootId, RootedError> {
@@ -569,17 +551,6 @@ pub(super) fn write_stream(context: &mut NativeContext<'_, NodeHost>, stream: St
     let text = context.string_rooted(text);
     let _ = context.call_rooted(write, stream, &[text]);
     Ok(context.undefined())
-}
-
-/// The console key Node's `writeOut` (`internal/process/warning.js`) writes warnings with.
-const WARNING_KEY: &str = "error";
-
-/// What Node's `writeOut` writes a warning with, read when it first writes one: the global
-/// console's `error`, a writer that writes one string without loading the SDK.
-pub(crate) fn warning_writer(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let console = facade(context)?;
-    let key = context.string_rooted(WARNING_KEY);
-    context.get_property_rooted(console, key)
 }
 
 /// The `console` module: the global console itself.

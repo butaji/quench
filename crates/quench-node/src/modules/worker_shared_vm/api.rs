@@ -199,6 +199,12 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let data = c.string_rooted(kind);
         accessor(c, prototype, &format!("on{kind}"), "messagingHandlerGet", Some("messagingHandlerSet"), data)?;
     }
+    let symbol = get(c, global, "Symbol")?;
+    let registry = get(c, symbol, "for")?;
+    let description = c.string_rooted(INSPECT_CUSTOM);
+    let inspect_key = c.call_rooted(registry, symbol, &[description])?;
+    let inspect = c.host_function_named(operation("messagingBroadcastInspect"), &format!("[{INSPECT_CUSTOM}]"))?;
+    c.define_data_property_rooted(prototype, inspect_key, inspect, true, false, true)?;
     put(c, api, member::BROADCAST_CHANNEL, channel)?;
 
     let emitter = crate::host::shared_vm::commonjs::events_module(c)?;
@@ -593,6 +599,21 @@ fn broadcast_port(c: &mut Context<'_>, receiver: RootId) -> Result<Option<u64>, 
     let Some(record) = slot(c, receiver)? else { return Ok(None) };
     let id = get(c, record, broadcast::PORT)?;
     Ok(c.rooted_value(id).and_then(|id| id.as_number()).map(|id| id as u64))
+}
+
+/// The registered symbol `util.inspect` reads a custom inspection from.
+const INSPECT_CUSTOM: &str = "nodejs.util.inspect.custom";
+
+/// `[util.inspect.custom](depth, options)`: `BroadcastChannel { name, active }`.
+pub(crate) fn broadcast_inspect(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let record = broadcast_record(c, receiver)?;
+    let name = get(c, record, broadcast::NAME)?;
+    let active = broadcast_port(c, receiver)?.is_some();
+    let active = c.boolean(active);
+    let data = c.object_rooted()?;
+    put(c, data, "name", name)?;
+    put(c, data, "active", active)?;
+    crate::modules::webstreams_shared_vm::custom_inspect(c, receiver, member::BROADCAST_CHANNEL, data, args)
 }
 
 pub(crate) fn broadcast_name(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {

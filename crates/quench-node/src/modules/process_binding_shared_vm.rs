@@ -21,6 +21,24 @@ fn name(
     Ok((text, value))
 }
 
+/// A fresh legacy wrapper object: `util`'s type predicates, the public `util.types`
+/// functions; `natives` maps builtin ids to their JavaScript source, and no Quench builtin
+/// has any.
+fn legacy_wrapper(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<RootId, RootedError> {
+    let result = context.object_rooted()?;
+    if name == UTIL_BINDING {
+        let util = super::util_shared_vm::module(context)?;
+        let key = context.string_rooted("types");
+        let types = context.get_property_rooted(util, key)?;
+        for predicate in LEGACY_UTIL_TYPES {
+            let key = context.string_rooted(predicate);
+            let function = context.get_property_rooted(types, key)?;
+            context.define_data_property_rooted(result, key, function, true, true, true)?;
+        }
+    }
+    Ok(result)
+}
+
 pub(crate) fn binding(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -61,13 +79,7 @@ pub(crate) fn binding(
         let code = context.string_rooted("DEP0111");
         context.call_rooted(emit, process, &[message, kind, code])?;
     } else if LEGACY_WRAPPER_BINDINGS.contains(&name.as_str()) {
-        let module = crate::host::shared_vm::commonjs::node_library_module(
-            context,
-            "internal/legacy/processbinding.js",
-            "internal/legacy/processbinding.js",
-        )?;
-        let function = context.get_property_rooted(module, value)?;
-        return context.call_rooted(function, module, &[]);
+        return legacy_wrapper(context, &name);
     } else if !PROCESS_BINDING_ALLOW_LIST.contains(&name.as_str()) {
         let error = context.error_rooted(&format!("No such module: {name}"))?;
         return Err(context.throw(error));

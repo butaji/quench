@@ -1407,16 +1407,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .ok_or_else(|| RootedError::host("socket option metadata missing"))?;
     let key = context.string_rooted("module");
     context.define_data_property_rooted(options_data, key, module, false, false, false)?;
-    let initialize = context.host_function_with_data(
-        crate::host::shared_vm::operation("netBoundSocketProjection"),
-        module,
-    )?;
-    context.define_lazy_data_properties_rooted(
-        module,
-        &["BoundSocket", "_TransferredBoundSocket"],
-        true,
-        initialize,
-    )?;
     let retained = context.retain(find("Socket"))?;
     context
         .host_mut()
@@ -3093,23 +3083,6 @@ pub(crate) fn udp_close_has_ref(transport: &Transport, id: u64) -> Option<bool> 
         .closing_sockets
         .iter()
         .find_map(|(key, owner)| (*key == CloseTarget::Datagram(id)).then_some(owner.referenced))
-}
-
-/// Load the unchanged SDK owner of BoundSocket's private handle and bind policy.
-pub(crate) fn bound_socket_projection(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let owner = context.host_function_data()?;
-    let policy =
-        crate::host::shared_vm::commonjs::node_library_module(context, "net.js", "net.js")?;
-    for name in ["BoundSocket", "_TransferredBoundSocket"] {
-        let key = context.string_rooted(name);
-        let constructor = context.get_property_rooted(policy, key)?;
-        context.define_data_property_rooted(owner, key, constructor, true, true, true)?;
-    }
-    Ok(context.undefined())
 }
 
 /// New kernel descriptor received over SCM_RIGHTS becomes this endpoint's sole
