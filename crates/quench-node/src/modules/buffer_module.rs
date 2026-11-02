@@ -1270,6 +1270,8 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     // `Buffer[Symbol.species]` is `FastBuffer`, which typed-array methods construct without
     // `Buffer()`'s deprecation; the two share one prototype.
     let fast = c.host_constructor_named(operation("bufferFastConstructor"), "FastBuffer")?;
+    let retained = c.retain(fast)?;
+    c.host_mut().shared_state().borrow_mut().builtin_cache.insert(super::buffer_shared_vm::FAST_BUFFER_CONSTRUCTOR.to_owned(), retained);
     c.set_prototype_rooted(fast, uint8)?;
     c.define_named_data_property_rooted(fast, "prototype", prototype, false, false, false)?;
     let species_getter = c.host_function_named_with_data(operation("streamConstant"), "get", fast)?;

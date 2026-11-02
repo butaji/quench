@@ -667,7 +667,7 @@ pub(crate) fn read_raw_bytes(c: &mut Context<'_>, receiver: RootId, args: &[Root
     let view = get(c, receiver, "buffer")?;
     let storage = c.buffer_storage_rooted(view)?.ok_or_else(|| RootedError::host("deserializer buffer is no view"))?;
     let offset = c.to_number(offset)? + storage.byte_offset as f64;
-    let buffer = super::buffer_shared_vm::fast_buffer(c)?;
+    let buffer = super::buffer_shared_vm::fast_buffer_constructor(c)?;
     let offset = c.number(offset);
     c.construct_rooted(buffer, buffer, &[storage.buffer, offset, length])
 }
