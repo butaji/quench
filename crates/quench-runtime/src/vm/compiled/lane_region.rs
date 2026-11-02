@@ -1797,12 +1797,17 @@ impl Lowering<'_, '_> {
             let terminal = self.unit.instructions.len().checked_sub(1)
                 .filter(|terminal| self.unit.instructions[*terminal].op() == Op::Return)
                 .and_then(|terminal| match self.unit.origins.get(terminal) {
-                    Some(super::lane_unit::Origin::Caller(record)) => Some(*record),
+                    Some(super::lane_unit::Origin::Caller(record)) => Some((*record, self.unit.instructions[terminal].register_a())),
                     _ => None,
                 });
             let Some(super::lane_unit::Origin::Caller(own)) = self.unit.origins.get(pc).copied() else { unreachable!("a returning binary is a caller record's") };
             let bits = self.tagged(state, destination);
-            self.return_value(terminal.unwrap_or(own), bits);
+            // The activation's `Return` register holds it too, as the record it names reads.
+            if let Some((_, register)) = terminal {
+                let base = self.registers_base;
+                self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+            }
+            self.return_value(terminal.map_or(own, |(record, _)| record), bits);
             self.native += 1;
             return Some(false);
         }
