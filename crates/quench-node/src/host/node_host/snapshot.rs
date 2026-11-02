@@ -75,6 +75,8 @@ impl SharedNodeState {
             process_ipc,
             node_test: _,
             cluster: _,
+            // `--hmr` disables startup snapshots (`names_only_inline_source`).
+            hmr: _,
             repl_resources: _,
             #[cfg(quench_openssl_provider)]
             crypto_hashes,
