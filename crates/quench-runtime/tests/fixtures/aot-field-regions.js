@@ -245,5 +245,20 @@ Object.defineProperty(terminalObject, 'finish', {
 });
 record(() => terminalPipe(terminalObject, 9));
 output.push(String(terminalObject.seen));
+function headerPivot(object) {
+  const first = object.left;
+  object = object.next;
+  const second = object.left;
+  object.mark();
+  return first + second;
+}
+const headerTail = {a: 0, left: 5, mark() { this.a++; }, b: 0, c: 0};
+const headerHead = {left: 2, next: headerTail, a: 0, b: 0, c: 0};
+for (let i = 0; i < 200; i++) {
+  if (headerPivot(headerHead) !== 7) throw Error('header redefinition');
+}
+Object.defineProperty(headerTail, 'left', {get() { events.push('header-get'); return 9; }});
+record(() => headerPivot(headerHead));
+output.push(String(headerTail.a));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

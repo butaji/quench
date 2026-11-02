@@ -1584,7 +1584,8 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let (values, length) = emit_js_property_values(builder, payload);
-    for base in [entries, records, values] {
+    // ObjectHeader owns record-base admission, including reused region proofs.
+    for base in [entries, values] {
         let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
         emit_js_guard(builder, present, miss);
     }
@@ -1608,9 +1609,9 @@ fn emit_js_cached_field_slot(
     allow_holder: bool,
     fallback: ir::Block,
     binding: Option<FieldSlotBinding>,
+    header: Option<object_slots::ObjectHeader>,
 ) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    use crate::value::ValueLayout;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
     let base = match receiver {
@@ -1619,17 +1620,8 @@ fn emit_js_cached_field_slot(
         JsFieldReceiver::FixedThis => emit_js_fixed_this(builder, payload, fallback),
         JsFieldReceiver::Value(value) => value,
     };
-    let family = builder.ins().band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
-    let is_object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-    emit_js_guard(builder, is_object, fallback);
     let record_id = builder.ins().ireduce(types::I32, base);
     let record_id = builder.ins().uextend(types::I64, record_id);
-    let in_reservation = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThan,
-        record_id,
-        i64::try_from(OBJECT.record_capacity).expect("object record capacity fits i64"),
-    );
-    emit_js_guard(builder, in_reservation, fallback);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, values, length: values_len } = binding;
@@ -1638,27 +1630,11 @@ fn emit_js_cached_field_slot(
         emit_js_guard(builder, own, fallback);
     }
 
-    let record_offset = builder.ins().imul_imm_u(
-        record_id,
-        i64::try_from(OBJECT.record_size).expect("object record size fits i64"),
-    );
-    let object = builder.ins().iadd(records, record_offset);
-    // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        object,
-        i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
-    );
+    let object_slots::ObjectHeader { record: object, shape, inline } = header
+        .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
+    // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
-    let meta = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        object,
-        i32::try_from(OBJECT.meta_offset).expect("meta offset fits i32"),
-    );
-    let inline = builder.ins().band_imm_u(meta, i64::from(OBJECT.inline_storage_mask));
     let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
     emit_js_guard(builder, arena_storage, fallback);
     // Plain storage has the arena start alone in the payload's lower half.
@@ -1681,6 +1657,8 @@ fn emit_js_cached_field_slot(
         builder.ins().jump(join, &[ir::BlockArg::Value(storage)]);
 
         builder.switch_to_block(holder_block);
+        let meta = builder.ins().load(types::I32, MemFlagsData::trusted(), object,
+            OBJECT.meta_offset as i32);
         let proto = builder.ins().band_imm_u(meta, i64::from(OBJECT.proto_mask));
         let in_start = builder.ins().icmp_imm_u(
             IntCC::UnsignedGreaterThanOrEqual, proto, i64::from(OBJECT.proto_record_base),
@@ -1801,7 +1779,7 @@ fn emit_js_own_field_get(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
@@ -1821,7 +1799,7 @@ fn emit_js_own_field_return(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     emit_js_guarded_return(builder, value, result_pointer, exact.pc, fallback);
     exact.emit(builder, fallback);
@@ -1912,7 +1890,7 @@ fn emit_js_own_field_set(
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
     let (address, record_id) =
-        emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback, None);
+        emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback, None, None);
     emit_unlogged_property_store_guard(builder, payload, record_id, value, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     if let Some(destination) = result_destination {
@@ -2624,12 +2602,12 @@ pub(super) fn lower_js_general_dispatch(
         {
             let fallback = builder.create_block();
             let (address, _) = emit_js_cached_field_slot(
-                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None,
+                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None, None,
             );
             let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             if let Some((_, cache)) = site.second {
                 let (address, _) = emit_js_cached_field_slot(
-                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None,
+                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None, None,
                 );
                 value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             }
@@ -16731,6 +16709,25 @@ mod tests {
         assert!(!leaf.functions.iter().any(|function| matches!(function,
             super::super::native_object::NativeFunction::Import { name, .. }
                 if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)), "units alone own helper-resolver imports");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_field_probes_share_a_dominating_object_header() {
+        let program = crate::Engine::specialize(
+            "function sum(o){let a=o.left;let b=o.right;o.mark();return a+b;}",
+            "shared-header.js").unwrap();
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_region(&program, 1, &*isa, 0).expect("typed field/call region");
+        let families = region.function.layout.blocks()
+            .flat_map(|block| region.function.layout.block_insts(block))
+            .filter(|instruction| matches!(region.function.dfg.insts[*instruction],
+                ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
+                    if i64::from(imm) as u64 == crate::value::ValueLayout::DIRECT_OBJECT_TAG))
+            .count();
+        assert_eq!(families, 2,
+            "one receiver-entry probe and one argument-object proof serve all three fields");
     }
 
     #[cfg(feature = "aot")]

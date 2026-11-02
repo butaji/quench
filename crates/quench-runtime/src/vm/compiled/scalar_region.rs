@@ -277,6 +277,7 @@ pub(super) fn emit_entry(
             true,
             baseline[range.start],
             None,
+            None,
         );
         let bits = builder
             .ins()

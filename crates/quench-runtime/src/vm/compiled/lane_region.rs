@@ -63,8 +63,8 @@ struct Registers {
 #[derive(Clone)]
 struct State {
     values: Vec<RegisterFact>,
-    /// Registers proved to hold a direct object, this block: its record address and shape.
-    shapes: BTreeMap<Register, (ir::Value, ir::Value, ir::Value)>,
+    /// Direct-object proofs by register; the final entry belongs to fixed `this`.
+    headers: Vec<Option<ObjectHeader>>,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
     /// Registers holding the receiver, whose facts the entry proved.
@@ -73,7 +73,7 @@ struct State {
 
 impl State {
     fn canonical(registers: usize) -> Self {
-        Self { values: vec![RegisterFact::canonical(); registers], shapes: BTreeMap::new(),
+        Self { values: vec![RegisterFact::canonical(); registers], headers: vec![None; registers + 1],
             layouts: BTreeMap::new(), receivers: BTreeSet::new() }
     }
 }
@@ -201,7 +201,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         };
         self.builder.def_var(variable, value);
         state.values[index] = fact;
-        state.shapes.remove(&register);
+        state.headers[index] = None;
         state.layouts.retain(|(owner, _), _| *owner != Some(register));
         state.receivers.remove(&register);
     }
@@ -999,13 +999,13 @@ impl Lowering<'_, '_> {
         let value = self.builder.use_var(variable);
         let tagged = (fact.tagged_current && fact.value.representation != Representation::Tagged)
             .then(|| self.builder.use_var(self.registers.tagged[usize::from(source)]));
-        let shape = state.shapes.get(&source).copied();
+        let header = state.headers[usize::from(source)];
         let receiver = state.receivers.contains(&source);
         let layouts: Vec<_> = state.layouts.iter().filter_map(|((owner, shape), projection)|
             (*owner == Some(source)).then_some((*shape, *projection))).collect();
         self.define(state, destination, value, fact);
         if let Some(bits) = tagged { self.builder.def_var(self.registers.tagged[usize::from(destination)], bits); }
-        if let Some(shape) = shape { state.shapes.insert(destination, shape); }
+        state.headers[usize::from(destination)] = header;
         for (shape, projection) in layouts { state.layouts.insert((Some(destination), shape), projection); }
         if receiver { state.receivers.insert(destination); }
     }
@@ -1100,7 +1100,8 @@ impl Lowering<'_, '_> {
                     self.builder.use_var(entry.receiver.inline),
                 )
             } else {
-                self.object_record(state, register.expect("a register base"), exit)
+                let header = self.object_header(state, Some(register.expect("a register base")), exit);
+                (header.record, header.shape, header.inline)
             };
             let owner = if receiver { None } else { register };
             let value = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit)?;
@@ -1117,7 +1118,8 @@ impl Lowering<'_, '_> {
         } else {
             self.tagged(state, register?)
         };
-        let value = self.field_probe(object_bits, cache_site, exit);
+        let owner = if receiver { None } else { register };
+        let value = self.field_probe(state, owner, object_bits, cache_site, exit);
         self.set_tagged(state, destination, value);
         Some(true)
     }
@@ -1170,34 +1172,39 @@ impl Lowering<'_, '_> {
         Some(value)
     }
 
-    /// The record address, exact shape and inline-storage bits of the direct object in
-    /// `register`, proved once per block (`State::shapes`).
-    fn object_record(&mut self, state: &mut State, register: Register, exit: ir::Block) -> (ir::Value, ir::Value, ir::Value) {
-        if let Some(known) = state.shapes.get(&register).copied() { return known; }
-        let bits = self.tagged(state, register);
+    /// A dominating direct-object proof for this value's lifetime in the block.
+    fn object_header(&mut self, state: &mut State, owner: Option<Register>, exit: ir::Block) -> ObjectHeader {
+        let index = owner.map_or(state.values.len(), usize::from);
+        if let Some(header) = state.headers[index] { return header; }
+        let bits = match owner {
+            Some(register) => self.tagged(state, register),
+            None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
+        };
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let fact = state.values[usize::from(register)].value;
-        let ty = fact.ty;
-        let header = ObjectHeader::prove(&mut self.builder, bits, records, Some(fact), exit);
-        let projection = (header.record, header.shape, header.inline);
-        state.shapes.insert(register, projection);
-        state.values[usize::from(register)] = RegisterFact::definition(
-            if ty.object_shape().is_some() { ty } else { Type::language(crate::ValueType::Object) },
-            Representation::Tagged);
-        projection
+        let fact = owner.map(|register| state.values[usize::from(register)].value);
+        let header = ObjectHeader::prove(&mut self.builder, bits, records, fact, exit);
+        state.headers[index] = Some(header);
+        if let Some(fact) = fact {
+            let ty = fact.ty;
+            state.values[index] = RegisterFact::definition(
+                if ty.object_shape().is_some() { ty } else { Type::language(crate::ValueType::Object) },
+                Representation::Tagged);
+        }
+        header
     }
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included;
     /// a miss leaves through `exit`.
-    fn field_probe(&mut self, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
+    fn field_probe(&mut self, state: &mut State, owner: Option<Register>, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
         let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
             .find_map(|(known, binding)| (*known == site).then_some(*binding)));
         if let Some(binding) = bound {
+            let header = self.object_header(state, owner, exit);
             let slow = self.builder.create_block();
             let done = self.builder.create_block();
             let result = self.builder.append_block_param(done, types::I64);
             let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding));
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding), Some(header));
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(slow);
@@ -1240,8 +1247,14 @@ impl Lowering<'_, '_> {
         } else { self.tagged(state, register.expect("register receiver")) };
         let field = self.fields.get(pc).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
         let header = if field.is_some() && !receiver {
-            Some(self.object_record(state, register.expect("register receiver"), exit))
+            let header = self.object_header(state, Some(register.expect("register receiver")), exit);
+            Some((header.record, header.shape, header.inline))
         } else { None };
+        // Prove before either store branch so reuse always has a dominating
+        // certificate, including the branch that performs the helper fallback.
+        let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter()
+            .any(|(site, _)| *site == instruction.cache_site_index()));
+        let dynamic_header = bound.then(|| self.object_header(state, owner, exit));
         let entry = self.entry.as_ref().expect("entry facts");
         if let Some(field) = field {
             let projection = state.layouts.get(&(owner, field.shape)).copied();
@@ -1281,18 +1294,18 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(general);
-            self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit);
+            self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit, dynamic_header);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(done);
             return Some(true);
         }
-        self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit);
+        self.store_helper(object_bits, atom, instruction.cache_site_index(), value, exit, dynamic_header);
         Some(true)
     }
 
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
     /// included; anything else leaves through `exit`.
-    fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
+    fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block, header: Option<ObjectHeader>) {
         let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
             .find_map(|(known, binding)| (*known == site).then_some(*binding)));
         if let Some(binding) = bound {
@@ -1301,7 +1314,7 @@ impl Lowering<'_, '_> {
             let allowed = self.builder.use_var(self.entry.as_ref().expect("entry").store_atoms[&atom]);
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding));
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header);
             emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
