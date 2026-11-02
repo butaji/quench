@@ -28,6 +28,8 @@ const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
 const INLINE_FIELD_BINDINGS: usize = 4;
+/// Common native-entry failure status; a pure scalar miss restarts its call.
+const NUMBER_ENTRY_MISS: i64 = 1;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,7 +149,28 @@ struct Lowering<'a, 'f> {
 pub(super) enum Coverage { Prefix, Full }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Completion { StatusAndPc, SourcePc }
+pub(super) enum Completion {
+    StatusAndPc,
+    SourcePc,
+    /// Pure, restartable scalar entry: borrowed Number inputs and one Number
+    /// output through the common native ABI; a miss restarts the original call.
+    Number,
+}
+
+/// No heap, environment or guest-call effect may precede scalar-call recovery.
+fn numeric_unit(program: &ResidualProgram, unit: &super::lane_unit::Unit) -> bool {
+    unit.frames.is_empty() && unit.instructions.iter().all(|instruction| {
+        if instruction.writes_current_this()
+            || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
+        match instruction.op() {
+            Op::LoadConst => program.constants.get(instruction.constant_index())
+                .and_then(super::facts::immediate).is_some(),
+            Op::Nop | Op::Move | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return => true,
+            op => op.js_denotation() == JsDenotation::NumericBinary
+                && instruction.numeric_local_target().is_none(),
+        }
+    })
+}
 
 fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
@@ -289,6 +312,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// Leave at `pc` with the interpreter's state: every written register back in the file.
     fn exit(&mut self, state: &mut State, pc: u32) {
+        if self.completion == Completion::Number {
+            self.return_at(0);
+            return;
+        }
         self.canonicalize(state, pc as usize);
         let block = match self.exits[pc as usize] {
             Some(block) => block,
@@ -466,6 +493,9 @@ pub(super) fn lower(
     completion: Completion,
 ) -> Option<LoweredRegion> {
     let function = program.function_get(function_id as usize)?;
+    let numeric = completion == Completion::Number;
+    if numeric && (!super::super::js_compiled::function_candidate(function, program)
+        || !numeric_unit(program, unit) || function.params > unit.caller_registers) { return None; }
     if fields.iter().flatten().any(|field| !field.valid())
         || (completion == Completion::SourcePc && unit.frames.iter().any(|frame|
             frame.target.callee != CalleeBinding::Function)) { return None; }
@@ -481,12 +511,12 @@ pub(super) fn lower(
     builder.switch_to_block(entry_block);
     let parameters = builder.block_params(entry_block).to_vec();
     let (context, registers_base, result) = (parameters[0], parameters[3], parameters[4]);
-    let payload = builder.ins().load(
+    let payload = if numeric { builder.ins().iconst(types::I64, 0) } else { builder.ins().load(
         types::I64,
         MemFlagsData::trusted(),
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
-    );
+    ) };
     let fault_poll = super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
         matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
             && instruction.jump_target() as usize <= pc);
@@ -515,7 +545,7 @@ pub(super) fn lower(
     let float_zero = builder.ins().f64const(0.0);
     let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
     for register in 0..count {
-        let bits = if register < usize::from(unit.caller_registers)
+        let bits = if !numeric && register < usize::from(unit.caller_registers)
             && live.is_none_or(|live| live.is_live(0, register as Register)) {
             builder.ins().load(types::I64, MemFlagsData::trusted(), registers_base, register_offset(register as Register))
         } else {
@@ -559,6 +589,7 @@ pub(super) fn lower(
         }
     }
     let mut initial = vec![Type::ANY; count];
+    if numeric { initial[..usize::from(function.params)].fill(Type::NUMBER); }
     for instruction in &instructions {
         let (operands, required) = match instruction.op() {
             Op::JumpBinaryFalse if nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
@@ -589,7 +620,7 @@ pub(super) fn lower(
                 *r >= base && *r - base < function.params)
                 || function.local_registers.iter().any(|entry|
                     entry.local < function.params && entry.register == *r))
-                && !lowering.written.contains(usize::from(*r))) {
+                && !numeric && !lowering.written.contains(usize::from(*r))) {
             let current = &mut initial[usize::from(register)];
             if *current != Type::INT32 { *current = required; }
         }
@@ -601,9 +632,20 @@ pub(super) fn lower(
         let FieldLookup::Atom { base, .. } = instruction.field_lookup()? else { return None };
         Some((base.register_index()?, field.shape))
     });
-    lowering.entry = Some(lowering.entry_facts(&instructions));
+    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions)); }
     let first = lowering.blocks[0].expect("pc 0 leads");
     let mut state = State::canonical(count);
+    if numeric {
+        for register in 0..function.params {
+            let number = lowering.builder.ins().load(types::F64, MemFlagsData::trusted(),
+                registers_base, register_offset(register));
+            lowering.builder.def_var(lowering.registers.float[usize::from(register)], number);
+            state.values[usize::from(register)] = RegisterFact::admit(Fact {
+                ty: Type::NUMBER, representation: Representation::Float64,
+                binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
+            }).expect("Number input signature is verified by its entry caller");
+        }
+    }
     if fault_poll {
         // Publication lends a resumable page for this entire no-GC entry.
         // If unavailable, leave before any guest effect through ordinary recovery.
@@ -620,6 +662,7 @@ pub(super) fn lower(
                 lowering.conform(&mut state, pc);
                 lowering.builder.ins().jump(block, &[]);
             }
+            if numeric && lowering.facts.at(pc).is_none() { reachable = false; continue; }
             lowering.builder.switch_to_block(block);
             state = lowering.entry_state(pc, count);
             reachable = true;
@@ -713,8 +756,24 @@ impl Lowering<'_, '_> {
             }
             Completion::SourcePc => self.builder.ins().iconst(types::I32,
                 i64::from(u32::try_from(word).expect("source PC has no inlined-frame tag"))),
+            Completion::Number => self.builder.ins().iconst(types::I32, NUMBER_ENTRY_MISS),
         };
         self.builder.ins().return_(&[result]);
+    }
+
+    fn return_number(&mut self, state: &mut State, register: Register, pc: u32) {
+        if !state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) {
+            self.valid = false;
+            self.return_at(0);
+            return;
+        }
+        self.interrupt_check(state, pc);
+        let exit = self.guard_exit(state, pc);
+        let number = self.number(state, register, exit);
+        let result = self.result;
+        self.ins().store(MemFlagsData::trusted(), number, result, 0);
+        let success = self.ins().iconst(types::I32, 0);
+        self.ins().return_(&[success]);
     }
 
     fn entry_facts(&mut self, instructions: &[WideInstruction]) -> Entry {
@@ -974,6 +1033,10 @@ impl Lowering<'_, '_> {
                 self.copy(state, instruction.result_register(), instruction.register_b());
                 Some(true)
             }
+            Op::Return if plain && self.completion == Completion::Number => {
+                self.return_number(state, instruction.register_a(), pc32);
+                Some(false)
+            }
             Op::Call if guarded_call_instruction(instruction) => {
                 let exit = self.guard_exit(state, pc32);
                 let callee = self.tagged(state, instruction.register_b());
@@ -1150,7 +1213,8 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
-                if self.coverage == Coverage::Full && !((instruction.op() == Op::Return && plain) || instruction.returns_from_frame()) {
+                if self.coverage == Coverage::Full && (self.completion == Completion::Number
+                    || !((instruction.op() == Op::Return && plain) || instruction.returns_from_frame())) {
                     self.valid = false;
                 }
                 self.exit(state, pc32);
@@ -1706,6 +1770,10 @@ impl Lowering<'_, '_> {
         }
         if let Some(terminal) = after {
             self.native += 1;
+            if self.completion == Completion::Number {
+                self.return_number(state, destination, pc as u32);
+                return Some(false);
+            }
             self.continue_at(state, terminal);
             return Some(false);
         }

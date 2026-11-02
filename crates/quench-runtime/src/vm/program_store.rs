@@ -980,6 +980,8 @@ pub(crate) struct ProgramStore {
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
+    #[cfg(test)]
+    js_entry_specializations_enabled: bool,
     /// Per-program, per-function estimated work from opt-in JS backedges.
     /// Both map levels are allocated only after the first eligible observation.
     js_general_dispatch_work: Option<FxHashMap<u32, FxHashMap<u32, u64>>>,
@@ -1029,6 +1031,8 @@ impl Default for ProgramStore {
                 .is_some_and(|value| value == "1"),
             js_jit_lane_methods_enabled: std::env::var_os("QUENCH_JS_JIT_LANE_METHODS")
                 .is_some_and(|value| value == "1"),
+            #[cfg(test)]
+            js_entry_specializations_enabled: true,
             js_general_dispatch_work: None,
             js_general_artifact_cache_enabled: std::env::var_os(
                 "QUENCH_JS_JIT_GENERAL_ARTIFACT_CACHE",
@@ -1088,6 +1092,13 @@ impl ProgramStore {
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body);
+            #[cfg(test)]
+            let facts = if self.js_entry_specializations_enabled { facts } else {
+                // Select the requested test tier without depending on which
+                // source shapes newer entry specializers happen to support.
+                super::js_compiled::JsEntryFacts { general: facts.general,
+                    general_acyclic: facts.general_acyclic, ..Default::default() }
+            };
             if facts.is_unset() {
                 Rc::clone(&self.no_entry_facts)
             } else {
@@ -2150,6 +2161,17 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn enable_js_lane_methods(&mut self) {
         self.js_jit_lane_methods_enabled = true;
+    }
+
+    /// Set before loading a test program; general/OSR coverage then owns entry.
+    #[cfg(test)]
+    pub(super) fn disable_js_entry_specializations(&mut self) {
+        self.js_entry_specializations_enabled = false;
+    }
+
+    #[cfg(test)]
+    pub(super) fn js_entry_specializations_enabled(&self) -> bool {
+        self.js_entry_specializations_enabled
     }
 
     #[cfg(all(test, not(quench_profiled)))]

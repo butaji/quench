@@ -11860,6 +11860,7 @@ fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly(
     let mut compiled = Vm::new(TestHost::default());
     compiled.programs.enable_js_general_dispatch();
     compiled.programs.compile_general_baseline_when_hot();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
 
@@ -12078,6 +12079,7 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert!(matches!(
         artifact.result,
         super::js_compiled::JsJitResultKind::NumberInterruptible
+            | super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable)
     ));
     let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");
@@ -14926,6 +14928,7 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     .unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
@@ -15506,6 +15509,7 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
         views.get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics()
     };
     let mut vm = Vm::new(TestHost::default());
+    vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
@@ -15660,6 +15664,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
 
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
@@ -18551,6 +18556,7 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
 
     let mut compiled = Vm::new(TestHost::default());
     compiled.programs.enable_js_general_dispatch();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -18692,6 +18698,7 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
 
     let mut compiled = Vm::new(TestHost::default());
     compiled.programs.enable_js_general_dispatch();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
     let views = compiled
@@ -18765,6 +18772,7 @@ fn js_jit_general_dispatch_attributes_inlined_osr_work_to_the_loop_owner() {
     compiled.programs.enable_js_general_dispatch();
     compiled.programs.enable_js_jit_diagnostics();
     compiled.programs.compile_general_baseline_when_hot();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
     let result_atom = compiled.intern_atom("result");

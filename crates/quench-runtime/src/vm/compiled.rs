@@ -569,10 +569,34 @@ pub(super) fn compile_js_numeric_region(
         code,
         params,
         requires_signed_int32_arguments: int32_bitwise,
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry,
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Leaf),
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
         capture_arguments: captures.to_vec(),
+        general_dispatch_native_pcs: Vec::new(),
+    })
+}
+
+/// Bind the numeric JIT ABI to the same semantic SSA specializer used by
+/// frameless JIT bodies and linked AOT regions, without a canonical VM frame.
+pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
+    -> Option<super::js_compiled::JsJitArtifact> {
+    let function = program.function_get(function_id as usize)?;
+    let unit = lane_unit::unit(program, function, &|_| None, &|_| None)?;
+    let isa = super::jit_backend::target_isa("speed")?;
+    let region = lane_region::lower(program, function_id, &unit,
+        LaneHelpers::Process([0; LaneHelper::COUNT]), &[], &*isa,
+        lane_region::Coverage::Full, lane_region::Completion::Number)?;
+    let dump = native_dump_directory().map(|_| region.function.to_string());
+    let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
+        |code| Some(code.to_vec())).ok()?;
+    if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {
+        dump_native_bytes(directory, function_id, &code, None, &clif);
+    }
+    Some(super::js_compiled::JsJitArtifact {
+        code, params: usize::from(function.params), requires_signed_int32_arguments: false,
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable),
+        field_argument: None, numeric_field_inputs: Vec::new(), capture_arguments: Vec::new(),
         general_dispatch_native_pcs: Vec::new(),
     })
 }
@@ -5719,7 +5743,7 @@ pub(super) fn native_entry_signature(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum NativeEntryMode {
+pub(super) enum NativeEntryMode {
     /// Use the signal-resuming entry, required by guarded memory and poll-page faults.
     Resumable,
     /// Use the same ABI directly for a bounded leaf with no possible native fault.
@@ -6746,13 +6770,21 @@ fn native_dump_directory() -> Option<&'static std::path::Path> {
 /// `loop-<n>.clif` into `directory`, numbered in compilation order, and reports where the
 /// mapping lives on stderr. A failed write leaves the run as it is.
 fn dump_native_code(directory: &std::path::Path, header: u32, code: &CodeMemory, clif: &str) {
-    static COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let number = COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // SAFETY: the mapping is `code.length` readable bytes while `code` lives.
     let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length) };
+    dump_native_bytes(directory, header, bytes, Some(code.pointer()), clif);
+}
+
+/// Publication is diagnostic data, not a reason to allocate executable memory.
+fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], address: Option<*mut u8>, clif: &str) {
+    static COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let number = COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let _ = std::fs::write(directory.join(format!("loop-{number:03}.bin")), bytes);
     let _ = std::fs::write(directory.join(format!("loop-{number:03}.clif")), clif);
-    eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} address={:p} bytes={}", code.pointer(), code.length);
+    match address {
+        Some(address) => eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} address={address:p} bytes={}", bytes.len()),
+        None => eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} unpublished bytes={}", bytes.len()),
+    }
 }
 
 /// Compile and publish a fully lowered native entry that has no relocations.
@@ -6914,7 +6946,7 @@ pub(super) struct CompiledJsFunction {
 
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
-    SharedNumber(Entry),
+    SharedNumber { entry: Entry, mode: NativeEntryMode },
     GeneralDispatch(Entry),
     Int32Identity {
         entry: unsafe extern "C" fn(*const f64) -> f64,
@@ -8341,10 +8373,10 @@ impl CompiledJsFunction {
         let capture_arguments = artifact.capture_arguments;
         let general_dispatch_native_pcs = artifact.general_dispatch_native_pcs;
         let (entry, return_constants, capture_argument) = match artifact.result {
-            super::js_compiled::JsJitResultKind::SharedNumberEntry => {
+            super::js_compiled::JsJitResultKind::SharedNumberEntry(mode) => {
                 // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
                 let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
-                (CompiledJsEntry::SharedNumber(entry), Vec::new(), None)
+                (CompiledJsEntry::SharedNumber { entry, mode }, Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::GeneralDispatch => {
                 // SAFETY: the general JS dispatcher emits the shared native-entry ABI.
@@ -8566,7 +8598,7 @@ impl CompiledJsFunction {
     }
 
     fn uses_numeric_field_argument(&self) -> bool {
-        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::SharedNumber(_))
+        self.field_argument.is_some() && matches!(self.entry, CompiledJsEntry::SharedNumber { .. })
     }
 
     fn capture_argument(&self) -> Option<super::js_compiled::JsJitCaptureArgument> {
@@ -8586,7 +8618,10 @@ impl CompiledJsFunction {
         if self.is_general_dispatch() {
             return None;
         }
-        if let CompiledJsEntry::SharedNumber(entry) = self.entry {
+        let required = self.params + self.capture_arguments.len() + self.numeric_field_inputs.len()
+            + usize::from(self.uses_numeric_field_argument() && self.numeric_field_inputs.is_empty());
+        if arguments.len() < required { return None; }
+        if let CompiledJsEntry::SharedNumber { entry, .. } = self.entry {
             let (status, result) = run_native_entry(
                 entry,
                 arguments,
@@ -8594,10 +8629,10 @@ impl CompiledJsFunction {
                 poll_page,
                 self.native_entry_mode(),
             );
-            (status == 0).then_some(())?;
             #[cfg(test)]
             self.native_entries
                 .set(self.native_entries.get().saturating_add(1));
+            (status == 0).then_some(())?;
             return Some(CompiledJsResult::Number(f64::from_bits(result)));
         }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
@@ -8690,13 +8725,13 @@ impl CompiledJsFunction {
 
     fn native_entry_mode(&self) -> NativeEntryMode {
         match self.entry {
+            CompiledJsEntry::SharedNumber { mode, .. } => mode,
             CompiledJsEntry::GeneralDispatch(_)
             | CompiledJsEntry::NumberInterruptible(_)
             | CompiledJsEntry::StringHashLoop(_) => {
                 NativeEntryMode::Resumable
             }
-            CompiledJsEntry::SharedNumber(_)
-            | CompiledJsEntry::Int32Identity { .. }
+            CompiledJsEntry::Int32Identity { .. }
             | CompiledJsEntry::CaptureNumber(_)
             | CompiledJsEntry::StringTransform { .. }
             | CompiledJsEntry::StringReturnPc(_)
@@ -8905,7 +8940,7 @@ impl CompiledJsFunction {
     pub(super) fn uses_shared_entry(&self) -> bool {
         matches!(
             self.entry,
-            CompiledJsEntry::SharedNumber(_) | CompiledJsEntry::GeneralDispatch(_)
+            CompiledJsEntry::SharedNumber { .. } | CompiledJsEntry::GeneralDispatch(_)
         )
     }
 
@@ -14588,6 +14623,8 @@ impl<H: Host> Vm<H> {
         let function = program.function_get(function_id as usize)?;
         let facts = &*entry.facts;
         // Most entries are of functions no entry path can claim; diagnostics still count them.
+        #[cfg(test)]
+        if !self.programs.js_entry_specializations_enabled() { return None; }
         if !facts.enters && !self.programs.js_jit_diagnostics_enabled() {
             return None;
         }
@@ -15211,10 +15248,10 @@ impl<H: Host> Vm<H> {
                 _ => return None,
             };
             let params = usize::from(function.params);
-            if !compiled.direct_callable() || compiled.params() != params || arguments.len() < params {
+            if !compiled.direct_callable() || compiled.params() != params {
                 return None;
             }
-            direct_call(compiled, &arguments[..params], interrupt)
+            direct_call(compiled, arguments, interrupt)
         };
         if diagnostics {
             programs.record_js_jit_entry(program_id, function_id, true, function.params);
@@ -15252,7 +15289,6 @@ impl<H: Host> Vm<H> {
         (terminal.op() == Op::Return).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
-            params,
             return_pc,
             return_register: terminal.register_a(),
         })
@@ -15268,7 +15304,7 @@ impl<H: Host> Vm<H> {
         parameters: &[Value],
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
-        let result = direct_call(&compiled, parameters.get(..entry.params)?, &self.execution_interrupt)?;
+        let result = direct_call(&compiled, parameters, &self.execution_interrupt)?;
         let value = match result {
             CompiledJsCallResult::Value(value) => value,
             CompiledJsCallResult::ReturnConstant(constant) => self.programs.constant(id, constant as usize)?,
@@ -16678,11 +16714,8 @@ fn direct_call(
     interrupt: &crate::ExecutionInterrupt,
 ) -> Option<CompiledJsCallResult> {
     let int32_identity = compiled.is_int32_identity();
-    if int32_identity && arguments.is_empty() {
-        return None;
-    }
     let mut numeric_arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-    for (index, argument) in arguments.iter().enumerate() {
+    for (index, argument) in arguments.iter().take(compiled.params()).enumerate() {
         // An integer Value is an int32 Number by representation; any other Number is
         // checked where the body's guards require one.
         let value = match argument.as_int() {
@@ -16717,11 +16750,10 @@ fn direct_call(
 }
 
 /// A compiled body a frameless activation runs directly (`Vm::direct_tier_entry`): the
-/// artifact, held weakly so that the tier retiring it ends the direct run, its parameter
-/// count, and the `Return` its result completes.
+/// artifact, held weakly so that the tier retiring it ends the direct run,
+/// and the `Return` its result completes. The artifact owns the input signature.
 pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
-    params: usize,
     return_pc: usize,
     return_register: crate::bytecode::Register,
 }
@@ -17879,6 +17911,102 @@ mod tests {
             Some(CompiledJsCallResult::Value(Value::TRUE))));
         assert!(direct_call(&compiled, &[Value::number(1.5)], &interrupt).is_none());
         assert!(direct_call(&compiled, &[Value::number(4_294_967_297.0)], &interrupt).is_none());
+    }
+
+    #[test]
+    fn numeric_jit_entry_uses_shared_typed_word32_loops() {
+        let source = r#"
+            function kernel(n,x){n=n|0;x=x|0;for(let i=0;i<n;i=(i+1)|0){x=x^(x<<13);x=x^(x>>>17);x=x^(x<<5);}return x|0;}
+        "#;
+        for program in [crate::Engine::specialize(source, "numeric-entry.js").unwrap(),
+            crate::Engine::specialize_typescript(&source.replace("(n,x)", "(n:number,x:number):number"), "numeric-entry.cts").unwrap()] {
+        let artifact = compile_js_typed_numeric_region(&program, 1).expect("shared typed numeric entry");
+        let compiled = CompiledJsFunction::from_artifact(artifact).unwrap();
+        assert!(matches!(compiled.native_entry_mode(), NativeEntryMode::Resumable));
+        let interrupt = crate::ExecutionInterrupt::default();
+        assert!(direct_call(&compiled, &[], &interrupt).is_none());
+        assert!(direct_call(&compiled, &[Value::number(17.0)], &interrupt).is_none());
+        assert!(compiled.call(&[17.0], interrupt.atomic_flag(), None).is_none());
+        assert!(matches!(direct_call(&compiled, &[Value::number(17.0), Value::number(0.0), Value::UNDEFINED], &interrupt),
+            Some(CompiledJsCallResult::Value(value)) if value == Value::number(0.0)), "extra unused inputs are ignored");
+        for value in [Value::UNDEFINED, Value::NULL, Value::TRUE] {
+            assert!(direct_call(&compiled, &[value, Value::number(1.0)], &interrupt).is_none(), "annotations are not input proofs");
+        }
+        for count in [-1, 0, 1, 2, 17, 257] {
+            for seed in [0, 1, 123456789, i32::MIN, i32::MAX] {
+                let mut expected = seed as u32;
+                for _ in 0..count.max(0) {
+                    expected ^= expected << 13;
+                    expected ^= expected >> 17;
+                    expected ^= expected << 5;
+                }
+                let actual = direct_call(&compiled, &[Value::number(f64::from(count)), Value::number(f64::from(seed))], &interrupt);
+                assert!(matches!(actual, Some(CompiledJsCallResult::Value(value)) if value == Value::number(f64::from(expected as i32))),
+                    "n={count} seed={seed}");
+            }
+        }
+        for value in [1.5, f64::NAN, f64::INFINITY, 4294967295.0] {
+            assert!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt).is_none(),
+                "unproved word32 input must decline exactly");
+        }
+        let effectful = crate::Engine::specialize("function f(n,o){for(let i=0;i<n;i++)o.x++;return n;}", "numeric-effects.js").unwrap();
+        assert!(compile_js_typed_numeric_region(&effectful, 1).is_none());
+        let patterned = crate::Engine::specialize("function f({n}){let sum=0;for(let i=0;i<n;i++)sum++;return sum;}", "numeric-pattern.js").unwrap();
+        assert!(compile_js_typed_numeric_region(&patterned, 1).is_none(), "scalar ABI requires the verified parameter mapping");
+        for returned in ["42", "n"] {
+            let source = format!("function f(n){{for(let i=0;i<n;i++){{}}return {returned};}}");
+            let program = crate::Engine::specialize(&source, "numeric-terminal.js").unwrap();
+            let artifact = super::super::js_compiled::compile(&program, 1).expect("existing numeric return coverage");
+            let native = CompiledJsFunction::from_artifact(artifact).unwrap();
+            let expected = if returned == "42" { 42.0 } else { 7.0 };
+            assert!(matches!(direct_call(&native, &[Value::number(7.0)], &interrupt),
+                Some(CompiledJsCallResult::Value(value)) if value == Value::number(expected)),
+                "unsupported fused terminals must retain an executable fallback");
+        }
+        interrupt.request_termination();
+        assert!(direct_call(&compiled, &[Value::number(17.0), Value::number(1.0)], &interrupt).is_none());
+        }
+    }
+
+    #[test]
+    fn numeric_jit_shared_entry_observes_live_termination() {
+        use std::{sync::mpsc, thread, time::Duration};
+        const TIMEOUT: Duration = Duration::from_secs(5);
+        fn started(context: &mut crate::NativeContext<'_, crate::test_host::TestHost>,
+            _: crate::RootId, _: &[crate::RootId]) -> Result<crate::RootId, crate::RootedError> {
+            context.host_mut().state::<mpsc::Sender<()>>().send(()).unwrap();
+            Ok(context.undefined())
+        }
+        let (ready, entered) = mpsc::channel::<()>();
+        let (send_handle, receive_handle) = mpsc::channel();
+        let (complete, finished) = mpsc::channel();
+        let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
+            let program = crate::Engine::specialize(r#"
+                function spin(n){let x=1;for(let i=0;i<n;i=(i+1)|0)x=x^(x<<13);return x;}
+                for(let warm=0;warm<64;warm++)spin(1);
+                started();spin(Infinity);
+            "#, "numeric-jit-interrupt.js").unwrap();
+            let host = crate::test_host::TestHost::default()
+                .with_natives(crate::host_functions![global "started" (0) => started]).with_state(Rc::new(ready));
+            let mut vm = Vm::new(host);
+            vm.set_execution_mode(ExecutionMode::Compiled);
+            send_handle.send(vm.execution_interrupt.clone()).unwrap();
+            let budget = crate::stack::GuestCallGuard::remaining();
+            let error = vm.execute(&program).unwrap_err();
+            assert!(error.is_execution_terminated(), "{error}");
+            assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
+            let Some(super::super::program_store::JsTierState::Compiled(native)) =
+                vm.programs.js_tier(ProgramId::MAIN, 1) else { panic!("numeric function must compile"); };
+            assert!(matches!(native.entry, CompiledJsEntry::SharedNumber { mode: NativeEntryMode::Resumable, .. }));
+            assert!(native.native_entries() > 0);
+            complete.send(()).unwrap();
+        }).unwrap();
+        let handle = receive_handle.recv_timeout(TIMEOUT).unwrap();
+        entered.recv_timeout(TIMEOUT).unwrap();
+        thread::sleep(Duration::from_millis(20));
+        handle.request_termination();
+        finished.recv_timeout(TIMEOUT).expect("shared numeric JIT loop must observe live cancellation");
+        worker.join().unwrap();
     }
 
     #[cfg(feature = "aot")]

@@ -106,7 +106,7 @@ pub(super) struct JsJitCaptureArgument {
 
 pub(super) enum JsJitResultKind {
     /// Numeric bytecode regions emit the common VM native-entry ABI.
-    SharedNumberEntry,
+    SharedNumberEntry(super::compiled::NativeEntryMode),
     /// A full function CFG whose operation blocks call the shared VM step
     /// helper and branch directly to the next validated bytecode PC.
     GeneralDispatch,
@@ -3094,6 +3094,9 @@ fn compile_numeric_loop(
             .any(|instruction| instruction.is_wide())
     {
         return None;
+    }
+    if let Some(region) = super::compiled::compile_js_typed_numeric_region(program, function_id) {
+        return Some(region);
     }
     let code_len = function.code.len();
     let registers = usize::from(function.registers);
