@@ -1201,20 +1201,22 @@ fn emit_js_tagged_number(
     builder.block_params(join)[0]
 }
 
+/// An exact int32 projection of a Number, including its zero sign. The predicate
+/// rejects fractions, nonfinite values, saturation and -0 before the view is used.
+fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
+    let integer = builder.ins().fcvt_to_sint_sat(types::I32, number);
+    let round_trip = builder.ins().fcvt_from_sint(types::F64, integer);
+    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
+    let round_trip_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
+    let exact = builder.ins().icmp(IntCC::Equal, bits, round_trip_bits);
+    (integer, exact)
+}
+
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations.
 fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    let truncated = builder.ins().fcvt_to_sint_sat(types::I32, number);
-    let round_trip = builder.ins().fcvt_from_sint(types::F64, truncated);
-    let result_bits = builder
-        .ins()
-        .bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let round_trip_bits = builder
-        .ins()
-        .bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
-    let is_integer = builder
-        .ins()
-        .icmp(IntCC::Equal, result_bits, round_trip_bits);
+    let (truncated, is_integer) = emit_js_exact_int32(builder, number);
+    let result_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
     let integer_bits = builder.ins().uextend(types::I64, truncated);
     let integer_bits = builder
         .ins()

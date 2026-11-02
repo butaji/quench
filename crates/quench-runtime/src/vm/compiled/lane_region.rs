@@ -323,20 +323,37 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.define(state, register, number, RegisterFact::definition(Type::NUMBER, Representation::Float64));
     }
 
-    /// Prove an exact int32 view once, preserving the canonical bits for recovery.
+    /// Prove an exact int32 view once; a Number already in a float register
+    /// needs no canonical encoding or tag test to establish that projection.
     fn int(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
         let index = usize::from(register);
-        if state.values[index].value.representation == Representation::Int32 {
-            return { let variable = self.int_var(index); self.builder.use_var(variable) };
-        }
-        let bits = self.tagged(state, register);
-        if !state.values[index].value.ty.is_subtype(Type::INT32) {
-            let integer = is_int_tagged(&mut self.builder, bits);
-            emit_js_guard(&mut self.builder, integer, otherwise);
-        }
-        let int = self.ins().ireduce(types::I32, bits);
-        { let variable = self.int_var(index); self.builder.def_var(variable, int); }
-        state.values[index] = RegisterFact { tagged_current: true,
+        let fact = state.values[index];
+        let int = match fact.value.representation {
+            Representation::Int32 => {
+                let variable = self.int_var(index);
+                return self.builder.use_var(variable);
+            }
+            Representation::Float64 if !fact.tagged_current => {
+                let variable = self.float_var(index);
+                let number = self.builder.use_var(variable);
+                let (int, exact) = emit_js_exact_int32(&mut self.builder, number);
+                if !fact.value.ty.is_subtype(Type::INT32) {
+                    emit_js_guard(&mut self.builder, exact, otherwise);
+                }
+                int
+            }
+            Representation::Tagged | Representation::Float64 => {
+                let bits = self.tagged(state, register);
+                if !fact.value.ty.is_subtype(Type::INT32) {
+                    let integer = is_int_tagged(&mut self.builder, bits);
+                    emit_js_guard(&mut self.builder, integer, otherwise);
+                }
+                self.ins().ireduce(types::I32, bits)
+            }
+        };
+        let variable = self.int_var(index);
+        self.builder.def_var(variable, int);
+        state.values[index] = RegisterFact { tagged_current: fact.tagged_current,
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         int
     }
@@ -2578,6 +2595,58 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_int32_admission_keeps_number_inputs_unboxed_and_misses_exactly() {
+        let program = crate::Engine::specialize(
+            "function words(x){x=x|0;return x|0;}", "unboxed-word-input.js").unwrap();
+        let unit = super::super::lane_unit::unit(&program, 1, program.function(1),
+            &|_, _| Vec::new(), &|_| None).unwrap();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
+            &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa,
+            Coverage::Full, Completion::Number).unwrap();
+        for instruction in region.function.layout.blocks()
+            .flat_map(|block| region.function.layout.block_insts(block)) {
+            if let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = region.function.dfg.insts[instruction] {
+                let bits = i64::from(imm) as u64;
+                assert!(![crate::value::ValueLayout::INT_TAG, crate::value::ValueLayout::CANONICAL_NAN].contains(&bits),
+                    "verified Number inputs must stay unboxed:\n{}", region.function);
+            }
+        }
+        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
+        // SAFETY: the region has the shared entry ABI and borrows one raw Number.
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
+        let interrupt = crate::ExecutionInterrupt::default();
+        let mut context = CallContext::interrupt_only(&interrupt);
+        let boundary = [0.0, -0.0, 1.0, -1.0, f64::from(i32::MIN), f64::from(i32::MAX),
+            f64::from(i32::MIN) - 1.0, f64::from(i32::MAX) + 1.0,
+            1.5, -1.5, f64::MIN_POSITIVE, f64::from_bits(1), -f64::from_bits(1),
+            f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f64::MAX, -f64::MAX];
+        let mut random = 0x517c_c1b7_2722_0a95_u64;
+        let samples = boundary.into_iter().chain((0..256).map(|_| {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            f64::from_bits(random)
+        }));
+        for number in samples {
+            let input = [number.to_bits()];
+            let mut out = u64::MAX;
+            let status = unsafe { entry(&mut context, 0, 0, input.as_ptr(), &mut out) };
+            match Value::number(number).as_int() {
+                Some(integer) => {
+                    assert_eq!(status, 0, "{number:?}");
+                    assert_eq!(f64::from_bits(out).to_bits(), f64::from(integer).to_bits());
+                }
+                None => {
+                    assert_eq!(i64::from(status), NUMBER_ENTRY_MISS, "{number:?}");
+                    assert_eq!(out, u64::MAX, "miss may not publish a result");
+                }
+            }
+            assert_eq!(input[0], number.to_bits(), "borrowed Number is never canonicalized in place");
+        }
+    }
 
     #[test]
     fn unavailable_fault_page_declines_before_changing_canonical_registers() {
