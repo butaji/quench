@@ -127,20 +127,6 @@ fn lookup(
     c.weak_map_get_rooted(map, key)
 }
 
-/// Retain the canonical provider's existing private key maps, never public fields.
-pub(crate) fn capture_brands(
-    c: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let state = state(c)?;
-    for (i, name) in ["secretBrands", "asymmetricBrands"].into_iter().enumerate() {
-        if let Some(value) = args.get(i) {
-            set(c, state, name, *value)?;
-        }
-    }
-    Ok(c.undefined())
-}
 fn key_slots(c: &mut Context<'_>, state: RootId, key: RootId) -> Result<RootId, RootedError> {
     let existing = lookup(c, state, "keys", key)?;
     if c.is_object_rooted(existing)? {
@@ -209,88 +195,6 @@ fn key_slots(c: &mut Context<'_>, state: RootId, key: RootId) -> Result<RootId, 
     Ok(c.undefined())
 }
 
-/// Resolve the private native handle stored in a branded Node KeyObject.
-/// Public fields and lookalike objects are ignored; the slots are retrieved
-/// only from the private WeakMap installed by the crypto key classes.
-#[cfg(quench_openssl_provider)]
-pub(crate) fn key_object_handle(
-    c: &mut Context<'_>,
-    key: RootId,
-) -> Result<Option<RootId>, RootedError> {
-    let state = state(c)?;
-    let slots = key_slots(c, state, key)?;
-    if !c.is_object_rooted(slots)? {
-        return Ok(None);
-    }
-    let kind = get(c, slots, "0")?;
-    let kind = c.rooted_value(kind).and_then(|value| value.as_number());
-    if kind != Some(KEY_TYPE_PUBLIC) && kind != Some(KEY_TYPE_PRIVATE) {
-        return Ok(None);
-    }
-    Ok(Some(get(c, slots, "1")?))
-}
-
-/// Return the branded public KeyObject type without exposing its native
-/// handle. Diffie-Hellman uses this to report Node's key-object type errors
-/// before treating a SecretKeyObject as BufferSource input.
-#[cfg(quench_openssl_provider)]
-pub(crate) fn key_object_type(
-    c: &mut Context<'_>,
-    key: RootId,
-) -> Result<Option<&'static str>, RootedError> {
-    let state = state(c)?;
-    let slots = key_slots(c, state, key)?;
-    if !c.is_object_rooted(slots)? {
-        return Ok(None);
-    }
-    let kind = get(c, slots, "0")?;
-    let kind = c.rooted_value(kind).and_then(|value| value.as_number());
-    Ok(match kind {
-        Some(value) if value == KEY_TYPE_SECRET => Some("secret"),
-        Some(value) if value == KEY_TYPE_PUBLIC => Some("public"),
-        Some(value) if value == KEY_TYPE_PRIVATE => Some("private"),
-        _ => None,
-    })
-}
-
-/// Return the canonical native handle for a branded WebCrypto secret key.
-/// The legacy `node:crypto` cipher surface still accepts CryptoKey values and
-/// must resolve their material through the same backing as subtle operations.
-pub(crate) fn secret_handle(
-    c: &mut Context<'_>,
-    key: RootId,
-) -> Result<Option<RootId>, RootedError> {
-    let state = state(c)?;
-    let slots = lookup(c, state, "cryptoKeys", key)?;
-    if !c.is_object_rooted(slots)? {
-        return Ok(None);
-    }
-    let kind = get(c, slots, "0")?;
-    if c.to_number(kind)? != KEY_TYPE_SECRET {
-        return Ok(None);
-    }
-    Ok(Some(get(c, slots, "4")?))
-}
-/// Source algorithms and the existing key provider share private slot access.
-pub(crate) fn install_provider_accessors(
-    c: &mut Context<'_>,
-    module: RootId,
-) -> Result<(), RootedError> {
-    let state = state(c)?;
-    for (name, op) in [
-        ("getKeyObjectHandle", "getKeyObjectHandle"),
-        ("getKeyObjectType", "getKeyObjectType"),
-        ("isKeyObject", "isKey"),
-        ("isCryptoKey", "isCryptoKey"),
-    ] {
-        let f = function(c, state, op, false)?;
-        let key = c.string_rooted("length");
-        let length = c.number(1.0);
-        c.define_data_property_rooted(f, key, length, false, false, true)?;
-        set(c, module, name, f)?;
-    }
-    Ok(())
-}
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let state = state(c)?;
     let cached = get(c, state, "binding")?;
@@ -770,24 +674,4 @@ pub(crate) fn generated_asymmetric(
     } else {
         Ok(handle)
     }
-}
-
-/// Existing byte-oriented cipher/KDF adapters snapshot canonical native material
-/// only when an operation consumes it. Old normalized arrays remain owned by
-/// the legacy backend; neither path installs a second canonical secret backing.
-pub(crate) fn secret_material(
-    c: &mut Context<'_>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let value = args.first().copied().unwrap_or_else(|| c.undefined());
-    if let Some(material) = super::crypto_key_material_shared_vm::secret(c, value)? {
-        return super::buffer_shared_vm::from_bytes(c, &material);
-    }
-    if let Some(handle) = secret_handle(c, value)? {
-        if let Some(material) = super::crypto_key_material_shared_vm::secret(c, handle)? {
-            return super::buffer_shared_vm::from_bytes(c, &material);
-        }
-    }
-    Ok(value)
 }

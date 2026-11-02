@@ -408,7 +408,6 @@ pub(crate) fn snapshot_path(
         .join(SNAPSHOT_SUBDIRECTORY)
         .join(format!("{:016x}", host.compile_cache.build()));
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&host.node_library_root, &mut hasher);
     for name in KEYED_VARIABLES {
         std::hash::Hash::hash(&std::env::var_os(name), &mut hasher);
     }

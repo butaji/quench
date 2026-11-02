@@ -86,6 +86,27 @@ const FLAG_OPTIONS: [(&str, &str); 3] = [
     ("reusePort", "UV_UDP_REUSEPORT"),
 ];
 const MAX_PORT: f64 = u16::MAX as f64;
+/// The `net.BlockList`s a socket filters its peers through.
+#[derive(Clone, Copy)]
+enum BlockListOption {
+    /// Destinations `connect` and `send` refuse with ERR_IP_BLOCKED.
+    Send,
+    /// Sources whose datagrams are dropped.
+    Receive,
+}
+
+impl BlockListOption {
+    const ALL: [Self; 2] = [Self::Receive, Self::Send];
+    fn name(self) -> &'static str {
+        match self {
+            Self::Send => "sendBlockList",
+            Self::Receive => "receiveBlockList",
+        }
+    }
+}
+
+/// Options `validateUint32` checks when they are truthy.
+const BUFFER_SIZE_OPTIONS: [&str; 2] = ["recvBufferSize", "sendBufferSize"];
 
 fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Outcome {
     c.get_named_property_rooted(object, name)
@@ -200,11 +221,12 @@ fn intrinsics(c: &mut Context<'_>) -> Result<Intrinsics, RootedError> {
     })
 }
 
-const PROTOTYPE_METHODS: [(&str, &str); 25] = [
+const PROTOTYPE_METHODS: [(&str, &str); 26] = [
     ("bind", "dgramBind"),
     ("connect", "dgramConnect"),
     ("disconnect", "dgramDisconnect"),
     ("send", "dgramSend"),
+    ("sendto", "dgramSendTo"),
     ("close", "dgramClose"),
     ("address", "dgramAddress"),
     ("remoteAddress", "dgramRemoteAddress"),
@@ -254,6 +276,9 @@ fn build(c: &mut Context<'_>) -> Outcome {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
+    let dispose = c.host_function_named(crate::host::shared_vm::operation("dgramAsyncDispose"), "[Symbol.asyncDispose]")?;
+    let key = super::fs_shared_vm::classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
+    c.define_data_property_rooted(prototype, key, dispose, true, false, true)?;
     put(c, holder, "Socket", socket)?;
     Ok(holder)
 }
@@ -264,6 +289,14 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     put(c, module, "createSocket", create)?;
     let socket = intrinsics(c)?.socket;
     put(c, module, "Socket", socket)?;
+    Ok(module)
+}
+
+/// `internal/dgram`: the key a socket's state is held under (`kStateSymbol`).
+pub(crate) fn internal_module(c: &mut Context<'_>) -> Outcome {
+    let module = c.object_rooted()?;
+    let slot = intrinsics(c)?.state_slot;
+    put(c, module, "kStateSymbol", slot)?;
     Ok(module)
 }
 
@@ -368,7 +401,24 @@ pub(crate) fn socket_construct(c: &mut Context<'_>, this: RootId, args: &[RootId
         lookup = get(c, options, "lookup")?;
         for name in ["recvBufferSize", "sendBufferSize", "reuseAddr", "reusePort", "ipv6Only"] {
             let value = get(c, options, name)?;
+            if BUFFER_SIZE_OPTIONS.contains(&name) && c.truthy_rooted(value)? {
+                let maximum = c.number(f64::from(u32::MAX));
+                super::util_shared_vm::validate_integer(c, value, &format!("options.{name}"), 0.0, maximum)?;
+            }
             put(c, state, name, value)?;
+        }
+        for option in BlockListOption::ALL {
+            let list = get(c, options, option.name())?;
+            if c.truthy_rooted(list)? {
+                let net = crate::host::shared_vm::commonjs::net_module(c)?;
+                let class = get(c, net, "BlockList")?;
+                let valid = call_method(c, class, "isBlockList", &[list])?;
+                if !c.truthy_rooted(valid)? {
+                    let name = format!("options.{}", option.name());
+                    return Err(super::util_shared_vm::argument_type_error_with_expected(c, list, &name, "an net.BlockList")?);
+                }
+                put(c, state, option.name(), list)?;
+            }
         }
     }
     let handle = new_handle(c, kind, lookup)?;
@@ -474,6 +524,13 @@ pub(crate) fn on_message(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
     if number(c, nread).is_some_and(|nread| nread < 0.0) {
         let error = errno_exception(c, nread, "recvmsg")?;
         emit(c, socket, "error", &[error])?;
+        return Ok(c.undefined());
+    }
+    let state = state(c, socket)?;
+    let address = get(c, rinfo, "address")?;
+    let family = get(c, rinfo, "family")?;
+    let family = c.to_string(family)?.to_lowercase();
+    if blocked(c, state, BlockListOption::Receive, address, Some(family))? {
         return Ok(c.undefined());
     }
     let size = get(c, buffer, "length")?;
@@ -746,6 +803,9 @@ pub(crate) fn after_connect_lookup(c: &mut Context<'_>, _: RootId, args: &[RootI
     if is_nullish(c, handle) {
         return Ok(c.undefined());
     }
+    if !c.truthy_rooted(error)? && blocked(c, state, BlockListOption::Send, ip, None)? {
+        error = ip_blocked(c, ip)?;
+    }
     if !c.truthy_rooted(error)? {
         let status = call_method(c, handle, "connect", &[ip, port])?;
         if c.truthy_rooted(status)? {
@@ -950,6 +1010,57 @@ pub(crate) fn send(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     Ok(c.undefined())
 }
 
+/// Whether the socket's `option` list blocks `ip`, in `family` (`ipv4`/`ipv6`) or the
+/// family `isIP` reads from it.
+fn blocked(c: &mut Context<'_>, state: RootId, option: BlockListOption, ip: RootId, family: Option<String>) -> Result<bool, RootedError> {
+    let list = get(c, state, option.name())?;
+    if !c.truthy_rooted(list)? {
+        return Ok(false);
+    }
+    let family = match family {
+        Some(family) => family,
+        None => {
+            let net = crate::host::shared_vm::commonjs::net_module(c)?;
+            let version = call_method(c, net, "isIP", &[ip])?;
+            format!("ipv{}", c.to_string(version)?)
+        }
+    };
+    let family = c.string_rooted(&family);
+    let verdict = call_method(c, list, "check", &[ip, family])?;
+    c.truthy_rooted(verdict)
+}
+
+fn ip_blocked(c: &mut Context<'_>, ip: RootId) -> Outcome {
+    let ip = c.to_string(ip)?;
+    super::net_block_list::ip_blocked(c, &ip)
+}
+
+/// `sendto(buffer, offset, length, port, address, callback)`: `send` with every position
+/// required.
+pub(crate) fn send_to(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
+    for (index, name) in [(1, "offset"), (2, "length"), (3, "port")] {
+        let value = arg(c, args, index);
+        if number(c, value).is_none() {
+            return Err(super::util_shared_vm::argument_type_error(c, value, name, "number")?);
+        }
+    }
+    let address = arg(c, args, 4);
+    if c.string_text(address)?.is_none() {
+        return Err(super::util_shared_vm::argument_type_error(c, address, "address", "string")?);
+    }
+    send(c, this, args)
+}
+
+/// `[Symbol.asyncDispose]()`: close the socket unless it is closed already.
+pub(crate) fn async_dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
+    let state = state(c, this)?;
+    let handle = handle(c, state)?;
+    if is_nullish(c, handle) {
+        return super::util_module_shared_vm::disposed_promise(c);
+    }
+    super::util_module_shared_vm::close_promise(c, this)
+}
+
 pub(crate) fn queued_send(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     let socket = capture(c, 0)?;
     let list = capture(c, 1)?;
@@ -980,6 +1091,13 @@ pub(crate) fn after_send_lookup(c: &mut Context<'_>, _: RootId, args: &[RootId])
     let state = state(c, socket)?;
     let handle = handle(c, state)?;
     if is_nullish(c, handle) {
+        return Ok(c.undefined());
+    }
+    if c.truthy_rooted(ip)? && blocked(c, state, BlockListOption::Send, ip, None)? {
+        if has_callback {
+            let error = ip_blocked(c, ip)?;
+            next_tick(c, callback, &[error])?;
+        }
         return Ok(c.undefined());
     }
     let binding = intrinsics(c)?.binding;

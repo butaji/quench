@@ -7,6 +7,34 @@ use std::sync::OnceLock;
 
 type ServerNames = Vec<(String, usize)>;
 type AlpnProtocols = Vec<u8>;
+/// What OpenSSL's callbacks report about one SSL while it runs, for the event loop to
+/// announce on its socket: issued sessions (DER, as `session` events once the client is
+/// verified) and, once a `keylog` listener asks, NSS key log lines.
+#[derive(Default)]
+pub(crate) struct Announcements {
+    pub(crate) sessions: Vec<Vec<u8>>,
+    pub(crate) keylog: Option<Vec<Vec<u8>>>,
+}
+
+pub(crate) type SharedAnnouncements = std::sync::Mutex<Announcements>;
+
+pub(crate) fn announcements_index(
+) -> Result<&'static openssl::ex_data::Index<Ssl, SharedAnnouncements>, openssl::error::ErrorStack> {
+    static INDEX: OnceLock<
+        Result<openssl::ex_data::Index<Ssl, SharedAnnouncements>, openssl::error::ErrorStack>,
+    > = OnceLock::new();
+    INDEX
+        .get_or_init(Ssl::new_ex_index::<SharedAnnouncements>)
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+/// `ssl`'s announcements, for a callback to record into or the event loop to drain.
+pub(crate) fn with_announcements<T>(ssl: &openssl::ssl::SslRef, use_them: impl FnOnce(&mut Announcements) -> T) -> Option<T> {
+    let index = announcements_index().ok()?;
+    let shared = ssl.ex_data(*index)?;
+    Some(use_them(&mut shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner)))
+}
 
 pub(crate) fn alpn_protocols_index(
 ) -> Result<&'static openssl::ex_data::Index<Ssl, AlpnProtocols>, openssl::error::ErrorStack> {
@@ -294,6 +322,22 @@ pub(crate) fn initialize(
         }
         ssl.set_ex_data(peer_servername, hostname);
         Ok(())
+    });
+    configuration.set_new_session_callback(|ssl, session| {
+        if ssl.is_server() {
+            return;
+        }
+        if let Ok(der) = session.to_der() {
+            with_announcements(ssl, |announcements| announcements.sessions.push(der));
+        }
+    });
+    configuration.set_keylog_callback(|ssl, line| {
+        with_announcements(ssl, |announcements| {
+            if let Some(keylog) = &mut announcements.keylog {
+                // Node's key log lines end with their newline.
+                keylog.push(format!("{line}\n").into_bytes());
+            }
+        });
     });
     configuration.set_options(SslOptions::NO_SSLV2 | SslOptions::NO_SSLV3);
     configuration.set_session_cache_mode(

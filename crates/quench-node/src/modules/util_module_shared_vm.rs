@@ -381,8 +381,8 @@ fn legacy_length(test: LegacyTest) -> u8 {
     }
 }
 
-/// `deprecate(fn, message, code)` for one of the module's own deprecated exports.
-fn deprecated_export(c: &mut Context<'_>, target: RootId, (code, message): (&str, &str)) -> Result<RootId, RootedError> {
+/// `deprecate(fn, message, code)` for a deprecated export of Node's own.
+pub(crate) fn deprecated_export(c: &mut Context<'_>, target: RootId, (code, message): (&str, &str)) -> Result<RootId, RootedError> {
     let message = c.string_rooted(message);
     let code = c.string_rooted(code);
     deprecated_wrapper(c, target, message, code)
@@ -411,7 +411,7 @@ pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> R
     }
     let global = c.global_root()?;
     let constructor = if class == "KeyObject" {
-        let crypto = crate::host::shared_vm::commonjs::library_require(c, "crypto")?;
+        let crypto = crate::host::shared_vm::commonjs::builtin_require(c, "crypto")?;
         get(c, crypto, class)?
     } else {
         get(c, global, class)?
@@ -434,7 +434,7 @@ pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
         LegacyTest::Array => c.is_array_rooted(value)?,
         LegacyTest::Boolean => kind == ValueType::Boolean,
         LegacyTest::Buffer => {
-            let buffer = crate::host::shared_vm::commonjs::library_require(c, "buffer")?;
+            let buffer = crate::host::shared_vm::commonjs::builtin_require(c, "buffer")?;
             let buffer = get(c, buffer, "Buffer")?;
             let is_buffer = get(c, buffer, "isBuffer")?;
             let result = c.call_rooted(is_buffer, buffer, &[value])?;
@@ -863,6 +863,29 @@ pub(crate) fn promisify_settle(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     };
     c.resolve_promise_rooted(promise, value)?;
     Ok(c.undefined())
+}
+
+/// `promisify(target.close).call(target)`: the promise `close`'s callback settles, which
+/// a resource's `[Symbol.asyncDispose]()` awaits.
+pub(crate) fn close_promise(c: &mut Context<'_>, target: RootId) -> Result<RootId, RootedError> {
+    let promise = c.pending_promise_rooted()?;
+    let undefined = c.undefined();
+    let data = c.array_rooted(&[promise, undefined])?;
+    let settle = c.host_function_with_data(operation("utilPromisifySettle"), data)?;
+    let close = get(c, target, "close")?;
+    if let Err(error) = c.call_rooted(close, target, &[settle]) {
+        let Some(exception) = error.exception else { return Err(error) };
+        c.reject_promise_rooted(promise, exception)?;
+    }
+    Ok(promise)
+}
+
+/// The `[Symbol.asyncDispose]()` of a resource already released: a promise of undefined.
+pub(crate) fn disposed_promise(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let promise = c.pending_promise_rooted()?;
+    let undefined = c.undefined();
+    c.resolve_promise_rooted(promise, undefined)?;
+    Ok(promise)
 }
 
 /// `util.log(...args)`: `console.log('%s - %s', timestamp(), format(...args))`.

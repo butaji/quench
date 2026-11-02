@@ -242,17 +242,12 @@ fn registered_extension(context: &mut NativeContext<'_, NodeHost>, extensions: R
     Ok(FALLBACK_EXTENSION.to_owned())
 }
 
-/// `Module.prototype.load`'s dispatch for a user module: the handler script registered for
-/// `filename`'s extension, or `None` while it is still Node's own, which the loader runs in
-/// place. Node's library modules always load in place.
+/// `Module.prototype.load`'s dispatch: the handler script registered for `filename`'s
+/// extension, or `None` while it is still Node's own, which the loader runs in place.
 pub(crate) fn replaced_extension_handler(
     context: &mut NativeContext<'_, NodeHost>,
     filename: &Path,
-    library: bool,
 ) -> Result<Option<RootId>, RootedError> {
-    if library {
-        return Ok(None);
-    }
     let extensions = extensions(context)?;
     let extension = registered_extension(context, extensions, filename)?;
     let handler = get(context, extensions, &extension)?;

@@ -691,15 +691,6 @@ pub(crate) fn publish_named(c: &mut Context<'_>, name: &str, message: RootId) ->
     deliver(c, ChannelKey::Name(name), message, name_value)
 }
 
-/// The host binding's publish (`name`, `message`), for host-built publishers.
-pub(crate) fn publish(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
-    let name = argument(c, args, 0);
-    let message = argument(c, args, 1);
-    let text = c.to_string(name)?;
-    deliver(c, ChannelKey::Name(&text), message, name)?;
-    Ok(c.undefined())
-}
-
 
 /// `tracingChannel(nameOrChannels)`: `new TracingChannel(nameOrChannels)`.
 pub(crate) fn tracing_channel(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {

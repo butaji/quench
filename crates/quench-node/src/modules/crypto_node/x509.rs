@@ -43,6 +43,18 @@ pub(crate) fn constructor(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
     Ok(c.undefined())
 }
 
+/// The private slot holding a peer certificate's issuer, which only a TLS chain knows.
+fn issuer_slot(c: &mut Context<'_>) -> Outcome {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0x509:issuer", |c| Ok(c.private_symbol_rooted(Some("issuerCertificate"))))
+}
+
+/// Link `certificate` to the `X509Certificate` of its issuer (`issuerCertificate`).
+pub(crate) fn set_issuer(c: &mut Context<'_>, certificate: RootId, issuer: RootId) -> Result<(), RootedError> {
+    let slot = issuer_slot(c)?;
+    c.define_data_property_rooted(certificate, slot, issuer, false, false, false)?;
+    Ok(())
+}
+
 fn certificate(c: &mut Context<'_>, this: RootId) -> Result<X509, RootedError> {
     let found = with_native(c, this, |native| match native {
         Native::Certificate(Certificate(certificate)) => Some(certificate.clone()),
@@ -137,7 +149,10 @@ pub(crate) fn field(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome 
             let ca = c.truthy_rooted(ca)?;
             Ok(c.boolean(ca))
         }
-        Field::IssuerCertificate => Ok(c.undefined()),
+        Field::IssuerCertificate => {
+            let slot = issuer_slot(c)?;
+            c.get_property_rooted(this, slot)
+        }
         Field::ValidFrom => Ok(c.string_rooted(&cert.not_before().to_string())),
         Field::ValidTo => Ok(c.string_rooted(&cert.not_after().to_string())),
         Field::ValidFromDate => date(c, cert.not_before().to_string()),

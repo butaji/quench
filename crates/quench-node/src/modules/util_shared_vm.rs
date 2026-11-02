@@ -298,6 +298,21 @@ pub(crate) fn argument_type_description(
     Ok(received)
 }
 
+/// `ERR_OUT_OF_RANGE`: `The value of "name" is out of range. It must be range. Received value`.
+pub(crate) fn out_of_range_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+    range: &str,
+    value: RootId,
+) -> Result<RootedError, RootedError> {
+    let received = range_error_received(context, value)?;
+    let error = context.range_error_rooted(&format!(
+        "The value of \"{name}\" is out of range. It must be {range}. Received {received}"
+    ))?;
+    super::node_errors_shared_vm::decorate_range_error(context, error, "ERR_OUT_OF_RANGE")?;
+    Ok(context.throw(error))
+}
+
 /// ERR_OUT_OF_RANGE rendering shares Node inspection and integer separators.
 pub(crate) fn range_error_received(
     context: &mut NativeContext<'_, NodeHost>,
@@ -372,9 +387,7 @@ pub(crate) fn validate_integer(
         let error = context.range_error_rooted(&format!(
             "The value of \"{name}\" is out of range. It must be {requirement}. Received {received}"
         ))?;
-        let key = context.string_rooted("code");
-        let code = context.string_rooted("ERR_OUT_OF_RANGE");
-        context.set_property_rooted(error, key, code, error)?;
+        super::node_errors_shared_vm::decorate_range_error(context, error, "ERR_OUT_OF_RANGE")?;
         return Err(context.throw(error));
     }
     Ok(number)
@@ -951,7 +964,7 @@ pub(crate) fn install_lazy_globals(context: &mut NativeContext<'_, NodeHost>) ->
 /// Frames `isInsideNodeModules` inspects without an explicit limit (node_util.cc).
 const DEFAULT_NODE_MODULES_FRAMES: usize = 10;
 
-/// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's own library
+/// `isInsideNodeModules(frameLimit)`: whether the nearest frame outside Node's builtins
 /// runs from a node_modules path.
 pub(crate) fn is_inside_node_modules(
     context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
@@ -960,12 +973,11 @@ pub(crate) fn is_inside_node_modules(
         Some(limit) if limit.fract() == 0.0 && limit >= f64::from(i32::MIN) && limit <= f64::from(i32::MAX) => limit.max(0.0) as usize,
         _ => DEFAULT_NODE_MODULES_FRAMES,
     };
-    let library = context.host_mut().node_library_root.join("lib");
     let inside = context
         .call_stack_source_names()
         .into_iter()
         .take(limit)
-        .find(|name| !name.is_empty() && !name.starts_with("node:") && !name.starts_with('<') && !std::path::Path::new(name).starts_with(&library))
+        .find(|name| !name.is_empty() && !name.starts_with("node:") && !name.starts_with('<'))
         .is_some_and(|name| ["/node_modules/", "\\node_modules\\", "/node_modules\\", "\\node_modules/"].iter().any(|part| name.contains(part)));
     Ok(context.boolean(inside))
 }
@@ -984,7 +996,7 @@ pub(crate) fn initialize_lazy_property(
     let export = if context.rooted_value(export).is_some_and(|value| value.is_undefined()) { key } else { export };
     let enumerable = context.truthy_rooted(flag)?;
     let id = context.to_string(id)?;
-    let module = crate::host::shared_vm::commonjs::library_require(context, &id)?;
+    let module = crate::host::shared_vm::commonjs::builtin_require(context, &id)?;
     let value = context.get_property_rooted(module, export)?;
     context.define_data_property_rooted(target, key, value, true, enumerable, true)?;
     Ok(context.undefined())

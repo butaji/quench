@@ -15,8 +15,6 @@ const TYPESCRIPT_MODULE_ENTRY_NAME: &str = "<quench:typescript-module-entry>";
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
-/// Optional installation root containing Node's lib/ and deps/ source assets.
-pub const NODE_LIBRARY_ROOT_ENV: &str = "QUENCH_NODE_LIBRARY_ROOT";
 /// Names the process's memory policy (`MemoryPolicy::name`); unset, it is the default
 /// (throughput). Child processes inherit it with the environment.
 pub const MEMORY_POLICY_ENV: &str = "QUENCH_MEMORY_POLICY";

@@ -678,6 +678,13 @@ pub(crate) fn block_list_inspect(c: &mut Context<'_>, this: RootId, args: &[Root
     inspect_as(c, this, "BlockList", shown, args)
 }
 
+/// `new ERR_IP_BLOCKED(ip)`: a connection or datagram a block list refused.
+pub(crate) fn ip_blocked(c: &mut Context<'_>, ip: &str) -> Outcome {
+    let error = c.error_rooted(&format!("IP({ip}) is blocked by net.BlockList"))?;
+    super::node_errors_shared_vm::decorate_error(c, error, "ERR_IP_BLOCKED")?;
+    Ok(error)
+}
+
 pub(crate) fn is_block_list(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outcome {
     let value = arg(c, args, 0);
     let is = rules_table(c, value)?.is_some();

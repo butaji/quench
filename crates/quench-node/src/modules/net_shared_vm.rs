@@ -169,6 +169,13 @@ impl SocketStream {
     fn shutdown_write_raw(&self) -> std::io::Result<()> {
         self.raw().shutdown(std::net::Shutdown::Write)
     }
+    /// Announce the TLS sessions the peer issued, as `session` events of `socket`.
+    fn announce_sessions(&self, socket: u64, events: &mut Vec<TransportEvent>) {
+        if let Self::Encrypted(tls) = self {
+            let sessions = tls.take_announcements(|announcements| std::mem::take(&mut announcements.sessions));
+            events.extend(sessions.into_iter().map(|session| TransportEvent::Session { socket, session }));
+        }
+    }
 }
 
 enum ListenerSocket {
@@ -351,6 +358,16 @@ pub(crate) enum TransportEvent {
     },
     Secure {
         socket: u64,
+    },
+    /// A TLS session (DER) the peer issued to a verified client.
+    Session {
+        socket: u64,
+        session: Vec<u8>,
+    },
+    /// An NSS key log line of a TLS socket that listens for them.
+    Keylog {
+        socket: u64,
+        line: Vec<u8>,
     },
     WriteComplete {
         socket: u64,
@@ -1033,7 +1050,11 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
             continue;
         }
         if let SocketStream::Encrypted(tls) = &mut socket.stream {
-            match tls.handshake() {
+            let handshake = tls.handshake();
+            // The handshake writes its key log lines as it runs, ahead of its outcome.
+            let lines = tls.take_announcements(|announcements| announcements.keylog.as_mut().map(std::mem::take).unwrap_or_default());
+            events.extend(lines.into_iter().map(|line| TransportEvent::Keylog { socket: id, line }));
+            match handshake {
                 Ok(true) => events.push(TransportEvent::Secure { socket: id }),
                 Ok(false) => {}
                 Err(error) => {
@@ -1143,6 +1164,8 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
             }
         }
+        // Sessions issued during the handshake wait for its verification.
+        socket.stream.announce_sessions(id, &mut events);
         // Writes and TLS handshakes have independent progress; application
         // bytes are consumed only while the native read request is active.
         if socket.read_demand == ReadDemand::Idle {
@@ -1171,6 +1194,8 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
             }
         }
+        // A read processes the tickets ahead of the bytes it returns.
+        socket.stream.announce_sessions(id, &mut events);
         if !received.is_empty() {
             events.push(TransportEvent::Data {
                 socket: id,
@@ -1407,16 +1432,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .ok_or_else(|| RootedError::host("socket option metadata missing"))?;
     let key = context.string_rooted("module");
     context.define_data_property_rooted(options_data, key, module, false, false, false)?;
-    let initialize = context.host_function_with_data(
-        crate::host::shared_vm::operation("netBoundSocketProjection"),
-        module,
-    )?;
-    context.define_lazy_data_properties_rooted(
-        module,
-        &["BoundSocket", "_TransferredBoundSocket"],
-        true,
-        initialize,
-    )?;
     let retained = context.retain(find("Socket"))?;
     context
         .host_mut()
@@ -3093,23 +3108,6 @@ pub(crate) fn udp_close_has_ref(transport: &Transport, id: u64) -> Option<bool> 
         .closing_sockets
         .iter()
         .find_map(|(key, owner)| (*key == CloseTarget::Datagram(id)).then_some(owner.referenced))
-}
-
-/// Load the unchanged SDK owner of BoundSocket's private handle and bind policy.
-pub(crate) fn bound_socket_projection(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let owner = context.host_function_data()?;
-    let policy =
-        crate::host::shared_vm::commonjs::node_library_module(context, "net.js", "net.js")?;
-    for name in ["BoundSocket", "_TransferredBoundSocket"] {
-        let key = context.string_rooted(name);
-        let constructor = context.get_property_rooted(policy, key)?;
-        context.define_data_property_rooted(owner, key, constructor, true, true, true)?;
-    }
-    Ok(context.undefined())
 }
 
 /// New kernel descriptor received over SCM_RIGHTS becomes this endpoint's sole

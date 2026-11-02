@@ -277,6 +277,9 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
     };
     let handler = c.host_function_named_with_data(crate::host::shared_vm::operation("netServerRejection"), "", table)?;
     c.define_data_property_rooted(prototype, rejection, handler, true, false, true)?;
+    let dispose = c.host_function_named(crate::host::shared_vm::operation("netServerAsyncDispose"), "[Symbol.asyncDispose]")?;
+    let key = super::fs_shared_vm::classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
+    c.define_data_property_rooted(prototype, key, dispose, true, false, true)?;
     super::net_server_listen::install(c, prototype)?;
 
     let connect = c.host_function_named_with_data(crate::host::shared_vm::operation("netConnectFactory"), "connect", table)?;
@@ -367,7 +370,7 @@ pub(crate) fn socket_pending(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
     Ok(c.boolean(pending))
 }
 
-fn clear_timeout_timer(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
+pub(crate) fn clear_timeout_timer(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
     let timer = get(c, socket, TIMEOUT_TIMER)?;
     if !c.rooted_value(timer).is_some_and(|value| value.is_null()) && !is_undefined(c, timer) {
         let global = c.global_root()?;
@@ -691,7 +694,7 @@ pub(crate) fn socket_connect(c: &mut Context<'_>, this: RootId, args: &[RootId])
     }
     put_bool(c, this, "connecting", true)?;
     if let Some(address) = blocked(c, options, host)? {
-        let error = coded(c, "ERR_IP_BLOCKED", &format!("IP({address}) is blocked by net.BlockList"))?;
+        let error = super::net_block_list::ip_blocked(c, &address)?;
         refuse_connect(c, this, error)?;
         return Ok(this);
     }
@@ -913,6 +916,14 @@ pub(crate) fn server_rejection(c: &mut Context<'_>, this: RootId, args: &[RootId
         emit(c, this, "error", &[error])?;
     }
     Ok(c.undefined())
+}
+
+/// `[Symbol.asyncDispose]()`: close the server unless it no longer listens.
+pub(crate) fn server_async_dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
+    if !truthy(c, this, "_handle")? {
+        return super::util_module_shared_vm::disposed_promise(c);
+    }
+    super::util_module_shared_vm::close_promise(c, this)
 }
 
 pub(crate) fn server_ref(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {

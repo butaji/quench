@@ -705,27 +705,18 @@ pub(crate) fn nop(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
     Ok(c.undefined())
 }
 
-/// The library modules Node's other built-ins load from its stream implementation, as the
-/// exports those modules have.
-pub(crate) fn library_module(c: &mut Context<'_>, relative: &str) -> Result<Option<RootId>, RootedError> {
+/// Node's `internal/streams/*` modules (under `--expose-internals`), as the exports
+/// those modules have.
+pub(crate) fn internal_streams_module(c: &mut Context<'_>, name: &str) -> Outcome {
     let stream = module(c)?;
-    let class = |c: &mut Context<'_>, name: &str| get(c, stream, name).map(Some);
-    match relative {
-        "stream.js" => Ok(Some(stream)),
-        "stream/promises.js" => promises(c).map(Some),
-        "internal/streams/readable.js" => class(c, "Readable"),
-        "internal/streams/writable.js" => class(c, "Writable"),
-        "internal/streams/duplex.js" => class(c, "Duplex"),
-        "internal/streams/transform.js" => class(c, "Transform"),
-        "internal/streams/passthrough.js" => class(c, "PassThrough"),
-        "internal/streams/end-of-stream.js" => class(c, "finished"),
-        "internal/streams/legacy.js"
-        | "internal/streams/state.js"
-        | "internal/streams/utils.js"
-        | "internal/streams/destroy.js"
-        | "internal/streams/pipeline.js"
-        | "internal/streams/add-abort-signal.js" => internal_module(c, relative).map(Some),
-        _ => Ok(None),
+    match name {
+        "internal/streams/readable" => get(c, stream, "Readable"),
+        "internal/streams/writable" => get(c, stream, "Writable"),
+        "internal/streams/duplex" => get(c, stream, "Duplex"),
+        "internal/streams/transform" => get(c, stream, "Transform"),
+        "internal/streams/passthrough" => get(c, stream, "PassThrough"),
+        "internal/streams/end-of-stream" => get(c, stream, "finished"),
+        _ => internal_module(c, name),
     }
 }
 
@@ -739,24 +730,24 @@ fn internal_module(c: &mut Context<'_>, relative: &str) -> Outcome {
     let stream = module(c)?;
     let module = c.object_rooted()?;
     let members: &[(&str, &str, &str)] = match relative {
-        "internal/streams/legacy.js" => &[("prependListener", "streamPrependListener", "prependListener")],
-        "internal/streams/state.js" => &[
+        "internal/streams/legacy" => &[("prependListener", "streamPrependListener", "prependListener")],
+        "internal/streams/state" => &[
             ("getHighWaterMark", "streamGetHighWaterMark", "getHighWaterMark"),
             ("getDefaultHighWaterMark", "streamGetDefaultHighWaterMark", "getDefaultHighWaterMark"),
             ("setDefaultHighWaterMark", "streamSetDefaultHighWaterMark", "setDefaultHighWaterMark"),
         ],
-        "internal/streams/destroy.js" => &[
+        "internal/streams/destroy" => &[
             ("construct", "streamConstructImpl", "construct"),
             ("destroyer", "streamDestroyer", "destroyer"),
             ("destroy", "streamDestroy", "destroy"),
             ("undestroy", "streamUndestroy", "undestroy"),
             ("errorOrDestroy", "streamErrorOrDestroy", "errorOrDestroy"),
         ],
-        "internal/streams/pipeline.js" => &[
+        "internal/streams/pipeline" => &[
             ("pipelineImpl", "streamPipelineImpl", "pipelineImpl"),
             ("pipeline", "streamPipeline", "pipeline"),
         ],
-        "internal/streams/add-abort-signal.js" => &[
+        "internal/streams/add-abort-signal" => &[
             ("addAbortSignal", "streamAddAbortSignal", "addAbortSignal"),
             ("addAbortSignalNoValidate", "streamAddAbortSignalNoValidate", ""),
         ],
@@ -767,11 +758,11 @@ fn internal_module(c: &mut Context<'_>, relative: &str) -> Outcome {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(module, key, function, true, true, true)?;
     }
-    if relative == "internal/streams/legacy.js" {
+    if relative == "internal/streams/legacy" {
         let key = c.string_rooted("Stream");
         c.define_data_property_rooted(module, key, stream, true, true, true)?;
     }
-    if relative == "internal/streams/utils.js" {
+    if relative == "internal/streams/utils" {
         utils::define_utils_exports(c, module)?;
     }
     let retained = c.retain(module)?;

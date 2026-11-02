@@ -443,40 +443,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let initializer = context.host_function(crate::host::shared_vm::operation("consoleGlobalInitialize"))?;
     context.define_lazy_data_properties_rooted(global, &["console"], false, initializer)?;
     context.seal_startup_intrinsics();
-    let expose_event_source = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--experimental-eventsource");
-    if expose_event_source {
-        let _ = node_primordials(context)?;
-        let require = get(context, global, "\0quench:require")?;
-        let specifier = context.string_rooted("internal/deps/undici/undici");
-        let undefined = context.undefined();
-        let undici = context.call_rooted(require, undefined, &[specifier])?;
-        let event_source = get(context, undici, "EventSource")?;
-        set(context, global, "EventSource", event_source)?;
-    }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_console_global");
     crate::host::resident_pages::release_read_only_pages();
-    if node_primordials_source(context).is_some() {
-        context.scoped(crate::modules::node_errors_shared_vm::install_stack_formatter)?;
-        // Node's policies hold the validators and error codes they import. Only a script
-        // that can require internal modules can replace those exports before a policy's
-        // first use, so only then are the policies captured before it runs.
-        if internals_exposed(context) {
-            // Capture SDK process policies before exposed internal exports can be replaced.
-            #[cfg(target_os = "linux")]
-            {
-                let cpu_usage = get(context, process, "cpuUsage")?;
-                context.release_root(cpu_usage);
-            }
-        }
-        context.seal_startup_intrinsics();
-    }
     #[cfg(feature = "aot")]
     if let Some(demands) = context.host_mut().native_source_staging.take() {
         return crate::aot::stage_host_sources(context, demands);
@@ -492,7 +461,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
-    context.scoped(crate::modules::worker_threads_shared_vm::initialize_process_owner)?;
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
     context.scoped(initialize_cluster_worker)?;
@@ -622,7 +590,6 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
         ("webStreamsInitialize", WEB_STREAM_GLOBALS),
         ("webApisInitialize", WEB_API_GLOBALS),
         ("webFetchInitialize", FETCH_API_GLOBALS),
-        ("webBroadcastChannelInitialize", &["BroadcastChannel"]),
         ("webSocketInitialize", &["WebSocket"]),
     ] {
         let names: Vec<&str> = names.iter().copied().filter(|name| web_global_enabled(context, name)).collect();
@@ -646,7 +613,7 @@ fn web_global_enabled(context: &mut Context<'_>, name: &str) -> bool {
 
 /// `process.release`'s key and its members (`process.release.name` is Node's runtime name).
 const PROCESS_RELEASE: &str = "release";
-const RELEASE_MEMBERS: [(&str, &str); 3] = [("name", "node"), ("sourceUrl", ""), ("headersUrl", "")];
+pub(crate) const RELEASE_MEMBERS: [(&str, &str); 3] = [("name", "node"), ("sourceUrl", ""), ("headersUrl", "")];
 
 /// Defines `process.release`.
 pub(super) fn initialize_process_release(
@@ -728,18 +695,7 @@ pub(crate) fn require_for_module(
     if !subscribed {
         return require_for_module_inner(context, parent, args);
     }
-
     let parent_filename = get(context, parent, "filename")?;
-    let node_library_root = context.host_mut().node_library_root.clone();
-    let is_node_library_module = context
-        .string_text(parent_filename)?
-        .is_some_and(|filename| {
-            filename.starts_with(node_library_root.join("lib").to_string_lossy().as_ref())
-        });
-    if is_node_library_module {
-        context.release_root(parent_filename);
-        return require_for_module_inner(context, parent, args);
-    }
     let event = context.object_rooted()?;
     let requested_value = context.string_rooted(&requested);
     set(context, event, "id", requested_value)?;
@@ -926,30 +882,11 @@ fn require_for_module_inner(
         Some(BuiltinModule::Vm) => {
             return cached_builtin(context, BuiltinModule::Vm);
         }
-        Some(BuiltinModule::InternalUndici) => {
-            let filename = context
-                .host_mut()
-                .node_library_root
-                .join("deps/undici/undici.js");
-            return load(context, &filename, Some(parent), EntryGoal::CommonJs);
-        }
         Some(BuiltinModule::Dgram) => {
             return cached_builtin(context, BuiltinModule::Dgram);
         }
         Some(BuiltinModule::InternalDgram) => {
-            return node_library_module(context, "internal/dgram.js", "internal/dgram.js");
-        }
-        Some(BuiltinModule::InternalTestBinding) => {
-            // Unlike internal policy initialization, this guest-facing SDK bridge
-            // must observe the current process.emitWarning and warning options.
-            // Its intrinsic operations already come from the SDK primordials.
-            let root = context.host_mut().node_library_root.clone();
-            return load(
-                context,
-                &root.join("lib/internal/test/binding.js"),
-                Some(parent),
-                EntryGoal::CommonJs,
-            );
+            return crate::modules::dgram_shared_vm::internal_module(context);
         }
         Some(BuiltinModule::InternalBlockList) => {
             let module = context.object_rooted()?;
@@ -1083,15 +1020,6 @@ fn require_for_module_inner(
         None => {}
     }
     let filename = resolve_filename(context, &specifier, parent)?;
-    let root = context.host_mut().node_library_root.clone();
-    let goal = if filename.starts_with(root.join("lib")) {
-        EntryGoal::CommonJs
-    } else {
-        EntryGoal::Node
-    };
-    if is_node_library_source(context, &filename) {
-        return load(context, &filename, Some(parent), goal);
-    }
     if context
         .rooted_value(directory_cache)
         .is_some_and(|value| value.is_undefined())
@@ -1104,7 +1032,7 @@ fn require_for_module_inner(
         context,
         &filename,
         Some(parent),
-        goal,
+        EntryGoal::Node,
         Some((directory_cache, &specifier)),
     )
 }
@@ -1195,31 +1123,6 @@ pub(crate) fn builtin_export_values(
     context.array_rooted(&values)
 }
 
-pub(super) fn require_node_library(
-    context: &mut Context<'_>,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    if let Some(value) = args.first() {
-        match context.string_text(*value)?.as_deref() {
-            Some(name) if name.strip_prefix("node:").unwrap_or(name) == "internal/timers" => {
-                return cached_builtin(context, BuiltinModule::InternalTimers);
-            }
-            Some(crate::modules::buffer_shared_vm::FAST_BUFFER_REQUEST) => {
-                return crate::modules::buffer_shared_vm::fast_buffer_request(context);
-            }
-            Some(crate::modules::buffer_shared_vm::BUFFER_POOL_REQUEST) => {
-                return crate::modules::buffer_shared_vm::buffer_pool_request(context);
-            }
-            Some(crate::modules::primordials_shared_vm::COPY_REQUEST) => {
-                return crate::modules::primordials_shared_vm::copy_request(context);
-            }
-            _ => {}
-        }
-    }
-    require(context, receiver, args)
-}
-
 /// `require.resolve(request, options)`: `Module._resolveFilename(request, module, false, options)`.
 pub(super) fn resolve(
     context: &mut Context<'_>,
@@ -1292,8 +1195,7 @@ fn lookup_paths(context: &mut Context<'_>, options: Option<RootId>) -> Result<Op
         return Ok(None);
     }
     if !context.is_array_rooted(paths)? {
-        let name = context.string_rooted("options.paths");
-        return Err(throw_node_error(context, "ERR_INVALID_ARG_VALUE", &[name, paths])?);
+        return Err(crate::modules::util_shared_vm::argument_value_error(context, paths, "options.paths", "is invalid")?);
     }
     let path = crate::modules::path_shared_vm::module(context)?;
     let resolve = get(context, path, "resolve")?;
@@ -1305,14 +1207,6 @@ fn lookup_paths(context: &mut Context<'_>, options: Option<RootId>) -> Result<Op
         directories.push(PathBuf::from(context.to_string(resolved)?));
     }
     Ok(Some(directories))
-}
-
-/// Throws Node's `code` error built by lib/internal/errors.js from `args`.
-fn throw_node_error(context: &mut Context<'_>, code: &str, args: &[RootId]) -> Result<RootedError, RootedError> {
-    let codes = node_library_export(context, "internal/modules/cjs/loader.js", "internal/errors.js", "codes")?;
-    let constructor = get(context, codes, code)?;
-    let error = context.construct_rooted(constructor, constructor, args)?;
-    Ok(context.throw(error))
 }
 
 pub(crate) fn resolve_from_parent(
@@ -1395,8 +1289,6 @@ enum BuiltinModule {
     Dgram,
     InternalDgram,
     InternalUrl,
-    InternalUndici,
-    InternalTestBinding,
     InternalTimers,
     InternalBlockList,
     InternalSocketAddress,
@@ -1482,9 +1374,7 @@ impl BuiltinModule {
             | Self::PathPosix
             | Self::PathWin32 => None,
             Self::InternalUrl => Some("internal/url"),
-            Self::InternalUndici => None,
             Self::InternalDgram
-            | Self::InternalTestBinding
             | Self::InternalBlockList
             | Self::InternalSocketAddress => None,
         }
@@ -1523,59 +1413,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
         "internal/histogram",
         BuiltinModule::Internal("internal/histogram"),
     ),
-    ("internal/zip", BuiltinModule::Internal("internal/zip")),
-    (
-        "internal/zip/archive",
-        BuiltinModule::Internal("internal/zip/archive"),
-    ),
-    (
-        "internal/zip/binary",
-        BuiltinModule::Internal("internal/zip/binary"),
-    ),
-    (
-        "internal/zip/buffer",
-        BuiltinModule::Internal("internal/zip/buffer"),
-    ),
-    (
-        "internal/zip/compression",
-        BuiltinModule::Internal("internal/zip/compression"),
-    ),
-    (
-        "internal/zip/constants",
-        BuiltinModule::Internal("internal/zip/constants"),
-    ),
-    (
-        "internal/zip/content-size",
-        BuiltinModule::Internal("internal/zip/content-size"),
-    ),
-    (
-        "internal/zip/dos",
-        BuiltinModule::Internal("internal/zip/dos"),
-    ),
-    (
-        "internal/zip/entry",
-        BuiltinModule::Internal("internal/zip/entry"),
-    ),
-    (
-        "internal/zip/extra-fields",
-        BuiltinModule::Internal("internal/zip/extra-fields"),
-    ),
-    (
-        "internal/zip/file",
-        BuiltinModule::Internal("internal/zip/file"),
-    ),
-    (
-        "internal/zip/fs-util",
-        BuiltinModule::Internal("internal/zip/fs-util"),
-    ),
-    (
-        "internal/zip/header-builders",
-        BuiltinModule::Internal("internal/zip/header-builders"),
-    ),
-    (
-        "internal/zip/headers",
-        BuiltinModule::Internal("internal/zip/headers"),
-    ),
     (
         "internal/process/task_queues",
         BuiltinModule::Internal("internal/process/task_queues"),
@@ -1593,6 +1430,19 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
         BuiltinModule::Internal("internal/worker/io"),
     ),
     ("internal/worker", BuiltinModule::Internal("internal/worker")),
+    ("internal/streams/readable", BuiltinModule::Internal("internal/streams/readable")),
+    ("internal/streams/writable", BuiltinModule::Internal("internal/streams/writable")),
+    ("internal/streams/duplex", BuiltinModule::Internal("internal/streams/duplex")),
+    ("internal/streams/transform", BuiltinModule::Internal("internal/streams/transform")),
+    ("internal/streams/passthrough", BuiltinModule::Internal("internal/streams/passthrough")),
+    ("internal/streams/end-of-stream", BuiltinModule::Internal("internal/streams/end-of-stream")),
+    ("internal/streams/legacy", BuiltinModule::Internal("internal/streams/legacy")),
+    ("internal/streams/state", BuiltinModule::Internal("internal/streams/state")),
+    ("internal/streams/utils", BuiltinModule::Internal("internal/streams/utils")),
+    ("internal/streams/destroy", BuiltinModule::Internal("internal/streams/destroy")),
+    ("internal/streams/pipeline", BuiltinModule::Internal("internal/streams/pipeline")),
+    ("internal/streams/add-abort-signal", BuiltinModule::Internal("internal/streams/add-abort-signal")),
+    ("internal/net", BuiltinModule::Internal("internal/net")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::DnsPromises),
@@ -1614,10 +1464,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     (
         "node:readline/promises",
         BuiltinModule::Internal("readline/promises"),
-    ),
-    (
-        "node:test/reporters",
-        BuiltinModule::Internal("node:test/reporters"),
     ),
     ("_http_agent", BuiltinModule::Internal("_http_agent")),
     ("node:_http_agent", BuiltinModule::Internal("_http_agent")),
@@ -1732,8 +1578,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/url", BuiltinModule::InternalUrl),
-    ("internal/deps/undici/undici", BuiltinModule::InternalUndici),
-    ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
     (
         "internal/socketaddress",
@@ -1807,138 +1651,16 @@ pub(crate) fn cached_native_binding(
     Ok(value)
 }
 
-/// Load a real configured standard-library export over this VM's native bindings.
-/// A library module's `require(id)`: a host builtin when the id names one, otherwise the
-/// pinned library file.
-pub(crate) fn library_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
+/// Node's internal `require(id)` of a builtin, or `ERR_UNKNOWN_BUILTIN_MODULE`.
+pub(crate) fn builtin_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
     if let Some(builtin) = BuiltinModule::from_specifier(id) {
         return cached_builtin(context, builtin);
     }
-    let relative = if id.ends_with(".js") { id.to_owned() } else { format!("{id}.js") };
-    node_library_module(context, "internal/util.js", &relative)
+    let error = context.error_rooted(&format!("No such built-in module: {id}"))?;
+    crate::modules::node_errors_shared_vm::decorate_error(context, error, "ERR_UNKNOWN_BUILTIN_MODULE")?;
+    Err(context.throw(error))
 }
 
-/// A library function a host fast path stands for, as its definition made it: the value of
-/// `method` on the `prototype` of the constructor its `Definition` names, recorded before
-/// any other code can replace it (`record_library_originals`,
-/// `record_bootstrap_originals`). A fast path that skips a call of the method holds only
-/// while the method is still this value.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibraryOriginal {
-    /// `Readable.prototype.push` (`lib/internal/streams/readable.js`).
-    ReadablePush,
-    /// `EventEmitter.prototype.listenerCount` (the bootstrap's shared EventEmitter).
-    EmitterListenerCount,
-    /// `IncomingMessage.prototype._addHeaderLines` (`lib/_http_incoming.js`).
-    IncomingAddHeaderLines,
-}
-
-/// Where a `LibraryOriginal`'s constructor comes from.
-#[derive(Clone, Copy)]
-enum Definition {
-    /// An export of a library module, as the module finishes evaluating: the named one, or
-    /// the module's exports themselves.
-    Module(&'static str, Option<&'static str>),
-    /// A global the bootstrap installs, as the bootstrap finishes.
-    BootstrapGlobal(&'static str),
-}
-
-impl LibraryOriginal {
-    pub(crate) const ALL: [Self; 3] = [Self::ReadablePush, Self::EmitterListenerCount, Self::IncomingAddHeaderLines];
-
-    /// The constructor's definition and the prototype method the original is.
-    fn definition(self) -> (Definition, &'static str) {
-        match self {
-            Self::ReadablePush => (Definition::Module("lib/internal/streams/readable.js", None), "push"),
-            Self::IncomingAddHeaderLines => {
-                (Definition::Module("lib/_http_incoming.js", Some("IncomingMessage")), "_addHeaderLines")
-            }
-            Self::EmitterListenerCount => (Definition::BootstrapGlobal("__nodeEventEmitter"), "listenerCount"),
-        }
-    }
-}
-
-/// The recorded `LibraryOriginal`s, by their position in `LibraryOriginal::ALL`.
-#[derive(Default)]
-pub(crate) struct LibraryOriginals(pub(crate) [Option<RootId>; LibraryOriginal::ALL.len()]);
-
-impl LibraryOriginals {
-    pub(crate) fn get(&self, original: LibraryOriginal) -> Option<RootId> {
-        self.0[original as usize]
-    }
-}
-
-/// Records `original`, whose constructor is `constructor`, unless it is recorded.
-fn record_library_original(context: &mut Context<'_>, original: LibraryOriginal, constructor: RootId) -> Result<(), RootedError> {
-    if context.host_mut().shared_state().borrow().library_originals.get(original).is_some() {
-        return Ok(());
-    }
-    let (_, method) = original.definition();
-    let prototype = get(context, constructor, "prototype")?;
-    let value = get(context, prototype, method)?;
-    let retained = context.retain(value)?;
-    context.host_mut().shared_state().borrow_mut().library_originals.0[original as usize] = Some(retained);
-    Ok(())
-}
-
-/// Records the `LibraryOriginal`s the library module at `path` defines from its `exports`.
-fn record_library_originals(context: &mut Context<'_>, path: &Path, exports: RootId) -> Result<(), RootedError> {
-    for original in LibraryOriginal::ALL {
-        let Definition::Module(module, export) = original.definition().0 else {
-            continue;
-        };
-        if path == Path::new(module) {
-            let constructor = match export {
-                Some(name) => get(context, exports, name)?,
-                None => exports,
-            };
-            record_library_original(context, original, constructor)?;
-        }
-    }
-    Ok(())
-}
-
-/// Records the `LibraryOriginal`s of the bootstrap's globals, before any script runs.
-pub(crate) fn record_bootstrap_originals(context: &mut Context<'_>) -> Result<(), RootedError> {
-    for original in LibraryOriginal::ALL {
-        if let Definition::BootstrapGlobal(name) = original.definition().0 {
-            let global = context.global_root()?;
-            let constructor = get(context, global, name)?;
-            record_library_original(context, original, constructor)?;
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn node_library_export(
-    context: &mut Context<'_>,
-    owner: &str,
-    relative: &str,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    let library = node_library_module(context, owner, relative)?;
-    get(context, library, name)
-}
-
-/// A module of the pinned Node library, loaded on first use inside the startup intrinsics:
-/// its initialization captures the original intrinsic methods however a script has replaced
-/// or frozen them since (`with_startup_intrinsics` restores even nonconfigurable ones).
-pub(crate) fn node_library_module(
-    context: &mut Context<'_>,
-    _owner: &str,
-    relative: &str,
-) -> Result<RootId, RootedError> {
-    if relative == "internal/histogram.js" {
-        return cached_builtin(context, BuiltinModule::PerfHooks);
-    }
-    if let Some(module) = crate::modules::stream_shared_vm::library_module(context, relative)? {
-        return Ok(module);
-    }
-    if relative == "internal/net.js" {
-        return crate::modules::net_internal_shared_vm::module(context);
-    }
-    crate::host::removed_javascript(format!("node:{}", relative.trim_end_matches(".js")))
-}
 
 /// Runs a load of host code: a library module or a builtin the host builds. A load on first
 /// use compiles after the entry's compilation released the pages compiling touches; they are
@@ -2021,6 +1743,14 @@ pub(crate) fn https_module(context: &mut Context<'_>) -> Result<RootId, RootedEr
     cached_builtin(context, BuiltinModule::Https)
 }
 
+pub(crate) fn http2_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Http2)
+}
+
+pub(crate) fn tls_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Tls)
+}
+
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Net)
 }
@@ -2059,6 +1789,33 @@ pub(crate) fn internal_url_module(context: &mut Context<'_>) -> Result<RootId, R
 }
 
 /// Private namespaces project the same original objects as the public globals.
+/// `constants` (lib/constants.js): os's dlopen, errno, priority and signal constants, fs's
+/// and crypto's, as one frozen object.
+fn constants_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let os = cached_builtin(context, BuiltinModule::Os)?;
+    let os = get(context, os, "constants")?;
+    let mut sources = Vec::new();
+    for group in ["dlopen", "errno", "priority", "signals"] {
+        sources.push(get(context, os, group)?);
+    }
+    let fs = cached_builtin(context, BuiltinModule::Fs)?;
+    sources.push(get(context, fs, "constants")?);
+    #[cfg(quench_openssl_provider)]
+    {
+        let crypto = cached_builtin(context, BuiltinModule::Crypto)?;
+        sources.push(get(context, crypto, "constants")?);
+    }
+    let module = context.object_rooted()?;
+    for source in sources {
+        for key in context.enumerable_own_keys_rooted(source, false, true)? {
+            let value = context.get_property_rooted(source, key)?;
+            context.define_data_property_rooted(module, key, value, false, true, false)?;
+        }
+    }
+    context.prevent_extensions_rooted(module)?;
+    Ok(module)
+}
+
 fn native_global_namespace(
     context: &mut Context<'_>,
     names: &[&str],
@@ -2279,55 +2036,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 },
             )
         }
-        BuiltinModule::Internal("internal/crypto/keys") => {
-            let module = node_library_module(context, "crypto.js", "internal/crypto/keys.js")?;
-            crate::modules::crypto_key_shared_vm::install_provider_accessors(context, module)?;
-            Ok(module)
-        }
+        #[cfg(quench_openssl_provider)]
+        BuiltinModule::Internal("internal/crypto/keys") => crate::modules::crypto_node::keys::internal_module(context),
         BuiltinModule::Internal("internal/source_map/source_map_cache") => {
             crate::modules::source_map_shared_vm::cache_module(context)
-        }
-        BuiltinModule::Internal("internal/zip") => {
-            node_library_module(context, "zlib.js", "internal/zip.js")
-        }
-        BuiltinModule::Internal("internal/zip/archive") => {
-            node_library_module(context, "zlib.js", "internal/zip/archive.js")
-        }
-        BuiltinModule::Internal("internal/zip/binary") => {
-            node_library_module(context, "zlib.js", "internal/zip/binary.js")
-        }
-        BuiltinModule::Internal("internal/zip/buffer") => {
-            node_library_module(context, "zlib.js", "internal/zip/buffer.js")
-        }
-        BuiltinModule::Internal("internal/zip/compression") => {
-            node_library_module(context, "zlib.js", "internal/zip/compression.js")
-        }
-        BuiltinModule::Internal("internal/zip/constants") => {
-            node_library_module(context, "zlib.js", "internal/zip/constants.js")
-        }
-        BuiltinModule::Internal("internal/zip/content-size") => {
-            node_library_module(context, "zlib.js", "internal/zip/content-size.js")
-        }
-        BuiltinModule::Internal("internal/zip/dos") => {
-            node_library_module(context, "zlib.js", "internal/zip/dos.js")
-        }
-        BuiltinModule::Internal("internal/zip/entry") => {
-            node_library_module(context, "zlib.js", "internal/zip/entry.js")
-        }
-        BuiltinModule::Internal("internal/zip/extra-fields") => {
-            node_library_module(context, "zlib.js", "internal/zip/extra-fields.js")
-        }
-        BuiltinModule::Internal("internal/zip/file") => {
-            node_library_module(context, "zlib.js", "internal/zip/file.js")
-        }
-        BuiltinModule::Internal("internal/zip/fs-util") => {
-            node_library_module(context, "zlib.js", "internal/zip/fs-util.js")
-        }
-        BuiltinModule::Internal("internal/zip/header-builders") => {
-            node_library_module(context, "zlib.js", "internal/zip/header-builders.js")
-        }
-        BuiltinModule::Internal("internal/zip/headers") => {
-            node_library_module(context, "zlib.js", "internal/zip/headers.js")
         }
         BuiltinModule::Internal("internal/worker/io") => {
             let module = native_global_namespace(context, &["MessageChannel", "MessagePort"])?;
@@ -2379,17 +2091,20 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             Ok(module)
         }
         BuiltinModule::Internal("internal/process/task_queues") => task_queues_module(context),
+        BuiltinModule::Internal(name) if name.starts_with("internal/streams/") => {
+            crate::modules::stream_shared_vm::internal_streams_module(context, name)
+        }
+        BuiltinModule::Internal("internal/net") => crate::modules::net_internal_shared_vm::module(context),
         BuiltinModule::Internal("_http_common") => {
             crate::modules::http_common_shared_vm::module(context)
         }
         BuiltinModule::Internal("dns/promises") => crate::modules::dns_module_shared_vm::promises(context),
         BuiltinModule::Internal("punycode") => crate::modules::punycode_shared_vm::module(context),
         BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
-        // Every other such builtin is Node's own library module of that name.
-        BuiltinModule::Internal(name) => {
-            let relative = format!("{}.js", name.strip_prefix("node:").unwrap_or(name));
-            node_library_module(context, &relative, &relative)
-        }
+        BuiltinModule::Internal("constants") => constants_module(context),
+        // Quench has no inspector; its promise API is as empty as `inspector`.
+        BuiltinModule::Internal("inspector/promises") => context.object_rooted(),
+        BuiltinModule::Internal(name) => Err(RootedError::host(format!("node:{name} has no builder"))),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
         // lib/util/types.js re-exports internal/util/types, the object `util.types` names.
@@ -2436,7 +2151,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         #[cfg(not(quench_openssl_provider))]
         BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
-        BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
+        BuiltinModule::Tls => crate::modules::tls_shared_vm::build_module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
         BuiltinModule::Module => crate::modules::module_shared_vm::module(context),
         BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(
@@ -2445,19 +2160,14 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
         BuiltinModule::Sys => crate::modules::util_module_shared_vm::sys_module(context),
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
+        // The public module's `ChildProcess` and `spawnSync`.
         BuiltinModule::InternalChildProcess => {
             let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
-            let module =
-                node_library_module(context, "child_process.js", "internal/child_process.js")?;
-            let constructor = get(context, public, "ChildProcess")?;
-            set(context, module, "ChildProcess", constructor)?;
-            // The public spawnSync facade dispatches through this cached
-            // internal module so Node's established internal hook points stay
-            // observable (and replaceable) by callers.
-            let spawn_sync = get(context, public, "__quenchSpawnSync")?;
-            set(context, module, "spawnSync", spawn_sync)?;
-            let key = context.string_rooted("__quenchInternalChildProcess");
-            context.define_data_property_rooted(public, key, module, true, false, true)?;
+            let module = context.object_rooted()?;
+            for name in ["ChildProcess", "spawnSync"] {
+                let value = get(context, public, name)?;
+                set(context, module, name, value)?;
+            }
             Ok(module)
         }
         BuiltinModule::Https => crate::modules::https_shared_vm::module(context),
@@ -2467,10 +2177,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             get(context, dns, "promises")
         }
         BuiltinModule::CaresBinding => crate::modules::cares_binding::module(context),
-        // HTTP/2 has no Rust implementation; its Node-sourced engine was removed.
-        BuiltinModule::Http2Binding | BuiltinModule::Http2 => {
-            Err(RootedError::host("node:http2 is not implemented".to_owned()))
-        }
+        BuiltinModule::Http2 => crate::modules::http2_shared_vm::build_module(context),
+        BuiltinModule::Http2Binding => crate::modules::http2_shared_vm::binding(context),
         BuiltinModule::Cluster => crate::modules::cluster::module(context),
         BuiltinModule::Repl => crate::modules::repl::module(context),
         BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
@@ -2482,10 +2190,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::PathPosix
         | BuiltinModule::PathWin32
         | BuiltinModule::InternalDgram
-        | BuiltinModule::InternalTestBinding
         | BuiltinModule::InternalBlockList
-        | BuiltinModule::InternalSocketAddress
-        | BuiltinModule::InternalUndici => Err(RootedError::host(
+        | BuiltinModule::InternalSocketAddress => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
     }
@@ -2586,17 +2292,9 @@ fn resolve_filename_from_host(
             PathBuf::from(directory)
         }
     };
-    let node_lib = context.host_mut().node_library_root.join("lib");
-    let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
-    let node_internal = (internal_specifier.starts_with("internal/")
-        && (internal_specifier != "internal/timers" || internals_exposed(context)))
-        || (internal_specifier.starts_with('_')
-            && module_is_file(context, &node_lib.join(internal_specifier).with_extension("js")));
     #[cfg(feature = "native-execution")]
     {
-        let virtual_path = if node_internal {
-            Some(node_lib.join(internal_specifier).with_extension("js"))
-        } else if specifier.starts_with("./") || specifier.starts_with("../") {
+        let virtual_path = if specifier.starts_with("./") || specifier.starts_with("../") {
             Some(directory.join(specifier).with_extension("js"))
         } else {
             None
@@ -2607,11 +2305,8 @@ fn resolve_filename_from_host(
             }
         }
     }
-    let (bases, resolved_specifier) = if node_internal {
-        (vec![node_lib], format!("./{internal_specifier}"))
-    } else {
-        (lookup.map_or_else(|| vec![directory], <[PathBuf]>::to_vec), specifier.to_owned())
-    };
+    let bases = lookup.map_or_else(|| vec![directory], <[PathBuf]>::to_vec);
+    let resolved_specifier = specifier.to_owned();
     // Each base in order: an existing explicit file, else the resolver's answer. The first
     // that is not "not found" decides, as does the last base's; a failure keeps its base.
     let resolve_in_bases = |resolver: &oxc_resolver::Resolver| {
@@ -2636,7 +2331,6 @@ fn resolve_filename_from_host(
         Ok(found) => (Ok(found), None),
         Err((base, error)) => {
             let missing_package = (matches!(error, oxc_resolver::ResolveError::NotFound(_))
-                && !node_internal
                 && is_bare_specifier(specifier))
             .then(|| super::esm_errors::missing_package_file(resolver, &base, specifier))
             .flatten();
@@ -2809,88 +2503,18 @@ pub(crate) fn attach_module_cache(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-enum ModuleCache {
-    NodeLibrary,
-    CommonJs,
-}
-
-impl ModuleCache {
-    fn get(self, context: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-        match self {
-            Self::NodeLibrary => Ok(context
-                .host_mut()
-                .shared_state()
-                .borrow()
-                .builtin_cache
-                .get(name)
-                .copied()
-                .unwrap_or_else(|| context.undefined())),
-            Self::CommonJs => {
-                let cache = commonjs_cache(context)?;
-                get(context, cache, name)
-            }
-        }
+/// Deletes the cache entry of a module whose load failed, as Node's loader does.
+fn remove_cached_module(context: &mut Context<'_>, cache: RootId, name: &str) -> Result<(), RootedError> {
+    let api = module_parent_api(context)?;
+    let delete = get(context, api, "deleteProperty")?;
+    let key = context.string_rooted(name);
+    let undefined = context.undefined();
+    let deleted = context.call_rooted(delete, undefined, &[cache, key])?;
+    if !context.truthy_rooted(deleted)? {
+        let error = context.type_error_rooted(&format!("Cannot delete property '{name}' of [object Object]"))?;
+        return Err(context.throw(error));
     }
-
-    fn insert(
-        self,
-        context: &mut Context<'_>,
-        name: &str,
-        module: RootId,
-    ) -> Result<(), RootedError> {
-        match self {
-            Self::NodeLibrary => {
-                let root = context.retain(module)?;
-                let old = context
-                    .host_mut()
-                    .shared_state()
-                    .borrow_mut()
-                    .builtin_cache
-                    .insert(name.to_owned(), root);
-                if let Some(old) = old {
-                    context.release_root(old);
-                }
-                Ok(())
-            }
-            Self::CommonJs => {
-                let cache = commonjs_cache(context)?;
-                context.assign_named_property_rooted(cache, name, module)
-            }
-        }
-    }
-
-    fn remove(self, context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
-        match self {
-            Self::NodeLibrary => {
-                let old = context
-                    .host_mut()
-                    .shared_state()
-                    .borrow_mut()
-                    .builtin_cache
-                    .remove(name);
-                if let Some(old) = old {
-                    context.release_root(old);
-                }
-                Ok(())
-            }
-            Self::CommonJs => {
-                let cache = commonjs_cache(context)?;
-                let api = module_parent_api(context)?;
-                let delete = get(context, api, "deleteProperty")?;
-                let key = context.string_rooted(name);
-                let undefined = context.undefined();
-                let deleted = context.call_rooted(delete, undefined, &[cache, key])?;
-                if !context.truthy_rooted(deleted)? {
-                    let error = context.type_error_rooted(&format!(
-                        "Cannot delete property '{name}' of [object Object]"
-                    ))?;
-                    return Err(context.throw(error));
-                }
-                Ok(())
-            }
-        }
-    }
+    Ok(())
 }
 
 fn first_module_parent(context: &mut Context<'_>, module: RootId) -> Result<RootId, RootedError> {
@@ -3121,59 +2745,7 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
     }
 }
 
-/// Whether the pinned Node library is available (its primordials module stands for it).
-pub(crate) fn node_library_present(context: &mut Context<'_>) -> bool {
-    node_primordials_source(context).is_some()
-}
 
-/// The pinned Node library's primordials module, when the library is present.
-fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
-    let root = context.host_mut().node_library_root.clone();
-    let path = root.join("lib/internal/per_context/primordials.js");
-    module_is_file(context, &path).then_some(path)
-}
-
-/// Node's primordials snapshot, which only Node's internal modules and their host
-/// counterparts read. Node initialization captures it before guests can make
-/// public intrinsic properties nonconfigurable; later consumers share that owner.
-pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootId>, RootedError> {
-    let state = context.host_mut().shared_state();
-    if let Some(primordials) = state.borrow().primordials_module {
-        return Ok(Some(primordials));
-    }
-    let Some(path) = node_primordials_source(context) else {
-        return Ok(None);
-    };
-    // Node builds its primordials before `Error.prepareStackTrace` exists; materializing
-    // that lazy property first builds them from inside its initializer, where it reads unset.
-    crate::modules::node_errors_shared_vm::materialize_prepare_stack_trace(context)?;
-    if let Some(primordials) = state.borrow().primordials_module {
-        return Ok(Some(primordials));
-    }
-    let exports = context
-        .with_startup_intrinsics(|context| load(context, &path, None, EntryGoal::CommonJs))?;
-    let retained = context.retain(exports)?;
-    context.release_root(exports);
-    state.borrow_mut().primordials_module = Some(retained);
-    Ok(Some(retained))
-}
-
-fn module_is_file(context: &mut Context<'_>, path: &Path) -> bool {
-    #[cfg(feature = "native-execution")]
-    if context.host_mut().embedded_module(path).is_some() { return true; }
-    let _ = context;
-    path.is_file()
-}
-
-fn is_node_library_source(context: &mut Context<'_>, path: &Path) -> bool {
-    // Only frozen images can still hold library sources; quench embeds none.
-    #[cfg(feature = "native-execution")]
-    if path.starts_with(&context.host_mut().node_library_root) && context.host_mut().embedded_module(path).is_some_and(|file| file.kind == quench_runtime::SourceKind::Script) {
-        return true;
-    }
-    let _ = (context, path);
-    false
-}
 
 /// Read a module's original bytes through the selected module input provider.
 fn module_file_bytes(context: &mut Context<'_>, path: &Path, kind: quench_runtime::SourceKind) -> std::io::Result<Vec<u8>> {
@@ -3215,23 +2787,8 @@ fn load_with_resolution(
             &message,
         )?);
     }
-    let library_root = context.host_mut().node_library_root.clone();
-    let library_relative = filename.strip_prefix(&library_root).ok();
-    let is_primordials =
-        library_relative == Some(Path::new("lib/internal/per_context/primordials.js"));
-    let in_node_internal = library_relative.is_some_and(|path| path.starts_with("lib"));
-    // A library module sees Node's bootstrap done before it starts, as in Node: building
-    // the primordials first may itself load this module (`Error.prepareStackTrace` loads
-    // `internal/errors`), which the cache then returns instead of a partial copy.
-    let primordials = if in_node_internal && !is_primordials {
-        node_primordials(context)?
-    } else {
-        None
-    };
-    let cache = if is_node_library_source(context, filename) {
-        ModuleCache::NodeLibrary
-    } else { ModuleCache::CommonJs };
-    let cached = cache.get(context, &key)?;
+    let cache = commonjs_cache(context)?;
+    let cached = get(context, cache, &key)?;
     if !context
         .rooted_value(cached)
         .is_some_and(|value| value.is_undefined())
@@ -3260,16 +2817,13 @@ fn load_with_resolution(
     if let Some(parent) = parent {
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
-    cache.insert(context, &key, module)?;
-    if library_relative.is_some() {
-        HOST_LOADS.with(|loads| loads.compiled.set(true));
-    }
+    context.assign_named_property_rooted(cache, &key, module)?;
     if let Some((directory, specifier)) = resolution {
         let name = context.string_rooted(&key);
         set(context, directory, specifier, name)?;
     }
-    let source = ModuleSource { key: &key, module, filename, parent, declared, library_relative, primordials, is_main };
-    let result = match crate::modules::module_shared_vm::replaced_extension_handler(context, filename, library_relative.is_some())? {
+    let source = ModuleSource { key: &key, module, filename, parent, declared, is_main };
+    let result = match crate::modules::module_shared_vm::replaced_extension_handler(context, filename)? {
         Some(handler) => run_extension_handler(context, handler, module, filename),
         None => execute_module(context, source),
     };
@@ -3277,25 +2831,12 @@ fn load_with_resolution(
         context.release_root(retained);
     }
     if result.is_err() {
-        cache.remove(context, &key)?;
+        remove_cached_module(context, cache, &key)?;
         if let Some((directory, specifier)) = resolution {
             delete_relative_resolution(context, directory, specifier)?;
         }
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Detach)?;
-        }
-    }
-    if library_relative == Some(Path::new("lib/internal/crypto/util.js")) {
-        if let Ok(exports) = &result {
-            if roots.borrow().crypto_handle_symbol.is_none() {
-                let symbol = get(context, *exports, "kHandle")?;
-                roots.borrow_mut().crypto_handle_symbol = Some(context.retain(symbol)?);
-            }
-        }
-    }
-    if library_relative == Some(Path::new("lib/internal/webidl.js")) {
-        if let Ok(exports) = &result {
-            crate::modules::events_shared_vm::adopt_abort_converter(context, *exports)?;
         }
     }
     result
@@ -3309,8 +2850,6 @@ struct ModuleSource<'a> {
     filename: &'a Path,
     parent: Option<RootId>,
     declared: Option<quench_runtime::SourceKind>,
-    library_relative: Option<&'a Path>,
-    primordials: Option<RootId>,
     is_main: bool,
 }
 
@@ -3332,15 +2871,13 @@ pub(crate) fn execute_user_module(context: &mut Context<'_>, module: RootId, fil
     let declared = declared_source_kind(&real_path_for_kind(filename).map_err(RootedError::host)?).map_err(RootedError::host)?;
     let parent = get(context, module, "parent")?;
     let parent = context.is_object_rooted(parent)?.then_some(parent);
-    let source = ModuleSource { key: &key, module, filename, parent, declared, library_relative: None, primordials: None, is_main: false };
+    let source = ModuleSource { key: &key, module, filename, parent, declared, is_main: false };
     execute_module(context, source)
 }
 
 /// Compile and run one module's file into `module` by its kind and extension.
 fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result<RootId, RootedError> {
-    let ModuleSource { key, module, filename, parent, declared, library_relative, primordials, is_main } = source;
-    let is_primordials = library_relative == Some(Path::new("lib/internal/per_context/primordials.js"));
-    let in_node_internal = library_relative.is_some_and(|path| path.starts_with("lib"));
+    let ModuleSource { key, module, filename, parent, declared, is_main } = source;
     if declared == Some(quench_runtime::SourceKind::Module) {
         return load_es_module(context, &key, module, filename, parent);
     }
@@ -3373,18 +2910,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         Some(crate::aot::PreparedModuleSource::Original) => file_text,
         #[cfg(feature = "native-execution")]
         Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
-        _ if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY => {
-            if library_relative.is_some() {
-                return Err(RootedError::host(format!("SDK module has no frozen source preparation: {}", filename.display())));
-            }
-            file_text
-        }
-        _ => {
-            if library_relative.is_some() {
-                return Err(RootedError::host(format!("{}: Node library module is not implemented in Rust", filename.display())));
-            }
-            file_text
-        }
+        _ => file_text,
     };
     let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
     let file_text = if prepared.is_none() && typed_commonjs {
@@ -3394,12 +2920,12 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         }
     } else { file_text };
     #[cfg(feature = "aot")]
-    if library_relative.is_some() || typed_commonjs {
+    if typed_commonjs {
         context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
     }
 
-    // An embedded library file is static text the compiled program can retain as is;
-    // a projected one is new text.
+    // An embedded file is static text the compiled program can retain as is; a
+    // projected one is new text.
     let embedded = match file_text {
         std::borrow::Cow::Borrowed(text) => Some(script_body(text)),
         std::borrow::Cow::Owned(_) => None,
@@ -3420,28 +2946,8 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         }
         _ => {
             let text = script_body(text);
-            let primordial_seed = if is_primordials {
-                Some(context.object_rooted()?)
-            } else {
-                None
-            };
-
             let exports = get(context, module, "exports")?;
-            let public_require = get(context, module, "require")?;
-            let require = if in_node_internal {
-                let require = context.host_function_named_with_data(
-                    super::operation("nodeLibraryRequire"),
-                    "require",
-                    module,
-                )?;
-                for name in ["resolve", "main", "cache"] {
-                    let value = get(context, public_require, name)?;
-                    set(context, require, name, value)?;
-                }
-                require
-            } else {
-                public_require
-            };
+            let require = get(context, module, "require")?;
             let name = context.string_rooted(&key);
             let directory = context.string_rooted(
                 &filename
@@ -3449,39 +2955,14 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     .unwrap_or(Path::new("."))
                     .to_string_lossy(),
             );
-            let primordials = match primordial_seed.or(primordials) {
-                Some(root) => root,
-                None => context.undefined(),
-            };
-            // Node's own library carries an internal-binding preamble; quench runs none
-            // of that library (decision 38).
-            if library_relative.is_some() {
-                return Err(RootedError::host(format!(
-                    "{}: Node library module is not implemented in Rust",
-                    filename.display()
-                )));
-            }
-            let prefix = WRAPPER_PREFIX.to_owned();
+            let (prefix, suffix) = (WRAPPER_PREFIX, WRAPPER_SUFFIX);
             if parent.is_none() {
                 crate::host::resident_pages::release_before_entry_compile();
             }
-            // Node's primordials file fills the object its wrapper passes and exports it.
-            let (prefix, suffix) = if is_primordials {
-                (
-                    format!("{prefix}primordials ??= {{}};\n"),
-                    format!("\nmodule.exports = primordials;\n{WRAPPER_SUFFIX}"),
-                )
-            } else {
-                (prefix, WRAPPER_SUFFIX.to_owned())
-            };
             let wrapper = match embedded {
                 // The program retains the embedded text itself, not a wrapped copy.
                 Some(body) => context
-                    .evaluate_specialized_static_body_rooted(&prefix, body, &suffix, &key)?,
-                // A library module's text the host projected from its embedded text keeps
-                // its records, as an embedded one does, and goes through the same cache.
-                None if in_node_internal => context
-                    .evaluate_specialized_library_body_rooted(&prefix, text.to_owned(), &suffix, &key)?,
+                    .evaluate_specialized_static_body_rooted(prefix, body, suffix, &key)?,
                 // A text an earlier run detected as a module loads as one, without the
                 // CommonJS compile that would fail again (a failed compile is not cached).
                 None if declared.is_none() && cached_source_kind(text) == Some(quench_runtime::SourceKind::Module) => {
@@ -3496,13 +2977,13 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     let body_start = file_text.len() - text.len();
                     let mut wrapper_source = file_text.into_owned();
                     wrapper_source.reserve_exact(prefix.len() + suffix.len());
-                    wrapper_source.replace_range(..body_start, &prefix);
-                    wrapper_source.push_str(&suffix);
+                    wrapper_source.replace_range(..body_start, prefix);
+                    wrapper_source.push_str(suffix);
                     let typescript = matches!(
                         filename.extension().and_then(|extension| extension.to_str()),
                         Some("cts" | "ts"),
                     );
-                    let wrapper = match evaluate_wrapper(context, &prefix, &wrapper_source, &key, is_main, typescript) {
+                    let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, &key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
                         Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
                             && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
@@ -3528,43 +3009,11 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                 crate::host::resident_pages::release_read_only_code_and_data();
                 crate::host::resident_pages::release_free_heap_pages();
                 crate::host::resident_pages::quench_entry_compiled();
-            } else if in_node_internal {
-                crate::host::resident_pages::release_read_only_pages_after_load();
             }
-            let mut arguments = vec![exports, require, module, name, directory];
-            if in_node_internal {
-                arguments.push(primordials);
-                arguments.push(
-                    context
-                        .host_function(crate::host::shared_vm::operation("traceInternal"))?,
-                );
-            }
-            context.call_rooted(wrapper, exports, &arguments)?;
-            if let Some(root) = primordial_seed {
-                context.release_root(root);
-            }
+            context.call_rooted(wrapper, exports, &[exports, require, module, name, directory])?;
         }
     }
     let exports = get(context, module, "exports")?;
-    if library_relative == Some(Path::new("lib/internal/util/debuglog.js")) {
-        let initialize = get(context, exports, "initializeDebugEnv")?;
-        let initial = context.host_mut().initial_node_debug.clone();
-        let debug = initial
-            .map(|value| context.string_rooted(&value))
-            .unwrap_or_else(|| context.undefined());
-        let absent = context.undefined();
-        context.call_rooted(initialize, absent, &[debug])?;
-    }
-    if library_relative == Some(Path::new("lib/internal/util/inspect.js")) {
-        crate::modules::console_shared_vm::note_inspect_loaded(context)?;
-    }
-    if library_relative == Some(Path::new("lib/diagnostics_channel.js")) {
-        crate::modules::console_shared_vm::note_channels_loaded(context)?;
-    }
-    let exports = get(context, module, "exports")?;
-    if let Some(path) = library_relative {
-        record_library_originals(context, path, exports)?;
-    }
     let loaded = context.boolean(true);
     set(context, module, "loaded", loaded)?;
     Ok(exports)
@@ -3732,16 +3181,6 @@ fn set(
             "cannot set module property {name}"
         )))
     }
-}
-
-pub(crate) fn node_library_module_in_realm(
-    _: &mut Context<'_>,
-    _: RootId,
-    relative: &str,
-    _: RootId,
-    _: RootId,
-) -> Result<RootId, RootedError> {
-    crate::host::removed_javascript(format!("node:{relative}"))
 }
 
 /// Run the unchanged SDK worker policy after native process IPC and require

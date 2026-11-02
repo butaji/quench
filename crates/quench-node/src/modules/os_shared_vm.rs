@@ -298,7 +298,7 @@ const PRIORITY_HIGHEST: f64 = -20.0;
 const PRIORITY_LOW: f64 = 19.0;
 /// `getInterfaceAddresses` reports each address as this many consecutive fields.
 #[cfg(unix)]
-const INTERFACE_FIELDS: usize = 7;
+pub(crate) const INTERFACE_FIELDS: usize = 7;
 
 /// `node:os` (lib/os.js) over the native OS binding.
 #[cfg(unix)]
@@ -344,7 +344,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 /// `getCheckedFunction`: a binding read that fills `ctx` and returns undefined on failure
 /// throws `ERR_SYSTEM_ERROR`.
 #[cfg(unix)]
-fn checked(
+pub(crate) fn checked(
     context: &mut NativeContext<'_, NodeHost>,
     read: fn(&mut NativeContext<'_, NodeHost>, RootId, &[RootId]) -> Result<RootId, RootedError>,
     leading: &[RootId],
@@ -474,7 +474,7 @@ fn network_interfaces(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
 
 /// `getInterfaceAddresses` marks an address without an IPv6 scope with this scope.
 #[cfg(unix)]
-const NO_SCOPE: f64 = -1.0;
+pub(crate) const NO_SCOPE: f64 = -1.0;
 
 /// `getCIDR`: the prefix length of a contiguous netmask, `None` for any other mask.
 #[cfg(unix)]

@@ -100,6 +100,8 @@ enum State {
     Trailers,
     UntilEof,
     Upgraded,
+    /// The head is out, but its framing is invalid: the failure is next.
+    Rejected(Failure),
     Failed,
 }
 
@@ -110,6 +112,8 @@ enum Framing {
     Fixed(usize),
     Chunked,
     UntilEof,
+    /// A head llhttp delivers before failing it (`after_headers_complete`).
+    Rejected(Failure),
 }
 
 pub(crate) struct Parser {
@@ -126,10 +130,12 @@ pub(crate) struct Parser {
     head_request: bool,
     /// When the current message's first byte arrived (server timeouts).
     pub(crate) started: Option<std::time::Instant>,
+    /// `insecureHTTPParser`: header values may hold any byte.
+    lenient: bool,
 }
 
 impl Parser {
-    pub(crate) fn new(kind: Kind, max_header_size: usize) -> Self {
+    pub(crate) fn new(kind: Kind, max_header_size: usize, lenient: bool) -> Self {
         Self {
             kind,
             state: State::Head,
@@ -139,6 +145,7 @@ impl Parser {
             max_header_size,
             head_request: false,
             started: None,
+            lenient,
         }
     }
 
@@ -194,6 +201,7 @@ impl Parser {
             (_, Framing::Fixed(length)) => State::Fixed(length),
             (_, Framing::Chunked) => State::ChunkSize,
             (_, Framing::UntilEof) => State::UntilEof,
+            (_, Framing::Rejected(failure)) => State::Rejected(failure),
         };
     }
 
@@ -207,6 +215,7 @@ impl Parser {
         match self.state {
             State::Head => self.head(),
             State::AwaitingOutcome(_) | State::Upgraded | State::Failed => Ok(None),
+            State::Rejected(failure) => Err(self.fail(failure, 0)),
             State::Fixed(remaining) => {
                 if self.buffer.is_empty() {
                     return Ok(None);
@@ -270,12 +279,10 @@ impl Parser {
     }
 
     fn head(&mut self) -> Result<Option<Event>, ParseError> {
-        // A request may be preceded by empty lines (RFC 9112 2.2).
-        if self.kind == Kind::Request {
-            while self.buffer.starts_with(CRLF) {
-                self.consume(CRLF.len());
-            }
-        }
+        // A message may be preceded by empty lines (RFC 9112 2.2): llhttp's start state
+        // skips each CR and LF before a request or a response.
+        let blank = self.buffer.iter().take_while(|byte| CRLF.contains(byte)).count();
+        self.consume(blank);
         if self.buffer.is_empty() {
             return Ok(None);
         }
@@ -297,7 +304,7 @@ impl Parser {
                 .map_or(head_length, |line_end| line_end + 1);
             return Err(self.fail(failure::HEADER_OVERFLOW, position));
         }
-        let parsed = parse_head(self.kind, &self.buffer[..end]);
+        let parsed = parse_head(self.kind, &self.buffer[..end], self.lenient);
         let (head, framing) = match parsed.and_then(|(head, offsets)| self.framing(head, &offsets)) {
             Ok(value) => value,
             Err((failure, position)) => return Err(self.fail(failure, position)),
@@ -374,9 +381,6 @@ impl Parser {
         if transfer_encoding.is_some() && content_length.is_some() {
             return Err((failure::TRANSFER_ENCODING_WITH_LENGTH, framing_at));
         }
-        if self.kind == Kind::Request && transfer_encoding.is_some() && !chunked {
-            return Err((failure::INVALID_TRANSFER_ENCODING, framing_at));
-        }
         head.upgrade = match self.kind {
             Kind::Request => (connection_upgrade && upgrade_header) || head.method == "CONNECT",
             Kind::Response => head.status == SWITCHING_PROTOCOLS,
@@ -385,6 +389,8 @@ impl Parser {
             && (self.head_request || is_informational(head.status) || NO_BODY_STATUSES.contains(&head.status));
         let framing = if no_body_response {
             Framing::None
+        } else if self.kind == Kind::Request && transfer_encoding.is_some() && !chunked {
+            Framing::Rejected(failure::INVALID_TRANSFER_ENCODING)
         } else if chunked {
             Framing::Chunked
         } else if let Some(length) = content_length {
@@ -430,7 +436,7 @@ impl Parser {
         let Some(end) = find(&self.buffer, HEAD_END) else {
             return Ok(None);
         };
-        let trailers = match header_lines(&self.buffer[..end], 0) {
+        let trailers = match header_lines(&self.buffer[..end], 0, self.lenient) {
             Ok(lines) => lines.into_iter().map(|(header, _)| header).collect(),
             Err((failure, position)) => return Err(self.fail(failure, position)),
         };
@@ -460,7 +466,7 @@ fn latin1(bytes: &[u8]) -> String {
 }
 
 /// The head and where each of its header values starts.
-fn parse_head(kind: Kind, bytes: &[u8]) -> Result<(Head, Vec<usize>), (Failure, usize)> {
+fn parse_head(kind: Kind, bytes: &[u8], lenient: bool) -> Result<(Head, Vec<usize>), (Failure, usize)> {
     let line_end = find(bytes, CRLF).unwrap_or(bytes.len());
     let line = &bytes[..line_end];
     let mut head = Head {
@@ -499,7 +505,7 @@ fn parse_head(kind: Kind, bytes: &[u8]) -> Result<(Head, Vec<usize>), (Failure, 
     }
     let start = line_end + CRLF.len();
     let rest = bytes.get(start..).unwrap_or_default();
-    let (headers, offsets) = header_lines(rest, start)?.into_iter().unzip();
+    let (headers, offsets) = header_lines(rest, start, lenient)?.into_iter().unzip();
     head.headers = headers;
     Ok((head, offsets))
 }
@@ -516,8 +522,9 @@ fn version_of(bytes: &[u8]) -> Result<(u8, u8), (Failure, usize)> {
 }
 
 /// Header lines `name: value`, each value without its surrounding whitespace, with the
-/// position its value starts at; `base` is where `bytes` starts in the input.
-fn header_lines(bytes: &[u8], base: usize) -> Result<Vec<((String, String), usize)>, (Failure, usize)> {
+/// position its value starts at; `base` is where `bytes` starts in the input. A `lenient`
+/// parser (llhttp's lenient headers) accepts any byte in a value.
+fn header_lines(bytes: &[u8], base: usize, lenient: bool) -> Result<Vec<((String, String), usize)>, (Failure, usize)> {
     let mut headers = Vec::new();
     if bytes.is_empty() {
         return Ok(headers);
@@ -535,7 +542,7 @@ fn header_lines(bytes: &[u8], base: usize) -> Result<Vec<((String, String), usiz
         };
         let value_at = at + colon + 1;
         let value = trim_whitespace(&line[colon + 1..]);
-        if let Some(position) = value.iter().position(|&byte| byte != b'\t' && (byte < b' ' || byte == 0x7f)) {
+        if let Some(position) = value.iter().position(|&byte| !lenient && byte != b'\t' && (byte < b' ' || byte == 0x7f)) {
             return Err((failure::INVALID_HEADER_VALUE, value_at + position));
         }
         headers.push(((latin1(name), latin1(value)), value_at));
@@ -595,7 +602,7 @@ mod tests {
 
     #[test]
     fn request_with_fixed_body_arrives_in_pieces() {
-        let mut parser = Parser::new(Kind::Request, LIMIT);
+        let mut parser = Parser::new(Kind::Request, LIMIT, false);
         parser.push(b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe");
         let first = events(&mut parser, HeadOutcome::Body).unwrap();
         assert!(matches!(&first[0], Event::Head(head) if head.method == "POST" && head.url == "/a" && head.keep_alive));
@@ -608,7 +615,7 @@ mod tests {
 
     #[test]
     fn chunked_response_with_trailers() {
-        let mut parser = Parser::new(Kind::Response, LIMIT);
+        let mut parser = Parser::new(Kind::Response, LIMIT, false);
         parser.push(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nX-T: 1\r\n\r\n");
         let events = events(&mut parser, HeadOutcome::Body).unwrap();
         assert!(matches!(&events[1], Event::Body(body) if body == b"abc"));
@@ -617,7 +624,7 @@ mod tests {
 
     #[test]
     fn unknown_method_fails_early() {
-        let mut parser = Parser::new(Kind::Request, LIMIT);
+        let mut parser = Parser::new(Kind::Request, LIMIT, false);
         parser.push(b"GARBAGE\r\n\r\n");
         let error = parser.next().err().unwrap();
         assert_eq!((error.code, error.bytes_parsed), ("HPE_INVALID_METHOD", 1));
@@ -625,14 +632,40 @@ mod tests {
 
     #[test]
     fn length_with_transfer_encoding_fails() {
-        let mut parser = Parser::new(Kind::Request, LIMIT);
+        let mut parser = Parser::new(Kind::Request, LIMIT, false);
         parser.push(b"GET / HTTP/1.1\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n");
         assert_eq!(parser.next().err().unwrap().code, "HPE_INVALID_TRANSFER_ENCODING");
     }
 
     #[test]
+    fn unchunked_request_transfer_encoding_fails_after_its_head() {
+        let mut parser = Parser::new(Kind::Request, LIMIT, false);
+        parser.push(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunkedchunked\r\n\r\n1\r\nA\r\n");
+        assert!(matches!(parser.next(), Ok(Some(Event::Head(_)))));
+        parser.resolve_head(HeadOutcome::Body);
+        assert_eq!(parser.next().err().unwrap().code, "HPE_INVALID_TRANSFER_ENCODING");
+    }
+
+    #[test]
+    fn leading_empty_lines_precede_a_response() {
+        let mut parser = Parser::new(Kind::Response, LIMIT, false);
+        parser.push(b"\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n");
+        assert!(matches!(parser.next(), Ok(Some(Event::Head(_)))));
+    }
+
+    #[test]
+    fn lenient_parser_accepts_control_bytes_in_values() {
+        let head = b"HTTP/1.1 200 OK\r\nHello: foo\x08foo\r\nContent-Length: 0\r\n\r\n";
+        for lenient in [false, true] {
+            let mut parser = Parser::new(Kind::Response, LIMIT, lenient);
+            parser.push(head);
+            assert_eq!(parser.next().is_ok(), lenient);
+        }
+    }
+
+    #[test]
     fn response_without_length_reads_until_eof() {
-        let mut parser = Parser::new(Kind::Response, LIMIT);
+        let mut parser = Parser::new(Kind::Response, LIMIT, false);
         parser.push(b"HTTP/1.0 200 OK\r\n\r\nbody");
         let events = events(&mut parser, HeadOutcome::Body).unwrap();
         assert!(matches!(&events[0], Event::Head(head) if !head.keep_alive));
@@ -641,7 +674,7 @@ mod tests {
 
     #[test]
     fn upgrade_keeps_the_bytes_after_the_head() {
-        let mut parser = Parser::new(Kind::Request, LIMIT);
+        let mut parser = Parser::new(Kind::Request, LIMIT, false);
         parser.push(b"GET / HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: ws\r\n\r\nrest");
         let Ok(Some(Event::Head(head))) = parser.next() else { panic!("head") };
         assert!(head.upgrade);
@@ -651,7 +684,7 @@ mod tests {
 
     #[test]
     fn oversized_head_overflows() {
-        let mut parser = Parser::new(Kind::Request, 32);
+        let mut parser = Parser::new(Kind::Request, 32, false);
         parser.push(b"GET / HTTP/1.1\r\nX: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert_eq!(parser.next().err().unwrap().code, "HPE_HEADER_OVERFLOW");
     }
