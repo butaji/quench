@@ -21365,6 +21365,35 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
 }
 
 #[test]
+fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
+    // A double's ToInt32 is its truncation modulo 2^32 natively below 2^63 in magnitude;
+    // larger magnitudes, infinities and NaN leave, and every one matches the interpreter.
+    let source = r#"(function () {
+      function toInt(xs, scale) { var s = 0; for (var i = 0; i < xs.length; i++) s = (s + ((xs[i] * scale) | 0)) | 0; return s; }
+      function bits(x) { return ((x | 0) + (x ^ 0) + (x & -1) + (x << 0)) * 4294967296 + (x >>> 0); }
+      var xs = [1.5, -1.5, -0.5, 2147483647.9, -2147483648.9, 4294967301.25, 9007199254740993,
+        -9007199254740993, 1e19, -1e19, 1e300, NaN, Infinity, -Infinity, -0];
+      var total = 0;
+      for (var k = 0; k < 3000; k++) total = toInt(xs, 1) + bits(xs[k % xs.length] * 1);
+      for (var j = 0; j < xs.length; j++) total += bits(xs[j] * 1);
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-to-int32.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
 fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
     // A sum only `| 0` reads wraps without an overflow exit; an increment its loop's `i < n`
     // bounds runs without one; one no test bounds keeps it and overflows to a double.

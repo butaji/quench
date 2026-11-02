@@ -709,7 +709,32 @@ fn lower(
     Some((native, native_count))
 }
 
+/// 2^63: below it in magnitude a double truncates to an int64 exactly, whose low 32 bits are its
+/// ToInt32 (ECMA-262 7.1.6).
+const TO_INT32_EXACT_BOUND: f64 = 9_223_372_036_854_775_808.0;
+
 impl Lowering<'_, '_> {
+    /// A bitwise operand's ToInt32: an int32 as it is, a number by truncation modulo 2^32. A
+    /// double of magnitude 2^63 or more, an infinity or NaN leaves (`TO_INT32_EXACT_BOUND`).
+    fn operand_to_int32(&mut self, state: &mut State, operand: Operand, exit: ir::Block) -> Option<ir::Value> {
+        let integral = match operand.kind()? {
+            OperandKind::Register => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
+            OperandKind::Constant => self.program.constants.get(usize::from(operand.payload()))
+                .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+            OperandKind::Field | OperandKind::Local => return None,
+        };
+        if integral {
+            return self.operand_int(state, operand, exit);
+        }
+        let number = self.operand_number(state, operand, exit)?;
+        let magnitude = self.ins().fabs(number);
+        let bound = self.ins().f64const(TO_INT32_EXACT_BOUND);
+        let exact = self.ins().fcmp(ir::condcodes::FloatCC::LessThan, magnitude, bound);
+        emit_js_guard(&mut self.builder, exact, exit);
+        let wide = self.ins().fcvt_to_sint_sat(types::I64, number);
+        Some(self.ins().ireduce(types::I32, wide))
+    }
+
     /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its
     /// header bounds: the loop's header leaves unless `register < bound`, with `bound` an
     /// int32 the loop never writes, and this increment is the loop's only write of `register`,
@@ -1837,8 +1862,8 @@ impl Lowering<'_, '_> {
                 }
             }
             (_, Some(bitwise)) => {
-                let left_int = self.operand_int(state, left, exit).expect("supported operand");
-                let right_int = self.operand_int(state, right, exit).expect("supported operand");
+                let left_int = self.operand_to_int32(state, left, exit)?;
+                let right_int = self.operand_to_int32(state, right, exit)?;
                 if bitwise == super::operations::NumberBitwise::ShiftRightUnsigned {
                     let number = emit_number_bitwise_operation(&mut self.builder, bitwise, left_int, right_int);
                     self.set_number(state, destination, number);
