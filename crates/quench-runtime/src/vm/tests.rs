@@ -21365,6 +21365,36 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
 }
 
 #[test]
+fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
+    // A sum only `| 0` reads wraps without an overflow exit; an increment its loop's `i < n`
+    // bounds runs without one; one no test bounds keeps it and overflows to a double.
+    let source = r#"(function () {
+      function wrapAdd(a, n) { var s = a; for (var i = 0; i < n; i++) s = (s + 2147483000) | 0; return s; }
+      function wrapSub(a, n) { var s = a; for (var i = 0; i < n; i++) s = (s - 2147483000) | 0; return s; }
+      function nearMax(start, bound) { var c = 0; for (var i = start; i < bound; i++) c = (c + 1) | 0; return c * 4294967296 + i; }
+      function unbounded(start, n) { var i = start, c = 0; while (c < n) { i++; c++; } return i; }
+      var total = 0;
+      for (var r = 0; r < 3000; r++) {
+        total = wrapAdd(r, 7) + wrapSub(-r, 7) + nearMax(2147483640, 2147483647) + unbounded(2147483645, 5);
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-int-arithmetic.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert_eq!(answers[0], Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
 #[cfg(not(quench_profiled))]
 fn lane_bodies_leave_before_a_store_changes_property_storage() {
     use crate::bytecode::Op;

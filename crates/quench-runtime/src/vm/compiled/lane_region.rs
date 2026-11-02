@@ -90,6 +90,8 @@ struct Entry {
     capture_values: Variable,
     capture_len: Variable,
     this: Variable,
+    /// The run's interrupt flag's address (`CallContext::interrupt`), fixed for the run.
+    interrupt: Variable,
 }
 
 pub(super) struct LaneRegion {
@@ -708,6 +710,63 @@ fn lower(
 }
 
 impl Lowering<'_, '_> {
+    /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its
+    /// header bounds: the loop's header leaves unless `register < bound`, with `bound` an
+    /// int32 the loop never writes, and this increment is the loop's only write of `register`,
+    /// run once per test (in no nested loop). Then `register + 1 <= bound`, which no int32
+    /// overflow reaches.
+    fn bounded_increment(&self, pc: usize, source: Register, register: Register) -> bool {
+        if source != register { return false; }
+        let instructions = &self.unit.instructions;
+        instructions.iter().enumerate().any(|(end, jump)| {
+            if jump.op().immediate_role() != crate::bytecode::ImmediateRole::JumpTarget { return false; }
+            let header = jump.imm() as usize;
+            if header > end || !(header..=end).contains(&pc) { return false; }
+            let test = instructions[header];
+            if test.op() != Op::JumpBinaryFalse || test.jump_target() as usize <= end
+                || super::operations::NumberRelation::from_operator(test.binary_operator_field())
+                    != Some(super::operations::NumberRelation::LessThan) {
+                return false;
+            }
+            let (left, bound) = (test.operand_b(), test.operand_c());
+            let int_bound = match bound.kind() {
+                Some(OperandKind::Register) => {
+                    let bound = bound.payload();
+                    self.facts.at(header).is_some_and(|types| types.get(usize::from(bound)).is_some_and(|ty| ty.is_subtype(Type::INT32)))
+                        && !instructions[header..=end].iter().any(|instruction| writes(*instruction).contains(&bound))
+                }
+                Some(OperandKind::Constant) => self.program.constants.get(usize::from(bound.payload()))
+                    .and_then(super::facts::immediate).is_some_and(super::facts::is_int32),
+                _ => false,
+            };
+            // Once per test: in no loop nested inside this one.
+            let nested = instructions.iter().enumerate().any(|(inner_end, inner)| {
+                inner.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                    && (inner.imm() as usize) <= inner_end && header < inner.imm() as usize
+                    && (inner.imm() as usize..=inner_end).contains(&pc)
+            });
+            !nested && left.register_index() == Some(register) && int_bound
+                && instructions[header..=end].iter().enumerate()
+                    .filter(|(_, instruction)| writes(**instruction).contains(&register))
+                    .all(|(offset, _)| header + offset == pc)
+        })
+    }
+
+    /// Whether the instruction after `pc` is `register | 0` and nothing else reads `register`:
+    /// it reads only the result's ToInt32.
+    fn truncated_next(&self, pc: usize, register: Register) -> bool {
+        let Some(next) = self.unit.instructions.get(pc + 1).copied() else { return false };
+        let zero = |operand: Operand| operand.kind() == Some(OperandKind::Constant)
+            && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)
+                .and_then(Value::as_number) == Some(0.0);
+        let this = |operand: Operand| operand.register_index() == Some(register);
+        next.op() == Op::Binary
+            && super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator())
+                == Some(super::operations::NumberBitwise::Or)
+            && ((this(next.operand_b()) && zero(next.operand_c())) || (zero(next.operand_b()) && this(next.operand_c())))
+            && (next.result_register() == register || !self.is_live(pc + 2, register))
+    }
+
     /// `register`'s int32 view (`Registers::int`).
     fn int_var(&mut self, register: usize) -> Variable {
         *self.registers.int[register].get_or_insert_with(|| self.builder.declare_var(types::I32))
@@ -763,7 +822,11 @@ impl Lowering<'_, '_> {
         let len = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len));
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
-        Entry { receiver, receiver_shapes, store_atoms, capture_values, capture_len, this }
+        let interrupt = self.builder.declare_var(types::I64);
+        let flag = self.builder.ins().load(types::I64, MemFlagsData::trusted(), self.context,
+            std::mem::offset_of!(CallContext, interrupt) as i32);
+        self.builder.def_var(interrupt, flag);
+        Entry { receiver, receiver_shapes, store_atoms, capture_values, capture_len, this, interrupt }
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
@@ -902,7 +965,9 @@ impl Lowering<'_, '_> {
                         let one = self.ins().iconst(types::I32, 1);
                         self.ins().sadd_overflow(value, one)
                     };
-                    emit_js_guard_not(&mut self.builder, overflow, exit);
+                    if decrement || !self.bounded_increment(pc, instruction.register_b(), instruction.result_register()) {
+                        emit_js_guard_not(&mut self.builder, overflow, exit);
+                    }
                     self.set_int(state, instruction.result_register(), result);
                     true
                 })
@@ -1262,13 +1327,7 @@ impl Lowering<'_, '_> {
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         let exit = self.guard_exit(state, pc);
-        let context = self.context;
-        let flag = self.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            context,
-            std::mem::offset_of!(CallContext, interrupt) as i32,
-        );
+        let flag = self.builder.use_var(self.entry.as_ref().expect("entry facts").interrupt);
         let requested = self.ins().load(types::I8, MemFlagsData::trusted(), flag, 0);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
         emit_js_guard(&mut self.builder, clear, exit);
@@ -1718,7 +1777,12 @@ impl Lowering<'_, '_> {
                     let left_int = self.operand_int(state, left, exit).expect("supported operand");
                     let right_int = self.operand_int(state, right, exit).expect("supported operand");
                     let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
-                    emit_js_guard_not(&mut self.builder, overflow, exit);
+                    // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
+                    // result, which needs no overflow exit.
+                    if !(matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
+                        && self.truncated_next(pc, destination)) {
+                        emit_js_guard_not(&mut self.builder, overflow, exit);
+                    }
                     if arithmetic == super::operations::NumberArithmetic::Multiply {
                         let zero = self.ins().icmp_imm_u(IntCC::Equal, result, 0);
                         let signs = self.ins().bor(left_int, right_int);

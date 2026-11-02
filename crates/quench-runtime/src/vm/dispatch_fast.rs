@@ -18908,10 +18908,11 @@ fn install_loop_sites<'live, H: Host>(
                             rejections.push((reason, 1));
                         }
                     }
+                    // A loop the region analysis rejects keeps its site, diagnostics or not: its
+                    // function's lane body may run it (`lane_loop_body_or_retire`), and the
+                    // site retires to the plain jump where none does. A diagnostics run tiers
+                    // as any other.
                     if !general_dispatch {
-                        if !diagnostics {
-                            return None;
-                        }
                         (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                     } else {
                         (std::cell::OnceCell::new(), true, Some(failure), Vec::new())
