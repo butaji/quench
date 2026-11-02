@@ -3020,6 +3020,11 @@ impl<H: Host> Vm<H> {
         self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
+        // Only native code reads slot representations, so only a runtime that runs lane
+        // bodies keeps them, starting from what its live objects hold.
+        if self.programs.js_jit_lane_methods_enabled() {
+            self.heap.track_slot_representations();
+        }
         Ok(())
     }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {

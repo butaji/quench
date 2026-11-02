@@ -723,8 +723,10 @@ impl Heap {
     }
 
     /// The slots of live object records whose value its owner's representation does not hold
-    /// (`ValueArena::slot_representation`): zero while every write joins its value's class.
+    /// (`ValueArena::slot_representation`): zero while every write joins its value's class;
+    /// zero too where representations are not kept.
     pub(crate) fn unrepresented_slots(&self) -> usize {
+        if !self.properties.tracks() { return 0; }
         let mut unrepresented = 0;
         self.object_records.for_each_live(|_, object| {
             let shape = object.exact_shape();

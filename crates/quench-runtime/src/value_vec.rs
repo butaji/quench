@@ -224,6 +224,9 @@ pub(crate) struct ValueArena {
     /// Per owner shape, the representation every value its slot has held fits
     /// (`SlotRepresentation`), joined on each write.
     owner_reps: Vec<SlotRepresentation>,
+    /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
+    /// native code reads representations keeps them.
+    tracking: bool,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -239,6 +242,7 @@ impl Default for ValueArena {
             shape_chains: vec![0],
             chain_owners: Vec::new(),
             owner_reps: vec![SlotRepresentation::None],
+            tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -259,7 +263,7 @@ impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { values, free, released_values, shape_lengths, shape_chains, chain_owners, owner_reps, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains, chain_owners, owner_reps, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -309,6 +313,7 @@ impl ValueArena {
             shape_chains,
             chain_owners,
             owner_reps,
+            tracking: false,
             dictionaries,
             free_dictionaries: reader.u32s()?,
             next_dictionary: reader.u32()?,
@@ -393,16 +398,28 @@ impl ValueArena {
     /// shape holds the slot (an ordinary shape's; a dictionary's holds none of its own).
     #[inline(always)]
     pub(crate) fn note_shape_value(&mut self, shape: u32, slot: usize, value: Value) {
-        if slot < self.shape_length(shape) && !value.is_deleted() {
+        if self.tracking && slot < self.shape_length(shape) && !value.is_deleted() {
             self.note_slot_value(shape, slot, value);
         }
     }
 
     /// `note_shape_value` of an object's initial `values`, slot by slot.
     pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
+        if !self.tracking { return; }
         for (slot, value) in values.iter().copied().enumerate() {
             self.note_shape_value(shape, slot, value);
         }
+    }
+
+    /// Starts joining writes' classes from none: the caller joins what live objects hold.
+    pub(crate) fn track(&mut self) {
+        self.tracking = true;
+        self.owner_reps.fill(SlotRepresentation::None);
+    }
+
+    /// Whether writes join their values' classes.
+    pub(crate) fn tracks(&self) -> bool {
+        self.tracking
     }
 
     /// The slots `shape`'s objects store.
@@ -425,6 +442,7 @@ impl ValueArena {
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
     #[inline(always)]
     pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+        if !self.tracking { return false; }
         let owner = self.slot_owner(shape, slot) as usize;
         let held = self.owner_reps[owner];
         // A slot that has held any value holds every value: the common case pays one compare.

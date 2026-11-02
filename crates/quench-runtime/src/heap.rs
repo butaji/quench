@@ -1723,11 +1723,24 @@ impl Heap {
             debug_assert!(parent.is_none_or(|(parent, _)| (parent as usize) < shape), "a compacted parent precedes its children");
             self.properties.register_derived_shape(shape as u32, length, parent);
         }
+        self.join_live_slot_values();
+    }
+
+    /// Keeps slot representations from now on (`ValueArena::track`), from what live objects hold.
+    pub(crate) fn track_slot_representations(&mut self) {
+        self.properties.track();
+        self.join_live_slot_values();
+    }
+
+    /// Joins each live object record's slot values into its owners' representations.
+    fn join_live_slot_values(&mut self) {
+        if !self.properties.tracks() { return; }
         let mut held = Vec::new();
+        let properties = &self.properties;
         self.object_records.for_each_live(|_, object| {
             let shape = object.exact_shape();
             if shape != object.shape() { return; }
-            for slot in 0..layouts.get(shape as usize).map_or(0, |(length, _)| *length) {
+            for slot in 0..properties.shape_length(shape) {
                 held.push((shape, slot, object as *const Object));
             }
         });
