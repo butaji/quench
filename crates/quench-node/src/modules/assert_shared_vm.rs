@@ -770,9 +770,14 @@ fn ok(c: &mut Context<'_>, call: Invocation, args: &[RootId]) -> Result<(), Root
     let (message, generated) = if args.is_empty() {
         (c.string_rooted("No value argument passed to `assert.ok()`"), true)
     } else if is_nullish(c, message) {
-        match falsy_source(c) {
-            Some(source) => (c.string_rooted(&format!("The expression evaluated to a falsy value:\n\n  {source}\n")), true),
-            None => (c.undefined(), true),
+        match c.caller_source_expression() {
+            Some(source) => (c.string_rooted(&assertion_source_message(&source)), true),
+            None => {
+                let message = c.undefined();
+                return Err(super::util_shared_vm::argument_type_error_with_expected(
+                    c, message, "message", "one of type string or function",
+                )?);
+            }
         }
     } else {
         if c.is_error_rooted(message)? {
@@ -787,12 +792,22 @@ fn ok(c: &mut Context<'_>, call: Invocation, args: &[RootId]) -> Result<(), Root
     Err(c.throw(error))
 }
 
-/// The source of the call expression at the assertion's caller (`getErrMessage`): the
-/// innermost JavaScript frame's file, read and parsed.
-fn falsy_source(c: &mut Context<'_>) -> Option<String> {
-    let frame = c.source_stack_frames(1).into_iter().next().filter(|frame| !frame.is_eval && !frame.script_name.is_empty())?;
-    let source = std::fs::read_to_string(&frame.script_name).ok()?;
-    super::assert_source::call_expression_at(&source, frame.line_number, frame.column_number)
+/// `getErrMessage` escapes source control characters while retaining tabs and line breaks.
+fn assertion_source_message(source: &str) -> String {
+    use std::fmt::Write;
+    let mut message = String::from("The expression evaluated to a falsy value:\n\n  ");
+    for character in source.chars() {
+        match character {
+            '\u{08}' => message.push_str("\\b"),
+            '\u{0c}' => message.push_str("\\f"),
+            '\0'..='\u{1f}' if !matches!(character, '\t' | '\n') => {
+                write!(message, "\\u{:04x}", character as u32).expect("writing to String");
+            }
+            _ => message.push(character),
+        }
+    }
+    message.push('\n');
+    message
 }
 
 /// `fail(message)`, and the legacy `fail(actual, expected, message, operator)`.
@@ -1279,4 +1294,65 @@ pub(crate) fn settled(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Ro
 pub(crate) fn rejected(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let reason = argument(c, args, 0);
     settle(c, Some(reason))
+}
+
+#[cfg(test)]
+mod source_tests {
+    #[test]
+    fn assertion_messages_use_admitted_source_including_eval_and_utf16_columns() {
+        let source = r#"
+const assert = require('node:assert');
+const messages = [];
+function capture(callback) {
+  try { callback(); } catch (error) {
+    if (error.name !== 'AssertionError' || error.code !== 'ERR_ASSERTION' ||
+        error.generatedMessage !== true || error.operator !== '==' ||
+        error.actual !== false || error.expected !== true) throw error;
+    messages.push(error.message);
+  }
+}
+capture(() => assert(false));
+capture(() => assert.ok(false));
+capture(() => assert['ok'](false));
+capture(() => assert?.ok(false));
+capture(() => (0, assert)(false));
+capture(() => assert[(() => 'ok')()](false));
+capture(() => assert.ok(
+  false
+));
+capture(() => { const unicode = '😀'; assert.ok(unicode === ''); });
+capture(() => eval('assert.ok(false)'));
+capture(() => assert.ok(/*control*/false));
+capture(() => assert.ok(/*backspace*/false));
+const expressions = ['assert(false)', 'assert.ok(false)', "assert['ok'](false)",
+  'assert?.ok(false)', '(false)', '(false)', 'assert.ok(',
+  "assert.ok(unicode === '')", 'assert.ok(false)', 'assert.ok(\\u000bfalse)',
+  'assert.ok(/*\\b*/false)'];
+const expected = expressions.map(source => 'The expression evaluated to a falsy value:\n\n  ' + source + '\n');
+if (JSON.stringify(messages) !== JSON.stringify(expected))
+  throw Error(JSON.stringify(messages));
+try { assert.ok((() => { return false; })()); throw Error('missing failure'); }
+catch (error) {
+  if (error.name !== 'TypeError' || error.code !== 'ERR_INVALID_ARG_TYPE' ||
+      error.message !== 'The "message" argument must be one of type string or function. Received undefined')
+    throw error;
+}
+"#;
+        let source = source.replace("/*control*/", "\u{0b}").replace("/*backspace*/", "/*\u{08}*/");
+        for typed in [false, true] {
+            let extension = if typed { "cts" } else { "cjs" };
+            let filename = std::env::temp_dir().join(format!("quench-assert-source-{}.{extension}", std::process::id()));
+            let name = filename.to_string_lossy();
+            let program = if typed {
+                quench_runtime::Engine::specialize_typescript(&source.replace("const unicode =", "const unicode: string ="), &name)
+            } else {
+                quench_runtime::Engine::specialize(&source, &name)
+            }.unwrap();
+            // Filesystem edits must not replace the source captured by the program.
+            std::fs::write(&filename, "assert.ok('changed-on-disk')").unwrap();
+            let result = quench_runtime::Runtime::new(crate::NodeHost::new(vec!["quench-node".into()])).execute(&program);
+            std::fs::remove_file(filename).unwrap();
+            result.unwrap();
+        }
+    }
 }

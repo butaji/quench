@@ -254,8 +254,7 @@ impl NativeJsCompiler {
             origin: Some(origin), keep_records: true, typescript: false,
         }).map_err(|diagnostics| format!("{diagnostics:?}"))?;
         if let Some(source) = &mut program.source {
-            source.text = SourceText::Shared(body);
-            source.base = base;
+            source.retain_body(SourceText::Shared(body), base);
         }
         Ok(program)
     }

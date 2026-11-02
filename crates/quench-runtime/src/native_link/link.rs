@@ -3,7 +3,7 @@ use crate::NativeImageSupport;
 use serde_json::Value;
 use serde::Serialize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -395,32 +395,57 @@ const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
     "specialize_module_with_atom_prefix", "specialize_eval_with_context",
     "specialize_function_constructor",
 ];
+const SYNTAX_FRONTEND_SYMBOLS: &[&str] = &["oxc_parser::", "oxc_semantic::"];
 const INTERPRETER_DISPATCH_SYMBOLS: &[&str] = &[
     "::run_fast_lane", "::derive_lane_view", "::js_step_callout",
     "::step_wasm", "::js_tier_frame_entry",
 ];
 
+#[cfg(test)]
 fn is_interpreter_symbol(symbol: &str) -> bool {
     INTERPRETER_DISPATCH_SYMBOLS.iter().any(|name| symbol.contains(name))
 }
 
+#[cfg(test)]
 fn is_compiler_symbol(symbol: &str) -> bool {
-    BACKEND_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name))
-        || ["oxc_parser::", "oxc_semantic::"].iter().any(|name| symbol.contains(name))
-        || (symbol.contains("quench_runtime") && JS_SOURCE_COMPILER_SYMBOLS.iter().any(|name| symbol.contains(name)))
+    compiler_symbol_patterns(symbol).next().is_some()
+}
+
+fn compiler_symbol_patterns(symbol: &str) -> impl Iterator<Item = &'static str> + '_ {
+    BACKEND_COMPILER_SYMBOLS.iter().chain(SYNTAX_FRONTEND_SYMBOLS).copied()
+        .chain(JS_SOURCE_COMPILER_SYMBOLS.iter().copied().filter(|_| symbol.contains("quench_runtime")))
+        .filter(|name| symbol.contains(name))
+}
+
+/// One representative per forbidden mechanism exposes independent retention
+/// roots in one link, without repeating every monomorph of the same mechanism.
+fn retained_execution_support(symbols: &str) -> BTreeMap<&'static str, &str> {
+    let mut retained = BTreeMap::new();
+    for line in symbols.lines() {
+        for pattern in compiler_symbol_patterns(line).chain(
+            INTERPRETER_DISPATCH_SYMBOLS.iter().copied().filter(|name| line.contains(name)),
+        ) {
+            retained.entry(pattern).or_insert(line);
+        }
+    }
+    retained
 }
 
 fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<(), String> {
     let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+    // Inspect whole demangled names: Rust types may contain spaces, and a
+    // required core generic emitted by OXC does not itself retain an OXC operation.
+    if !support.allows_dynamic_source() {
+        let retained = retained_execution_support(&symbols);
+        if !retained.is_empty() {
+            let examples = retained.into_iter().map(|(mechanism, line)| format!("{mechanism}: {line}"))
+                .collect::<Vec<_>>().join("\n");
+            return Err(format!("native image retained compilation or interpretation support:\n{examples}"));
+        }
+    }
     let mut exports = BTreeSet::new();
     for line in symbols.lines() {
-        // Demangled names omit the instantiating crate: a core generic first
-        // emitted by OXC can be required without retaining any OXC operation.
-        // Inspect the full line because Rust types may contain spaces.
-        if !support.allows_dynamic_source() && (is_compiler_symbol(line) || is_interpreter_symbol(line)) {
-            return Err(format!("native image retained compilation or interpretation support: {line}"));
-        }
         let mut fields = line.split_whitespace().rev();
         let Some(symbol) = fields.next() else {
             continue;
@@ -447,6 +472,22 @@ fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retention_report_includes_each_mechanism_once() {
+        let symbols = "T quench_runtime::compile::ast::FunctionCompiler::first\n\
+            T quench_runtime::compile::ast::FunctionCompiler::second\n\
+            T oxc_parser::Parser::parse\n\
+            T quench_runtime::vm::compiled::js_step_callout\n\
+            T cranelift_native::builder\n\
+            T core::option::Option<oxc_allocator::Allocator>::unwrap";
+        let retained = retained_execution_support(symbols);
+        assert_eq!(retained.len(), 4);
+        assert!(retained["FunctionCompiler"].ends_with("::first"));
+        assert!(retained.contains_key("oxc_parser::"));
+        assert!(retained.contains_key("::js_step_callout"));
+        assert!(retained.contains_key("cranelift_native"));
+    }
 
     #[test]
     fn interpreter_audit_preserves_native_frame_coordination_and_shared_validation() {
