@@ -201,6 +201,8 @@ use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
+#[cfg(all(test, feature = "bench-primitives"))]
+mod primitive_bench;
 pub(crate) use operations::number_is_truthy;
 mod primitives;
 pub(crate) mod program_store;
