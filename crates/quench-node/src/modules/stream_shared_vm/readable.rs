@@ -392,7 +392,8 @@ fn how_much_to_read(c: &mut Context<'_>, n: f64, state: RootId) -> Result<f64, R
         return Ok(1.0);
     }
     if n.is_nan() {
-        if field & FLOWING != 0 && length != 0.0 {
+        // Without a decoder, and while flowing, one buffer at a time.
+        if (field & DECODER == 0 || field & FLOWING != 0) && length != 0.0 {
             let buffer = get(c, state, "buffer")?;
             let index = number(c, state, "bufferIndex")?;
             let first = get(c, buffer, &(index as u64).to_string())?;
