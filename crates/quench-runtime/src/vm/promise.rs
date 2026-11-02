@@ -1982,9 +1982,7 @@ impl<H: Host> Vm<H> {
             Err(vm.type_error(p, "host did not resolve dynamic import module".into()))
         });
         if let Err(error) = operation {
-            let reason = error
-                .thrown_value()
-                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+            let reason = self.thrown_value_for(p, error);
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
         }
         Ok(promise)
@@ -2015,9 +2013,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Err(error) => {
-                let reason = error.thrown_value().unwrap_or_else(|| {
-                    self.heap.alloc(Cell::Error(error.into_message()))
-                });
+                let reason = self.thrown_value_for(p, error);
                 let waiters = self
                     .realm
                     .promise
@@ -2886,9 +2882,7 @@ impl<H: Host> Vm<H> {
         let evaluation = self.evaluate_static_module_source(p, job.module, &mut active);
         self.deferred_dependency_batch = outer_batch;
         if let Err(error) = evaluation {
-            let reason = error
-                .thrown_value()
-                .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+            let reason = self.thrown_value_for(p, error);
             self.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
             return Ok(());
         }
@@ -4084,9 +4078,7 @@ impl<H: Host> Vm<H> {
         if waiters.is_empty() {
             return Err(error);
         }
-        let reason = error
-            .thrown_value()
-            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        let reason = self.thrown_value_for(p, error);
         self.settle_module_waiters(p, cache_key, waiters, PromiseState::Rejected, reason)
     }
 
@@ -5527,9 +5519,7 @@ impl<H: Host> Vm<H> {
             // rejection or an allocated Error during thenable assimilation.
             Err(error) if error.is_execution_terminated() => return Err(error),
             Err(error) => {
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+                let reason = self.thrown_value_for(p, error);
                 return self.promise_settle(p, promise, PromiseState::Rejected, reason);
             }
         };

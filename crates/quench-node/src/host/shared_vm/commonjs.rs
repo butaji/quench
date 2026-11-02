@@ -2879,7 +2879,7 @@ pub(crate) fn execute_user_module(context: &mut Context<'_>, module: RootId, fil
 fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result<RootId, RootedError> {
     let ModuleSource { key, module, filename, parent, declared, is_main } = source;
     if declared == Some(quench_runtime::SourceKind::Module) {
-        return load_es_module(context, &key, module, filename, parent);
+        return load_es_module(context, key, module, filename, parent);
     }
     if filename
         .extension()
@@ -2948,7 +2948,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
             let text = script_body(text);
             let exports = get(context, module, "exports")?;
             let require = get(context, module, "require")?;
-            let name = context.string_rooted(&key);
+            let name = context.string_rooted(key);
             let directory = context.string_rooted(
                 &filename
                     .parent()
@@ -2962,12 +2962,12 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
             let wrapper = match embedded {
                 // The program retains the embedded text itself, not a wrapped copy.
                 Some(body) => context
-                    .evaluate_specialized_static_body_rooted(prefix, body, suffix, &key)?,
+                    .evaluate_specialized_static_body_rooted(prefix, body, suffix, key)?,
                 // A text an earlier run detected as a module loads as one, without the
                 // CommonJS compile that would fail again (a failed compile is not cached).
                 None if declared.is_none() && cached_source_kind(text) == Some(quench_runtime::SourceKind::Module) => {
                     drop(file_text);
-                    return load_es_module(context, &key, module, filename, parent);
+                    return load_es_module(context, key, module, filename, parent);
                 }
                 None => {
                     // The wrapper is built in the file's own buffer: growing a large one
@@ -2983,14 +2983,14 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                         filename.extension().and_then(|extension| extension.to_str()),
                         Some("cts" | "ts"),
                     );
-                    let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, &key, is_main, typescript) {
+                    let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
                         Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
                             && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
                                 == quench_runtime::SourceKind::Module =>
                         {
                             drop(wrapper_source);
-                            return load_es_module(context, &key, module, filename, parent);
+                            return load_es_module(context, key, module, filename, parent);
                         }
                         Err(error) => return Err(error),
                     };
