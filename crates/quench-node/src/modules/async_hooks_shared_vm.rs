@@ -43,6 +43,44 @@ pub(crate) fn enter_default_trigger(
     }
 }
 
+pub(crate) fn default_trigger_scope(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let trigger = args.first().copied().unwrap_or(undefined);
+    let block = args.get(1).copied().unwrap_or(undefined);
+    let scope = if context
+        .rooted_value(trigger)
+        .is_some_and(|value| value.is_undefined())
+    {
+        None
+    } else {
+        // Node stores through Float64Array; use its ordinary ToNumber coercion.
+        let trigger = context.to_number(trigger)?;
+        let shared = context.host_mut().shared_state();
+        Some(enter_default_trigger(&shared, trigger))
+    };
+    let receiver = context.null();
+    let result = context.call_rooted(block, receiver, args.get(2..).unwrap_or_default());
+    drop(scope);
+    result
+}
+pub(crate) fn get_default_trigger(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let trigger = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .default_trigger_async_id();
+    Ok(context.number(trigger))
+}
+
 /// Allocate an async identity for a host-created request context.
 ///
 /// HTTP enters this identity around request delivery and response diagnostics;
@@ -699,6 +737,30 @@ pub(crate) fn execution_resource(
     }
     let api = api.ok_or_else(|| RootedError::host("async resource API missing"))?;
     super::event_constructor_shared_vm::get(context, api, "defaultResource")
+}
+
+pub(crate) fn external_init(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let resource = args.first().copied().unwrap_or(undefined);
+    let kind = args.get(1).copied().unwrap_or(undefined);
+    let kind = context
+        .string_text(kind)?
+        .ok_or_else(|| RootedError::host("async resource type is not a string"))?;
+    let id = if let Some(id) = args
+        .get(2)
+        .and_then(|id| context.rooted_value(*id))
+        .and_then(|v| v.as_number())
+    {
+        id as u64
+    } else {
+        create_context(&context.host_mut().shared_state())
+    };
+    emit_init(context, resource, &kind, id)?;
+    Ok(context.number(id as f64))
 }
 
 pub(crate) fn initialize_resource(

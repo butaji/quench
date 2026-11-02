@@ -669,6 +669,13 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
         method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
         method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
+        method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
+        method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
+        method "asyncHookDisable" (1) => crate::modules::async_hook_registry_shared_vm::disable,
+        method "asyncHooksEnabled" (0) => crate::modules::async_hook_registry_shared_vm::enabled,
+        method "asyncDefaultTriggerScope" (2) => crate::modules::async_hooks_shared_vm::default_trigger_scope,
+        method "asyncGetDefaultTrigger" (0) => crate::modules::async_hooks_shared_vm::get_default_trigger,
+        method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
         method "asyncQueueDestroyAsyncId" (1) => crate::modules::async_hooks_shared_vm::queue_destroy_async_id,
         method "asyncSetPromiseHooks" (1) => crate::modules::promise_hooks_shared_vm::set_registry,
         method "asyncPromisePrune" (0) => crate::modules::async_hooks_shared_vm::prune_promises,
@@ -2374,7 +2381,7 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
         .get(first)
         .copied()
         .filter(|&position| bindings[usize::from(position)].name == name)
-        .expect("registered Node operation");
+        .unwrap_or_else(|| panic!("unregistered Node operation: {name}"));
     HostFunctionId(u32::from(position))
 }
 
