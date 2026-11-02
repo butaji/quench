@@ -16856,6 +16856,85 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn loop_carried_updates_reuse_the_comparison_value() {
+        use std::sync::atomic::AtomicU8;
+        const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLCU");
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I32, types::I64] { for step in [1_i64, -1, 7, -7] {
+            let mut signature = ir::Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut function = ir::Function::with_name_signature(UserFuncName::user(TEST_NAMESPACE, 0), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let entry = builder.create_block();
+            let header = builder.create_block();
+            let comparison = builder.create_block();
+            let backedge = builder.create_block();
+            let exit = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.append_block_param(header, ty);
+            builder.append_block_param(exit, ty);
+            builder.switch_to_block(entry);
+            let args = builder.block_params(entry).to_vec();
+            let narrow = |builder: &mut FunctionBuilder<'_>, value| if ty == types::I32 {
+                builder.ins().ireduce(ty, value)
+            } else { value };
+            let start = narrow(&mut builder, args[0]);
+            let bound = narrow(&mut builder, args[1]);
+            let empty = builder.ins().icmp(IntCC::Equal, start, bound);
+            builder.ins().brif(empty, exit, &[start.into()], header, &[start.into()]);
+            builder.switch_to_block(header);
+            let previous = builder.block_params(header)[0];
+            let next = builder.ins().iadd_imm_u(previous, step);
+            let stop = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), args[2]);
+            builder.ins().brif(stop, exit, &[next.into()], comparison, &[]);
+            builder.switch_to_block(comparison);
+            let done = builder.ins().icmp(IntCC::Equal, next, bound);
+            builder.ins().brif(done, exit, &[next.into()], backedge, &[]);
+            builder.switch_to_block(backedge);
+            builder.ins().jump(header, &[next.into()]);
+            builder.switch_to_block(exit);
+            let result = builder.block_params(exit)[0];
+            let result = if ty == types::I32 { builder.ins().uextend(types::I64, result) } else { result };
+            builder.ins().return_(&[result]);
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            let mut compiler = cranelift_codegen::Context::for_function(function);
+            let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+            let memory = CodeMemory::new(compiled.buffer.data()).unwrap();
+            let native = &compiler.func;
+            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+            loops.compute(native, &cfg, &dom);
+            assert_eq!(loops.loops().count(), 1);
+            let updates = native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
+                .flat_map(|block| native.layout.block_insts(block))
+                .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Iadd).count();
+            assert_eq!(updates, 1, "one update serves comparison and backedge: {ty} step{step}\n{native}");
+            // SAFETY: the verified function has three word inputs and one word
+            // output. The third input points to a live atomic byte for the call.
+            let run = unsafe { std::mem::transmute::<*mut u8,
+                unsafe extern "C" fn(u64, u64, *const AtomicU8) -> u64>(memory.pointer()) };
+            let mask = u64::MAX >> (u64::BITS - ty.bits());
+            for seed in [0_u64, 1, u64::MAX, i32::MAX as u64, i64::MAX as u64] {
+                for trips in [0_u64, 1, 2, 17, 257] { for requested in [0_u8, 1] {
+                    let seed = seed & mask;
+                    let bound = seed.wrapping_add(trips.wrapping_mul(step as u64)) & mask;
+                    let flag = AtomicU8::new(requested);
+                    let expected = if trips == 0 { seed } else if requested != 0 {
+                        seed.wrapping_add(step as u64) & mask
+                    } else { bound };
+                    assert_eq!(unsafe { run(seed, bound, &flag) }, expected,
+                        "{ty} step{step} seed{seed} trips{trips} stop{requested}");
+                }}
+            }
+        }}
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn scalar_loop_rotation_preserves_trip_counts_and_exact_header_recovery() {
         let source = r#"
             function count(n){n=n|0;let result=0;for(let i=0;i<n;i=(i+1)|0)result=(result+1)|0;return result;}
