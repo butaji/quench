@@ -362,7 +362,11 @@ impl ValueArena {
             self.owner_reps.resize(index + 1, SlotRepresentation::None);
         }
         self.owner_reps[index] = SlotRepresentation::None;
-        let chain = match parent {
+        // A parent's chain covers its length once registered; one that does not (a parent the
+        // heap never registered at that length) lends no owners, and the child owns its slots.
+        let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
+            .is_some_and(|base| *base as usize + parent_length <= self.chain_owners.len()));
+        let chain = match covered {
             Some((parent, parent_length)) if length == parent_length => self.shape_chains[parent as usize] as usize,
             Some((parent, parent_length)) if length == parent_length + 1 => {
                 let base = self.shape_chains[parent as usize] as usize;

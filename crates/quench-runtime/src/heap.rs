@@ -4377,17 +4377,6 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
     data.set_shape(shape);
 }
 
-/// Joins `value`'s class into the representation of `slot` of `data`'s shape, where the shape
-/// is an ordinary object's outside dictionary storage, whose slots have owners
-/// (`ValueArena::note_slot_value`).
-#[inline(always)]
-fn note_object_slot(properties: &mut ValueArena, data: &Object, slot: usize, value: Value) {
-    let shape = data.exact_shape();
-    if shape == data.shape() && slot < properties.shape_length(shape) {
-        properties.note_slot_value(shape, slot, value);
-    }
-}
-
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
 /// arena values without extras need no other decoding (as `property_get_flat`), and inline
 /// values that cannot take `value` move to the arena only under MayWiden.
