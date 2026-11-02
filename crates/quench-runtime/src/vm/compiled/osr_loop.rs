@@ -4268,11 +4268,24 @@ pub(super) fn lower_verified(
 /// The Cranelift user-function namespace of loop regions ("QLOP").
 const LOOP_NAMESPACE: u32 = 0x514c_4f50;
 
-/// A value in native code with its representation.
+/// A native operand retains its semantic type independently of its encoding.
 #[derive(Clone, Copy)]
 struct Typed {
     value: ir::Value,
+    ty: Type,
     representation: Representation,
+}
+
+impl Typed {
+    /// The load's tag/kind proof has completed. Tagged loads establish no
+    /// refinement; checked unboxing establishes the corresponding Number set.
+    fn checked_load(value: ir::Value, representation: Representation) -> Self {
+        Self { value, representation, ty: match representation {
+            Representation::Int32 => Type::INT32,
+            Representation::Float64 => Type::NUMBER,
+            Representation::Tagged => Type::ANY,
+        } }
+    }
 }
 
 /// Immutable entry snapshots and mutable Number cells have different lifetimes.
@@ -4996,7 +5009,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         };
         let ty = self.body.builder.func.dfg.value_type(entry.value);
         let value = self.body.builder.ins().stack_load(self.pointer, ty, stack, slot as i32 * WORD_BYTES);
-        Typed { value, representation: entry.representation }
+        Typed { value, ..entry }
     }
 
     fn field(&mut self, index: usize) -> Typed {
@@ -5005,6 +5018,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             FieldValue::NumberCell(variable) => Typed {
                 value: self.body.builder.use_var(variable),
                 representation: Representation::Float64,
+                ty: Type::NUMBER,
             },
         }
     }
@@ -5237,7 +5251,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             let otherwise = self.not_entered(Some(Widening::Capture(index as u16)));
             let value = self.unbox(bits, representation, otherwise);
             self.reside(self.resident.captures[index], value);
-            self.captures.push(Typed { value, representation });
+            self.captures.push(Typed { value, representation, ty: self.capture_facts[index].ty });
         }
         for index in 0..self.region.fields.len() {
             let bits = self.word(fields_start + index);
@@ -5254,7 +5268,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.body.builder.def_var(variable, value);
                 FieldValue::NumberCell(variable)
             } else {
-                FieldValue::Snapshot(Typed { value, representation })
+                FieldValue::Snapshot(Typed { value, representation, ty: self.field_facts[index].ty })
             };
             self.fields.push(field);
         }
@@ -5506,7 +5520,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let ty = super::scalar_ir(view_type(representation));
         let slot = self.parking.slot.expect("a parking slot");
         let offset = self.parking.offset(index, register);
-        Typed { value: self.body.builder.ins().stack_load(self.pointer, ty, slot, offset), representation }
+        Typed { value: self.body.builder.ins().stack_load(self.pointer, ty, slot, offset), representation,
+            ty: self.values[web].expect("verified SSA definition").ty }
     }
 
     /// Stores counted loop `index`'s parked registers on arrival at it, in its preheader.
@@ -5599,15 +5614,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
     /// distinguish strings, symbols, bigints, functions, and HTMLDDA, so resume at this
     /// exact unary instruction for them.
     fn typeof_index(&mut self, pc: u32, value: Typed) -> Option<Typed> {
-        let source = self.region.instructions[(pc - self.region.header) as usize].register_b();
-        let ty = self.values[self.webs.read(self.region, pc, source)].expect("verified SSA operand").ty;
+        let ty = value.ty;
         for kind in [crate::ValueType::Number, crate::ValueType::Boolean, crate::ValueType::Null,
             crate::ValueType::Undefined, crate::ValueType::String, crate::ValueType::BigInt, crate::ValueType::Symbol]
         {
             if ty != Type::NEVER && ty.is_subtype(Type::language(kind)) {
                 let name = super::super::coercion::typeof_text(kind);
                 let index = crate::bytecode::typeof_name_index(name).expect("language typeof name");
-                return Some(self.read(Source::Tagged(Value::integer(index as i32))));
+                let value = self.read(Source::Tagged(Value::integer(index as i32)));
+                return Some(Typed { ty: Type::TYPEOF_INDEX, ..value });
             }
         }
         if value.representation != Representation::Tagged {
@@ -5673,7 +5688,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         let index = self.body.builder.ins().select(is_boolean, boolean, number);
         let index = self.body.builder.ins().select(is_null, object, index);
         let index = self.body.builder.ins().select(is_undefined, undefined, index);
-        Some(Typed { value: index, representation: Representation::Tagged })
+        Some(Typed { value: index, representation: Representation::Tagged, ty: Type::TYPEOF_INDEX })
     }
 
     /// Strict Number equality for a tagged value and a numeric constant. Integer and
@@ -5782,7 +5797,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.unbox(bits, representation, otherwise)
             }
         };
-        Some(Typed { value, representation })
+        Some(Typed { value, representation, ty: self.field_facts[index].ty })
     }
 
     /// Establish an object's header proof once for this SSA value and chain.
@@ -5874,15 +5889,16 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.unbox(bits, representation, otherwise)
             }
         };
-        Some(Typed { value, representation })
+        Some(Typed { value, representation, ty: self.field_facts[index].ty })
     }
 
     /// The value of the web rooted at `web`, which its register's view holds where the web
     /// is live.
     fn web(&mut self, web: Definition) -> Typed {
-        let representation = self.values[web].expect("verified SSA definition").representation;
+        let fact = self.values[web].expect("verified SSA definition");
         let register = self.webs.register(self.region, web);
-        Typed { value: self.body.read(register, view_type(representation)), representation }
+        Typed { value: self.body.read(register, view_type(fact.representation)),
+            representation: fact.representation, ty: fact.ty }
     }
 
     /// `register`'s value before the instruction being lowered.
@@ -5901,14 +5917,17 @@ impl<'a, 'b> Lowering<'a, 'b> {
             Source::Register(register) => self.register(register),
             Source::Tagged(value) => Typed {
                 value: self.body.builder.ins().iconst(types::I64, value.to_bits() as i64),
+                ty: Type::immediate(value),
                 representation: Representation::Tagged,
             },
             Source::Number(number) if int32_number(number) => Typed {
                 value: self.body.builder.ins().iconst(types::I32, i64::from(number as i32)),
+                ty: Type::INT32,
                 representation: Representation::Int32,
             },
             Source::Number(number) => Typed {
                 value: self.body.builder.ins().f64const(number),
+                ty: Type::NUMBER,
                 representation: Representation::Float64,
             },
         }
@@ -5962,8 +5981,9 @@ impl<'a, 'b> Lowering<'a, 'b> {
             self.guard(self.pc, changed);
         }
         let web = self.webs.defined(self.region, self.pc);
-        let representation = self.values[web].expect("verified SSA definition").representation;
-        if !representation.can_receive(value.representation) {
+        let fact = self.values[web].expect("verified SSA definition");
+        let representation = fact.representation;
+        if !value.ty.is_subtype(fact.ty) || !representation.can_receive(value.representation) {
             self.result_proof = NodeProof::InvalidConversion;
             return;
         }
@@ -6114,7 +6134,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.bounded_reads.insert(next, sum);
         let value = self.body.builder.ins().ireduce(types::I32, sum);
         self.discharge(DefinitionObligation::Int32Result);
-        Some(Typed { value, representation: Representation::Int32 })
+        Some(Typed { value, ty: Type::INT32, representation: Representation::Int32 })
     }
 
     /// Exits at `pc` unless `index` is below `array`'s length; an `i32` key a proof covers is.
@@ -6563,7 +6583,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     && right.representation == Representation::Int32 =>
             {
                 let value = self.int32_arithmetic(pc, operator, result, left.value, right.value);
-                Typed { value, representation: Representation::Int32 }
+                Typed { value, ty: Type::INT32, representation: Representation::Int32 }
             }
             Arithmetic::Float(operator) => {
                 let (left, right) = (self.float(left), self.float(right));
@@ -6573,12 +6593,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     left,
                     right,
                 );
-                Typed { value, representation: Representation::Float64 }
+                Typed { value, ty: Type::NUMBER, representation: Representation::Float64 }
             }
             Arithmetic::Remainder => {
                 let (left, right) = (self.float(left), self.float(right));
                 let value = super::emit_number_remainder(&mut self.body.builder, self.pointer, left, right);
-                Typed { value, representation: Representation::Float64 }
+                Typed { value, ty: Type::NUMBER, representation: Representation::Float64 }
             }
             Arithmetic::Int32(operator) => {
                 let left = self.int32(pc, left);
@@ -6591,10 +6611,10 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 );
                 if operator == NumberBitwise::ShiftRightUnsigned {
                     let value = self.body.builder.ins().fcvt_from_uint(types::F64, bits);
-                    return Typed { value, representation: Representation::Float64 };
+                    return Typed { value, ty: Type::NUMBER, representation: Representation::Float64 };
                 }
                 let value = bits;
-                Typed { value, representation: Representation::Int32 }
+                Typed { value, ty: Type::INT32, representation: Representation::Int32 }
             }
         }
     }
@@ -6634,7 +6654,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let yes = self.body.builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64);
                     let no = self.body.builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64);
                     let value = self.body.builder.ins().select(holds, yes, no);
-                    self.define(result, Typed { value, representation: Representation::Tagged });
+                    self.define(result, Typed { value, ty: Type::language(crate::ValueType::Boolean), representation: Representation::Tagged });
                     return self.fall_through(pc);
                 }
                 let operator = arithmetic(instruction.op(), instruction.binary_operator())?;
@@ -6682,7 +6702,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     let step = self.body.builder.ins().iconst(types::I32, step);
                     let value = self.exact_int32(NumberArithmetic::Add, operand.value, step);
                     self.discharge(DefinitionObligation::Int32Result);
-                    Typed { value, representation: Representation::Int32 }
+                    Typed { value, ty: Type::INT32, representation: Representation::Int32 }
                 } else {
                     let operator = if decrement {
                         NumberArithmetic::Subtract
@@ -6718,7 +6738,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         self.guard_int32(pc, failed, Widening::Register(result));
                         let value = self.body.builder.ins().ineg(operand.value);
                         self.discharge(DefinitionObligation::Int32Result);
-                        Typed { value, representation: Representation::Int32 }
+                        Typed { value, ty: Type::INT32, representation: Representation::Int32 }
                     }
                     Unary::Number(NumberUnary::Negate) => {
                         let number = self.float(operand);
@@ -6727,12 +6747,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                             NumberUnary::Negate,
                             number,
                         );
-                        Typed { value, representation: Representation::Float64 }
+                        Typed { value, ty: Type::NUMBER, representation: Representation::Float64 }
                     }
                     Unary::BitwiseNot => {
                         let integer = self.int32(pc, operand);
                         let value = self.body.builder.ins().bnot(integer);
-                        Typed { value, representation: Representation::Int32 }
+                        Typed { value, ty: Type::INT32, representation: Representation::Int32 }
                     }
                 };
                 self.define(result, value);
@@ -6801,7 +6821,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 };
                 let value = self.unbox(bits, representation, otherwise);
                 if representation != Representation::Tagged { self.discharge(DefinitionObligation::NumberLoad); }
-                self.define(instruction.result_register(), Typed { value, representation });
+                self.define(instruction.result_register(), Typed::checked_load(value, representation));
                 self.fall_through(pc)
             }
             Op::GetIndex => {
@@ -6835,7 +6855,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     } else { self.exit_block(pc) };
                     let value = self.unbox(bits, representation, otherwise);
                     if representation != Representation::Tagged { self.discharge(DefinitionObligation::NumberLoad); }
-                    self.define(instruction.result_register(), Typed { value, representation });
+                    self.define(instruction.result_register(), Typed::checked_load(value, representation));
                     return self.fall_through(pc);
                 };
                 // A tagged result: a value lifetime the region keeps tagged, or a receiver a
@@ -6904,11 +6924,12 @@ impl<'a, 'b> Lowering<'a, 'b> {
                         bits
                     }
                 };
+                let value = Typed::checked_load(value, representation);
                 if !dynamic {
-                    self.element_reads.insert(read, (Typed { value, representation }, chain, self.element_stores));
+                    self.element_reads.insert(read, (value, chain, self.element_stores));
                 }
                 if representation != Representation::Tagged { self.discharge(DefinitionObligation::NumberLoad); }
-                self.define(instruction.result_register(), Typed { value, representation });
+                self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
             Op::SetIndex => {
@@ -7069,8 +7090,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                     }
                     Representation::Tagged => {
                         let yes = self.body.builder.ins().icmp_imm_u(IntCC::Equal, value.value, Value::TRUE.to_bits() as i64);
-                        let web = self.webs.read(self.region, pc, instruction.register_a());
-                        if !self.values[web].expect("verified SSA condition").ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
+                        if !value.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
                             let truthy = self.tagged_truthiness(pc, value.value);
                             self.discharge(DefinitionObligation::BooleanTest);
                             truthy
@@ -7327,6 +7347,38 @@ mod tests {
         assert_eq!(verified.obligations[1], DefinitionObligation::None);
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
+
+        // Same tagged machine representation, incompatible semantic type:
+        // publication must reject the producer even with no unboxing needed.
+        let mut inconsistent = verify_region(&region, &observation).unwrap();
+        let fact = *inconsistent.values[comparison].unwrap();
+        inconsistent.values[comparison] = Some(ValueFact {
+            ty: Type::NUMBER, ..fact
+        }.verified().unwrap());
+        assert!(lower_verified(inconsistent, &observation, &*isa, None, false).is_none());
+    }
+
+    #[test]
+    fn typed_folded_typeof_preserves_its_control_type_through_lowering() {
+        for constant in [Value::number(0.5), Value::TRUE, Value::NULL, Value::UNDEFINED] {
+            let region = admit_region(vec![
+                WideInstruction::new(Op::LoadConst, 0, 0, 0, 0),
+                WideInstruction::new(Op::Unary, 1, 0, 0, crate::bytecode::UNARY_TYPEOF_INDEX),
+                WideInstruction::new(Op::Jump, 0, 0, 0, 0),
+            ], 2, &[constant], &[],
+                Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![0, 1, 0]))),
+                Some(0), 0, &Default::default()).unwrap();
+            let widened = Default::default();
+            let observation = Observation {
+                register: None, int32_elements: &|_| false, only_int32: &|_| false, captures: &[], fields: &[],
+                native_field_loads: &[], widened: &widened,
+            };
+            let verified = verify_region(&region, &observation).unwrap();
+            let result = verified.webs.defined(&region, 1);
+            assert_eq!(verified.values[result].unwrap().ty, Type::TYPEOF_INDEX);
+            let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+            assert!(lower_verified(verified, &observation, &*isa, None, false).is_some());
+        }
     }
 
     #[test]
