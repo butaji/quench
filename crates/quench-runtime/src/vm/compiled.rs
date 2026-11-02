@@ -18300,6 +18300,15 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "native-execution", not(any(feature = "jit", feature = "aot"))))]
+    #[test]
+    fn static_lane_call_helper_declines_without_dynamic_context() {
+        // Execution-only images lend no interpreter lane, so even a null context
+        // must decline before inspecting it or publishing a dynamic continuation.
+        let status = unsafe { super::super::dispatch_fast::lane_body_call::<crate::test_host::TestHost>(0, 0, 0, 0) };
+        assert_eq!(status, LANE_CALL_MISSED);
+    }
+
     #[test]
     fn nested_lane_entry_restores_outer_fault_binding() {
         if !FAULT_POLL_SUPPORTED { return; }

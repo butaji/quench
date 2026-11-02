@@ -14745,6 +14745,9 @@ fn lane_body_inlined_activation<H: Host>(
 /// `context` is the running lane's context, whose activation's registers hold the caller's
 /// state; nothing the call runs allocates or collects.
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    // Static regions recover ordinary calls through their linked semantic operation.
+    // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
+    if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
