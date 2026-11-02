@@ -2021,6 +2021,10 @@ pub(crate) fn https_module(context: &mut Context<'_>) -> Result<RootId, RootedEr
     cached_builtin(context, BuiltinModule::Https)
 }
 
+pub(crate) fn tls_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Tls)
+}
+
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Net)
 }
@@ -2436,7 +2440,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         #[cfg(not(quench_openssl_provider))]
         BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
-        BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
+        BuiltinModule::Tls => crate::modules::tls_shared_vm::build_module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
         BuiltinModule::Module => crate::modules::module_shared_vm::module(context),
         BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(

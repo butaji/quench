@@ -372,9 +372,7 @@ pub(crate) fn validate_integer(
         let error = context.range_error_rooted(&format!(
             "The value of \"{name}\" is out of range. It must be {requirement}. Received {received}"
         ))?;
-        let key = context.string_rooted("code");
-        let code = context.string_rooted("ERR_OUT_OF_RANGE");
-        context.set_property_rooted(error, key, code, error)?;
+        super::node_errors_shared_vm::decorate_range_error(context, error, "ERR_OUT_OF_RANGE")?;
         return Err(context.throw(error));
     }
     Ok(number)

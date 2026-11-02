@@ -451,7 +451,7 @@ pub(crate) fn module_member(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
             Ok(c.undefined())
         }
         Module::IsLenient => {
-            let lenient = c.host_mut().shared_state().borrow().cli_options.enabled("--insecure-http-parser");
+            let lenient = c.host_mut().shared_state().borrow().cli_options.enabled(parsing::INSECURE_PARSER_FLAG);
             Ok(c.boolean(lenient))
         }
         Module::PrepareError => {

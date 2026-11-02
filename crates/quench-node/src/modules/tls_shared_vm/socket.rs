@@ -745,12 +745,40 @@ pub(crate) fn init_read(
     method(context, socket, "read", &[zero])?;
     Ok(context.undefined())
 }
+/// The environment switch that turns off client certificate verification.
+const ALLOW_UNAUTHORIZED_ENV: &str = "NODE_TLS_REJECT_UNAUTHORIZED";
+/// The facade field that records the insecure-verification warning was emitted.
+const ALLOW_UNAUTHORIZED_WARNED: &str = "allowUnauthorizedWarned";
+
+/// Node's `getAllowUnauthorized()`: whether `NODE_TLS_REJECT_UNAUTHORIZED` is `'0'`, which
+/// warns once per realm.
+fn allow_unauthorized(context: &mut NativeContext<'_, NodeHost>, api: RootId) -> Result<bool, RootedError> {
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let env = get(context, process, "env")?;
+    let value = get(context, env, ALLOW_UNAUTHORIZED_ENV)?;
+    let allowed = context.string_text(value)?.as_deref() == Some("0");
+    let warned = get(context, api, ALLOW_UNAUTHORIZED_WARNED)?;
+    if allowed && !context.truthy_rooted(warned)? {
+        let yes = context.boolean(true);
+        let key = context.string_rooted(ALLOW_UNAUTHORIZED_WARNED);
+        context.define_data_property_rooted(api, key, yes, true, false, true)?;
+        let warning = context.string_rooted(
+            "Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS \
+             connections and HTTPS requests insecure by disabling certificate verification.",
+        );
+        method(context, process, "emitWarning", &[warning])?;
+    }
+    Ok(allowed)
+}
+
 pub(crate) fn connect(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let api = super::facade::install(context)?;
+    let allow_unauthorized = allow_unauthorized(context, api)?;
     let module = get(context, api, "module")?;
     let options = context.object_rooted()?;
     let undefined = context.undefined();
@@ -856,10 +884,14 @@ pub(crate) fn connect(
             )?);
         }
     }
-    let reject = get(context, options, "rejectUnauthorized")?;
-    let reject = !context
-        .rooted_value(reject)
-        .is_some_and(|value| value.as_bool() == Some(false));
+    let reject = if context.has_own_property_rooted(options, "rejectUnauthorized")? {
+        let reject = get(context, options, "rejectUnauthorized")?;
+        !context
+            .rooted_value(reject)
+            .is_some_and(|value| value.as_bool() == Some(false))
+    } else {
+        !allow_unauthorized
+    };
     let reject = context.boolean(reject);
     set(context, options, "rejectUnauthorized", reject)?;
     let constructor = get(context, api, "socketConstructor")?;

@@ -48,7 +48,14 @@ pub(crate) const DEFAULT_CIPHER_LIST: &str = concat!(
 );
 
 
+/// The `tls` builtin the module cache keeps, so every class shares its `TLSSocket` and
+/// `Server`.
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::tls_module(context)
+}
+
+/// Builds the `tls` builtin (`module`).
+pub(crate) fn build_module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let api = facade::install(context)?;
     handle::registry(context)?;
     let net = crate::host::shared_vm::commonjs::net_module(context)?;

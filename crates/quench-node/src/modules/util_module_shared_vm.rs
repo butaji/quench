@@ -859,6 +859,29 @@ pub(crate) fn promisify_settle(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     Ok(c.undefined())
 }
 
+/// `promisify(target.close).call(target)`: the promise `close`'s callback settles, which
+/// a resource's `[Symbol.asyncDispose]()` awaits.
+pub(crate) fn close_promise(c: &mut Context<'_>, target: RootId) -> Result<RootId, RootedError> {
+    let promise = c.pending_promise_rooted()?;
+    let undefined = c.undefined();
+    let data = c.array_rooted(&[promise, undefined])?;
+    let settle = c.host_function_with_data(operation("utilPromisifySettle"), data)?;
+    let close = get(c, target, "close")?;
+    if let Err(error) = c.call_rooted(close, target, &[settle]) {
+        let Some(exception) = error.exception else { return Err(error) };
+        c.reject_promise_rooted(promise, exception)?;
+    }
+    Ok(promise)
+}
+
+/// The `[Symbol.asyncDispose]()` of a resource already released: a promise of undefined.
+pub(crate) fn disposed_promise(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    let promise = c.pending_promise_rooted()?;
+    let undefined = c.undefined();
+    c.resolve_promise_rooted(promise, undefined)?;
+    Ok(promise)
+}
+
 /// `util.log(...args)`: `console.log('%s - %s', timestamp(), format(...args))`.
 pub(crate) fn log(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

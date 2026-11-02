@@ -28,6 +28,8 @@ crate::modules::host_members::members!(Member, "httpServer", [
     CloseAllConnections,
     CloseIdleConnections,
     SetTimeout,
+    /// `[Symbol.asyncDispose]()`: the promise of `close`.
+    AsyncDispose,
     /// `onServerResponseClose`, on the socket.
     OnResponseClose,
     /// `emitCloseNT(res)`.
@@ -141,7 +143,11 @@ pub(crate) fn install_server_methods(c: &mut Context<'_>, prototype: RootId) -> 
         ("closeAllConnections", Member::CloseAllConnections),
         ("closeIdleConnections", Member::CloseIdleConnections),
         ("setTimeout", Member::SetTimeout),
-    ])
+    ])?;
+    let dispose = function(c, Member::AsyncDispose, "[Symbol.asyncDispose]", &[])?;
+    let key = crate::modules::fs_shared_vm::classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
+    c.define_data_property_rooted(prototype, key, dispose, true, true, true)?;
+    Ok(())
 }
 
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
@@ -200,6 +206,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             }
             Ok(c.undefined())
         }
+        Member::AsyncDispose => crate::modules::util_module_shared_vm::close_promise(c, this),
         Member::CloseIdleConnections => {
             close_idle_connections(c, this)?;
             Ok(c.undefined())
@@ -317,7 +324,7 @@ fn construct_response(c: &mut Context<'_>, this: RootId, request: RootId, option
         put_bool(c, this, "useChunkedEncodingByDefault", chunked)?;
         put_bool(c, this, "shouldKeepAlive", false)?;
     }
-    Ok(())
+    publish_exchange(c, RESPONSE_CREATED_CHANNEL, &[("request", request), ("response", this)])
 }
 
 fn assign_socket(c: &mut Context<'_>, this: RootId, socket: RootId) -> Result<(), RootedError> {
@@ -710,12 +717,11 @@ pub(crate) fn connection_listener(c: &mut Context<'_>, server: RootId, args: &[R
     let socket = arg(c, args, 0);
     put(c, socket, "server", server)?;
     let timeout = get(c, server, "timeout")?;
-    if c.truthy_rooted(timeout)? {
-        call_method(c, socket, "setTimeout", &[timeout])?;
+    let setter = get(c, socket, "setTimeout")?;
+    if c.truthy_rooted(timeout)? && c.is_callable_rooted(setter)? {
+        c.call_rooted(setter, socket, &[timeout])?;
     }
-    let max_header_size = get(c, server, "maxHeaderSize")?;
-    let max_header_size = if is_nullish(c, max_header_size) { 0.0 } else { c.to_number(max_header_size)? };
-    let parser = parsing::create(c, Kind::Request, socket, max_header_size)?;
+    let parser = parsing::create(c, Kind::Request, socket, server)?;
     put(c, socket, "parser", parser)?;
     let max_headers = get(c, server, "maxHeadersCount")?;
     if let Some(count) = c.rooted_value(max_headers).and_then(|value| value.as_number()) {
@@ -933,6 +939,7 @@ pub(crate) fn on_incoming(c: &mut Context<'_>, socket: RootId, request: RootId, 
     let pending = function(c, Member::PendingData, "updateOutgoingData", &[socket, state])?;
     put(c, response, "_onPendingData", pending)?;
     put_bool(c, response, "shouldKeepAlive", keep_alive)?;
+    publish_exchange(c, REQUEST_START_CHANNEL, &[("request", request), ("response", response), ("socket", socket), ("server", server)])?;
     let owner = get(c, socket, "_httpMessage")?;
     if c.truthy_rooted(owner)? {
         let outgoing = get(c, state, STATE_OUTGOING)?;
@@ -998,7 +1005,26 @@ pub(crate) fn on_incoming(c: &mut Context<'_>, socket: RootId, request: RootId, 
 
 /// `resOnFinish`: the next pipelined response gets the socket, or the connection idles
 /// or closes.
+/// The server's diagnostics channels (lib/_http_server.js).
+const REQUEST_START_CHANNEL: &str = "http.server.request.start";
+const RESPONSE_CREATED_CHANNEL: &str = "http.server.response.created";
+const RESPONSE_FINISH_CHANNEL: &str = "http.server.response.finish";
+
+/// Publish an exchange's members (`request`, `response`, then `socket` and `server` where
+/// the channel carries them) on `channel` when it has subscribers.
+fn publish_exchange(c: &mut Context<'_>, channel: &str, members: &[(&str, RootId)]) -> Result<(), RootedError> {
+    if !crate::modules::diagnostics_channel_shared_vm::channel_has_subscribers(&c.host_mut().shared_state().borrow(), channel) {
+        return Ok(());
+    }
+    let message = c.object_rooted()?;
+    for &(name, value) in members {
+        put(c, message, name, value)?;
+    }
+    crate::modules::diagnostics_channel_shared_vm::publish_named(c, channel, message)
+}
+
 fn response_finished(c: &mut Context<'_>, request: RootId, response: RootId, socket: RootId, state: RootId, server: RootId) -> Result<(), RootedError> {
+    publish_exchange(c, RESPONSE_FINISH_CHANNEL, &[("request", request), ("response", response), ("socket", socket), ("server", server)])?;
     let incoming = get(c, state, STATE_INCOMING)?;
     call_method(c, incoming, "shift", &[])?;
     let readable = get(c, request, "_readableState")?;
@@ -1018,10 +1044,11 @@ fn response_finished(c: &mut Context<'_>, request: RootId, response: RootId, soc
             call_method(c, socket, "end", &[])?;
         }
     } else if number(c, outgoing, "length")? == 0.0 {
-        let keep_alive = number(c, server, "keepAliveTimeout")?;
-        if keep_alive > 0.0 {
-            let buffer = number(c, server, "keepAliveTimeoutBuffer")?;
-            let buffer = if buffer.is_finite() { buffer } else { 0.0 };
+        let duration = |value: f64, fallback: f64| if value.is_finite() && value >= 0.0 { value } else { fallback };
+        let keep_alive = duration(number(c, server, "keepAliveTimeout")?, 0.0);
+        let setter = get(c, socket, "setTimeout")?;
+        if keep_alive > 0.0 && c.is_callable_rooted(setter)? {
+            let buffer = duration(number(c, server, "keepAliveTimeoutBuffer")?, DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER);
             let timeout = c.number(keep_alive + buffer);
             call_method(c, socket, "setTimeout", &[timeout])?;
             put_bool(c, state, STATE_KEEP_ALIVE_TIMEOUT_SET, true)?;

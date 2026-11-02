@@ -377,7 +377,7 @@ fn x509(c: &mut Context<'_>, certificate: RootId) -> Outcome {
     let issuer = get(c, certificate, "issuerCertificate")?;
     if c.truthy_rooted(issuer)? && !c.strict_equal_rooted(issuer, certificate)? {
         let issuer = x509(c, issuer)?;
-        set(c, result, "issuerCertificate", issuer)?;
+        crate::modules::crypto_node::x509::set_issuer(c, result, issuer)?;
     }
     Ok(result)
 }

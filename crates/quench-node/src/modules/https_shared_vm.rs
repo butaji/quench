@@ -49,6 +49,9 @@ enum NamePart {
     Json,
     /// The server name, when it differs from the host.
     Servername,
+    /// The PFX when truthy; an array lists each entry's `:buf:passphrase`
+    /// (`getPfxAgentKey`).
+    Pfx,
 }
 
 const NAME_PARTS: [(&str, NamePart); 20] = [
@@ -57,7 +60,7 @@ const NAME_PARTS: [(&str, NamePart); 20] = [
     ("clientCertEngine", NamePart::Truthy),
     ("ciphers", NamePart::Truthy),
     ("key", NamePart::Truthy),
-    ("pfx", NamePart::Truthy),
+    ("pfx", NamePart::Pfx),
     ("rejectUnauthorized", NamePart::Defined),
     ("servername", NamePart::Servername),
     ("minVersion", NamePart::Truthy),
@@ -213,8 +216,19 @@ fn construct_server(c: &mut Context<'_>, this: RootId, options: RootId, listener
     let tls_options = c.object_rooted()?;
     let yes = c.boolean(true);
     put(c, tls_options, "noDelay", yes)?;
-    let protocol = c.string_rooted(HTTP1_ALPN);
-    let protocols = c.array_rooted(&[protocol])?;
+    // Only one of ALPNProtocols and ALPNCallback may be set, so the default applies only
+    // when neither is.
+    let mut chosen = false;
+    for name in ["ALPNProtocols", "ALPNCallback"] {
+        let value = get(c, options, name)?;
+        chosen |= c.truthy_rooted(value)?;
+    }
+    let protocols = if chosen {
+        c.undefined()
+    } else {
+        let protocol = c.string_rooted(HTTP1_ALPN);
+        c.array_rooted(&[protocol])?
+    };
     put(c, tls_options, "ALPNProtocols", protocols)?;
     for key in c.enumerable_own_keys_rooted(options, true, true)? {
         let value = c.get_property_rooted(options, key)?;
@@ -316,8 +330,22 @@ fn name_of(c: &mut Context<'_>, this: RootId, options: RootId) -> Result<String,
     for (field, part) in NAME_PARTS {
         name.push(':');
         let value = get(c, options, field)?;
+        if matches!(part, NamePart::Pfx) && c.is_array_rooted(value)? {
+            let passphrase = get(c, options, "passphrase")?;
+            for entry in c.array_like_values_rooted(value)? {
+                let (mut raw, mut pass) = (entry, passphrase);
+                if !is_nullish(c, entry) {
+                    let buf = get(c, entry, "buf")?;
+                    raw = if c.truthy_rooted(buf)? { buf } else { entry };
+                    let own = get(c, entry, "passphrase")?;
+                    pass = if c.truthy_rooted(own)? { own } else { passphrase };
+                }
+                name.push_str(&format!(":{}:{}", c.to_string(raw)?, c.to_string(pass)?));
+            }
+            continue;
+        }
         let shown = match part {
-            NamePart::Truthy => c.truthy_rooted(value)?,
+            NamePart::Truthy | NamePart::Pfx => c.truthy_rooted(value)?,
             NamePart::Defined => !is_undefined(c, value),
             NamePart::Json => c.truthy_rooted(value)?,
             NamePart::Servername => {
