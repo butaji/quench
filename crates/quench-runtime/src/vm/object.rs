@@ -1391,6 +1391,22 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
+        // A polymorphic site's prototype-held entries, keyed by both exact shapes.
+        if let Some(record) = receiver.proto_link().object_record_id() {
+            let holder = self.heap.object_record_by_id(record);
+            if let Some(cache) = self.megamorphic_field_cache(index, receiver.exact_shape(), holder.exact_shape()) {
+                // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
+                // immediate-prototype data property of these exact shapes.
+                return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
+            }
+        }
+        // The tiers the lane's own handlers read past these: a receiver a heap cell holds, and
+        // a field inherited from beyond the immediate prototype.
+        if let Some(value) = self.cell_own_field_hit(p, object, site)
+            .or_else(|| self.cell_holder_field_hit(p, object, site))
+            .or_else(|| self.inherited_field_hit(p, object, site)) {
+            return FieldCacheProbe::Hit(value);
+        }
         FieldCacheProbe::OrdinaryMiss
     }
 

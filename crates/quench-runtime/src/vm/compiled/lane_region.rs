@@ -52,8 +52,11 @@ impl RegisterFact {
 
 struct Registers {
     tagged: Vec<Variable>,
-    int: Vec<Variable>,
-    float: Vec<Variable>,
+    /// Each register's int32 and float64 views, declared at their first use: most registers
+    /// never take one, and the SSA builder's tables grow with variables times blocks. A view
+    /// read before any definition reads zero, as only a state that defined it reads it.
+    int: Vec<Option<Variable>>,
+    float: Vec<Option<Variable>>,
 }
 
 /// The compile-time state of the instruction being lowered.
@@ -182,11 +185,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if !fact.tagged_current {
             let bits = match fact.value.representation {
                 Representation::Int32 => {
-                    let int = self.builder.use_var(self.registers.int[index]);
+                    let int = { let variable = self.int_var(index); self.builder.use_var(variable) };
                     int_tagged(&mut self.builder, int)
                 }
                 Representation::Float64 => {
-                    let number = self.builder.use_var(self.registers.float[index]);
+                    let number = { let variable = self.float_var(index); self.builder.use_var(variable) };
                     emit_js_box_number(&mut self.builder, number)
                 }
                 Representation::Tagged => unreachable!("tagged view is current"),
@@ -202,8 +205,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let index = usize::from(register);
         let variable = match fact.value.representation {
             Representation::Tagged => self.registers.tagged[index],
-            Representation::Int32 => self.registers.int[index],
-            Representation::Float64 => self.registers.float[index],
+            Representation::Int32 => self.int_var(index),
+            Representation::Float64 => self.float_var(index),
         };
         self.builder.def_var(variable, value);
         state.values[index] = fact;
@@ -228,7 +231,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn int(&mut self, state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
         let index = usize::from(register);
         if state.values[index].value.representation == Representation::Int32 {
-            return self.builder.use_var(self.registers.int[index]);
+            return { let variable = self.int_var(index); self.builder.use_var(variable) };
         }
         let bits = self.tagged(state, register);
         if !state.values[index].value.ty.is_subtype(Type::INT32) {
@@ -236,7 +239,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             emit_js_guard(&mut self.builder, integer, otherwise);
         }
         let int = self.ins().ireduce(types::I32, bits);
-        self.builder.def_var(self.registers.int[index], int);
+        { let variable = self.int_var(index); self.builder.def_var(variable, int); }
         state.values[index] = RegisterFact { tagged_current: true,
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
         int
@@ -247,9 +250,9 @@ impl<'a, 'f> Lowering<'a, 'f> {
         let index = usize::from(register);
         let fact = state.values[index].value;
         match fact.representation {
-            Representation::Float64 => self.builder.use_var(self.registers.float[index]),
+            Representation::Float64 => { let variable = self.float_var(index); self.builder.use_var(variable) },
             Representation::Int32 => {
-                let int = self.builder.use_var(self.registers.int[index]);
+                let int = { let variable = self.int_var(index); self.builder.use_var(variable) };
                 self.ins().fcvt_from_sint(types::F64, int)
             }
             Representation::Tagged => {
@@ -259,7 +262,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 } else {
                     emit_js_tagged_number(&mut self.builder, bits, otherwise)
                 };
-                self.builder.def_var(self.registers.float[index], number);
+                { let variable = self.float_var(index); self.builder.def_var(variable, number); }
                 state.values[index] = RegisterFact { tagged_current: true,
                     ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
                 number
@@ -324,7 +327,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             } else if ty == Type::NUMBER && state.values[index].value.representation != Representation::Float64 {
                 let exit = self.guard_exit(state, target as u32);
                 let number = self.number(state, register, exit);
-                self.builder.def_var(self.registers.float[index], number);
+                { let variable = self.float_var(index); self.builder.def_var(variable, number); }
             } else if ty != Type::INT32 && ty != Type::NUMBER {
                 self.tagged(state, register);
             }
@@ -515,15 +518,9 @@ fn lower(
     let frame_live = unit.frames.iter().map(|frame| program.register_root_masks(frame.target.function)).collect();
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
-        int: (0..count).map(|_| builder.declare_var(types::I32)).collect(),
-        float: (0..count).map(|_| builder.declare_var(types::F64)).collect(),
+        int: vec![None; count],
+        float: vec![None; count],
     };
-    let zero = builder.ins().iconst(types::I32, 0);
-    let float_zero = builder.ins().f64const(0.0);
-    for register in 0..count {
-        builder.def_var(registers.int[register], zero);
-        builder.def_var(registers.float[register], float_zero);
-    }
     // An alternative of a call's switch starts a block: a callee other than the one before
     // it branches there (`Lowering::inline_call`).
     let mut leaders = leaders(&unit.instructions);
@@ -711,6 +708,16 @@ fn lower(
 }
 
 impl Lowering<'_, '_> {
+    /// `register`'s int32 view (`Registers::int`).
+    fn int_var(&mut self, register: usize) -> Variable {
+        *self.registers.int[register].get_or_insert_with(|| self.builder.declare_var(types::I32))
+    }
+
+    /// `register`'s float64 view (`Registers::float`).
+    fn float_var(&mut self, register: usize) -> Variable {
+        *self.registers.float[register].get_or_insert_with(|| self.builder.declare_var(types::F64))
+    }
+
     fn entry_facts(&mut self, instructions: &[WideInstruction]) -> Entry {
         let receiver_offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, receiver)).expect("dispatch offset fits i32");
         let receiver = emit_lane_receiver(&mut self.builder, self.payload, receiver_offset);
@@ -915,11 +922,11 @@ impl Lowering<'_, '_> {
                 let fact = state.values[usize::from(register)].value;
                 let truthy = match fact.representation {
                     Representation::Int32 => {
-                        let int = self.builder.use_var(self.registers.int[usize::from(register)]);
+                        let int = { let variable = self.int_var(usize::from(register)); self.builder.use_var(variable) };
                         self.ins().icmp_imm_u(IntCC::NotEqual, int, 0)
                     }
                     Representation::Float64 => {
-                        let number = self.builder.use_var(self.registers.float[usize::from(register)]);
+                        let number = { let variable = self.float_var(usize::from(register)); self.builder.use_var(variable) };
                         emit_number_truthiness(&mut self.builder, number)
                     }
                     Representation::Tagged => {
@@ -1009,8 +1016,8 @@ impl Lowering<'_, '_> {
         let fact = state.values[usize::from(source)];
         let variable = match fact.value.representation {
             Representation::Tagged => self.registers.tagged[usize::from(source)],
-            Representation::Int32 => self.registers.int[usize::from(source)],
-            Representation::Float64 => self.registers.float[usize::from(source)],
+            Representation::Int32 => self.int_var(usize::from(source)),
+            Representation::Float64 => self.float_var(usize::from(source)),
         };
         let value = self.builder.use_var(variable);
         let tagged = (fact.tagged_current && fact.value.representation != Representation::Tagged)
@@ -1345,28 +1352,29 @@ impl Lowering<'_, '_> {
     /// the site's proved shapes and slots, with the base's record proved once (the
     /// receiver's at entry), else the VM's cached read.
     fn base_field_read(&mut self, state: &mut State, register: Option<Register>, receiver: bool, site: u16, exit: ir::Block) -> ir::Value {
-        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
-        if !shapes.is_empty() {
-            let (object, shape, inline) = if receiver {
-                let entry = self.entry.as_ref().expect("entry facts");
-                (
-                    self.builder.use_var(entry.receiver.object),
-                    self.builder.use_var(entry.receiver.shape),
-                    self.builder.use_var(entry.receiver.inline),
-                )
-            } else {
-                self.object_record(state, register, exit)
-            };
-            let owner = Some(if receiver { None } else { register });
-            if let Some(value) = self.shape_switch_read(state, owner, object, shape, inline, &shapes, exit) {
-                return value;
-            }
-        }
         let object_bits = match register {
             None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
             Some(register) => self.tagged(state, register),
         };
-        self.field_probe(object_bits, site, exit)
+        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
+        if shapes.is_empty() {
+            return self.field_probe(object_bits, site, exit);
+        }
+        let owner = if receiver { None } else { register };
+        let probed = shapes.iter().any(|field| field.holder.is_some());
+        self.probed_read(state, owner, probed, object_bits, site, exit, |lowering, state, generic| {
+            let (object, shape, inline) = if receiver {
+                let entry = lowering.entry.as_ref().expect("entry facts");
+                (
+                    lowering.builder.use_var(entry.receiver.object),
+                    lowering.builder.use_var(entry.receiver.shape),
+                    lowering.builder.use_var(entry.receiver.inline),
+                )
+            } else {
+                lowering.object_record(state, register, generic)
+            };
+            lowering.shape_switch_read(state, Some(owner), object, shape, inline, &shapes, generic)
+        })
     }
 
     /// The read through `site` of the object a previous read of a chain produced, whose
@@ -1376,9 +1384,46 @@ impl Lowering<'_, '_> {
         if shapes.is_empty() {
             return Some(self.field_probe(object_bits, site, exit));
         }
-        let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        let header = ObjectHeader::prove(&mut self.builder, object_bits, records, exit);
-        self.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, exit)
+        let probed = shapes.iter().any(|field| field.holder.is_some());
+        Some(self.probed_read(state, None, probed, object_bits, site, exit, |lowering, state, generic| {
+            let records = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+            let header = ObjectHeader::prove(&mut lowering.builder, object_bits, records, generic);
+            lowering.shape_switch_read(state, None, header.record, header.shape, header.inline, &shapes, generic)
+        }))
+    }
+
+    /// A read by the site's proved shapes (`fast`), whose misses leave through `exit`; where
+    /// `probed` (the site names prototype-held slots, which prove only the immediate prototype,
+    /// `Vm::ordinary_holder_entry_value`), a miss first asks the VM's caches, whose other tiers
+    /// read deeper holders (`field_probe`). Past that join only what both paths prove holds:
+    /// the fast path's proofs of `owner`'s object do not.
+    #[allow(clippy::too_many_arguments)]
+    fn probed_read(&mut self, state: &mut State, owner: Option<Register>, probed: bool, object_bits: ir::Value, site: u16,
+        exit: ir::Block, fast: impl FnOnce(&mut Self, &mut State, ir::Block) -> Option<ir::Value>) -> ir::Value {
+        if !probed {
+            return match fast(self, state, exit) {
+                Some(read) => read,
+                None => self.field_probe(object_bits, site, exit),
+            };
+        }
+        let (generic, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(generic);
+        let value = self.builder.append_block_param(join, types::I64);
+        let before = state.clone();
+        match fast(self, state, generic) {
+            Some(read) => { self.ins().jump(join, &[ir::BlockArg::Value(read)]); }
+            None => { self.ins().jump(generic, &[]); }
+        }
+        self.builder.switch_to_block(generic);
+        let probed = self.field_probe(object_bits, site, exit);
+        self.ins().jump(join, &[ir::BlockArg::Value(probed)]);
+        self.builder.switch_to_block(join);
+        state.shapes.retain(|known, _| before.shapes.contains_key(known));
+        state.layouts.retain(|key, _| before.layouts.contains_key(key));
+        if let Some(register) = owner {
+            state.values[usize::from(register)] = before.values[usize::from(register)];
+        }
+        value
     }
 
     /// Read the slot `shapes` names for the record's `shape`; `exit` for any other shape. A
