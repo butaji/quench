@@ -58,6 +58,7 @@ mod lane_region;
 mod lane_unit;
 pub(super) use lane_unit::{CallTarget, Frame as InlinedCall};
 mod object_slots;
+mod frame_ssa;
 pub(super) use object_slots::NativeFieldLoad;
 #[cfg(feature = "aot")]
 mod scalar_region;
@@ -2165,6 +2166,8 @@ pub(super) struct StaticRegionEntry<'a> {
     pub(super) range: std::ops::Range<usize>,
     pub(super) target: StaticRegionTarget,
     pub(super) fields: &'a [FieldUse],
+    /// Complete canonical register footprint of the verified no-GC residual.
+    pub(super) frame: &'a [Register],
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
@@ -2300,6 +2303,8 @@ pub(super) fn lower_js_general_dispatch(
         }
         i32::try_from(usize::from(register).checked_mul(std::mem::size_of::<u64>())?).ok()
     };
+    let mut frame_flow = frame_ssa::FrameFlow::new(arguments, function.registers);
+    let resume_entries: Vec<_> = (0..instruction_count).map(|_| builder.create_block()).collect();
     for (pc, block) in blocks.iter().copied().enumerate() {
         builder.switch_to_block(block);
         #[cfg(feature = "aot")]
@@ -3363,8 +3368,15 @@ pub(super) fn lower_js_general_dispatch(
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
-        scalar_region::emit_entry(&mut builder, isa, entry,
+        let call = scalar_region::emit_entry(&mut builder, isa, entry,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc);
+        frame_flow.residual(call, entry.frame);
+    }
+    let live = program.register_root_masks(function_id);
+    for (pc, resume) in resume_entries.iter().copied().enumerate() {
+        builder.switch_to_block(resume);
+        frame_flow.resume(&mut builder, live, pc);
+        builder.ins().jump(entries[pc], &[]);
     }
     builder.switch_to_block(continue_block);
     let select_block = builder.create_block();
@@ -3377,7 +3389,7 @@ pub(super) fn lower_js_general_dispatch(
     );
     builder.switch_to_block(select_block);
     let selector = builder.ins().ireduce(types::I32, continue_pc);
-    let cases: Vec<_> = entries
+    let cases: Vec<_> = resume_entries
         .iter()
         .map(|target| builder.func.dfg.block_call(*target, &[]))
         .collect();
@@ -3392,6 +3404,7 @@ pub(super) fn lower_js_general_dispatch(
     builder.seal_block(continue_block);
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
+    frame_flow.promote(&mut native, callout, live, isa.frontend_config());
     Ok((native, general_dispatch_native_pcs))
 }
 

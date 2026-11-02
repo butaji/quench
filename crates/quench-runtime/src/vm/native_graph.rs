@@ -306,6 +306,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                                 u32::try_from(scalar_base + scalar_definitions.len() + offset)
                                     .expect("native scalar symbol index")),
                             fields: &region.fields,
+                            frame: &region.frame,
                         }
                     }).collect::<Vec<_>>(),
                 ) {

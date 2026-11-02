@@ -1459,7 +1459,7 @@ impl LoopRegion {
             .copied()
     }
 
-    fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
+    pub(super) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
         self.numbers.iter().chain(&self.tagged).copied()
     }
 

@@ -99,5 +99,24 @@ Object.defineProperty(state, 'value', {
 });
 state.change(2, 7);
 record(() => state.check()); state.mark(); state.assign();
+function acrossCall(value, mutate) {
+  const original = value;
+  const computed = value + 1;
+  mutate(arguments);
+  return computed + ':' + value + ':' + original;
+}
+function changeArgument(args) { args[0] = 'changed'; }
+for (let i = 0; i < 40; i++) {
+  if (acrossCall(7, changeArgument) !== '8:changed:7') throw Error('call-edge alias recovery');
+}
+output.push(acrossCall(7, changeArgument));
+function reflectedAfterWrite(value) {
+  value = value + 1;
+  return reflectedAfterWrite.arguments[0];
+}
+for (let i = 0; i < 40; i++) {
+  if (reflectedAfterWrite(3) !== 4) throw Error('reflected return state');
+}
+output.push(String(reflectedAfterWrite(3)));
 output.push(events.join(','));
 console.log(JSON.stringify(output));
