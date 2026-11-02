@@ -20752,8 +20752,8 @@ mod numeric_pair_tests {
         let run = |program| {
             let host = TestHost::default();
             super::super::Vm::new(host.clone()).execute(&program).unwrap();
-            let output = host.lines().clone();
-            output
+            let output = host.lines();
+            output.clone()
         };
         let specialized = crate::Engine::specialize(source, "constant-numeric-pairs.js").unwrap();
         let general = crate::Engine::specialize_unspecialized(source, "constant-numeric-pairs.js").unwrap();

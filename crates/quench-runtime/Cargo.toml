@@ -15,6 +15,10 @@ name = "quench_runtime"
 name = "quench"
 path = "src/bin/quench.rs"
 
+[[bench]]
+name = "number_primitives"
+required-features = ["bench-primitives"]
+
 [features]
 default = ["jit"]
 jit = ["dep:cranelift-native", "cranelift-codegen/host-arch"]

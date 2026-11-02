@@ -16,9 +16,9 @@ use std::hash::{Hash, Hasher};
 use std::hint::black_box;
 use test::Bencher;
 
-const BATCH_VALUES: usize = 64;
-const INPUT_SEED: i32 = 104729;
-const FRACTION_DIVISOR: f64 = 31.0;
+#[path = "../../benches/support/number_inputs.rs"]
+mod number_inputs;
+use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
@@ -150,48 +150,7 @@ fn primitive_control_number_pair_chain_batch(b: &mut Bencher) {
     });
 }
 
-#[derive(Clone, Copy)]
-enum Inputs {
-    Integers,
-    WideIntegers,
-    LargeInt32,
-    Fractions,
-    Dyadic,
-    Mixed,
-    Boundaries,
-}
-
 impl Inputs {
-    fn numbers(self) -> [f64; BATCH_VALUES] {
-        let seed = black_box(INPUT_SEED);
-        let edges = [
-            0.0,
-            -0.0,
-            f64::from(i32::MIN),
-            f64::from(i32::MAX),
-            f64::from(i32::MIN) - 1.0,
-            f64::from(i32::MAX) + 1.0,
-            f64::MIN_POSITIVE,
-            f64::from_bits(1),
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NAN,
-        ];
-        std::array::from_fn(|index| {
-            let integer = f64::from(seed * (index as i32 - BATCH_VALUES as i32 / 2));
-            match self {
-                Self::Integers => integer,
-                Self::WideIntegers => integer * f64::from(u32::MAX),
-                Self::LargeInt32 => f64::from(i32::MAX - seed * index as i32),
-                Self::Fractions => integer + 1.0 / FRACTION_DIVISOR,
-                Self::Dyadic => integer + 0.5,
-                Self::Mixed if index % 2 == 0 => integer,
-                Self::Mixed => integer + 1.0 / FRACTION_DIVISOR,
-                Self::Boundaries => edges[index % edges.len()],
-            }
-        })
-    }
-
     fn values(self) -> [Value; BATCH_VALUES] {
         self.numbers().map(Value::number)
     }
@@ -427,12 +386,12 @@ fn primitive_array_proved_store_batch(b: &mut Bencher) {
     let _scope = LaneProofScope::enter();
     assert!(heap.prove_array_storage(&mut proofs, 0, array));
     b.iter(|| {
-        for index in 0..BATCH_VALUES {
+        for (index, value) in values.iter().enumerate() {
             assert!(black_box(&mut *proofs).replace(
                 0,
                 black_box(array),
                 black_box(index),
-                black_box(values[index])
+                black_box(*value)
             ));
         }
     });
