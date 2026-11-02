@@ -4594,7 +4594,36 @@ impl<H> Vm<H> {
                 holders += 1;
             }
         }
-        format!(
+        // The representation each own field a cache entry names holds across the live objects
+        // of its shape, the join of their values' classes: int32, number, anything else.
+        const INT32: u8 = 1;
+        const NUMBER: u8 = 2;
+        const TAGGED: u8 = 3;
+        let mut classes: std::collections::HashMap<(u32, u16), u8> = std::collections::HashMap::new();
+        self.heap.for_each_live_object_record(|object| {
+            let shape = object.exact_shape();
+            if shape != object.shape() { return; }
+            let Some(len) = self.shapes.get(shape as usize).map(|shape| shape.storage_len()) else { return };
+            for slot in 0..len {
+                // SAFETY: an exact, non-dictionary shape holds `len` slots.
+                let value = unsafe { self.heap.property_get_flat(object, slot) };
+                if value.is_deleted() { continue; }
+                let class = if value.as_int().is_some() { INT32 } else if value.as_number().is_some() { NUMBER } else { TAGGED };
+                let joined = classes.entry((shape, slot as u16)).or_insert(class);
+                *joined = (*joined).max(class);
+            }
+        });
+        let mut reps = [0_usize; 4];
+        let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
+            .filter(|cache| cache.receiver != NO_FIELD_RECEIVER && cache.holder == NO_FIELD_HOLDER);
+        for cache in own_entries {
+            reps[usize::from(classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(0))] += 1;
+        }
+        let reps = format!(
+            "QUENCH_FIELD_REPS {{\"no_live_object\":{},\"int32\":{},\"number\":{},\"tagged\":{}}}",
+            reps[0], reps[usize::from(INT32)], reps[usize::from(NUMBER)], reps[usize::from(TAGGED)],
+        );
+        reps + "\n" + &format!(
             "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
         )

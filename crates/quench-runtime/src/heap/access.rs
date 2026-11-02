@@ -722,6 +722,11 @@ impl Heap {
         }
     }
 
+    /// Every live object record, for a diagnostics census (`Vm::field_site_report`).
+    pub(crate) fn for_each_live_object_record(&self, mut visit: impl FnMut(&Object)) {
+        self.object_records.for_each_live(|_, object| visit(object));
+    }
+
     pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
         // SAFETY: direct-object Values name live records, retired after weak pruning.
         unsafe { self.object_records.get_live(record_id) }
