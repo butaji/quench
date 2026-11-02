@@ -16,6 +16,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 /// The CLI switch that enables this module.
 pub(crate) const FLAG: &str = "--hmr";
+/// A frozen image cannot admit a new version of filesystem source.
+const SOURCE_REPLACEMENT_UNAVAILABLE: &str =
+    "native guest code required: hot module replacement is unavailable";
 /// The watcher's cadence: polls closer together than this find nothing new.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// An edit is applied once its file has kept one stamp this long (editors write in steps).
@@ -569,6 +572,13 @@ pub(crate) fn accept_plan(
 /// The event loop's HMR poll: apply each stable edit, or restart the process for one that
 /// cannot be applied. Whether an update ran guest code.
 pub(crate) fn poll(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &quench_runtime::ResidualProgram) -> Result<bool, String> {
+    if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+        return if runtime.host_mut().shared_state().borrow().hmr.is_some() {
+            Err(SOURCE_REPLACEMENT_UNAVAILABLE.into())
+        } else {
+            Ok(false)
+        };
+    }
     let shared_state = runtime.host_mut().shared_state();
     let update = shared_state.borrow_mut().hmr.as_mut().and_then(|state| state.poll(Instant::now()));
     let changed = match update {
@@ -622,6 +632,9 @@ fn apply(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &quench_runti
 /// `hmrApply(path)`: replace one changed module by the loader that loaded it; false when
 /// the update is not accepted and the process restarts instead.
 pub(crate) fn apply_operation(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+        return Err(RootedError::host(SOURCE_REPLACEMENT_UNAVAILABLE));
+    }
     let path = match args.first() {
         Some(path) => context.string_text(*path)?.map(PathBuf::from),
         None => None,
