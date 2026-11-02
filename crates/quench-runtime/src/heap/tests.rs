@@ -194,15 +194,20 @@ fn parallel_full_mark_follows_records_and_ephemerons_like_the_serial_mark() {
             // Each array reaches the previous one through an object record.
             let object = heap.alloc(Cell::Object(plain_object()));
             heap.object_mut(object).unwrap().set_inline_property(0, link);
+            let property = heap.alloc_string(format!("object:{index}").into());
+            heap.object_mut(object).unwrap().set_inline_property(1, property);
+            strings.push(property);
             elements.push(object);
             link = heap.alloc(Cell::Array {
                 object: ArrayObject::new(plain_object(), elements),
             });
         }
+        let direct_root = heap.alloc_string("direct root".into());
         let garbage = heap.alloc_string("garbage".into());
         assert!(link.direct_array_index().is_some() && strings[0].direct_string_index().is_some());
 
-        heap.collect([map, link]);
+        heap.collect([direct_root, map, link]);
+        assert!(heap.is_live(direct_root));
         #[cfg(feature = "profile-aggregate")]
         marked_counts.push((heap.gc_profile().marked, heap.gc_profile().marked_kinds));
         assert!(strings.iter().all(|string| heap.is_live(*string)));
@@ -214,6 +219,7 @@ fn parallel_full_mark_follows_records_and_ephemerons_like_the_serial_mark() {
         }
 
         heap.collect([map]);
+        assert!(!heap.is_live(direct_root));
         assert!(strings.iter().all(|string| !heap.is_live(*string)));
         for dead in [object_key, array_key, object_value, array_value, nested_value] {
             assert!(!heap.is_live(dead), "{dead:?} is unreachable");
