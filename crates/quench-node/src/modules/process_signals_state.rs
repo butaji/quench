@@ -1,48 +1,62 @@
 //! OS signal resources and ordered notifications for the Node host.
 // Delivery is implemented on Linux; other platforms preserve the previous path.
+/// Node signal names and host numbers, shared by OS constants and signal validation.
+pub(crate) const SIGNALS: &[(&str, libc::c_int)] = &[
+    ("SIGHUP", libc::SIGHUP),
+    ("SIGINT", libc::SIGINT),
+    ("SIGQUIT", libc::SIGQUIT),
+    ("SIGILL", libc::SIGILL),
+    ("SIGTRAP", libc::SIGTRAP),
+    ("SIGABRT", libc::SIGABRT),
+    ("SIGIOT", libc::SIGIOT),
+    ("SIGBUS", libc::SIGBUS),
+    ("SIGFPE", libc::SIGFPE),
+    ("SIGKILL", libc::SIGKILL),
+    ("SIGUSR1", libc::SIGUSR1),
+    ("SIGSEGV", libc::SIGSEGV),
+    ("SIGUSR2", libc::SIGUSR2),
+    ("SIGPIPE", libc::SIGPIPE),
+    ("SIGALRM", libc::SIGALRM),
+    ("SIGTERM", libc::SIGTERM),
+    ("SIGCHLD", libc::SIGCHLD),
+    #[cfg(target_os = "linux")]
+    ("SIGSTKFLT", libc::SIGSTKFLT),
+    ("SIGCONT", libc::SIGCONT),
+    ("SIGSTOP", libc::SIGSTOP),
+    ("SIGTSTP", libc::SIGTSTP),
+    ("SIGTTIN", libc::SIGTTIN),
+    ("SIGTTOU", libc::SIGTTOU),
+    ("SIGURG", libc::SIGURG),
+    ("SIGXCPU", libc::SIGXCPU),
+    ("SIGXFSZ", libc::SIGXFSZ),
+    ("SIGVTALRM", libc::SIGVTALRM),
+    ("SIGPROF", libc::SIGPROF),
+    ("SIGWINCH", libc::SIGWINCH),
+    ("SIGIO", libc::SIGIO),
+    #[cfg(target_os = "linux")]
+    ("SIGPOLL", libc::SIGPOLL),
+    #[cfg(target_os = "linux")]
+    ("SIGPWR", libc::SIGPWR),
+    #[cfg(target_os = "macos")]
+    ("SIGINFO", libc::SIGINFO),
+    ("SIGSYS", libc::SIGSYS),
+];
+
+pub(crate) fn signal_number(name: &str) -> Option<libc::c_int> {
+    SIGNALS
+        .iter()
+        .find_map(|(candidate, number)| (*candidate == name).then_some(*number))
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
+    use super::{SIGNALS, signal_number};
     use std::collections::{BTreeMap, HashMap, VecDeque};
     use std::io::{self, Read};
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
 
-    pub(crate) const SIGNALS: &[(&str, libc::c_int)] = &[
-        ("SIGHUP", libc::SIGHUP),
-        ("SIGINT", libc::SIGINT),
-        ("SIGQUIT", libc::SIGQUIT),
-        ("SIGILL", libc::SIGILL),
-        ("SIGTRAP", libc::SIGTRAP),
-        ("SIGABRT", libc::SIGABRT),
-        ("SIGIOT", libc::SIGIOT),
-        ("SIGBUS", libc::SIGBUS),
-        ("SIGFPE", libc::SIGFPE),
-        ("SIGKILL", libc::SIGKILL),
-        ("SIGUSR1", libc::SIGUSR1),
-        ("SIGSEGV", libc::SIGSEGV),
-        ("SIGUSR2", libc::SIGUSR2),
-        ("SIGPIPE", libc::SIGPIPE),
-        ("SIGALRM", libc::SIGALRM),
-        ("SIGTERM", libc::SIGTERM),
-        ("SIGCHLD", libc::SIGCHLD),
-        ("SIGSTKFLT", libc::SIGSTKFLT),
-        ("SIGCONT", libc::SIGCONT),
-        ("SIGSTOP", libc::SIGSTOP),
-        ("SIGTSTP", libc::SIGTSTP),
-        ("SIGTTIN", libc::SIGTTIN),
-        ("SIGTTOU", libc::SIGTTOU),
-        ("SIGURG", libc::SIGURG),
-        ("SIGXCPU", libc::SIGXCPU),
-        ("SIGXFSZ", libc::SIGXFSZ),
-        ("SIGVTALRM", libc::SIGVTALRM),
-        ("SIGPROF", libc::SIGPROF),
-        ("SIGWINCH", libc::SIGWINCH),
-        ("SIGIO", libc::SIGIO),
-        ("SIGPOLL", libc::SIGPOLL),
-        ("SIGPWR", libc::SIGPWR),
-        ("SIGSYS", libc::SIGSYS),
-    ];
     // Apply only at an executable's process boundary, before starting VM workers.
     // Node ResetSignalHandlers resets inherited ignores for standard POSIX signals;
     // genuine installed handlers survive. SIGPIPE and SIGXFSZ are ignored by policy.
@@ -95,12 +109,6 @@ mod platform {
             .map_err(|_| io::Error::other("signal arrival sequence exhausted"))
     }
     static HUB: Mutex<Option<Hub>> = Mutex::new(None);
-
-    pub(crate) fn signal_number(name: &str) -> Option<libc::c_int> {
-        SIGNALS
-            .iter()
-            .find_map(|(candidate, number)| (*candidate == name).then_some(*number))
-    }
 
     extern "C" fn receive(signal: libc::c_int) {
         ACTIVE_HANDLERS.fetch_add(1, Ordering::AcqRel);
@@ -404,11 +412,7 @@ mod platform {
     }
 }
 
-pub(crate) use platform::{wake_fd, SignalState};
-#[cfg(target_os = "linux")]
-pub(crate) use platform::SIGNALS;
-#[cfg(target_os = "linux")]
-pub(crate) use platform::signal_number;
+pub(crate) use platform::{SignalState, wake_fd};
 
 /// The VM runs on a stack-owning worker. Keep process-directed signals from
 /// being delivered to its waiting caller, while preserving the caller's mask
