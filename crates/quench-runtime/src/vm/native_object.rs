@@ -127,6 +127,17 @@ pub fn emit_native_module(
                 if matches!(target, ir::ExternalName::TestCase(_)) {
                     return Err(format!("{name}: test-only external names cannot be linked"));
                 }
+                if let ir::ExternalName::User(reference) = target {
+                    let target = &function.params.user_named_funcs()[*reference];
+                    let declared = match target.namespace {
+                        NATIVE_FUNCTION_NAMESPACE => (target.index as usize) < symbols.len(),
+                        NATIVE_DATA_NAMESPACE => (target.index as usize) < data_symbols.len(),
+                        _ => false,
+                    };
+                    if !declared {
+                        return Err(format!("{name}: undeclared native function or data {target}"));
+                    }
+                }
                 if *tls {
                     return Err(format!(
                         "{name}: thread-local native symbols are not declared"
@@ -134,25 +145,22 @@ pub fn emit_native_module(
                 }
             }
         }
-        for target in function.params.user_named_funcs().values() {
-            let declared = match target.namespace {
-                NATIVE_FUNCTION_NAMESPACE => (target.index as usize) < symbols.len(),
-                NATIVE_DATA_NAMESPACE => (target.index as usize) < data_symbols.len(),
-                _ => false,
+        // Inlining leaves unused FuncRef/name declarations behind. Validate
+        // actual instructions, not those non-emitted compilation records.
+        for instruction in function.layout.blocks().flat_map(|block| function.layout.block_insts(block)) {
+            let reference = match function.dfg.insts[instruction] {
+                ir::InstructionData::Call { func_ref, .. }
+                | ir::InstructionData::TryCall { func_ref, .. }
+                | ir::InstructionData::FuncAddr { func_ref, .. } => func_ref,
+                _ => continue,
             };
-            if !declared {
-                return Err(format!(
-                    "{name}: undeclared native function or data {target}"
-                ));
-            }
-        }
-        for external in function.dfg.ext_funcs.values() {
-            if let ir::ExternalName::User(reference) = external.name {
+            if let ir::ExternalName::User(reference) = function.dfg.ext_funcs[reference].name {
                 let target = &function.params.user_named_funcs()[reference];
                 if target.namespace != NATIVE_FUNCTION_NAMESPACE {
-                    return Err(format!(
-                        "{name}: data symbol {target} cannot be called as a function"
-                    ));
+                    return Err(format!("{name}: data or private symbol {target} cannot be called as a function"));
+                }
+                if target.index as usize >= symbols.len() {
+                    return Err(format!("{name}: undeclared native function {target}"));
                 }
             }
         }
@@ -277,6 +285,19 @@ mod tests {
             vec![function("main", Some(1)), function("answer", None)],
         )
         .unwrap();
+        assert_eq!(link_and_run(object), Some(PROGRAM_EXIT_STATUS as i32));
+    }
+
+    #[test]
+    fn inlined_import_metadata_needs_no_linked_symbol() {
+        let NativeFunction::Definition { function: mut main, .. } = function("main", None) else { unreachable!() };
+        let signature = main.import_signature(signature());
+        let private = main.declare_imported_user_function(ir::UserExternalName::new(u32::from_be_bytes(*b"INLN"), 0));
+        main.import_function(ir::ExtFuncData { name: ir::ExternalName::user(private), signature,
+            colocated: false, patchable: false });
+        let object = emit_native_object("inlined-import", vec![NativeFunction::Definition {
+            name: "main".into(), function: main,
+        }]).unwrap();
         assert_eq!(link_and_run(object), Some(PROGRAM_EXIT_STATUS as i32));
     }
 

@@ -3,30 +3,15 @@ use oxc_syntax::operator::UnaryOperator;
 
 use crate::bytecode::Constant;
 
-#[derive(Clone, Copy)]
-pub(super) enum BindingTime<T> {
-    Static(T),
-    Dynamic,
-}
-
-impl<T> BindingTime<T> {
-    pub(super) fn static_value(self) -> Option<T> {
-        match self {
-            Self::Static(value) => Some(value),
-            Self::Dynamic => None,
-        }
-    }
-}
-
-pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
+pub(super) fn expression(value: &Expression<'_>) -> Option<Constant> {
     match value {
-        Expression::NumericLiteral(value) => BindingTime::Static(Constant::Number(value.value)),
-        Expression::StringLiteral(value) => BindingTime::Static(super::string::constant(value)),
+        Expression::NumericLiteral(value) => Some(Constant::Number(value.value)),
+        Expression::StringLiteral(value) => Some(super::string::constant(value)),
         Expression::BigIntLiteral(value) => {
-            BindingTime::Static(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
+            Some(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
         }
-        Expression::BooleanLiteral(value) => BindingTime::Static(Constant::Boolean(value.value)),
-        Expression::NullLiteral(_) => BindingTime::Static(Constant::Null),
+        Expression::BooleanLiteral(value) => Some(Constant::Boolean(value.value)),
+        Expression::NullLiteral(_) => Some(Constant::Null),
         Expression::ParenthesizedExpression(value) => expression(&value.expression),
         Expression::TSAsExpression(value) => expression(&value.expression),
         Expression::TSSatisfiesExpression(value) => expression(&value.expression),
@@ -34,7 +19,7 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
         Expression::TSNonNullExpression(value) => expression(&value.expression),
         Expression::TSInstantiationExpression(value) => expression(&value.expression),
         Expression::UnaryExpression(value) => unary(value),
-        _ => BindingTime::Dynamic,
+        _ => None,
     }
 }
 
@@ -42,21 +27,19 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
 /// coercion: `void` of any literal (which minifiers write for `undefined`), `!` of a
 /// literal whose ToBoolean is fixed (`!0` and `!1` for the booleans), and `-`/`+` of a
 /// number.
-pub(super) fn unary(value: &UnaryExpression<'_>) -> BindingTime<Constant> {
-    let Some(operand) = expression(&value.argument).static_value() else {
-        return BindingTime::Dynamic;
-    };
+pub(super) fn unary(value: &UnaryExpression<'_>) -> Option<Constant> {
+    let operand = expression(&value.argument)?;
     let folded = match (value.operator, operand) {
         (UnaryOperator::Void, _) => Constant::Undefined,
         (UnaryOperator::LogicalNot, operand) => match to_boolean(&operand) {
             Some(truthy) => Constant::Boolean(!truthy),
-            None => return BindingTime::Dynamic,
+            None => return None,
         },
         (UnaryOperator::UnaryNegation, Constant::Number(value)) => Constant::Number(-value),
         (UnaryOperator::UnaryPlus, Constant::Number(value)) => Constant::Number(value),
-        _ => return BindingTime::Dynamic,
+        _ => return None,
     };
-    BindingTime::Static(folded)
+    Some(folded)
 }
 
 /// ToBoolean of a static constant; BigInt literals keep their run-time conversion.
@@ -74,7 +57,6 @@ fn to_boolean(value: &Constant) -> Option<bool> {
 /// Whether a test is a literal whose ToBoolean is true, so a loop need not evaluate it.
 pub(super) fn always_truthy(value: &Expression<'_>) -> bool {
     expression(value)
-        .static_value()
         .and_then(|value| to_boolean(&value))
         .unwrap_or(false)
 }

@@ -45,7 +45,7 @@ impl FunctionCompiler<'_, '_> {
                     },
                 )
             }
-            value => binding_time::expression(value).static_value().map(|_| 0),
+            value => binding_time::expression(value).map(|_| 0),
         }
     }
 
@@ -71,9 +71,7 @@ impl FunctionCompiler<'_, '_> {
                 steps.push(LiteralStep::Object(site));
             }
             value => {
-                let constant = binding_time::expression(value)
-                    .static_value()
-                    .expect("an admitted leaf is a constant");
+                let constant = binding_time::expression(value).expect("an admitted leaf is a constant");
                 steps.push(LiteralStep::Constant(self.owner.constant(constant)));
             }
         }

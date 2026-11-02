@@ -1646,6 +1646,20 @@ impl<H: Host> Vm<H> {
         self.set_index_mode(&program, object, key, value, true)
     }
 
+    pub(crate) fn delete_property_strict_rooted(&mut self, object: RootId, key: RootId) -> Result<(), JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        self.delete_reference_property_mode(&program, object, key, true).map(|_| ())
+    }
+
+    pub(crate) fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        self.delete_reference_property_mode(&program, object, key, false).map(|value| value == Value::TRUE)
+    }
+
     pub(crate) fn evaluate_module_sync(
         &mut self,
         module: &crate::ModuleSource,
@@ -1684,16 +1698,6 @@ impl<H: Host> Vm<H> {
             &[object, key, value, receiver],
         )?;
         Ok(accepted.as_bool().expect("Reflect.set returns a boolean"))
-    }
-
-    /// `Reflect.deleteProperty(object, key)`: the object's `[[Delete]]`, whose result says
-    /// whether the property is gone; a strict-mode `delete` throws where it is `false`.
-    pub(crate) fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
-        let object = self.embedding_value(object)?;
-        let key = self.embedding_value(key)?;
-        let program = self.embedding_program()?;
-        let deleted = self.call_reflect_native(&program, Native::ReflectDeleteProperty, &[object, key])?;
-        Ok(deleted.as_bool().expect("Reflect.deleteProperty returns a boolean"))
     }
 
     /// `Reflect.set(object, name, value)` for a string key the host spells, without

@@ -93,16 +93,9 @@ pub(super) struct PendingGeneralCall {
     pub(super) caller_cursor: Option<GeneralCodeCursor>,
     pub(super) call_pc: u32,
     pub(super) destination: Register,
-    /// Set for an in-loop `new`; see `StepResult::PushFrame`.
-    pub(super) construct_this: Option<Value>,
-    /// The rooted promise of an async callee pushed in place (`CallPlan::settles_in_loop`):
-    /// its return resolves the promise, which is then the call's value, and an abrupt
-    /// completion rejects it and resumes the caller after the call.
-    pub(super) settles: Option<crate::heap::RootId>,
-    /// The generator whose suspended frame the call resumed in place
-    /// (`Vm::try_in_loop_generator_step`): the frame's `yield` suspends it again and its
-    /// return or throw finishes it, each completing the call with the step's result.
-    pub(super) generator: Option<super::generator::GeneratorResume>,
+    /// Constructor substitution, promise settlement or generator resumption;
+    /// ordinary calls yield the returned value directly.
+    pub(super) completion: CallCompletion,
     /// The call falls into a return of its result: the caller completes with the callee's
     /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
     /// legacy `caller` reflection), so this chains returns rather than replacing frames.
@@ -2378,7 +2371,7 @@ impl<H: Host> Vm<H> {
             let mut yielded = None;
             let step = match step {
                 Ok(StepResult::Yield { value, destination, delegated_result })
-                    if pending_calls.last().is_some_and(|call| call.generator.is_some() && call.caller + 1 == frame) =>
+                    if pending_calls.last().is_some_and(|call| call.completion.is_generator() && call.caller + 1 == frame) =>
                 {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
@@ -2420,7 +2413,7 @@ impl<H: Host> Vm<H> {
                                     )
                                     .is_some()
                         );
-                        match pending.generator.take() {
+                        match pending.completion.take_generator() {
                             Some(resume) => {
                                 let stop = yielded.take().unwrap_or(super::generator::InLoopGeneratorStop::Returned);
                                 value = self.finish_in_loop_generator_step(completed_frame, resume, value, stop);
@@ -2440,11 +2433,11 @@ impl<H: Host> Vm<H> {
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // [[Construct]] of an ordinary constructor yields its returned object,
                         // otherwise the receiver it allocated.
-                        value = match pending.construct_this {
+                        value = match pending.completion.constructor_this() {
                             Some(this) if !self.is_object_like(value) => this,
                             _ => value,
                         };
-                        if let Some(root) = pending.settles {
+                        if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);
                             // SAFETY: as for `p` at the top of the loop.
                             let caller_code = unsafe { &*executing_residual };
@@ -2484,9 +2477,7 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::PushFrame {
                     destination,
                     call_guard,
-                    construct_this,
-                    settles,
-                    generator,
+                    completion,
                 }) => {
                     // A callee of another program became active when its frame was pushed;
                     // the loop executes that program until the callee returns.
@@ -2510,9 +2501,7 @@ impl<H: Host> Vm<H> {
                         caller_cursor: Some(cursor),
                         call_pc: instruction_pc as u32,
                         destination,
-                        construct_this,
-                        settles,
-                        generator,
+                        completion,
                         returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
                         caller_program,
@@ -2558,13 +2547,13 @@ impl<H: Host> Vm<H> {
                     // and its caller continues with the promise, as `call_user_maybe_async`
                     // makes both for a call it runs apart.
                     if let Some(mut pending) = pending_calls.pop_if(|pending| {
-                        pending.settles.is_some() && pending.generator.is_none() && !pending.returns && pending.caller + 1 == frame
+                        pending.completion.is_settling() && !pending.returns && pending.caller + 1 == frame
                     }) {
                         self.frames[frame].pc = pc;
                         self.frames[frame].pc_is_resume = true;
                         let mut suspended = self.frames.pop().expect("the awaiting frame is the innermost");
                         suspended.with_objects = self.with_stack.split_off(suspended.with_base);
-                        let promise = self.release_settled_call_root(pending.settles.take().expect("a settling call"));
+                        let promise = self.release_settled_call_root(pending.completion.take_promise().expect("a settling call"));
                         // SAFETY: as for `p` at the top of the loop.
                         let callee_code = unsafe { &*executing_residual };
                         self.persist_global_lexical_bindings(callee_code, &suspended);
@@ -2689,12 +2678,12 @@ impl<H: Host> Vm<H> {
                         Ok(_) => unreachable!(),
                     };
                     // A generator resumed in place finishes with its frame's throw.
-                    if let Some(resume) = pending.generator.take() {
+                    if let Some(resume) = pending.completion.take_generator() {
                         self.abandon_in_loop_generator_step(resume);
                     }
                     // An async callee's abrupt completion rejects its promise, which the
                     // call yields; the caller resumes after the call.
-                    if let Some(root) = pending.settles {
+                    if let Some(root) = pending.completion.take_promise() {
                         let promise = self.release_settled_call_root(root);
                         let caller_residual = executing.retained.clone();
                         let caller_code = caller_residual.as_deref().unwrap_or(entry_program);

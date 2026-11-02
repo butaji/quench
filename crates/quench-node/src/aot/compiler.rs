@@ -154,79 +154,6 @@ impl CompiledSources {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct HostSourceDemands {
-    builtins: BTreeSet<String>,
-    globals: BTreeSet<String>,
-    esm_builtins: BTreeSet<String>,
-}
-
-enum CaptureStage<'a> {
-    Snapshot(crate::host::startup_snapshot::SnapshotKind),
-    Modules(&'a DependencyGraph),
-}
-
-/// Materialize only host-defined SDK sources in a fresh compiler VM. This point
-/// precedes IPC, user preloads and application entry; no application is trained.
-pub(crate) fn stage_host_sources(
-    context: &mut quench_runtime::NativeContext<'_, NodeHost>, demands: HostSourceDemands,
-) -> Result<(), quench_runtime::RootedError> {
-    // The default warning listener is installed after the staging boundary and
-    // can run for host-generated warnings without an application import.
-    crate::modules::process_warning_shared_vm::prepare(context)?;
-    crate::modules::node_errors_shared_vm::stage_coded_error_support(context)?;
-    // Global timer operations construct these handles only when scheduled.
-    // Build their definitions without creating timers or enqueueing callbacks.
-    crate::modules::timers_shared_vm::timer_handle_api(context)?;
-    let global = context.global_root()?;
-    let process = context.string_rooted("process");
-    let process = context.get_property_rooted(global, process)?;
-    // Process is an implicit Node entry capability and can escape through
-    // aliases or reflection. Materialize its declared lazy groups, without
-    // invoking ordinary accessor getters or any process operation.
-    for name in crate::modules::process_surface::LAZY_MEMBERS {
-        context.materialize_lazy_data_property_rooted(process, name)?;
-    }
-    let env = context.string_rooted("env");
-    context.get_property_rooted(process, env)?;
-    let builtins: Vec<_> = demands.builtins.iter().map(String::as_str).collect();
-    crate::host::startup_snapshot::preload_named(context, &builtins)?;
-    for name in demands.esm_builtins {
-        context.scoped(|context| crate::host::shared_vm::commonjs::stage_builtin_exports(context, &name))?;
-    }
-    // These imported modules expose SDK-backed lazy policies. Stage the
-    // policies without invoking their exported operations or capturing state.
-    for name in &builtins {
-        context.scoped(|context| {
-            let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
-                // Namespace copies can observe every public lazy export: buffer
-                // Blob/File, util codecs, and crypto's WebCrypto policy.
-                "buffer" | "util" | "crypto" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, name),
-                "sys" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:util"),
-                // createRequire tests URL-like inputs through the SDK URL policy,
-                // including the static CommonJS facade used by ESM imports.
-                "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
-                "fs" | "fs/promises" => {
-                    // Namespace readers can observe directory/glob policy as well
-                    // as streams, including fs.promises reached through fs.
-                    crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs")?;
-                    return crate::host::shared_vm::commonjs::stage_builtin_exports(context, "node:fs/promises");
-                }
-                // Domain's capture callback preserves the process report flag.
-                "domain" => (process, "report"),
-                _ => return Ok(()),
-            };
-            let key = context.string_rooted(member);
-            context.get_property_rooted(module, key).map(drop)
-        })?;
-    }
-    for name in demands.globals {
-        let key = context.string_rooted(&name);
-        context.get_property_rooted(global, key)?;
-    }
-    Ok(())
-}
-
 impl SourceManifest {
     pub fn insert(&mut self, name: &str, parts: &[&str]) -> Result<bool, String> {
         Ok(self.units.insert(NativeSourceKey::new(name, parts)?))
@@ -247,16 +174,18 @@ impl SourceManifest {
     /// boundary forbids process-state capture and stops before user preloads,
     /// entry loading, IPC activation and event-loop execution.
     pub fn capture_bootstrap() -> Result<Self, String> {
-        Self::capture(CaptureStage::Snapshot(crate::host::startup_snapshot::SnapshotKind::Bootstrap))
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Bootstrap)
     }
 
     /// The existing Node snapshot preload set, staged before any application.
     pub fn capture_preloaded() -> Result<Self, String> {
-        Self::capture(CaptureStage::Snapshot(crate::host::startup_snapshot::SnapshotKind::Preloaded))
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Preloaded)
     }
 
-    pub fn capture_for_graph(graph: &DependencyGraph) -> Result<Self, String> {
-        Self::capture(CaptureStage::Modules(graph))
+    /// Node SDK policies are Rust; only startup inputs can contribute guest source.
+    /// Keep this entry point for callers combining bootstrap and application manifests.
+    pub fn capture_for_graph(_graph: &DependencyGraph) -> Result<Self, String> {
+        Self::capture_bootstrap()
     }
 
     pub fn extend(&mut self, other: Self) -> Result<(), String> {
@@ -265,7 +194,7 @@ impl SourceManifest {
         Ok(())
     }
 
-    fn capture(stage: CaptureStage<'_>) -> Result<Self, String> {
+    fn capture(stage: crate::host::startup_snapshot::SnapshotKind) -> Result<Self, String> {
         let inputs = Rc::new(RefCell::new(Self::default()));
         let captured = inputs.clone();
         let mut host = NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?
@@ -273,13 +202,7 @@ impl SourceManifest {
                 captured.borrow_mut().insert(name, parts)?;
                 Ok(None)
             });
-        match stage {
-            CaptureStage::Snapshot(kind) => host.building_snapshot = Some(kind),
-            CaptureStage::Modules(graph) => host.native_source_staging = Some(HostSourceDemands {
-                builtins: graph.builtins.union(&graph.esm_builtins).cloned().collect(),
-                globals: graph.host_globals.clone(), esm_builtins: graph.esm_builtins.clone(),
-            }),
-        }
+        host.building_snapshot = Some(stage);
         let assets = Rc::new(RefCell::new(ModuleAssets::default()));
         host.module_assets = ModuleAssetState::Capture(assets.clone());
         let mut runtime = Runtime::new(host);

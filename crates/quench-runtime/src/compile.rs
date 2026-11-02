@@ -660,17 +660,12 @@ impl Engine {
                             let message = match expression.arguments.as_slice() {
                                 [] => None,
                                 [oxc_ast::ast::Argument::SpreadElement(_)] => return None,
-                                [argument] => Some(
-                                    binding_time::expression(argument.as_expression()?)
-                                        .static_value()?,
-                                ),
+                                [argument] => Some(binding_time::expression(argument.as_expression()?)?),
                                 _ => return None,
                             };
                             StaticModuleThrow::Error { name, message }
                         }
-                        expression => StaticModuleThrow::Value(
-                            binding_time::expression(expression).static_value()?,
-                        ),
+                        expression => StaticModuleThrow::Value(binding_time::expression(expression)?),
                     };
                     thrown = Some(value);
                 }
@@ -739,7 +734,7 @@ impl Engine {
                         Expression::Identifier(identifier) => {
                             bindings.get(identifier.name.as_str())?.clone()
                         }
-                        expression => binding_time::expression(expression).static_value()?,
+                        expression => binding_time::expression(expression)?,
                     };
                     exports.push(("\0quench:module-default".into(), "default".into()));
                     bindings.insert("\0quench:module-default".into(), value);
@@ -1645,7 +1640,7 @@ fn static_module_bindings(
             return None;
         };
         let value = match &declarator.init {
-            Some(expression) => binding_time::expression(expression).static_value()?,
+            Some(expression) => binding_time::expression(expression)?,
             None => Constant::Undefined,
         };
         let name = identifier.name.to_string();

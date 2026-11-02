@@ -38,6 +38,22 @@ fn source_keys_reject_unknown_or_noncanonical_shapes() {
 }
 
 #[test]
+fn rust_sdk_contributes_no_guest_source_and_capture_does_not_run_the_entry() {
+    use std::fs;
+    let directory = std::env::temp_dir().join(format!("quench-warning-stage-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("entry.cjs");
+    fs::write(&entry, "require('node:fs/promises'); require('node:util'); require('node:domain'); throw new Error('application entry must not run');").unwrap();
+    let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+    let staged = SourceManifest::capture_for_graph(&graph).unwrap();
+    assert_eq!(staged.units().len(), 0);
+    assert!(staged.assets().files.is_empty());
+    assert!(staged.assets().views.is_empty());
+    assert!(staged.assets().modules.is_empty());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn manifest_retains_full_source_identity_and_compiles_without_guest_execution() {
     let mut manifest = SourceManifest::default();
     let options = HostScriptOptions { typescript: true, ..Default::default() };
@@ -147,9 +163,9 @@ fn framework_graphs_admit_original_js_and_ts_without_running_applications() {
 }
 
 #[test]
-fn node_bootstrap_manifest_compiles_to_native_objects_before_application_entry() {
+fn rust_bootstrap_entry_compiles_without_sdk_guest_units() {
     let manifest = SourceManifest::capture_bootstrap().unwrap();
-    assert!(manifest.units().len() > 0, "bootstrap bypassed the source admission boundary");
+    assert_eq!(manifest.units().len(), 0, "Rust bootstrap must not generate guest code");
     let count = manifest.units().len();
     let compiled = manifest.compile().unwrap();
     assert_eq!(compiled.units.len(), count);
@@ -402,6 +418,51 @@ fn link_images(inputs: &quench_node::aot::NativeImageInputs, executable: &Path) 
 #[ignore = "explicit compile-command framework qualification"]
 fn compile_command_builds_source_independent_framework_js_and_ts() {
     qualify_compile_command_frameworks("iteration", Some(pinned_support_report()));
+}
+
+#[test]
+#[ignore = "explicit source-deleted typed field region qualification"]
+fn compile_command_preserves_typed_field_regions() {
+    use std::{fs, process::Command};
+    let source = include_str!("../../quench-runtime/tests/fixtures/aot-field-regions.js");
+    let directory = std::env::temp_dir().join(format!("quench-typed-fields-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let oracle_source = directory.join("oracle.cjs");
+    fs::write(&oracle_source, source).unwrap();
+    let oracle = Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+        .arg(&oracle_source).output().unwrap();
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    fs::remove_file(oracle_source).unwrap();
+    let sdk = directory.join("support.jsonl");
+    fs::write(&sdk, pinned_support_report()).unwrap();
+    for extension in ["cjs", "cts"] {
+        let sources = directory.join(format!("sources-{extension}"));
+        fs::create_dir(&sources).unwrap();
+        let entry = sources.join(format!("entry.{extension}"));
+        let guest = if extension == "cts" {
+            source.replace("function calc(o)", "function calc(o: {left:number,right:number}): number")
+        } else { source.to_owned() };
+        fs::write(&entry, guest).unwrap();
+        let binary = directory.join(format!("fields-{extension}"));
+        let report = directory.join(format!("fields-{extension}.json"));
+        let compiled = Command::new(env!("CARGO_BIN_EXE_quench-node"))
+            .arg("compile").arg(&entry).arg("-o").arg(&binary)
+            .args(["--profile", "iteration", "--sdk-report"]).arg(&sdk)
+            .arg("--report").arg(&report).output().unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+        fs::remove_dir_all(sources).unwrap();
+        let native = Command::new(&binary).env_clear().current_dir(&directory).output().unwrap();
+        assert_eq!(native.status.code(), oracle.status.code(), "{}", String::from_utf8_lossy(&native.stderr));
+        assert_eq!(native.stdout, oracle.stdout, "{extension}");
+        assert_eq!(native.stderr, oracle.stderr, "{extension}");
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(report["execution_mode"], "native_only");
+        for capability in ["source_compilation", "js_source_frontend", "bytecode_interpreter", "jit"] {
+            assert_eq!(report[capability], false, "{capability}");
+        }
+        assert_reduced_payload(&report, &binary);
+    }
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
