@@ -119,7 +119,10 @@ struct Lowering<'a, 'f> {
     native_calls: bool,
     /// The registers' types at each block leader (`facts::analyze`).
     facts: super::facts::Facts,
+    /// The caller's register liveness, by its PCs; per inlined frame, its callee's
+    /// (`Lowering::is_live`). A function without masks keeps every register live.
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
+    frame_live: Vec<Option<&'a crate::compile::liveness::RegisterMasks>>,
     valid: bool,
 }
 
@@ -347,8 +350,23 @@ impl<'a, 'f> Lowering<'a, 'f> {
         state
     }
 
+    /// Whether unit `register` is live at unit `pc`: the frame that owns it is in the chain of
+    /// frames `pc` runs in, and its function's masks keep it live at the frame's own PC there
+    /// (the PC itself for the innermost, its call's for each frame around it).
     fn is_live(&self, pc: usize, register: Register) -> bool {
-        self.live.is_none_or(|live| live.is_live(pc, register))
+        let (mut frame, mut at) = match self.unit.origins.get(pc).copied() {
+            Some(super::lane_unit::Origin::Inlined { frame, pc }) => (Some(frame), pc),
+            Some(super::lane_unit::Origin::Caller(pc)) => (None, pc),
+            None => (None, self.unit.end),
+        };
+        while let Some(index) = frame {
+            let inlined = self.unit.frames[index];
+            if (inlined.base..inlined.base + inlined.registers).contains(&register) {
+                return self.frame_live[index].is_none_or(|live| live.is_live(at as usize, register - inlined.base));
+            }
+            (frame, at) = (inlined.parent, inlined.call);
+        }
+        register < self.unit.caller_registers && self.live.is_none_or(|live| live.is_live(at as usize, register))
     }
 
     fn operand_number(&mut self, state: &mut State, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
@@ -483,7 +501,8 @@ fn lower(
     let count = usize::from(unit.registers);
     // Original masks address the caller's PCs. Inlined units conservatively
     // retain caller/callee state until a shared remapped mask is available.
-    let live = if unit.frames.is_empty() { program.register_root_masks(function_id) } else { None };
+    let live = program.register_root_masks(function_id);
+    let frame_live = unit.frames.iter().map(|frame| program.register_root_masks(frame.target.function)).collect();
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
         int: (0..count).map(|_| builder.declare_var(types::I32)).collect(),
@@ -526,6 +545,7 @@ fn lower(
         native_calls: unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
         facts: super::facts::Facts::default(),
         live,
+        frame_live,
         valid: true,
     };
     let instructions = unit.instructions.clone();
@@ -641,10 +661,14 @@ fn lower(
                 // Each register of the frame and the frames around it, at its unit register
                 // past the caller's (`LaneMethod::scratch_width`).
                 let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
+                // A dead register reads `undefined`, so the activation keeps no stale value.
+                let undefined = lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
                 for index in unit.chain(frame) {
                     let inlined = unit.frames[index];
                     for register in inlined.base..inlined.base + inlined.registers {
-                        let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
+                        let bits = if lowering.is_live(pc as usize, register) {
+                            lowering.builder.use_var(lowering.registers.tagged[usize::from(register)])
+                        } else { undefined };
                         lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register - unit.caller_registers));
                     }
                 }

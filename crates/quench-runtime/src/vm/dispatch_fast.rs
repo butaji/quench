@@ -264,6 +264,10 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
+    /// Bodies it specialized again past (`LaneView::note_lane_body_exit`), whose code the
+    /// direct callers that name them still run until they retire with them at a shape
+    /// compaction.
+    retired: std::cell::RefCell<Vec<super::compiled::LaneMethod>>,
     /// Per record, the register whose value it reads as the carried accumulator
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
@@ -526,8 +530,9 @@ struct ActivationShape {
 /// `LANE_BODY_WARMUP_ENTRIES` entries; a shape compaction moves a body that names shape ids
 /// back to `Unspecialized`.
 enum LaneBody {
-    /// Counting its entries toward specialization.
-    Unspecialized { entries: u16 },
+    /// Counting its entries toward specialization; `recompiles` bodies before it left too
+    /// often for their feedback (`LaneView::note_lane_body_exit`).
+    Unspecialized { entries: u16, recompiles: u8 },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires.
     Specialized {
@@ -538,12 +543,21 @@ enum LaneBody {
         /// `LANE_BODY_TRIAL_RUNS` (`LaneView::note_lane_body_run`).
         runs: std::cell::Cell<u16>,
         leaves: std::cell::Cell<u16>,
+        /// Its leaves since it specialized, toward `LANE_BODY_REOPTIMIZE_EXITS`.
+        exits: std::cell::Cell<u16>,
+        recompiles: u8,
     },
     /// A body whose runs mostly left: its function runs in the lane again, and its code stays
     /// for the direct callers that name it until they retire with it at a shape compaction.
     Retired { _method: super::compiled::LaneMethod },
     Declined,
 }
+
+/// The leaves after which a body specializes again from the feedback its sites hold then: a
+/// region compiled while its call graph warmed keeps leaving at sites whose targets came
+/// later, the deoptimization that reoptimizes. `LANE_BODY_MAX_RECOMPILES` bounds it.
+const LANE_BODY_REOPTIMIZE_EXITS: u16 = 64;
+const LANE_BODY_MAX_RECOMPILES: u8 = 4;
 
 /// The runs over which a specialized body proves it completes more often than it leaves:
 /// a body whose runs mostly leave pays its entry and the lane's resumption for work the
@@ -573,7 +587,8 @@ impl LaneView {
     fn specialize_lane_body(&self, entry: Handler, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) -> bool {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Unspecialized { entries } = body {
+        if let LaneBody::Unspecialized { entries, recompiles } = body {
+            let recompiles = *recompiles;
             *entries += 1;
             if *entries >= LANE_BODY_WARMUP_ENTRIES {
                 *body = match specialize() {
@@ -602,6 +617,8 @@ impl LaneView {
                             room,
                             runs: std::cell::Cell::new(runs),
                             leaves: std::cell::Cell::new(0),
+                            exits: std::cell::Cell::new(0),
+                            recompiles,
                         }
                     }
                     None => LaneBody::Declined,
@@ -615,7 +632,7 @@ impl LaneView {
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
     fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
-        if let LaneBody::Unspecialized { entries } = unsafe { &mut *self.tier_lane.get() } {
+        if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() } {
             *entries = LANE_BODY_WARMUP_ENTRIES - 1;
         }
         self.specialize_lane_body(entry, specialize);
@@ -643,6 +660,32 @@ impl LaneView {
         self.release_from_tier();
     }
 
+    /// Counts a leave of the specialized body; at `LANE_BODY_REOPTIMIZE_EXITS` it specializes
+    /// again, from the feedback its sites hold now (`lane_specialize`), at most
+    /// `LANE_BODY_MAX_RECOMPILES` times, its code kept for the direct callers that name it.
+    fn note_lane_body_exit(&self) {
+        // SAFETY: as `lane_body`; the run that left has finished, and nothing reads its body.
+        let body = unsafe { &mut *self.tier_lane.get() };
+        let LaneBody::Specialized { exits, recompiles, tier_prologue, .. } = body else { return };
+        exits.set(exits.get().saturating_add(1));
+        if exits.get() < LANE_BODY_REOPTIMIZE_EXITS || *recompiles >= LANE_BODY_MAX_RECOMPILES {
+            return;
+        }
+        let recompiles = *recompiles + 1;
+        // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
+        unsafe { (*self.prologue.get()).handler = *tier_prologue };
+        let LaneBody::Specialized { method, .. } = std::mem::replace(body, LaneBody::Unspecialized { entries: 0, recompiles }) else {
+            unreachable!()
+        };
+        self.retired.borrow_mut().push(method);
+    }
+
+    /// Whether its body left too often and specializes again at its next entry.
+    fn respecializes(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
+    }
+
     /// The stack room an entry of the specialized body proves (`LaneBody::Specialized`).
     fn lane_body_room(&self) -> u16 {
         // SAFETY: as `lane_body`.
@@ -662,8 +705,9 @@ impl LaneView {
         {
             // SAFETY: as `claim_for_tier`; no lane body or handler runs during a collection.
             unsafe { (*self.prologue.get()).handler = *tier_prologue };
-            *body = LaneBody::Unspecialized { entries: 0 };
+            *body = LaneBody::Unspecialized { entries: 0, recompiles: 0 };
         }
+        self.retired.borrow_mut().clear();
         // Its direct callers name shapes too, so they retire with this compaction.
         if matches!(body, LaneBody::Retired { .. }) {
             *body = LaneBody::Declined;
@@ -7096,6 +7140,26 @@ script_handler! {
 }
 
 
+/// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
+/// specializes it at once, from the targets and callees the program's views hold now; with
+/// a second entry at `loop_header`, where a loop's backward jump enters it. Whether the body
+/// is still warming or specialized (`LaneView::specialize_lane_body`).
+fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, loop_header: Option<u32>, now: bool) -> bool {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let specialize = || {
+        let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
+        vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header)
+    };
+    if now {
+        own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
+        own.lane_body().is_some()
+    } else {
+        own.specialize_lane_body(lane_body_entry::<H>, specialize)
+    }
+}
+
 /// A loop no region runs (`lane_loop_jump`) runs in its function's lane body, entered at its
 /// header (`lane_loop_body_jump`), where lane bodies are enabled and the body specializes
 /// with that entry; else its backward jump retires to the interpreter's.
@@ -7106,12 +7170,7 @@ fn lane_loop_body_or_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &Loo
     let entered = vm.programs.js_jit_lane_methods_enabled()
         && !vm.programs.js_jit_general_dispatch_enabled()
         && own.is_some_and(|own| {
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx).code };
-            own.specialize_lane_body_now(lane_body_entry::<H>, || {
-                let direct = code.function_get(site.function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-                vm.compile_lane_method(code, site.function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, Some(site.header))
-            });
+            lane_specialize(cx, own, site.function, Some(site.header), true);
             own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
         });
     if entered {
@@ -7138,7 +7197,15 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         // SAFETY: as `lane_loop_body_or_retire`.
         let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view);
-        let Some((own, method)) = own.and_then(|own| own.lane_body().map(|method| (own, method))) else {
+        // A body that left too often specializes again here, from the feedback it left on.
+        if let Some(own) = own
+            && own.respecializes()
+        {
+            lane_specialize(cx, own, site.function, Some(site.header), true);
+        }
+        let Some((own, method)) = own
+            .and_then(|own| own.lane_body().filter(|method| method.loop_header == Some(site.header)).map(|method| (own, method)))
+        else {
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         };
@@ -7154,15 +7221,22 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).capture });
         let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::LoopHeader, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        // Every run that leaves before the loop completes pays the entry again at the next
-        // backward jump; a loop that keeps leaving runs in the interpreter.
-        if !matches!(exit, super::compiled::LaneExit::Returned { .. }) {
+        // A run that leaves at the header, before an iteration, pays its entry for nothing: a
+        // loop whose runs keep doing so runs in the interpreter. Leaves past the header, which
+        // a warming call graph makes, cost one entry each for native iterations.
+        if !Vm::<H>::lane_shadow_active() && exit == super::compiled::LaneExit::At(site.header as usize) {
             site.exits.set(site.exits.get() + 1);
             if site.exits.get() >= LOOP_TIER_MAX_EXITS {
                 lane_loop_retire::<H>(cx, ip, site);
             }
         }
-        match lane_body_left(cx, r, own, method, exit) {
+        let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
+        let resumed = lane_body_left(cx, r, own, method, exit);
+        // Counted once nothing reads the body: a reoptimization moves it.
+        if left {
+            own.note_lane_body_exit();
+        }
+        match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
         }
@@ -13963,8 +14037,11 @@ script_handler! {
         let exit = vm.run_lane_method(method, super::compiled::LaneStart::First, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
         let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let resumed = lane_body_left(cx, r, own, method, exit);
-        // Counted once nothing reads the body: a retirement moves it.
+        // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
+        if left {
+            own.note_lane_body_exit();
+        }
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
@@ -14013,10 +14090,7 @@ fn lane_tier_enter<H: Host>(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        if !own.specialize_lane_body(lane_body_entry::<H>, || {
-            let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-            vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, None)
-        }) {
+        if !lane_specialize(cx, own, function, None, false) {
             own.release_from_tier();
         }
         return None;
@@ -14305,6 +14379,9 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
+    if own.respecializes() {
+        lane_specialize(cx, own, target.function, None, true);
+    }
     let Some(method) = own.lane_body().filter(|_| lane_body_admits(cx, own)) else {
         return leave(start, Value::UNDEFINED);
     };
@@ -14312,7 +14389,12 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
-    match lane_body_left(cx, registers, own, method, exit) {
+    let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
+    let resumed = lane_body_left(cx, registers, own, method, exit);
+    if left {
+        own.note_lane_body_exit();
+    }
+    match resumed {
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
         LaneBodyLeft::Completed(_, value) => {
             lane_return_to_body(cx, value).expect("the call made a plain activation");
@@ -18608,7 +18690,8 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0 }),
+        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0 }),
+        retired: std::cell::RefCell::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()
