@@ -118,6 +118,8 @@ struct Lowering<'a, 'f> {
     result: ir::Value,
     registers: Registers,
     written: CompoundBitSet,
+    /// Source operations already consumed by an exact, unobservable scalar pair.
+    consumed: CompoundBitSet,
     blocks: Vec<Option<ir::Block>>,
     exits: Vec<Option<ir::Block>>,
     entry: Option<Entry>,
@@ -522,6 +524,7 @@ pub(super) fn lower(
         result,
         registers,
         written: CompoundBitSet::with_capacity(count),
+        consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
         blocks,
         exits: vec![None; unit.instructions.len() + 1],
         entry: None,
@@ -916,6 +919,9 @@ impl Lowering<'_, '_> {
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, instructions: &[WideInstruction]) -> bool {
+        if self.consumed.contains(pc) {
+            return true;
+        }
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
@@ -1553,6 +1559,30 @@ impl Lowering<'_, '_> {
             return None;
         }
         let exit = self.guard_exit(state, pc as u32);
+        if let Some(arithmetic) = arithmetic
+            && arithmetic.int32_projection_is_wrapping()
+            && instruction.result_flags() == 0
+            && let Some(next) = instructions.get(pc + 1).copied()
+            && next.result_flags() == 0
+            && next.op() == Op::Binary
+            && super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator())
+                == Some(super::operations::NumberBitwise::Or)
+            && next.operand_b().register_index() == Some(destination)
+            && super::facts::constant_number(&self.program.constants, next.operand_c()) == Some(0.0)
+            && self.blocks[pc + 1].is_none()
+            && self.live.is_some_and(|live| next.result_register() == destination
+                || !live.is_live(pc + 2, destination))
+        {
+            // No source edge or observer can see the intermediate Number.
+            // A failed input proof resumes before the arithmetic, and the
+            // consumer cannot fail once these signed-int32 inputs are proved.
+            let left = self.operand_int(state, left, exit)?;
+            let right = self.operand_int(state, right, exit)?;
+            let bits = arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left, right);
+            self.set_int(state, next.result_register(), bits);
+            self.consumed.insert(pc + 1);
+            return Some(true);
+        }
         match (arithmetic, bitwise) {
             (Some(arithmetic), _) => {
                 let float_operand = [left, right].iter().any(|operand| match operand.kind() {
@@ -1617,7 +1647,8 @@ impl Lowering<'_, '_> {
             (_, Some(bitwise)) => {
                 let left_int = self.operand_int(state, left, exit).expect("supported operand");
                 let right_int = self.operand_int(state, right, exit).expect("supported operand");
-                if bitwise == super::operations::NumberBitwise::ShiftRightUnsigned {
+                let right_constant = super::facts::constant_number(&self.program.constants, right);
+                if !bitwise.result_is_int32(right_constant) {
                     let number = emit_number_bitwise_operation(&mut self.builder, bitwise, left_int, right_int);
                     self.set_number(state, destination, number);
                 } else {

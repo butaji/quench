@@ -301,6 +301,28 @@ macro_rules! emit_arithmetic_stages {
 }
 super::operations::number_arithmetic_rows!(emit_arithmetic_stages);
 
+/// The low-word view is selected only after the shared operation proves that
+/// projecting the Number result commutes with wrapping signed-int32 arithmetic.
+struct EmitWord32Arithmetic<'a, 'f> { builder: &'a mut FunctionBuilder<'f> }
+
+macro_rules! emit_word32_arithmetic_stages {
+    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
+        impl super::operations::NumberArithmeticStage<ir::Value> for EmitWord32Arithmetic<'_, '_> {
+            type Output = ir::Value;
+            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
+                emit_word32_arithmetic_stages!(@emit self, left, right, $symbol)
+            })+
+        }
+    };
+    (@emit $stage:ident, $left:ident, $right:ident, +) => { $stage.builder.ins().iadd($left, $right) };
+    (@emit $stage:ident, $left:ident, $right:ident, -) => { $stage.builder.ins().isub($left, $right) };
+    (@emit $stage:ident, $left:ident, $right:ident, *) => { $stage.builder.ins().imul($left, $right) };
+    (@emit $stage:ident, $left:ident, $right:ident, /) => {
+        { let _ = ($left, $right); unreachable!("division has no wrapping Word32 projection") }
+    };
+}
+super::operations::number_arithmetic_rows!(emit_word32_arithmetic_stages);
+
 pub(super) fn emit_number_arithmetic_operation(
     builder: &mut FunctionBuilder<'_>,
     operation: super::operations::NumberArithmetic,
@@ -2244,12 +2266,24 @@ pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: 
                 || instruction.jump_target() as usize >= *header));
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
+    // A scalar function has no opaque observation between its preheader and
+    // loop. Keep the definitions in the unit so loop phis inherit their types;
+    // native backedges still target the loop, never the initialization.
+    let scalar = !has_calls && unit.instructions.iter().all(|instruction|
+        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
+                | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return));
+    let lower = |unit: &lane_unit::Unit| lane_region::lower(program, function_id, unit,
+        LaneHelpers::Linked(helper_symbol), &[], isa, lane_region::Coverage::Full,
+        lane_region::Completion::SourcePc).filter(|(_, count)| *count != 0).map(|(native, _)| native);
+    if scalar && loop_header.is_some()
+        && let Some(function) = lower(&unit) {
+        return Some(StaticTypedRegion { header: 0, function });
+    }
     let header = loop_header.or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))?;
     let lane_unit::Origin::Caller(source_header) = unit.origins[header] else { return None; };
     let unit = unit.suffix(header)?;
-    let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
-        &[], isa, lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
-    (count != 0).then_some(StaticTypedRegion { header: source_header as usize, function: native })
+    Some(StaticTypedRegion { header: source_header as usize, function: lower(&unit)? })
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
@@ -16741,6 +16775,156 @@ mod tests {
                     "invariant receiver proof {proof} must precede loop {header}:\n{native}");
             }
         }
+    }
+
+    #[cfg(all(target_arch = "aarch64", any(feature = "jit", feature = "aot")))]
+    #[test]
+    fn aarch64_logical_right_shift_selection_preserves_all_integer_widths() {
+        // A64 Logical (shifted register): fixed class bits, N=0; shift kind
+        // occupies bits23:22. The test checks actual emitted instructions.
+        const LOGICAL_CLASS_MASK: u32 = 0x1f20_0000;
+        const LOGICAL_CLASS: u32 = 0x0a00_0000;
+        const SHIFT_KIND_OFFSET: u32 = 22;
+        const SHIFT_KIND_MASK: u32 = 0b11 << SHIFT_KIND_OFFSET;
+        const LSR_KIND: u32 = 0b01 << SHIFT_KIND_OFFSET;
+        const ASR_KIND: u32 = 0b10 << SHIFT_KIND_OFFSET;
+        const TEST_NAMESPACE: u32 = u32::from_be_bytes(*b"QLSH");
+        use crate::vm::operations::NumberBitwise;
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I8, types::I16, types::I32, types::I64] {
+            let width = ty.bits();
+            let mask = u64::MAX >> (u64::BITS - width);
+            for operation in [NumberBitwise::And, NumberBitwise::Or, NumberBitwise::Xor] { for signed in [false, true] { for reversed in [false, true] {
+                for count in [0_u64, 1, 17, 31, 32, 63, 64, u64::MAX] {
+                    let mut signature = ir::Signature::new(isa.default_call_conv());
+                    signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64)]);
+                    signature.returns.push(AbiParam::new(types::I64));
+                    let mut function = ir::Function::with_name_signature(UserFuncName::user(TEST_NAMESPACE, 0), signature);
+                    let mut context = FunctionBuilderContext::new();
+                    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                    let block = builder.create_block();
+                    builder.append_block_params_for_function_params(block);
+                    builder.switch_to_block(block);
+                    let args = builder.block_params(block).to_vec();
+                    let left = if ty == types::I64 { args[0] } else { builder.ins().ireduce(ty, args[0]) };
+                    let right = if ty == types::I64 { args[1] } else { builder.ins().ireduce(ty, args[1]) };
+                    let shifted = if signed { builder.ins().sshr_imm_u(right, count as i64) }
+                        else { builder.ins().ushr_imm_u(right, count as i64) };
+                    let (left, right) = if reversed { (shifted, left) } else { (left, shifted) };
+                    let result = match operation {
+                        NumberBitwise::And => builder.ins().band(left, right),
+                        NumberBitwise::Or => builder.ins().bor(left, right),
+                        NumberBitwise::Xor => builder.ins().bxor(left, right),
+                        _ => unreachable!("logical operation matrix"),
+                    };
+                    let result = if ty == types::I64 { result } else { builder.ins().uextend(types::I64, result) };
+                    builder.ins().return_(&[result]);
+                    builder.seal_all_blocks();
+                    builder.finalize(isa.frontend_config());
+                    let mut compiler = cranelift_codegen::Context::for_function(function);
+                    let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+                    let bytes = compiled.buffer.data();
+                    if width >= u32::BITS && count == 17 {
+                        let kind = if signed { ASR_KIND } else { LSR_KIND };
+                        assert!(bytes.chunks_exact(std::mem::size_of::<u32>()).any(|bytes| {
+                            let word = u32::from_le_bytes(bytes.try_into().unwrap());
+                            word & LOGICAL_CLASS_MASK == LOGICAL_CLASS && word & SHIFT_KIND_MASK == kind
+                        }), "right shift must fold: {ty} operation{operation:?} signed{signed} reversed{reversed}");
+                    }
+                    let memory = CodeMemory::new(bytes).unwrap();
+                    // SAFETY: this verified native function has exactly two
+                    // u64 inputs and one u64 result under the host C ABI.
+                    let entry = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
+                    for left in [0, 1, u64::MAX, 1_u64 << (width - 1)] {
+                        for right in [0, 1, u64::MAX, 1_u64 << (width - 1)] {
+                            let shift = count as u32 & (width - 1);
+                            let right = right & mask;
+                            let shifted = if signed {
+                                let widened = ((right << (u64::BITS - width)) as i64) >> (u64::BITS - width);
+                                (widened >> shift) as u64 & mask
+                            } else { right >> shift };
+                            let expected = match operation { NumberBitwise::And => left & shifted, NumberBitwise::Or => left | shifted,
+                                NumberBitwise::Xor => left ^ shifted, _ => unreachable!("logical operation matrix") } & mask;
+                            assert_eq!(unsafe { entry(left, right) }, expected,
+                                "{ty} operation{operation:?} signed{signed} reversed{reversed} shift{count}");
+                        }
+                    }
+                }
+            }}}
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn scalar_word32_pairs_preserve_overflow_rounding_and_live_numbers() {
+        let source = r#"
+            function add(a,b){let out=0;for(let i=0;i<1;i++){out=(a+b)|0;}return out;}
+            function sub(a,b){let out=0;for(let i=0;i<1;i++){out=(a-b)|0;}return out;}
+            function mul(a,b){let out=0;for(let i=0;i<1;i++){out=(a*b)|0;}return out;}
+            function observed(a,b){let sum=0,bits=0;for(let i=0;i<1;i++){sum=a+b;bits=sum|0;}return sum;}
+            if(add(2147483647,1)!==-2147483648 || sub(-2147483648,1)!==2147483647)throw 'overflow';
+            if(mul(2147483647,2147483647)!==0)throw 'rounded multiply';
+            if(observed(2147483647,1)!==2147483648)throw 'live intermediate';
+            if(add(1.5,2)!==3 || add(NaN,1)!==0 || sub(Infinity,1)!==0 ||
+                add('1','2')!==12 || !Object.is(add(-0,-0),0))throw 'number fallback';
+            let conversions=0;
+            let object={valueOf(){conversions++;return 2147483647;}};
+            if(add(object,1)!==-2147483648 || conversions!==1)throw 'coercion replay';
+            throw 42;
+        "#;
+        let program = crate::Engine::specialize(source, "word32-pairs.cjs").unwrap();
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
+        let targets = static_call_targets(&program);
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let region = lower_static_typed_region(&program, id as u32, &targets[id], &*isa, 0).unwrap();
+        assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
+        assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
+            .any(|instruction| region.function.dfg.insts[instruction].opcode() == ir::Opcode::Fadd),
+            "the unobserved add/ToInt32 pair must stay Word32");
+        let native = linked_optimized_test_program(program);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+    }
+
+    #[cfg(feature = "aot")]
+    fn linked_optimized_test_program(program: ResidualProgram) -> crate::NativeJsProgram<crate::test_host::TestHost> {
+        let targets = static_call_targets(&program);
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let mut owners = Vec::new();
+        let mut entries = Vec::new();
+        for id in 0..program.function_count() {
+            let mut region = lower_static_typed_region(&program, id as u32, &targets[id], &*isa, 0);
+            if let Some(region) = &mut region {
+                // Bind the pure helper-table resolver as the image linker does.
+                let instructions: Vec<_> = region.function.layout.blocks()
+                    .flat_map(|block| region.function.layout.block_insts(block)).collect();
+                for instruction in instructions {
+                    if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Call {
+                        region.function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
+                            opcode: ir::Opcode::Iconst,
+                            imm: ir::immediates::Imm64::new(native_js_lane_helpers::<crate::test_host::TestHost>() as usize as i64),
+                        };
+                    }
+                }
+            }
+            let lowered = lower_js_general_dispatch(&program,id as u32,false,&*isa,
+                JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),&[],
+                region.as_ref().map(|region|StaticTypedRegionEntry {header:region.header,function:&region.function}));
+            let (memory,entry,operands)=match lowered {
+                Ok((body,_)) => {
+                    let (memory,entry)=compile_and_publish_entry(body,&*isa,usize::MAX).unwrap();
+                    (memory,entry,Vec::new())
+                }
+                Err(_) => live_native_function(&program,id as u32,None),
+            };
+            entries.push(unsafe {std::mem::transmute::<Entry,crate::NativeJsFunctionEntry>(entry)});
+            owners.push((memory,operands));
+        }
+        // SAFETY: all entries use this exact program/host ABI and owner retains code.
+        unsafe {crate::NativeJsProgram::from_entries(program,entries,Rc::new(owners))}.unwrap()
     }
 
     #[cfg(feature = "aot")]

@@ -81,6 +81,12 @@ pub(super) fn immediate(constant: &Constant) -> Option<Value> {
     }
 }
 
+/// A numeric constant is a static semantic value, regardless of machine view.
+pub(super) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
+    (operand.kind() == Some(OperandKind::Constant)).then_some(())?;
+    constants.get(usize::from(operand.payload())).and_then(immediate).and_then(Value::as_number)
+}
+
 /// The semantic type of an operand, independent of its selected machine view.
 pub(super) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
     match operand.kind() {
@@ -148,11 +154,8 @@ fn transfer(
             match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
                 Some(bitwise) => {
                     prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
-                    let result = if bitwise == super::super::operations::NumberBitwise::ShiftRightUnsigned {
-                        Type::NUMBER
-                    } else {
-                        Type::INT32
-                    };
+                    let right = constant_number(constants, instruction.operand_c());
+                    let result = if bitwise.result_is_int32(right) { Type::INT32 } else { Type::NUMBER };
                     if !instruction.returns_from_frame() {
                         set(types, instruction.result_register(), result);
                     }
