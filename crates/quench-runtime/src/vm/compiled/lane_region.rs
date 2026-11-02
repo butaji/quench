@@ -725,7 +725,7 @@ pub(super) fn lower(
             };
             lowering.builder.def_var(lowering.registers.tagged[register], bits);
         }
-        let Some(target) = lowering.blocks.get(pc).copied().flatten() else { return None };
+        let target = lowering.blocks.get(pc).copied().flatten()?;
         let mut state = State::canonical(count);
         lowering.conform(&mut state, pc);
         lowering.builder.ins().jump(target, &[]);
@@ -1007,11 +1007,11 @@ impl Lowering<'_, '_> {
             _ => None,
         }).collect::<Vec<_>>();
         for atom in stored {
-            if !store_atoms.contains_key(&atom) {
+            if let std::collections::btree_map::Entry::Vacant(slot) = store_atoms.entry(atom) {
                 let admitted = self.emit_store_atom_admitted(atom);
                 let variable = self.builder.declare_var(types::I8);
                 self.builder.def_var(variable, admitted);
-                store_atoms.insert(atom, variable);
+                slot.insert(variable);
             }
         }
         // The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`),

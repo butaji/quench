@@ -7075,7 +7075,7 @@ pub(super) struct LaneMethod {
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
-    pub(super) direct: Vec<Box<DirectCallee>>,
+    pub(super) direct: Box<[DirectCallee]>,
     /// Whether every call it makes is inlined or direct: under a direct caller's native
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
@@ -7356,15 +7356,17 @@ impl<H: Host> Vm<H> {
         let fields = self.lane_unit_fields(program, &unit);
         // The calls the unit still makes (none it inlines) whose callees have bodies.
         let mut direct = direct;
-        let direct: Vec<(usize, Box<DirectCallee>)> = unit.instructions.iter().enumerate()
+        // The code names each callee by its address in this boxed slice, which never moves.
+        let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
             .filter(|(_, instruction)| instruction.op() == Op::Call)
             .filter_map(|(pc, _)| match unit.origins[pc] {
-                lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take().map(|callee| (pc, Box::new(callee))),
+                lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take().map(|callee| (pc, callee)),
                 lane_unit::Origin::Inlined { .. } => None,
             })
-            .collect();
+            .unzip();
+        let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
         let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
-            direct.iter().map(|(pc, callee)| (*pc, &**callee as *const DirectCallee)).collect();
+            pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites, &frame_captures, loop_entry);
@@ -7389,7 +7391,6 @@ impl<H: Host> Vm<H> {
         let caller_registers = unit.caller_registers;
         let closed = unit.instructions.iter().enumerate()
             .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
-        let direct = direct.into_iter().map(|(_, callee)| callee).collect();
         Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
     }
 
