@@ -106,8 +106,14 @@ fn inlinable(instruction: WideInstruction) -> bool {
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
         Op::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
-        Op::GetField => plain && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { .. })),
-        Op::SetThisField | Op::SetThisFieldStrict => plain,
+        // A nested lookup's chain names its base by the function's registers; the lowering
+        // renames it through the frame (`Lowering::get_field`), and its sink stores to `this`.
+        Op::GetField => match instruction.field_lookup() {
+            Some(FieldLookup::Atom { .. }) => plain,
+            Some(FieldLookup::Site(_)) => instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0,
+            None => false,
+        },
+        Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
@@ -324,6 +330,10 @@ impl Emitter {
                     WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
                 }
                 Op::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+                Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
+                    let flags = instruction.result_flags();
+                    WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
+                }
                 _ => super::osr_loop::renamed(instruction, &register, receiver, &target_of)?,
             };
             self.unit.instructions.push(rewritten);

@@ -1350,38 +1350,19 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
     builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
 }
 
-/// Lower a present dense own-array read. The receiver and key come from the
-/// canonical tagged frame on every execution; the record and its current
-/// backing are also reloaded per access so receiver changes and COW writes are
-/// visible. Every failed proof leaves the destination untouched and resumes
-/// `Vm::step` at this GetIndex PC.
-#[allow(clippy::too_many_arguments)]
-fn emit_js_dense_array_get(
+/// The present element `key` of the dense own-array `base`, both tagged: the record and
+/// its current backing reloaded per access, so receiver changes and copy-on-write writes are
+/// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
+pub(super) fn emit_dense_element_read(
     builder: &mut FunctionBuilder<'_>,
-    arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    base: ir::Value,
     key: ir::Value,
-    destination_offset: i32,
-    next: ir::Block,
-    context: ir::Value,
-    callout: ir::Value,
-    callout_signature: ir::SigRef,
-    result_pointer: ir::Value,
-    stopped_block: ir::Block,
-    continue_block: ir::Block,
-    pc: usize,
-) {
+    fallback: ir::Block,
+) -> ir::Value {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     use crate::value::ValueLayout;
 
-    let fallback = builder.create_block();
-    let base = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        arguments,
-        base_offset,
-    );
     let family = builder
         .ins()
         .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
@@ -1478,6 +1459,39 @@ fn emit_js_dense_array_get(
     );
     emit_js_guard(builder, is_present, fallback);
 
+    value
+}
+
+/// Lower a present dense own-array read. The receiver and key come from the
+/// canonical tagged frame on every execution; the record and its current
+/// backing are also reloaded per access so receiver changes and COW writes are
+/// visible. Every failed proof leaves the destination untouched and resumes
+/// `Vm::step` at this GetIndex PC.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_dense_array_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    key: ir::Value,
+    destination_offset: i32,
+    next: ir::Block,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    let fallback = builder.create_block();
+    let base = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        arguments,
+        base_offset,
+    );
+    let value = emit_dense_element_read(builder, payload, base, key, fallback);
     builder.ins().store(
         MemFlagsData::trusted(),
         value,
@@ -2036,6 +2050,8 @@ pub(super) struct LaneHelpers {
     field_set: usize,
     /// A call the body does not inline (`dispatch_fast::lane_body_call`).
     call: usize,
+    /// The lane's in-place element store (`Vm::try_replace_record_element`).
+    index_set: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -6893,6 +6909,15 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
     ))
 }
 
+/// A lane body's element store: the lane's own in-place replacement of a record array's
+/// element (`Vm::try_replace_record_element`), whose miss changes nothing and leaves the
+/// body at the store.
+unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; a replacement allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    u64::from(vm.try_replace_record_element(Value::from_bits(object), Value::from_bits(key), Value::from_bits(value)))
+}
+
 impl<H: Host> Vm<H> {
     /// The field cache sites `unit` reads or writes, each with the holderless exact shapes and
     /// slots its entries prove now (`Vm::native_field_load_descriptors`); a nested lookup
@@ -6934,6 +6959,7 @@ impl<H: Host> Vm<H> {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             field_set: lane_field_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
             call: super::dispatch_fast::lane_body_call::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            index_set: lane_index_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::unit(function, body, targets, &|callee| program.function_get(callee as usize))?;
@@ -7394,6 +7420,7 @@ impl JsStepDispatch {
     /// the running program changes.
     fn refresh_lane_bases<H: Host>(&mut self, vm: &Vm<H>, program: ProgramId, refreshed: &mut Option<ProgramId>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         let (values, len) = vm.heap.native_property_values();
         (self.property_values, self.property_len) = (values as usize, len);
         let atoms = vm.method_cache_atoms.words();

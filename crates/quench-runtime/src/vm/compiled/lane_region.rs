@@ -383,6 +383,18 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
     }
 
+    /// An operand's tagged bits: its register's, or its immediate constant's.
+    fn operand_tagged(&mut self, state: &mut State, operand: Operand) -> Option<ir::Value> {
+        match operand.kind()? {
+            OperandKind::Register => Some(self.tagged(state, operand.register_index()?)),
+            OperandKind::Constant => {
+                let value = self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)?;
+                Some(self.ins().iconst(types::I64, value.to_bits() as i64))
+            }
+            OperandKind::Field | OperandKind::Local => None,
+        }
+    }
+
     fn operand_supported(&self, operand: Operand) -> bool {
         match operand.kind() {
             Some(OperandKind::Register) => operand.register_index().is_some_and(|r| r < self.unit.registers),
@@ -790,6 +802,29 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             Op::GetField if instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 => self.get_field(state, pc, instruction),
+            Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
+                // A present dense element, the lane's own fast read (`Vm::direct_dense_element`).
+                let exit = self.guard_exit(state, pc32);
+                let operands = (self.operand_tagged(state, instruction.operand_b()), self.operand_tagged(state, instruction.operand_c()));
+                operands.0.zip(operands.1).map(|(base, key)| {
+                    let payload = self.payload;
+                    let value = super::emit_dense_element_read(&mut self.builder, payload, base, key, exit);
+                    self.set_tagged(state, instruction.result_register(), value);
+                    true
+                })
+            }
+            Op::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
+                .iter().all(|register| *register < self.unit.registers) => {
+                // The lane's in-place element replacement; a miss leaves at the store.
+                let exit = self.guard_exit(state, pc32);
+                let value = self.tagged(state, instruction.register_a());
+                let base = self.tagged(state, instruction.register_b());
+                let key = self.tagged(state, instruction.register_c());
+                let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.index_set, &[base, key, value]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+                emit_js_guard(&mut self.builder, hit, exit);
+                Some(true)
+            }
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction, instructions)
@@ -864,27 +899,7 @@ impl Lowering<'_, '_> {
                     self.branch(state, pc, target, taken);
                     return false;
                 }
-                if super::operations::NumberRelation::from_operator(operator).is_none()
-                    || !self.operand_supported(left)
-                    || !self.operand_supported(right)
-                    || [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-                        && !super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
-                {
-                    None
-                } else {
-                    let exit = self.guard_exit(state, pc32);
-                    let integer = [left, right].iter().all(|operand| super::facts::operand_type(
-                        &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
-                        .is_subtype(Type::INT32));
-                    let (left, right, domain) = if integer {
-                        (self.operand_int(state, left, exit).expect("supported operand"),
-                            self.operand_int(state, right, exit).expect("supported operand"), NumberRelationDomain::Int32)
-                    } else {
-                        (self.operand_number(state, left, exit).expect("numeric operand"),
-                            self.operand_number(state, right, exit).expect("numeric operand"), NumberRelationDomain::Float64)
-                    };
-                    let holds = emit_number_relation(&mut self.builder, operator, left, right, domain)
-                        .expect("a numeric relation");
+                if let Some(holds) = self.number_relation(state, pc32, operator, left, right) {
                     let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
                     let target = instruction.jump_target() as usize;
                     if target <= pc {
@@ -892,6 +907,8 @@ impl Lowering<'_, '_> {
                     }
                     self.branch(state, pc, target, taken);
                     return false;
+                } else {
+                    None
                 }
             }
             _ => None,
@@ -906,6 +923,31 @@ impl Lowering<'_, '_> {
                 false
             }
         }
+    }
+
+    /// Whether the numeric relation `operator` holds of `left` and `right`, as an `i8`: in
+    /// int32 where both are proved int32, else in Float64, each operand proved a Number or
+    /// leaving at `pc`; `None` for any other operator or operand.
+    fn number_relation(&mut self, state: &mut State, pc: u32, operator: u32,
+        left: Operand, right: Operand) -> Option<ir::Value> {
+        if super::operations::NumberRelation::from_operator(operator).is_none()
+            || !self.operand_supported(left)
+            || !self.operand_supported(right)
+            || [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
+                && !super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
+        {
+            return None;
+        }
+        let exit = self.guard_exit(state, pc);
+        let integer = [left, right].iter().all(|operand| super::facts::operand_type(
+            &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
+            .is_subtype(Type::INT32));
+        let (left, right, domain) = if integer {
+            (self.operand_int(state, left, exit)?, self.operand_int(state, right, exit)?, NumberRelationDomain::Int32)
+        } else {
+            (self.operand_number(state, left, exit)?, self.operand_number(state, right, exit)?, NumberRelationDomain::Float64)
+        };
+        emit_number_relation(&mut self.builder, operator, left, right, domain)
     }
 
     /// `source`'s value into `destination`, with every fact proved of it.
@@ -1181,14 +1223,26 @@ impl Lowering<'_, '_> {
         // guard that fails anywhere in it leaves at the instruction, whose reads have no effect.
         // A nested lookup that writes the current `this` stores the chain's value to `this`'s
         // sink field too, after its reads (`FieldSite::sink`).
+        // An inlined frame's nested site names its base, and its sink's `this`, by the callee's
+        // registers: they are the frame's (`lane_unit::Frame`).
+        let frame = match self.unit.origins.get(pc) {
+            Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(self.unit.frames[*frame]),
+            _ => None,
+        };
         let (base, parts, sink): (_, Vec<u16>, _) = match instruction.field_lookup()? {
             FieldLookup::Atom { base, cache_site, .. } => (base, vec![cache_site], None),
             FieldLookup::Site(index) => {
                 let site = *self.program.field_sites.get(index)?;
                 let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| cache).collect();
-                (site.base, reads, instruction.writes_current_this().then_some(site.sink).flatten())
+                let base = match frame {
+                    Some(frame) if site.base == crate::bytecode::FieldBase::THIS => crate::bytecode::FieldBase::register(frame.receiver),
+                    Some(frame) => crate::bytecode::FieldBase::register(frame.base + site.base.register_index()?),
+                    None => site.base,
+                };
+                (base, reads, instruction.writes_current_this().then_some(site.sink).flatten())
             }
         };
+        let sink_owner = frame.map(|frame| frame.receiver);
         if instruction.writes_current_this() && sink.is_none() {
             return None;
         }
@@ -1209,7 +1263,7 @@ impl Lowering<'_, '_> {
             value = self.object_field_read(state, value, *site, exit)?;
         }
         if let Some((atom, site)) = sink {
-            self.store_field(state, None, atom, site, value, false, exit)?;
+            self.store_field(state, sink_owner, atom, site, value, false, exit)?;
         }
         self.set_tagged(state, destination, value);
         Some(true)
@@ -1529,7 +1583,13 @@ impl Lowering<'_, '_> {
                     self.set_int(state, destination, result);
                 }
             }
-            _ => return None,
+            // A relation's Boolean, from the predicate a branch on it would test.
+            _ => {
+                let holds = self.number_relation(state, pc as u32, operator, left, right)?;
+                let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+                let boolean = self.ins().select(holds, yes, no);
+                self.set_tagged(state, destination, boolean);
+            }
         }
         if let Some(terminal) = after {
             self.native += 1;
@@ -1568,7 +1628,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &fields, &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &fields, &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1591,7 +1651,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0 }, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

@@ -6905,11 +6905,17 @@ script_handler! {
                 return exit(header);
             }
         }
-        if site.promotion_only {
+        let lane_bodies = runtime.programs.js_jit_lane_methods_enabled();
+        if site.promotion_only && !lane_bodies {
             next!(cx, r, header, Carried::script(cx))
         }
         if site.taken.get() < LOOP_TIER_THRESHOLD {
             site.taken.set(site.taken.get() + 1);
+            next!(cx, r, header, Carried::script(cx))
+        }
+        // A loop no region runs runs in its function's lane body, which calls natively.
+        if site.promotion_only {
+            lane_loop_body_or_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script(cx))
         }
         if site.analysis_failure.is_some_and(|failure| {
@@ -14254,6 +14260,7 @@ enum LaneBodyLeft {
     /// The activation completes with the value, by the record.
     Completed(Ip, Value),
 }
+
 
 fn lane_body_left<H: Host>(
     cx: *mut LaneContext<H>,
