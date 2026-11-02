@@ -4394,7 +4394,8 @@ fn note_object_slot(properties: &mut ValueArena, data: &Object, slot: usize, val
 /// Preserve declines before changing storage or values.
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
-    note_object_slot(properties, data, slot, value);
+    // The caller matched the exact shape, which holds the slot.
+    properties.note_slot_value(data.shape(), slot, value);
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
