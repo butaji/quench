@@ -648,7 +648,7 @@ const LANE_BODY_TRIAL_RUNS: u16 = 1024;
 /// The entries a function makes before its lane body specializes: enough that its call
 /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
 /// only a function called repeatedly pays for compiling one.
-const LANE_BODY_WARMUP_ENTRIES: u16 = 32;
+const LANE_BODY_WARMUP_ENTRIES: u16 = 400;
 
 impl LaneView {
     /// The specialized frameless body, if there is one.
