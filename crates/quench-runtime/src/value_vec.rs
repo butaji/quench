@@ -347,6 +347,7 @@ impl ValueArena {
     }
 
     pub(crate) fn reset_shapes(&mut self) {
+        self.tracking = false;
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
         self.shape_chains.clear();
@@ -361,6 +362,8 @@ impl ValueArena {
     /// parent's is its end; as long shares it; anything else owns every slot itself.
     pub(crate) fn register_derived_shape(&mut self, shape: u32, length: usize, parent: Option<(u32, usize)>) {
         self.register_shape(shape, length);
+        // Owners serve only kept representations; tracking's start registers every shape.
+        if !self.tracking { return; }
         let index = shape as usize;
         if self.shape_chains.len() <= index {
             self.shape_chains.resize(index + 1, 0);

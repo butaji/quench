@@ -4574,6 +4574,11 @@ fn cached_holder_matches(holder: &crate::heap::Object, shape: u32) -> bool {
 }
 
 impl<H> Vm<H> {
+    /// The shape table as the heap registers it (`Heap::track_slot_representations`).
+    pub(super) fn shape_layouts(&self) -> Vec<(usize, Option<(u32, usize)>)> {
+        super::shape_layouts(&self.shapes)
+    }
+
     /// The field sites' polymorphism, for a diagnostics run (`QUENCH_JS_JIT_STATS`): the
     /// polymorphic sites by how many receiver shapes they recorded, how many name only own
     /// fields and of those how many find the field at one slot in every shape (a layout whose

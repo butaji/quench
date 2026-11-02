@@ -1720,18 +1720,28 @@ impl Heap {
             let old_shape = object.shape() as usize;
             object.set_shape(mapping[old_shape]);
         }
+        self.register_shape_layouts(layouts);
+    }
+
+    /// Registers a whole shape table, each shape's length and parent (a parent precedes its
+    /// children), and, where representations are kept, their slot owners and their
+    /// representations joined anew from the values live objects hold.
+    fn register_shape_layouts(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {
+        let tracking = self.properties.tracks();
         self.properties.reset_shapes();
+        if tracking { self.properties.track(); }
         for (shape, (length, parent)) in layouts.iter().copied().enumerate() {
-            debug_assert!(parent.is_none_or(|(parent, _)| (parent as usize) < shape), "a compacted parent precedes its children");
+            debug_assert!(parent.is_none_or(|(parent, _)| (parent as usize) < shape), "a parent precedes its children");
             self.properties.register_derived_shape(shape as u32, length, parent);
         }
         self.join_live_slot_values();
     }
 
-    /// Keeps slot representations from now on (`ValueArena::track`), from what live objects hold.
-    pub(crate) fn track_slot_representations(&mut self) {
+    /// Keeps slot representations from now on (`ValueArena::track`), over the shape table
+    /// `layouts` (`register_shape_layouts`), from what live objects hold.
+    pub(crate) fn track_slot_representations(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {
         self.properties.track();
-        self.join_live_slot_values();
+        self.register_shape_layouts(layouts);
     }
 
     /// Joins each live object record's slot values into its owners' representations.
@@ -4400,7 +4410,9 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     // The caller matched the exact shape, which holds the slot.
-    properties.note_slot_value(data.shape(), slot, value);
+    if properties.tracks() {
+        properties.note_slot_value(data.shape(), slot, value);
+    }
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
