@@ -619,8 +619,8 @@ pub(super) fn lower(
             super::lane_unit::Origin::Inlined { frame, pc: source_pc } => {
                 let inlined = unit.frames[frame];
                 if lowering.completion == Completion::SourcePc {
-                    // Function-bound units admit only captured stores: every
-                    // possible miss precedes the write; its return cannot fail.
+                    // Function-bound leaves are pure or have one final store.
+                    // Every possible callee miss precedes any guest effect.
                     lowering.return_at(u64::from(inlined.call));
                     continue;
                 }
@@ -1463,6 +1463,23 @@ impl Lowering<'_, '_> {
                     let result = emit_number_bitwise_bits(&mut self.builder, bitwise, left_int, right_int);
                     self.set_int(state, destination, result);
                 }
+            }
+            _ if super::operations::NumberRelation::from_operator(operator).is_some() => {
+                let integer = [left, right].iter().all(|operand| super::facts::operand_type(
+                    &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
+                    .is_subtype(Type::INT32));
+                let (left, right, domain) = if integer {
+                    (self.operand_int(state, left, exit)?, self.operand_int(state, right, exit)?, NumberRelationDomain::Int32)
+                } else {
+                    (self.operand_number(state, left, exit)?, self.operand_number(state, right, exit)?, NumberRelationDomain::Float64)
+                };
+                let holds = emit_number_relation(&mut self.builder, operator, left, right, domain)
+                    .expect("admitted numeric relation");
+                let yes = self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64);
+                let no = self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64);
+                let value = self.ins().select(holds, yes, no);
+                self.define(state, destination, value, RegisterFact::definition(
+                    Type::language(crate::ValueType::Boolean), Representation::Tagged));
             }
             _ => return None,
         }

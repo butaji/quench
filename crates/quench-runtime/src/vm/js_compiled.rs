@@ -4400,7 +4400,7 @@ fn wide_boolean_tree_candidate(function: &Function) -> bool {
     }) && has_forward_branch
 }
 
-fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
+pub(super) fn eligible(function: &Function, program: &crate::bytecode::ResidualProgram) -> bool {
     // An arrow's `this` is its environment's, which this tier does not bind.
     if function.parent.is_none()
         || function.is_arrow

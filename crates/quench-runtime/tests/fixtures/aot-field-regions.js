@@ -282,5 +282,34 @@ record(() => runBound(boundSecond));
 Object.defineProperty(boundFirst, 'state', {writable: false});
 record(() => runBound(boundFirst));
 output.push(JSON.stringify([boundFirst.state, boundFirst.stamp, boundSecond.state, boundSecond.stamp]));
+function makePure(mask) {
+  const object = {state: 3, stamp: 0, changeMask(value) { mask = value; }, a: 0, b: 0, c: 0};
+  object.pureBoundProbe = function (expected) { return (this.state & mask) === expected; };
+  return object;
+}
+function runPure(object, expected) {
+  object.stamp = object.stamp + 1;
+  const result = object.pureBoundProbe(expected);
+  if (result) return 11;
+  return 12;
+}
+const pureFirst = makePure(1);
+const pureSecond = makePure(2);
+for (let i = 0; i < 200; i++) {
+  if (runPure(pureFirst, 1) !== 11 || runPure(pureSecond, 1) !== 12) throw Error('pure closure arguments');
+}
+for (const expected of [NaN, Infinity, -Infinity, -0, 0, 1, 1.5, 1n, undefined, null, '1',
+  {valueOf() { events.push('unexpected-pure-coerce'); return 1; }}]) {
+  record(() => runPure(pureFirst, expected));
+}
+pureFirst.changeMask(1n);
+record(() => runPure(pureFirst, 1));
+pureFirst.changeMask({valueOf() { events.push('pure-coerce'); return 1; }});
+record(() => runPure(pureFirst, 1));
+Object.defineProperty(pureSecond, 'state', {get() { events.push('pure-get'); return 1; }});
+record(() => runPure(pureSecond, 0));
+Object.defineProperty(pureFirst, 'pureBoundProbe', {value(expected) { events.push('pure-replacement'); return expected; }});
+record(() => runPure(pureFirst, 0));
+output.push(JSON.stringify([pureFirst.stamp, pureSecond.stamp]));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

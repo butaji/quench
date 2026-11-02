@@ -7119,7 +7119,7 @@ unsafe extern "C" fn lane_function_binding<H: Host>(vm: u64, _residual: u64, pro
     let matches = !vm.direct_eval && !vm.parameter_eval && vm.same_realm_user_target(Value::from_bits(callee))
         .is_some_and(|(owner, id, _)| owner == ProgramId::from_raw(program as u32) && u64::from(id) == function);
     // The admitted body is a leaf. Check its guest-call/interrupt permission
-    // here; no guest operation or nested call occurs before its single store.
+    // here; no nested guest call occurs anywhere in the admitted native body.
     u64::from(matches && vm.enter_guarded_call().is_some())
 }
 
@@ -16749,6 +16749,25 @@ mod tests {
         assert_eq!(admitted(&vm), 1);
         vm.execution_interrupt.request_termination();
         assert_eq!(admitted(&vm), 0, "termination must precede the inlined store");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn function_bound_pure_predicates_share_argument_mapping_and_restartable_recovery() {
+        let program = crate::Engine::specialize(
+            "function make(mask){let o={};o.pureProbe=function(n){return (this.state&mask)===n;};return o;} function run(o,n){o.stamp=o.stamp+1;let r=o.pureProbe(n);if(r)return 11;return 12;}",
+            "pure-binding.js").unwrap();
+        let caller = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+        let targets = static_call_targets(&program);
+        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+            &|id| program.function_get(id as usize)).unwrap();
+        assert_eq!(unit.frames.len(), 1);
+        assert_eq!(unit.frames[0].arguments, 1);
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        assert!(lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0).is_some());
     }
 
     #[cfg(feature = "aot")]

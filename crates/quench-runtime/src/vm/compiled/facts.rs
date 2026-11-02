@@ -163,6 +163,12 @@ fn transfer(
                         set(types, instruction.result_register(), Type::NUMBER);
                     }
                 }
+                None if super::super::operations::NumberRelation::from_operator(operator).is_some() => {
+                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
+                    if !instruction.returns_from_frame() {
+                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
+                    }
+                }
                 None => {
                     for register in written(instruction) {
                         set(types, register, Type::ANY);

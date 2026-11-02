@@ -15,7 +15,7 @@ use crate::value::Value;
 
 /// Binding time of a callee: a published closure or a static body whose actual
 /// closure/environment is admitted at the call. Function bindings are accepted
-/// only for a body whose misses precede its sole store and infallible return.
+/// only for a pure body or one whose misses precede its sole final store.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CalleeBinding { Identity(Value), Function }
 
@@ -227,6 +227,20 @@ fn inlinable(instruction: WideInstruction) -> bool {
     }
 }
 
+/// The shared lowering performs only guarded, non-guest operations for an
+/// inlinable pure leaf. A miss may restart that call without replaying effects.
+/// Captured stores additionally allow one final write with an infallible tail.
+fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
+    if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
+    function.plain_activation(program) && super::super::js_compiled::eligible(function, program)
+        && code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
+            Op::SetThisField | Op::SetThisFieldStrict => false,
+            Op::IncDec => instruction.numeric_local_target().is_none(),
+            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => instruction.jump_target() as usize > pc,
+            _ => true, // `inlinable` above owns the supported instruction/effect set.
+        })
+}
+
 fn expanded_len(instruction: WideInstruction) -> usize {
     if instruction.op() == Op::Return { 2 }
     else if super::osr_loop::inlined_returning(instruction) { 3 }
@@ -256,13 +270,12 @@ pub(crate) fn unit<'f>(
             continue;
         }
         let Some(callee) = body(target.function) else { continue };
-        if target.callee == CalleeBinding::Function
-            && super::super::js_compiled::captured_field_store_candidate(program, callee).is_none() { continue; }
         let callee_code = decoded(callee);
         let arguments = ImmediateLayout::argument_count(instruction.imm());
         if callee_code.len() > MAX_INLINED_INSTRUCTIONS
             || arguments > callee.registers
             || !callee_code.iter().all(|instruction| inlinable(*instruction))
+            || (target.callee == CalleeBinding::Function && !restartable(program, callee, &callee_code))
             || !callee_code.iter().any(|instruction| expanded_len(*instruction) > 1)
         {
             continue;
@@ -362,6 +375,23 @@ pub(crate) fn unit<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn function_binding_rejects_effects_before_fallible_work_and_backward_branches() {
+        for body in ["this.state=1;return this.next.value;", "let x=0;while(x<4)x++;return x;"] {
+            let source = format!("let o={{}};o.unsafeProbe=function(){{{body}}};function run(o){{let r=o.unsafeProbe();if(r)return 11;return 12;}}");
+            let program = crate::Engine::specialize(&source, "non-restartable.js").unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+            let targets = static_call_targets(&program);
+            assert!(targets[caller].iter().any(Option::is_some), "the hint must reach admission");
+            let unit = unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
+                .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+                &|id| program.function_get(id as usize)).unwrap();
+            assert!(unit.frames.is_empty(), "caller-call recovery must reject {body}");
+        }
+    }
 
     #[test]
     fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_at_entry() {
