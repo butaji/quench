@@ -196,6 +196,7 @@ pub(super) fn emit_entry(
     builder: &mut FunctionBuilder<'_>,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry: &StaticRegionEntry<'_>,
+    gate: ir::Block,
     context: ir::Value,
     payload: ir::Value,
     registers: ir::Value,
@@ -206,7 +207,7 @@ pub(super) fn emit_entry(
     control: &NativeStopControl,
 ) -> ir::Inst {
     let range = entry.range.clone();
-    builder.switch_to_block(entries[range.start]);
+    builder.switch_to_block(gate);
     // An activation whose bound was not discharged may stop inside the region.
     if matches!(control, NativeStopControl::Unproven) {
         let stop = builder.ins().load(

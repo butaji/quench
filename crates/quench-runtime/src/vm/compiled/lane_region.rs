@@ -737,7 +737,8 @@ impl Lowering<'_, '_> {
             self.builder.set_cold_block(miss);
             // No guest operation has run and canonical registers are untouched.
             // Decline the whole unit once, even for a speculative unused capture.
-            let pc = self.builder.ins().iconst(types::I64, 0);
+            let super::lane_unit::Origin::Caller(pc) = self.unit.origins[0] else { unreachable!("unit entry belongs to caller") };
+            let pc = self.builder.ins().iconst(types::I64, i64::from(pc));
             self.builder.ins().store(MemFlagsData::trusted(), pc, self.result, 0);
             let stopped = self.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
             self.builder.ins().return_(&[stopped]);

@@ -244,12 +244,12 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             for site in sites {
                 site.operands.append_native_bytes(&mut bytes);
             }
-            let unit = typed_units[id].take().map(|function| {
+            let unit = typed_units[id].take().map(|unit| {
                 let symbol = u32::try_from(unit_base + unit_definitions.len())
                     .expect("validated typed unit symbol index");
                 unit_definitions.push(NativeFunction::Definition {
-                    name: format!("{namespace}_function_{id}_typed_loop"), function });
-                symbol
+                    name: format!("{namespace}_function_{id}_typed_loop"), function: unit.function });
+                super::compiled::StaticTypedLoopEntry { header: unit.header, symbol }
             });
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)

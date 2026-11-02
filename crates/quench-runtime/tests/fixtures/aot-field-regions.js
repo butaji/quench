@@ -191,5 +191,24 @@ Object.defineProperty(middleNode, 'next', {
 });
 record(() => markTail(firstNode));
 output.push(JSON.stringify([firstNode.mark, middleNode.mark, tailNode.mark]));
+let edgeEntries = 0;
+function enterTail(node, skip) {
+  edgeEntries++;
+  if (skip) return node;
+  let cursor = node;
+  while (cursor.next !== null) cursor = cursor.next;
+  return cursor;
+}
+const edgeTail = {next: null};
+const edgeHead = {next: edgeTail};
+for (let i = 0; i < 40; i++) {
+  if (enterTail(edgeHead, false) !== edgeTail) throw Error('loop edge live temporary');
+  if (enterTail(edgeHead, true) !== edgeHead) throw Error('loop edge early return');
+}
+Object.defineProperty(edgeHead, 'next', {
+  get() { events.push('edge-get'); return edgeTail; }
+});
+record(() => enterTail(edgeHead, false) === edgeTail);
+output.push(String(edgeEntries));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

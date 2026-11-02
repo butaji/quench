@@ -68,7 +68,8 @@ impl Unit {
     ) -> Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>> {
         use crate::compile::liveness::{ROOT_MAP_REGISTERS, RegisterMasks};
         let caller = program.register_root_masks(caller)?;
-        if self.frames.is_empty() {
+        if self.frames.is_empty() && self.origins.iter().enumerate().all(|(pc, origin)|
+            *origin == Origin::Caller(pc as u32)) {
             return Some(std::borrow::Cow::Borrowed(caller));
         }
         if self.registers > ROOT_MAP_REGISTERS { return None; }
@@ -118,6 +119,22 @@ impl Unit {
         starts.push(successors.len());
         let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
+    }
+
+    /// A closed suffix entered with the caller's canonical homes at `header`.
+    /// Source origins survive rebasing, including entry misses and liveness.
+    #[cfg(feature = "aot")]
+    pub(super) fn suffix(mut self, header: usize) -> Option<Self> {
+        if !self.frames.is_empty() || header >= self.instructions.len() { return None; }
+        self.instructions.drain(..header);
+        self.origins.drain(..header);
+        for instruction in &mut self.instructions {
+            if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
+                let target = instruction.jump_target().checked_sub(u32::try_from(header).ok()?)?;
+                instruction.set_jump_target(target);
+            }
+        }
+        Some(self)
     }
 
     /// The closure whose depth-zero binding this instruction reads.

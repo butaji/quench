@@ -2183,27 +2183,35 @@ enum JsGeneralBranch {
 }
 
 #[cfg(feature = "aot")]
+pub(super) struct StaticTypedLoop {
+    pub(super) header: usize,
+    pub(super) function: ir::Function,
+}
+
+#[cfg(feature = "aot")]
 pub(super) fn lower_static_typed_loop(program: &ResidualProgram, function_id: u32,
-    isa: &dyn cranelift_codegen::isa::TargetIsa) -> Option<ir::Function>
+    isa: &dyn cranelift_codegen::isa::TargetIsa) -> Option<StaticTypedLoop>
 {
     if isa.pointer_type() != types::I64 { return None; }
     let function = program.function_get(function_id as usize)?;
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
     let unit = lane_unit::unit(function, &[], &|_| None)?;
-    let mut loop_body = false;
-    for (pc, instruction) in unit.instructions.iter().enumerate() {
-        match instruction.op().control_flow_layout() {
-            ControlFlowLayout::Call => return None,
-            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
-                loop_body |= instruction.jump_target() as usize <= pc;
-            }
-            _ => {}
-        }
-    }
-    if !loop_body { return None; }
+    let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
+    }).min()?;
+    let unit = unit.suffix(header)?;
+    if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) { return None; }
     let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Activation,
         &[], isa, lane_region::Coverage::Full)?;
-    (count != 0).then_some(native)
+    (count != 0).then_some(StaticTypedLoop { header, function: native })
+}
+
+#[cfg(feature = "aot")]
+#[derive(Clone, Copy)]
+pub(super) struct StaticTypedLoopEntry {
+    pub(super) header: usize,
+    pub(super) symbol: u32,
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -2241,7 +2249,7 @@ pub(super) fn compile_js_general_dispatch(
 pub(super) enum JsGeneralCallout {
     Dynamic,
     #[cfg(feature = "aot")]
-    Relocatable { fallback: u32, unit: Option<u32> },
+    Relocatable { fallback: u32, unit: Option<StaticTypedLoopEntry> },
     #[cfg(all(feature = "aot", test))]
     Address(usize),
 }
@@ -2344,12 +2352,17 @@ pub(super) fn lower_js_general_dispatch(
         .collect();
     let entries = std::borrow::Cow::Borrowed(blocks.as_slice());
     #[cfg(feature = "aot")]
-    let entries = {
+    let (entries, typed_entry) = {
         let mut entries = entries;
         for entry in _scalar_regions {
             entries.to_mut()[entry.range.start] = builder.create_block();
         }
-        entries
+        let typed_entry = if let JsGeneralCallout::Relocatable { unit: Some(unit), .. } = callout_kind {
+            let fallback = entries[unit.header];
+            entries.to_mut()[unit.header] = builder.create_block();
+            Some((unit, fallback))
+        } else { None };
+        (entries, typed_entry)
     };
     let mut general_dispatch_native_pcs = vec![0; instruction_count];
     // Start from the caller's exact resume PC. The artifact is shared by normal
@@ -2385,36 +2398,8 @@ pub(super) fn lower_js_general_dispatch(
         let unbounded = builder.ins().icmp_imm_u(IntCC::Equal, stop_pc, JS_NO_STOP_PC as i64);
         let bounded = builder.create_block();
         let pc = builder.append_block_param(bounded, types::I64);
-        let unit = match callout_kind {
-            JsGeneralCallout::Relocatable { unit, .. } => unit,
-            _ => None,
-        };
-        let native_entry = unit.map(|_| builder.create_block());
-        let initial = native_entry.unwrap_or(continue_block);
-        let initial_args = if native_entry.is_some() { &[][..] } else { &[ir::BlockArg::Value(start_pc)][..] };
-        builder.ins().brif(unbounded, initial, initial_args,
+        builder.ins().brif(unbounded, continue_block, &[ir::BlockArg::Value(start_pc)],
             bounded, &[ir::BlockArg::Value(start_pc)]);
-        if let Some(symbol) = unit {
-            builder.switch_to_block(native_entry.expect("unit entry"));
-            let run = builder.create_block();
-            let fresh = builder.ins().icmp_imm_u(IntCC::Equal, start_pc, 0);
-            let specialized = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
-            let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-            let admitted = builder.ins().band(fresh, specialized);
-            builder.ins().brif(admitted, run, &[], continue_block, &[ir::BlockArg::Value(start_pc)]);
-            builder.switch_to_block(run);
-            let signature = builder.import_signature(native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
-            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                super::native_object::NATIVE_FUNCTION_NAMESPACE, symbol));
-            let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
-                signature, colocated: false, patchable: false });
-            let call = builder.ins().call(target, &parameters);
-            // The shared typed unit performs no guest call or collection and
-            // publishes canonical recovery homes before returning its exact PC.
-            frame_flow.recovery(call);
-            let pc = builder.ins().load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
-            builder.ins().jump(continue_block, &[ir::BlockArg::Value(pc)]);
-        }
         builder.switch_to_block(bounded);
         let run = builder.create_block();
         let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, instruction_count as i64);
@@ -3497,15 +3482,41 @@ pub(super) fn lower_js_general_dispatch(
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
-        let call = scalar_region::emit_entry(&mut builder, isa, entry,
+        let gate = typed_entry.filter(|(unit, _)| unit.header == entry.range.start)
+            .map_or(entries[entry.range.start], |(_, fallback)| fallback);
+        let call = scalar_region::emit_entry(&mut builder, isa, entry, gate,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc, &control);
         frame_flow.residual(call, entry.frame);
+    }
+    #[cfg(feature = "aot")]
+    if let Some((unit, fallback)) = typed_entry {
+        builder.switch_to_block(entries[unit.header]);
+        let run = builder.create_block();
+        let specialized = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+        let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
+        builder.ins().brif(admitted, run, &[], fallback, &[]);
+        builder.switch_to_block(run);
+        let signature = builder.import_signature(native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
+        let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+            super::native_object::NATIVE_FUNCTION_NAMESPACE, unit.symbol));
+        let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
+            signature, colocated: false, patchable: false });
+        let call = builder.ins().call(target, &parameters);
+        // Publish dirty canonical inputs before the no-GC unit. Exact source-PC
+        // recovery reloads its outputs and bypasses this entry's admission.
+        frame_flow.recovery(call);
+        let pc = builder.ins().load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
+        builder.ins().jump(continue_block, &[ir::BlockArg::Value(pc)]);
     }
     let live = program.register_root_masks(function_id);
     for (pc, resume) in resume_entries.iter().copied().enumerate() {
         builder.switch_to_block(resume);
         frame_flow.resume(&mut builder, live, pc);
-        builder.ins().jump(entries[pc], &[]);
+        let target = entries[pc];
+        #[cfg(feature = "aot")]
+        let target = typed_entry.filter(|(unit, _)| unit.header == pc)
+            .map_or(target, |(_, fallback)| fallback);
+        builder.ins().jump(target, &[]);
     }
     builder.switch_to_block(continue_block);
     let select_block = builder.create_block();
@@ -16520,12 +16531,14 @@ mod tests {
     #[test]
     fn linked_typed_loops_share_register_ir_and_runtime_bound_helpers() {
         let program = crate::Engine::specialize(
-            "function tail(node) { while(node.next!==null) node=node.next; return node; }",
+            "function tail(node) { node.seen=1; while(node.next!==null) node=node.next; return node; }",
             "typed-loop.js",
         ).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let native = lower_static_typed_loop(&program, 1, &*isa).expect("call-free typed loop");
+        let residual = lower_static_typed_loop(&program, 1, &*isa).expect("call-free typed loop");
+        assert!(residual.header > 0, "loop admission must skip the effectful prefix");
+        let native = residual.function;
         let context = native.dfg.block_params(native.layout.entry_block().unwrap())[0];
         let load_base = |value: ir::Value, expected_offset: i32| {
             let ir::ValueDef::Result(instruction, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
