@@ -463,7 +463,8 @@ impl<H: Host> Vm<H> {
             child.lookup_index = OnceCell::from(index);
         }
         self.shapes.push(child);
-        self.heap.register_property_shape(next, storage_len);
+        let parent_length = self.shapes[parent as usize].storage_len();
+        self.heap.register_property_shape(next, storage_len, Some((parent, parent_length)));
         next
     }
     /// Whether `to` is `from` extended by one appended property slot: the shape an add of
@@ -4620,8 +4621,8 @@ impl<H> Vm<H> {
             reps[usize::from(classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(0))] += 1;
         }
         let reps = format!(
-            "QUENCH_FIELD_REPS {{\"no_live_object\":{},\"int32\":{},\"number\":{},\"tagged\":{}}}",
-            reps[0], reps[usize::from(INT32)], reps[usize::from(NUMBER)], reps[usize::from(TAGGED)],
+            "QUENCH_FIELD_REPS {{\"no_live_object\":{},\"int32\":{},\"number\":{},\"tagged\":{},\"unrepresented_slots\":{}}}",
+            reps[0], reps[usize::from(INT32)], reps[usize::from(NUMBER)], reps[usize::from(TAGGED)], self.heap.unrepresented_slots(),
         );
         reps + "\n" + &format!(
             "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",

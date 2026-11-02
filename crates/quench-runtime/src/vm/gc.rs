@@ -1000,11 +1000,11 @@ impl<H: Host> Vm<H> {
             }
         }
         self.shape_accessors = accessors;
-        let lengths = shapes
+        let layouts = shapes
             .iter()
-            .map(|shape| shape.storage_len())
+            .map(|shape| (shape.storage_len(), shape.parent().map(|parent| (parent, shapes[parent as usize].storage_len()))))
             .collect::<Vec<_>>();
-        self.heap.remap_live_object_shapes(&mapping, &lengths);
+        self.heap.remap_live_object_shapes(&mapping, &layouts);
         self.startup_intrinsics.remap_shapes(&mapping);
         self.remap_object_template_shapes(&mapping);
         self.shapes = shapes;

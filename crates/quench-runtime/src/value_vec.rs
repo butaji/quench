@@ -186,12 +186,44 @@ impl Default for ValueVec {
     }
 }
 
+/// What every value a slot has held is, a lattice joined by `max`: no value yet, an int32, any
+/// number, any value. Integral numbers are stored in int form (`Value::number`), so each class
+/// keeps the same encoding and a slot widens in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SlotRepresentation {
+    None,
+    Int32,
+    Number,
+    Tagged,
+}
+
+impl SlotRepresentation {
+    const ALL: [Self; 4] = [Self::None, Self::Int32, Self::Number, Self::Tagged];
+
+    fn from_index(index: u32) -> Option<Self> {
+        Self::ALL.get(index as usize).copied()
+    }
+
+    #[inline(always)]
+    pub(crate) fn of(value: Value) -> Self {
+        if value.as_int().is_some() { Self::Int32 } else if value.as_number().is_some() { Self::Number } else { Self::Tagged }
+    }
+}
+
 pub(crate) struct ValueArena {
     values: PropertyBuffer,
     free: [Vec<u32>; BUCKETS],
     /// Values held by the ranges on `free`.
     released_values: usize,
     shape_lengths: Vec<u32>,
+    /// The slot owners of every shape (`ValueArena::slot_owner`): each shape's chain starts at
+    /// its `shape_chains` index in `chain_owners`, which names, per slot, the shape that added
+    /// it. A child that appends a slot at its parent's chain end shares that chain.
+    shape_chains: Vec<u32>,
+    chain_owners: Vec<u32>,
+    /// Per owner shape, the representation every value its slot has held fits
+    /// (`SlotRepresentation`), joined on each write.
+    owner_reps: Vec<SlotRepresentation>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -204,6 +236,9 @@ impl Default for ValueArena {
             free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
             shape_lengths: vec![0],
+            shape_chains: vec![0],
+            chain_owners: Vec::new(),
+            owner_reps: vec![SlotRepresentation::None],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -224,13 +259,16 @@ impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains, chain_owners, owner_reps, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
         }
         writer.len(*released_values);
         writer.u32s(shape_lengths);
+        writer.u32s(shape_chains);
+        writer.u32s(chain_owners);
+        writer.u32s(&owner_reps.iter().map(|rep| *rep as u32).collect::<Vec<_>>());
         writer.len(dictionaries.len());
         for (id, entries) in dictionaries {
             writer.u32(*id);
@@ -252,6 +290,10 @@ impl ValueArena {
         }
         let released_values = reader.len()?;
         let shape_lengths = reader.u32s()?;
+        let shape_chains = reader.u32s()?;
+        let chain_owners = reader.u32s()?;
+        let owner_reps = reader.u32s()?.into_iter().map(SlotRepresentation::from_index).collect::<Option<Vec<_>>>()
+            .ok_or_else(|| crate::snapshot::SnapshotError("slot representation out of range".into()))?;
         let dictionaries = crate::snapshot::read_list(reader, |reader| {
             let id = reader.u32()?;
             let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
@@ -264,6 +306,9 @@ impl ValueArena {
             free,
             released_values,
             shape_lengths,
+            shape_chains,
+            chain_owners,
+            owner_reps,
             dictionaries,
             free_dictionaries: reader.u32s()?,
             next_dictionary: reader.u32()?,
@@ -299,6 +344,88 @@ impl ValueArena {
     pub(crate) fn reset_shapes(&mut self) {
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
+        self.shape_chains.clear();
+        self.shape_chains.push(0);
+        self.chain_owners.clear();
+        self.owner_reps.clear();
+        self.owner_reps.push(SlotRepresentation::None);
+    }
+
+    /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
+    /// longer extends the parent's chain, owning the new slot, sharing the chain where the
+    /// parent's is its end; as long shares it; anything else owns every slot itself.
+    pub(crate) fn register_derived_shape(&mut self, shape: u32, length: usize, parent: Option<(u32, usize)>) {
+        self.register_shape(shape, length);
+        let index = shape as usize;
+        if self.shape_chains.len() <= index {
+            self.shape_chains.resize(index + 1, 0);
+            self.owner_reps.resize(index + 1, SlotRepresentation::None);
+        }
+        self.owner_reps[index] = SlotRepresentation::None;
+        let chain = match parent {
+            Some((parent, parent_length)) if length == parent_length => self.shape_chains[parent as usize] as usize,
+            Some((parent, parent_length)) if length == parent_length + 1 => {
+                let base = self.shape_chains[parent as usize] as usize;
+                if self.chain_owners.len() != base + parent_length {
+                    let start = self.chain_owners.len();
+                    self.chain_owners.extend_from_within(base..base + parent_length);
+                    self.chain_owners.push(shape);
+                    start
+                } else {
+                    self.chain_owners.push(shape);
+                    base
+                }
+            }
+            _ => {
+                let start = self.chain_owners.len();
+                self.chain_owners.extend(std::iter::repeat_n(shape, length));
+                start
+            }
+        };
+        self.shape_chains[index] = u32::try_from(chain).expect("slot owner chains fit u32");
+    }
+
+    /// `note_slot_value` of a write of `value` to `slot` of an object of `shape`, where the
+    /// shape holds the slot (an ordinary shape's; a dictionary's holds none of its own).
+    #[inline(always)]
+    pub(crate) fn note_shape_value(&mut self, shape: u32, slot: usize, value: Value) {
+        if slot < self.shape_length(shape) && !value.is_deleted() {
+            self.note_slot_value(shape, slot, value);
+        }
+    }
+
+    /// `note_shape_value` of an object's initial `values`, slot by slot.
+    pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
+        for (slot, value) in values.iter().copied().enumerate() {
+            self.note_shape_value(shape, slot, value);
+        }
+    }
+
+    /// The slots `shape`'s objects store.
+    pub(crate) fn shape_length(&self, shape: u32) -> usize {
+        self.shape_lengths.get(shape as usize).map_or(0, |length| *length as usize)
+    }
+
+    /// The shape that added `slot` of `shape`'s objects, whose representation it shares.
+    #[inline(always)]
+    pub(crate) fn slot_owner(&self, shape: u32, slot: usize) -> u32 {
+        self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
+    }
+
+    /// The representation `slot` of `shape` has held.
+    #[inline(always)]
+    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> SlotRepresentation {
+        self.owner_reps[self.slot_owner(shape, slot) as usize]
+    }
+
+    /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
+    #[inline(always)]
+    pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+        let owner = self.slot_owner(shape, slot) as usize;
+        let class = SlotRepresentation::of(value);
+        let widened = class > self.owner_reps[owner];
+        if widened { self.owner_reps[owner] = class; }
+        widened
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {

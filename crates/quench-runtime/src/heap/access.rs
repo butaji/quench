@@ -722,6 +722,25 @@ impl Heap {
         }
     }
 
+    /// The slots of live object records whose value its owner's representation does not hold
+    /// (`ValueArena::slot_representation`): zero while every write joins its value's class.
+    pub(crate) fn unrepresented_slots(&self) -> usize {
+        let mut unrepresented = 0;
+        self.object_records.for_each_live(|_, object| {
+            let shape = object.exact_shape();
+            if shape != object.shape() { return; }
+            for slot in 0..self.properties.shape_length(shape) {
+                // SAFETY: an exact, non-dictionary shape holds its registered slots.
+                let value = unsafe { self.property_get_flat(object, slot) };
+                if !value.is_deleted()
+                    && crate::value_vec::SlotRepresentation::of(value) > self.properties.slot_representation(shape, slot) {
+                    unrepresented += 1;
+                }
+            }
+        });
+        unrepresented
+    }
+
     /// Every live object record, for a diagnostics census (`Vm::field_site_report`).
     pub(crate) fn for_each_live_object_record(&self, mut visit: impl FnMut(&Object)) {
         self.object_records.for_each_live(|_, object| visit(object));
