@@ -460,16 +460,20 @@ impl<H: Host> Vm<H> {
         if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
             return false;
         }
-        let elements = array.elements_mut();
-        if !elements.get(index).is_some_and(|value| !value.is_deleted())
-            || (!DETACH && elements.owner_count() != 1)
-        {
+        if !array.elements().get(index).is_some_and(|value| !value.is_deleted()) {
             return false;
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile
-            .array_write_ownership(elements.owner_count() != 1);
-        mutable_array_elements(elements).set(index, value);
+            .array_write_ownership(array.elements().owner_count() != 1);
+        // A backing the array owns alone is written in place, which changes no backing (so
+        // no array storage proof retires); a shared one is copied first, with `DETACH`.
+        if !array.replace_in_place(index, value) {
+            if !DETACH {
+                return false;
+            }
+            mutable_array_elements(array.elements_mut()).set(index, value);
+        }
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
         true

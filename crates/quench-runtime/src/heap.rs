@@ -10,6 +10,9 @@ use std::sync::Mutex;
 mod access;
 mod array_elements;
 pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+mod array_proofs;
+pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
+use array_proofs::retire_array_storage_proofs;
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
@@ -2042,6 +2045,8 @@ impl Heap {
         // those it promotes.
         let carries_owners = !full && age.ages();
         self.charge_materialized_text();
+        // The sweep may free an array whose record a later array reuses.
+        retire_array_storage_proofs();
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
