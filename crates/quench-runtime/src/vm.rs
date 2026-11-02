@@ -42,7 +42,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
-use activation::{CallContext, ConstructionTarget};
+use activation::{CallCompletion, CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -1659,14 +1659,7 @@ pub(super) enum StepResult {
     PushFrame {
         destination: Register,
         call_guard: crate::stack::GuestCallGuard,
-        /// For `new`: the allocated receiver, the result unless the callee returns an object.
-        construct_this: Option<Value>,
-        /// For an async callee pushed in place: its rooted promise
-        /// (`PendingGeneralCall::settles`).
-        settles: Option<crate::heap::RootId>,
-        /// For a generator resumed in place: its rooted generator
-        /// (`PendingGeneralCall::generator`).
-        generator: Option<generator::GeneratorResume>,
+        completion: CallCompletion,
     },
     Return(Value),
     Await {

@@ -947,7 +947,7 @@ enum Completion {
     /// A plain call of a non-suspending async function of the caller's program
     /// (`CallEntry::Settles`): its return resolves the promise the call made, which
     /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
-    /// pending call settles it (`PendingGeneralCall::settles`).
+    /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
 }
 
@@ -1573,7 +1573,7 @@ pub(super) struct LaneStack {
     forwarders: Vec<SkippedForwarder>,
     /// The rooted promises of the `Completion::SettlesPromise` activations, innermost last:
     /// each activation's return resolves its own, which its frame's pending call takes when
-    /// it materializes (`PendingGeneralCall::settles`).
+    /// it materializes (`PendingGeneralCall::completion`).
     settling: Vec<crate::heap::RootId>,
     /// The iterators the activations' `for-of` loops would close, each with the index of
     /// the activation whose loop pushed it (`IteratorCleanupPush`), innermost last: a
@@ -10236,17 +10236,14 @@ impl<H: Host> Vm<H> {
             self.frames[caller].pc_is_resume = true;
             let count = usize::from(code.function(activation.function as usize).registers);
             let window = &registers[activation.window..activation.window + count];
-            let construct_this = activation
-                .script()
-                .and_then(|script| script.completion.constructs().then_some(state.this));
+            let completion = match activation.script().map(|script| script.completion) {
+                Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
+                Some(Completion::SettlesPromise) => CallCompletion::Promise(
+                    settling.next().expect("each settling activation roots its promise")),
+                _ => CallCompletion::Value,
+            };
             // A native's callback is the entry frame of the loop that finishes it.
             let to_native = activation.script().is_some_and(|script| script.completion == Completion::ReturnsToNative);
-            // A settling activation's frame settles its promise as the general loop's
-            // in-place push of the call would (`Vm::try_settling_call`).
-            let settles = activation
-                .script()
-                .is_some_and(|script| script.completion == Completion::SettlesPromise)
-                .then(|| settling.next().expect("each settling activation roots its promise"));
             let call_guard = match activation.kind {
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
@@ -10289,9 +10286,7 @@ impl<H: Host> Vm<H> {
                             caller_cursor: None,
                             call_pc: call_pc as u32,
                             destination: result & crate::bytecode::REGISTER_MASK,
-                            construct_this: Some(state.this),
-                            settles: None,
-                            generator: None,
+                            completion: CallCompletion::Constructor(state.this),
                             returns: result & crate::bytecode::RETURN_REGISTER != 0,
                             call_guard: crate::stack::GuestCallGuard::enter().ok(),
                             caller_program: None,
@@ -10380,9 +10375,7 @@ impl<H: Host> Vm<H> {
                     caller_cursor: None,
                     call_pc: call_pc as u32,
                     destination: result & crate::bytecode::REGISTER_MASK,
-                    construct_this,
-                    settles,
-                    generator: None,
+                    completion,
                     returns: result & crate::bytecode::RETURN_REGISTER != 0,
                     call_guard,
                     caller_program,
@@ -14852,9 +14845,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         caller_cursor: None,
         call_pc: call_pc as u32,
         destination: i.a,
-        construct_this: None,
-        settles: None,
-        generator: None,
+        completion: CallCompletion::Value,
         returns: false,
         call_guard: Some(call_guard),
         caller_program: None,
@@ -16144,7 +16135,7 @@ fn lane_push_frame_call<H: Host>(
         Some(Ok(StepResult::PushFrame {
             destination,
             call_guard,
-            construct_this,
+            completion,
             ..
         })) => {
             // A callee of another program runs in its own, which the push made active
@@ -16166,9 +16157,7 @@ fn lane_push_frame_call<H: Host>(
                 caller_cursor: None,
                 call_pc: call_pc as u32,
                 destination,
-                construct_this,
-                settles: None,
-                generator: None,
+                completion,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -16208,7 +16197,7 @@ fn lane_push_frame_call<H: Host>(
 
 script_handler! {
     /// `yield` of the frame of a generator its caller resumed in place
-    /// (`PendingGeneralCall::generator`), made as the general loop makes it: the frame
+    /// (`PendingGeneralCall::completion`), made as the general loop makes it: the frame
     /// suspends into the generator at the record after this one, and the caller continues
     /// with the step's result (`Vm::finish_in_loop_generator_step`). Any other `yield`
     /// takes the general path.
@@ -16220,7 +16209,7 @@ script_handler! {
         let frame = unsafe { (*cx).frame };
         let resumed_here = vm.lane_stack.activations.is_empty()
             && frame + 1 == vm.frames.len()
-            && pending.last().is_some_and(|call| call.generator.is_some() && call.caller + 1 == frame);
+            && pending.last().is_some_and(|call| call.completion.is_generator() && call.caller + 1 == frame);
         if !resumed_here {
             return exit(ip);
         }
@@ -16235,7 +16224,7 @@ script_handler! {
             destination: i.a & crate::bytecode::REGISTER_MASK,
             delegated_result: None,
         };
-        let resume = call.generator.take().expect("a generator call");
+        let resume = call.completion.take_generator().expect("a generator call");
         let result = vm.finish_in_loop_generator_step(suspended, resume, value, stop);
         drop(call.call_guard);
         vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
@@ -16276,9 +16265,7 @@ fn lane_resume_generator_frame<H: Host>(
                 caller_cursor: None,
                 call_pc: call_pc as u32,
                 destination,
-                construct_this: None,
-                settles: None,
-                generator: Some(resume),
+                completion: CallCompletion::Generator(resume),
                 returns: false,
                 call_guard: Some(call_guard),
                 caller_program: None,
@@ -16377,9 +16364,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 caller_cursor: None,
                 call_pc: call_pc as u32,
                 destination: i.a & crate::bytecode::REGISTER_MASK,
-                construct_this: Some(this),
-                settles: None,
-                generator: None,
+                completion: CallCompletion::Constructor(this),
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -16456,10 +16441,10 @@ fn lane_return_script_frame<H: Host>(
     let mut frame = unsafe { (*cx).frame };
     let mut exit_ip = ip;
     loop {
-        // An async callee's promise settles on the general path (`PendingGeneralCall::settles`);
-        // a generator resumed in place finishes here as there (`PendingGeneralCall::generator`).
+        // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
+        // a generator resumed in place finishes here as there (`PendingGeneralCall::completion`).
         let returns_here = pending.last().is_some_and(|call| {
-            call.caller + 1 == frame && frame + 1 == vm.frames.len() && call.settles.is_none()
+            call.caller + 1 == frame && frame + 1 == vm.frames.len() && !call.completion.is_settling()
         });
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
@@ -16471,7 +16456,7 @@ fn lane_return_script_frame<H: Host>(
         }
         let mut call = pending.pop().expect("a pending call names the returning frame");
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
-        match call.generator.take() {
+        match call.completion.take_generator() {
             Some(resume) => {
                 let stop = super::generator::InLoopGeneratorStop::Returned;
                 value = vm.finish_in_loop_generator_step(completed, resume, value, stop);
@@ -16491,7 +16476,7 @@ fn lane_return_script_frame<H: Host>(
             executing.retained = saved.retained;
             lane_enter_program(cx, saved.id);
         }
-        value = match call.construct_this {
+        value = match call.completion.constructor_this() {
             Some(this) if !vm.is_object_like(value) => this,
             _ => value,
         };
@@ -16525,10 +16510,8 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
         || pending.last().is_none_or(|call| {
-            call.construct_this.is_some()
+            !matches!(call.completion, CallCompletion::Value)
                 || call.caller_program.is_some()
-                || call.settles.is_some()
-                || call.generator.is_some()
         })
     {
         return exit(ip);

@@ -759,7 +759,7 @@ macro_rules! opcodes {
     ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
-        #[quench_macros::native_operation_exports(15, "quench_js_op_")]
+        #[quench_macros::native_operation_exports(16, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         #[allow(dead_code)]

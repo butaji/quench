@@ -129,7 +129,7 @@ impl<H: Host> Vm<H> {
         self.promise_settle(p, promise, PromiseState::Rejected, reason)
     }
 
-    /// The promise an async call pushed in place settles (`PendingGeneralCall::settles`),
+    /// The promise an async call pushed in place settles (`PendingGeneralCall::completion`),
     /// unrooted now that the call completes.
     pub(super) fn release_settled_call_root(&mut self, root: crate::heap::RootId) -> Value {
         let promise = self.heap.root_value(root).expect("a settling call roots its promise");
@@ -166,8 +166,8 @@ impl<H: Host> Vm<H> {
         // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
         let pushed = self.push_in_loop_call(p, f, pc, target, callee, this, unsafe { &*arguments }, destination);
         Some(match pushed {
-            Some(Ok(StepResult::PushFrame { destination, call_guard, construct_this, .. })) => {
-                Ok(StepResult::PushFrame { destination, call_guard, construct_this, settles: Some(root), generator: None })
+            Some(Ok(StepResult::PushFrame { destination, call_guard, .. })) => {
+                Ok(StepResult::PushFrame { destination, call_guard, completion: CallCompletion::Promise(root) })
             }
             Some(Err(error)) => {
                 let promise = self.release_settled_call_root(root);

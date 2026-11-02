@@ -67,9 +67,7 @@ impl<H: Host> Vm<H> {
         Some(resumed.map(|(call_guard, resume)| StepResult::PushFrame {
             destination,
             call_guard,
-            construct_this: None,
-            settles: None,
-            generator: Some(resume),
+            completion: CallCompletion::Generator(resume),
         }))
     }
 
@@ -1822,5 +1820,23 @@ impl<H: Host> Vm<H> {
             .thrown_value()
             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
         self.promise_settle(p, promise, PromiseState::Rejected, reason)
+    }
+}
+
+#[cfg(test)]
+mod call_completion_tests {
+    use super::*;
+
+    #[test]
+    fn generator_completion_moves_resume_state_once() {
+        for reuses_result in [false, true] {
+            let mut completion = CallCompletion::Generator(GeneratorResume { reuses_result });
+            assert!(completion.take_promise().is_none());
+            assert!(completion.is_generator());
+            let resume = completion.take_generator().expect("generator completion");
+            assert_eq!(resume.reuses_result, reuses_result);
+            assert!(completion.take_generator().is_none());
+            assert!(matches!(completion, CallCompletion::Value));
+        }
     }
 }

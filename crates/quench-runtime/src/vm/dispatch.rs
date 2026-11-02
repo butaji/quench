@@ -213,9 +213,7 @@ impl<H: Host> Vm<H> {
         Some(call_guard.map(|call_guard| StepResult::PushFrame {
             destination,
             call_guard,
-            construct_this: None,
-            settles: None,
-            generator: None,
+            completion: CallCompletion::Value,
         }))
     }
 
@@ -1620,9 +1618,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
                         call_guard,
-                        construct_this: None,
-                        settles: None,
-                        generator: None,
+                        completion: CallCompletion::Value,
                     });
                 }
                 self.profile.call_source(1);
@@ -1759,9 +1755,7 @@ impl<H: Host> Vm<H> {
                         return Ok(StepResult::PushFrame {
                             destination: i.result_register(),
                             call_guard: pushed?,
-                            construct_this: Some(this),
-                            settles: None,
-                            generator: None,
+                            completion: CallCompletion::Constructor(this),
                         });
                     }
                 }

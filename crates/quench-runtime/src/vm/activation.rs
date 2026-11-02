@@ -42,6 +42,43 @@ pub(crate) enum CallContext {
     Constructor(Value),
 }
 
+/// The single completion mode of a pushed call. Cross-program restoration and
+/// a caller's terminal-return flag are independent of the value this call yields.
+pub(crate) enum CallCompletion {
+    Value,
+    Constructor(Value),
+    Promise(crate::heap::RootId),
+    Generator(super::generator::GeneratorResume),
+}
+
+impl CallCompletion {
+    #[inline(always)]
+    pub(super) fn constructor_this(&self) -> Option<Value> {
+        match self { Self::Constructor(this) => Some(*this), _ => None }
+    }
+
+    #[inline(always)]
+    pub(super) fn is_settling(&self) -> bool { matches!(self, Self::Promise(_)) }
+
+    #[inline(always)]
+    pub(super) fn is_generator(&self) -> bool { matches!(self, Self::Generator(_)) }
+
+    #[inline(always)]
+    pub(super) fn take_promise(&mut self) -> Option<crate::heap::RootId> {
+        let Self::Promise(root) = self else { return None; };
+        let root = *root;
+        *self = Self::Value;
+        Some(root)
+    }
+
+    #[inline(always)]
+    pub(super) fn take_generator(&mut self) -> Option<super::generator::GeneratorResume> {
+        if !self.is_generator() { return None; }
+        let Self::Generator(resume) = std::mem::replace(self, Self::Value) else { unreachable!() };
+        Some(resume)
+    }
+}
+
 /// A pending constructor entry belongs only to its actual callee.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructionTarget {
@@ -269,6 +306,33 @@ impl Snap for Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn call_completion_preserves_other_modes_and_consumes_promise_lease_once() {
+        let old_fields = std::mem::size_of::<Option<Value>>()
+            + std::mem::size_of::<Option<crate::heap::RootId>>()
+            + std::mem::size_of::<Option<super::super::generator::GeneratorResume>>();
+        assert!(std::mem::size_of::<CallCompletion>() < old_fields);
+        eprintln!("call completion: {} bytes; previous independent fields: {old_fields}; step: {}; pending: {}",
+            std::mem::size_of::<CallCompletion>(), std::mem::size_of::<super::super::StepResult>(),
+            std::mem::size_of::<super::super::dispatch_frame::PendingGeneralCall>());
+        let this = Value::number(17.0);
+        let mut constructor = CallCompletion::Constructor(this);
+        assert!(constructor.take_generator().is_none());
+        assert!(constructor.take_promise().is_none());
+        assert_eq!(constructor.constructor_this(), Some(this));
+        let mut vm = super::super::Vm::new(crate::test_host::TestHost::default());
+        let root = vm.heap.root(Value::number(42.0));
+        let mut promise = CallCompletion::Promise(root);
+        assert!(promise.take_generator().is_none());
+        assert!(promise.is_settling());
+        assert_eq!(promise.take_promise(), Some(root));
+        assert!(matches!(promise, CallCompletion::Value));
+        assert!(promise.take_promise().is_none());
+        assert_eq!(vm.heap.root_value(root), Some(Value::number(42.0)));
+        assert!(vm.heap.release_root(root));
+        assert!(vm.heap.root_value(root).is_none());
+    }
 
     #[test]
     fn continuation_roots_include_frame_and_completion_values() {
