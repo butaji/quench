@@ -5,17 +5,79 @@
 
 extern crate test;
 
+use super::DataAttributes;
 use super::operations::{ADDITION, MULTIPLICATION, integer_operator, number_value_operator};
 use crate::heap::{
     ArrayElements, ArrayObject, ArrayStorageProofs, Cell, Heap, LaneProofScope, Object,
 };
 use crate::value::Value;
+use std::hash::{Hash, Hasher};
 use std::hint::black_box;
 use test::Bencher;
 
 const BATCH_VALUES: usize = 64;
 const INPUT_SEED: i32 = 104729;
 const FRACTION_DIVISOR: f64 = 31.0;
+
+fn attribute_hash<const FIELDS: bool, const DEPENDENT: bool>(b: &mut Bencher) {
+    const FLAG_STATES: [bool; 2] = [false, true];
+    let states = FLAG_STATES.len();
+    let flags: [DataAttributes; BATCH_VALUES] = std::array::from_fn(|index| DataAttributes {
+        writable: FLAG_STATES[index % states],
+        enumerable: FLAG_STATES[index / states % states],
+        configurable: FLAG_STATES[index / (states * states) % states],
+    });
+    let mut initial = rustc_hash::FxHasher::default();
+    black_box(INPUT_SEED).hash(&mut initial);
+    b.iter(|| {
+        let mut chain = initial.clone();
+        for attributes in flags {
+            let attributes = black_box(attributes);
+            let mut independent = initial.clone();
+            let state = if DEPENDENT {
+                &mut chain
+            } else {
+                &mut independent
+            };
+            if FIELDS {
+                (
+                    attributes.writable,
+                    attributes.enumerable,
+                    attributes.configurable,
+                )
+                    .hash(state);
+            } else {
+                attributes.hash(state);
+            }
+            if !DEPENDENT {
+                black_box(state.finish());
+            }
+        }
+        if DEPENDENT {
+            black_box(chain.finish());
+        }
+    });
+}
+
+#[bench]
+fn primitive_attribute_hash_batch(b: &mut Bencher) {
+    attribute_hash::<false, false>(b);
+}
+
+#[bench]
+fn primitive_attribute_hash_fields_batch(b: &mut Bencher) {
+    attribute_hash::<true, false>(b);
+}
+
+#[bench]
+fn primitive_attribute_hash_chain_batch(b: &mut Bencher) {
+    attribute_hash::<false, true>(b);
+}
+
+#[bench]
+fn primitive_attribute_hash_fields_chain_batch(b: &mut Bencher) {
+    attribute_hash::<true, true>(b);
+}
 
 #[derive(Clone, Copy)]
 enum Inputs {

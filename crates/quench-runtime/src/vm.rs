@@ -1221,11 +1221,24 @@ struct ShapeAttributes {
 /// The attributes a data property is created with. Its `Add` transition records them, so a
 /// property created non-enumerable (as builtin methods are) costs no second, `Descriptor`
 /// shape.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct DataAttributes {
     writable: bool,
     enumerable: bool,
     configurable: bool,
+}
+impl Hash for DataAttributes {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // A fixed-width, injective projection of the three flags. One hash write avoids
+        // mixing each bool separately; the fields remain the equality/snapshot authority.
+        const WRITABLE: u8 = 1 << 0;
+        const ENUMERABLE: u8 = 1 << 1;
+        const CONFIGURABLE: u8 = 1 << 2;
+        let flags = (u8::from(self.writable) * WRITABLE)
+            | (u8::from(self.enumerable) * ENUMERABLE)
+            | (u8::from(self.configurable) * CONFIGURABLE);
+        state.write_u8(flags);
+    }
 }
 impl DataAttributes {
     /// `attributes` when they describe a data property.

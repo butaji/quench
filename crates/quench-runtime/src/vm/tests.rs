@@ -1008,6 +1008,56 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
 }
 
 #[test]
+fn added_property_shapes_preserve_every_attribute_combination_after_table_growth() {
+    use super::property_key::PropertyKey;
+
+    const PROPERTY_COUNT: usize = 128;
+    let program = Engine::specialize("", "data-attribute-transitions.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+    let mut recorded = Vec::new();
+    for index in 0..PROPERTY_COUNT {
+        let key = PropertyKey::string(vm.intern_atom(&format!("field{index}")));
+        for writable in [false, true] {
+            for enumerable in [false, true] {
+                for configurable in [false, true] {
+                    let attributes = super::PropertyAttributes {
+                        writable,
+                        enumerable,
+                        configurable,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    };
+                    let object = vm.object();
+                    vm.create_shape_data_property(
+                        object,
+                        key,
+                        Value::integer(1),
+                        super::DataAttributes::of(attributes).unwrap(),
+                    ).unwrap();
+                    recorded.push((key, attributes, vm.object_data(object).unwrap().shape()));
+                }
+            }
+        }
+    }
+    let shape_count = vm.shapes.len();
+    for (key, attributes, shape) in recorded {
+        let object = vm.object();
+        vm.create_shape_data_property(
+            object,
+            key,
+            Value::integer(2),
+            super::DataAttributes::of(attributes).unwrap(),
+        ).unwrap();
+        assert_eq!(vm.object_data(object).unwrap().shape(), shape);
+        assert!(vm.property_attributes(object, key) == Some(attributes));
+    }
+    assert_eq!(vm.shapes.len(), shape_count);
+}
+
+#[test]
 fn equivalent_data_descriptor_transitions_share_one_shape() {
     use super::property_key::PropertyKey;
 
