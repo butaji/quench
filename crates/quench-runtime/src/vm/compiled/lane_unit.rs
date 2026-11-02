@@ -91,10 +91,12 @@ impl Unit {
 /// relative to its work.
 const MAX_INLINED_INSTRUCTIONS: usize = 96;
 /// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
-/// graph, inlined, is the region an optimizing tier compiles as one function.
-pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 2048;
-/// How deep calls nest inside a unit.
-const MAX_INLINING_DEPTH: usize = 8;
+/// graph, inlined, is the region an optimizing tier compiles as one function. Its compile
+/// cost grows with it (Richards' 600-instruction units cost ~63M instructions to compile),
+/// so it is TurboFan's cumulative inlining budget (`max_inlined_bytecode_size_cumulative`).
+pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 920;
+/// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
+const MAX_INLINING_DEPTH: usize = 5;
 
 /// Whether the lane-body lowering runs `instruction` of an inlined callee: a capture of its
 /// own environment only, no fusion but a returning one, which splits into the

@@ -633,7 +633,8 @@ impl LaneBodyStats {
 
 /// The leaves after which a body specializes again from the feedback its sites hold then: a
 /// region compiled while its call graph warmed keeps leaving at sites whose targets came
-/// later, the deoptimization that reoptimizes. `LANE_BODY_MAX_RECOMPILES` bounds it.
+/// later, the deoptimization that reoptimizes. Each recompile doubles it, as JSC's exit
+/// threshold backs off, and `LANE_BODY_MAX_RECOMPILES` bounds it.
 const LANE_BODY_REOPTIMIZE_EXITS: u16 = 64;
 const LANE_BODY_MAX_RECOMPILES: u8 = 4;
 
@@ -751,7 +752,7 @@ impl LaneView {
         let LaneBody::Specialized { exits, leaves_at, recompiles, tier_prologue, stuck, .. } = body else { return };
         exits.set(exits.get().saturating_add(1));
         leaves_at.set(leaves_at.get().with(exit));
-        if exits.get() < LANE_BODY_REOPTIMIZE_EXITS || *recompiles >= LANE_BODY_MAX_RECOMPILES {
+        if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES {
             return;
         }
         let one = match leaves_at.get() { LaneLeaves::One(at) => Some(at), LaneLeaves::None | LaneLeaves::Scattered => None };
