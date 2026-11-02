@@ -7,35 +7,118 @@
 //! so aliased parameters and references moved by GC are never cached across one.
 
 use super::*;
-use std::collections::{BTreeMap, BTreeSet};
+use cranelift_codegen::entity::SecondaryMap;
+use smallvec::SmallVec;
 use cranelift_codegen::ir::InstBuilderBase;
 
 pub(super) struct FrameFlow {
     registers: ir::Value,
     count: u16,
-    roots: BTreeMap<ir::Inst, u16>,
-    calls: BTreeMap<ir::Inst, FrameCallEffect>,
+    effects: SecondaryMap<ir::Inst, FrameEffect>,
+    footprints: Vec<RegisterSet>,
 }
 
-/// Frame effects are independent of heap effects. A verified no-GC helper may
-/// read/write heap slots while neither observing nor changing canonical homes.
-#[cfg_attr(not(feature = "aot"), allow(dead_code))]
-enum FrameCallEffect { Canonical(BTreeSet<u16>), NoFrame }
+/// One packed column owns instruction effects. The high bits classify resume
+/// roots and verified no-frame calls; other nonzero values index footprints.
+/// A zero entry is an unknown effect and retains the canonical recovery path.
+#[derive(Clone, Copy, Default)]
+struct FrameEffect(u32);
+
+impl FrameEffect {
+    const ROOT: u32 = 1 << (u32::BITS - 1);
+    const NO_FRAME: Self = Self(1 << (u32::BITS - 2));
+    const INDEX_MASK: u32 = Self::NO_FRAME.0 - 1;
+
+    fn root(register: u16) -> Self { Self(Self::ROOT | u32::from(register)) }
+
+    #[cfg(feature = "aot")]
+    fn canonical(index: usize) -> Self {
+        let encoded = u32::try_from(index).ok().and_then(|index| index.checked_add(1))
+            .filter(|index| *index <= Self::INDEX_MASK).expect("frame footprint index");
+        Self(encoded)
+    }
+
+    fn register(self) -> Option<u16> {
+        (self.0 & Self::ROOT != 0).then_some((self.0 & Self::INDEX_MASK) as u16)
+    }
+
+    fn footprint(self) -> Option<usize> {
+        (self.0 != 0 && self.0 <= Self::INDEX_MASK).then(|| (self.0 - 1) as usize)
+    }
+
+    fn no_frame(self) -> bool { self.0 == Self::NO_FRAME.0 }
+    fn known_call(self) -> bool { self.0 != 0 && self.0 & Self::ROOT == 0 }
+}
+
+/// Two inline words cover small native frames without allocation; larger frames
+/// grow normally. Word operations process membership in contiguous batches.
+const INLINE_REGISTER_WORDS: usize = 2;
+const REGISTER_WORD_BITS: usize = u64::BITS as usize;
+
+#[derive(Clone)]
+struct RegisterSet(SmallVec<[u64; INLINE_REGISTER_WORDS]>);
+
+impl RegisterSet {
+    fn new(count: u16) -> Self {
+        Self(std::iter::repeat_n(0, usize::from(count).div_ceil(REGISTER_WORD_BITS)).collect())
+    }
+
+    fn clear(&mut self) { self.0.fill(0); }
+
+    fn insert(&mut self, register: u16) {
+        let register = usize::from(register);
+        self.0[register / REGISTER_WORD_BITS] |= 1 << (register % REGISTER_WORD_BITS);
+    }
+
+    fn contains(&self, register: u16) -> bool {
+        let register = usize::from(register);
+        self.0[register / REGISTER_WORD_BITS] & (1 << (register % REGISTER_WORD_BITS)) != 0
+    }
+
+    fn subtract(&mut self, other: &Self) {
+        for (word, other) in self.0.iter_mut().zip(&other.0) { *word &= !other; }
+    }
+
+    fn union(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for (word, other) in self.0.iter_mut().zip(&other.0) {
+            let next = *word | other;
+            changed |= next != *word;
+            *word = next;
+        }
+        changed
+    }
+
+    fn iter(&self) -> impl Iterator<Item = u16> + '_ {
+        self.0.iter().enumerate().flat_map(|(index, word)| {
+            let mut remaining = *word;
+            std::iter::from_fn(move || {
+                if remaining == 0 { return None; }
+                let bit = remaining.trailing_zeros() as usize;
+                remaining &= remaining - 1;
+                Some((index * REGISTER_WORD_BITS + bit) as u16)
+            })
+        })
+    }
+}
 
 impl FrameFlow {
     pub(super) fn new(registers: ir::Value, count: u16) -> Self {
-        Self { registers, count, roots: BTreeMap::new(), calls: BTreeMap::new() }
+        Self { registers, count, effects: SecondaryMap::new(), footprints: Vec::new() }
     }
 
     /// This call targets a verified scalar residual: canonical writes, no GC.
     #[cfg(feature = "aot")]
     pub(super) fn residual(&mut self, call: ir::Inst, frame: &[Register]) {
-        self.calls.insert(call, FrameCallEffect::Canonical(frame.iter().copied().collect()));
+        let mut footprint = RegisterSet::new(self.count);
+        for register in frame { footprint.insert(*register); }
+        self.effects[call] = FrameEffect::canonical(self.footprints.len());
+        self.footprints.push(footprint);
     }
 
     /// A helper copied from the verified typed residual: no frame access or GC.
     #[cfg(feature = "aot")]
-    pub(super) fn no_frame(&mut self, call: ir::Inst) { self.calls.insert(call, FrameCallEffect::NoFrame); }
+    pub(super) fn no_frame(&mut self, call: ir::Inst) { self.effects[call] = FrameEffect::NO_FRAME; }
 
     pub(super) fn resume(&mut self, builder: &mut FunctionBuilder<'_>,
         live: Option<&crate::compile::liveness::RegisterMasks>, pc: usize) {
@@ -44,23 +127,25 @@ impl FrameFlow {
                 builder.ins().load(types::I64, MemFlagsData::trusted(), self.registers, offset(register))
             } else { builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64) };
             let ir::ValueDef::Result(instruction, _) = builder.func.dfg.value_def(value) else { unreachable!() };
-            self.roots.insert(instruction, register);
+            self.effects[instruction] = FrameEffect::root(register);
         }
     }
 
     pub(super) fn promote(self, native: &mut ir::Function, callout: ir::Value,
         live: Option<&crate::compile::liveness::RegisterMasks>, config: cranelift_codegen::isa::TargetFrontendConfig) {
+        let mut instructions = Vec::new();
         let records: Vec<_> = native.layout.blocks().map(|block| {
-            let instructions: Vec<_> = native.layout.block_insts(block).collect();
-            (block, instructions)
+            let start = instructions.len();
+            instructions.extend(native.layout.block_insts(block));
+            (block, start..instructions.len())
         }).collect();
         // Reject unknown effects before changing the graph. Registered scalar
         // residuals cannot move frame buffers.
         // Other address roots belong to disjoint locals/result/VM heap storage
         // under the native-entry ABI. The canonical register pointer must not
         // escape into another view or be written as a value.
-        for (_, instructions) in &records {
-            for instruction in instructions {
+        for (_, range) in &records {
+            for instruction in &instructions[range.clone()] {
                 let data = &native.dfg.insts[*instruction];
                 if data.opcode().is_call() && !self.known_call(native, *instruction, callout) {
                     return;
@@ -74,30 +159,28 @@ impl FrameFlow {
                 }
             }
         }
-        let mut dirty = BTreeMap::<ir::Block, BTreeSet<u16>>::new();
+        let mut dirty = SecondaryMap::<ir::Block, RegisterSet>::with_default(RegisterSet::new(self.count));
         loop {
             let mut changed = false;
-            for (block, instructions) in &records {
-                let mut current = dirty.get(block).cloned().unwrap_or_default();
-                for instruction in instructions {
-                    if self.roots.contains_key(instruction) { current.clear(); }
+            for (block, range) in &records {
+                let mut current = dirty[*block].clone();
+                let block_instructions = &instructions[range.clone()];
+                for instruction in block_instructions {
+                    if self.effects[*instruction].register().is_some() { current.clear(); }
                     if let Some((register, _, store)) = self.cell(native, *instruction) {
                         if store { current.insert(register); }
                     }
                     if native.dfg.insts[*instruction].opcode().is_call() {
-                        match self.calls.get(instruction) {
-                            Some(FrameCallEffect::Canonical(frame)) => current.retain(|register| !frame.contains(register)),
-                            Some(FrameCallEffect::NoFrame) => {},
-                            None => current.clear(),
-                        }
+                        let effect = self.effects[*instruction];
+                        if let Some(frame) = effect.footprint() {
+                            current.subtract(&self.footprints[frame]);
+                        } else if !effect.no_frame() { current.clear(); }
                     }
                 }
-                let Some(last) = instructions.last() else { continue };
+                let Some(last) = block_instructions.last() else { continue };
                 for destination in native.dfg.insts[*last].branch_destination(&native.dfg.jump_tables, &native.dfg.exception_tables) {
-                    let incoming = dirty.entry(destination.block(&native.dfg.value_lists)).or_default();
-                    let size = incoming.len();
-                    incoming.extend(&current);
-                    changed |= incoming.len() != size;
+                    let incoming = &mut dirty[destination.block(&native.dfg.value_lists)];
+                    changed |= incoming.union(&current);
                 }
             }
             if !changed { break; }
@@ -106,11 +189,12 @@ impl FrameFlow {
         for (block, _) in &records { native.layout.remove_block_and_insts(*block); }
         let mut context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(native, &mut context);
-        let blocks: BTreeMap<_, _> = records.iter().map(|(block, _)| (*block, builder.create_block())).collect();
+        let mut blocks = SecondaryMap::<ir::Block, Option<ir::Block>>::new();
+        for (block, _) in &records { blocks[*block] = Some(builder.create_block()); }
         for ((block, _), parameters) in records.iter().zip(&parameters) {
             builder.func.dfg.detach_block_params(*block);
             for parameter in parameters {
-                let next = builder.append_block_param(blocks[block], builder.func.dfg.value_type(*parameter));
+                let next = builder.append_block_param(blocks[*block].expect("recorded native block"), builder.func.dfg.value_type(*parameter));
                 builder.func.dfg.change_to_alias(*parameter, next);
             }
         }
@@ -120,24 +204,23 @@ impl FrameFlow {
             .verified().expect("canonical frame definition");
         assert_eq!(fact.representation, typed_ir::Representation::Tagged);
         let variables: Vec<_> = (0..self.count).map(|_| builder.declare_var(types::I64)).collect();
-        for (position, (block, instructions)) in records.iter().enumerate() {
-            builder.switch_to_block(blocks[block]);
+        for (position, (block, range)) in records.iter().enumerate() {
+            builder.switch_to_block(blocks[*block].expect("recorded native block"));
             if position == 0 {
                 let undefined = builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
                 for variable in &variables { builder.def_var(*variable, undefined); }
             }
-            let mut current = dirty.get(block).cloned().unwrap_or_default();
-            for instruction in instructions {
+            let mut current = dirty[*block].clone();
+            for instruction in &instructions[range.clone()] {
                 let data = builder.func.dfg.insts[*instruction].clone();
                 let results = builder.func.dfg.inst_results(*instruction).to_vec();
                 let control = builder.func.dfg.ctrl_typevar(*instruction);
                 let cell = self.cell(builder.func, *instruction);
-                let root = self.roots.get(instruction).copied();
+                let effect = self.effects[*instruction];
+                let root = effect.register();
                 let pc = self.recovery_pc(builder.func, *instruction, callout);
-                let residual = match self.calls.get(instruction) {
-                    Some(FrameCallEffect::Canonical(frame)) => Some(frame), _ => None,
-                };
-                let no_frame = matches!(self.calls.get(instruction), Some(FrameCallEffect::NoFrame));
+                let residual = effect.footprint().map(|frame| &self.footprints[frame]);
+                let no_frame = effect.no_frame();
                 if root.is_some() { current.clear(); }
                 builder.func.dfg.clear_results(*instruction);
                 // Branch argument lists are owned by the replacement. SSA
@@ -159,22 +242,22 @@ impl FrameFlow {
                 let is_call = data.opcode().is_call();
                 let is_return = data.opcode() == ir::Opcode::Return;
                 if (is_call && !no_frame) || is_return {
-                    for register in &current {
+                    for register in current.iter() {
                         if residual.is_some_and(|frame| !frame.contains(register)) { continue; }
-                        if pc.is_some_and(|pc| live.is_some_and(|live| !live.is_live(pc, *register))) { continue; }
-                        let value = builder.use_var(variables[usize::from(*register)]);
-                        builder.ins().store(MemFlagsData::trusted(), value, self.registers, offset(*register));
+                        if pc.is_some_and(|pc| live.is_some_and(|live| !live.is_live(pc, register))) { continue; }
+                        let value = builder.use_var(variables[usize::from(register)]);
+                        builder.ins().store(MemFlagsData::trusted(), value, self.registers, offset(register));
                     }
                     match residual {
-                        Some(frame) => current.retain(|register| !frame.contains(register)),
+                        Some(frame) => current.subtract(frame),
                         None => current.clear(),
                     }
                 }
                 let mut data = data;
                 let dfg = &mut builder.func.dfg;
                 for destination in data.branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables) {
-                    if let Some(block) = blocks.get(&destination.block(&dfg.value_lists)) {
-                        destination.set_block(*block, &mut dfg.value_lists);
+                    if let Some(block) = blocks[destination.block(&dfg.value_lists)] {
+                        destination.set_block(block, &mut dfg.value_lists);
                     }
                 }
                 let (next, _) = builder.ins().build(data, control);
@@ -187,9 +270,9 @@ impl FrameFlow {
                 if let Some(frame) = residual {
                     // A scalar residual may update canonical homes on either
                     // success or deopt, but cannot move or release the buffers.
-                    for register in frame {
-                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), self.registers, offset(*register));
-                        builder.def_var(variables[usize::from(*register)], value);
+                    for register in frame.iter() {
+                        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), self.registers, offset(register));
+                        builder.def_var(variables[usize::from(register)], value);
                     }
                 }
             }
@@ -234,7 +317,7 @@ impl FrameFlow {
         // carries a dynamic PC through the same fixed semantic operation table.
         (native.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect
             && native.dfg.resolve_aliases(native.dfg.inst_args(instruction)[0]) == native.dfg.resolve_aliases(callout))
-            || self.calls.contains_key(&instruction)
+            || self.effects[instruction].known_call()
     }
 }
 
@@ -243,6 +326,51 @@ fn offset(register: u16) -> i32 { i32::from(register) * std::mem::size_of::<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_effects_preserve_zero_roots_and_distinguish_unknown_calls() {
+        assert_eq!(std::mem::size_of::<FrameEffect>(), std::mem::size_of::<u32>());
+        assert!(!FrameEffect::default().known_call());
+        assert_eq!(FrameEffect::default().register(), None);
+        assert_eq!(FrameEffect::default().footprint(), None);
+        for register in [0, u16::MAX] {
+            let effect = FrameEffect::root(register);
+            assert_eq!(effect.register(), Some(register));
+            assert!(!effect.known_call());
+            assert_eq!(effect.footprint(), None);
+        }
+        assert!(FrameEffect::NO_FRAME.known_call());
+        assert!(FrameEffect::NO_FRAME.no_frame());
+        assert_eq!(FrameEffect::NO_FRAME.footprint(), None);
+        #[cfg(feature = "aot")]
+        for index in [0, FrameEffect::INDEX_MASK as usize - 1] {
+            let effect = FrameEffect::canonical(index);
+            assert_eq!(effect.footprint(), Some(index));
+            assert!(effect.known_call());
+            assert!(!effect.no_frame());
+            assert_eq!(effect.register(), None);
+        }
+    }
+
+    #[test]
+    fn register_bitsets_batch_joins_and_kills_across_inline_and_spilled_words() {
+        for count in [0, 1, REGISTER_WORD_BITS as u16, (REGISTER_WORD_BITS * INLINE_REGISTER_WORDS + 1) as u16, u16::MAX] {
+            let mut left = RegisterSet::new(count);
+            let mut right = RegisterSet::new(count);
+            for register in 0..count {
+                if register % 2 == 0 { left.insert(register); } else { right.insert(register); }
+            }
+            assert_eq!(left.0.spilled(), usize::from(count) > REGISTER_WORD_BITS * INLINE_REGISTER_WORDS);
+            assert_eq!(left.union(&right), count > 1);
+            assert!(!left.union(&right));
+            assert_eq!(left.iter().collect::<Vec<_>>(), (0..count).collect::<Vec<_>>());
+            left.subtract(&right);
+            assert_eq!(left.iter().collect::<Vec<_>>(), (0..count).filter(|register| register % 2 == 0).collect::<Vec<_>>());
+            for register in 0..count { assert_eq!(left.contains(register), register % 2 == 0); }
+            left.clear();
+            assert_eq!(left.iter().next(), None);
+        }
+    }
 
     unsafe extern "C" fn mutate_frame(frame: u64, _pc: u64, _args: u64, result: *mut u64) -> u64 {
         // SAFETY: the test's native caller supplies its live two-cell frame.
