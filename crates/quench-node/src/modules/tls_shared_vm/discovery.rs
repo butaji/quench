@@ -61,6 +61,13 @@ pub(crate) fn ciphers(
     context.array_rooted(&values)
 }
 
+/// The PEM of `NODE_EXTRA_CA_CERTS`, which extends the root store.
+pub(crate) fn extra_certificates_pem() -> Option<String> {
+    let path = std::env::var_os("NODE_EXTRA_CA_CERTS")?;
+    let text = String::from_utf8(std::fs::read(path).ok()?).ok()?;
+    (!text.is_empty()).then_some(text)
+}
+
 pub(crate) fn ca_certificates(
     context: &mut quench_runtime::NativeContext<'_, crate::host::NodeHost>,
     _: quench_runtime::RootId,
@@ -154,15 +161,7 @@ pub(crate) fn ca_certificates(
         certificates.extend(system_certificates());
     }
     if matches!(kind.as_str(), "default" | "extra") {
-        if let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS") {
-            if let Ok(bytes) = std::fs::read(path) {
-                if let Ok(text) = String::from_utf8(bytes) {
-                    if !text.is_empty() {
-                        certificates.push(text);
-                    }
-                }
-            }
-        }
+        certificates.extend(extra_certificates_pem());
     }
     let values = certificates
         .iter()

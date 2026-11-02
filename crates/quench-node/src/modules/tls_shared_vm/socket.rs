@@ -95,6 +95,8 @@ fn create_session(
     }
     .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
     let mut ssl = ssl;
+    let announcements = super::contexts::announcements_index().map_err(|error| super::parser_error(context, error))?;
+    ssl.set_ex_data(*announcements, Default::default());
     if let Some(protocols) = encode_alpn_protocols(context, options)? {
         if server {
             let index = super::contexts::alpn_protocols_index()
@@ -673,6 +675,13 @@ pub(crate) fn construct(
         }
     }
     super::handle::install(context, socket)?;
+    let event = context.string_rooted("newListener");
+    let listener = get(context, api, super::surface::KEYLOG_NEW_LISTENER)?;
+    method(context, socket, "on", &[event, listener])?;
+    if let Some(timeout) = handshake_timeout(context, options)? {
+        let handler = get(context, socket, "_handleTimeout")?;
+        method(context, socket, "setTimeout", &[timeout, handler])?;
+    }
     let secure = context.string_rooted("secure");
     let callback = context.host_function(crate::host::shared_vm::operation("tlsSocketSecure"))?;
     method(context, socket, "on", &[secure, callback])?;
@@ -1046,24 +1055,53 @@ pub(super) fn verify_error(
     set(context, error, "code", code)?;
     Ok(error)
 }
+/// `enableKeylogCallback()`: record the session's key log lines from now on, whether the
+/// SSL still waits for its connection or the transport already runs it.
+pub(crate) fn enable_keylog(context: &mut NativeContext<'_, NodeHost>, socket: RootId) -> Result<(), RootedError> {
+    let enable = |ssl: &openssl::ssl::SslRef| {
+        super::contexts::with_announcements(ssl, |announcements| {
+            announcements.keylog.get_or_insert_with(Vec::new);
+        });
+    };
+    let session = super::sessions::owner(context, socket)?;
+    let shared = context.host_mut().shared_state();
+    if let Some(pending) = &shared.borrow().tls_contexts.sessions.entries[session].pending {
+        enable(&pending.ssl);
+        return Ok(());
+    }
+    if let Some(id) = physical_owner(context, socket)? {
+        if let Some(ssl) = super::super::net_shared_vm::tls_info(&shared.borrow().tcp, id) {
+            enable(ssl);
+        }
+    }
+    Ok(())
+}
+
+/// The positive `handshakeTimeout` a socket's TLS options arm, in milliseconds.
+fn handshake_timeout(context: &mut NativeContext<'_, NodeHost>, options: RootId) -> Result<Option<RootId>, RootedError> {
+    let timeout = get(context, options, "handshakeTimeout")?;
+    Ok(context.rooted_value(timeout).and_then(|value| value.as_number()).filter(|ms| *ms > 0.0).map(|_| timeout))
+}
+
 pub(crate) fn secure(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    let options = get(context, socket, "_tlsOptions")?;
+    if handshake_timeout(context, options)?.is_some() {
+        let zero = context.number(0.0);
+        let handler = get(context, socket, "_handleTimeout")?;
+        method(context, socket, "setTimeout", &[zero, handler])?;
+    }
     let id = owner(context, socket)?;
     let session = super::sessions::owner(context, socket)?;
     let shared = context.host_mut().shared_state();
     let purpose = shared.borrow().tls_contexts.sessions.entries[session].purpose;
-    let (result, reason, peer, reused, servername, alpn, session_bytes) = {
+    let (result, reason, peer, reused, servername, alpn) = {
         let state = shared.borrow();
         let ssl = super::super::net_shared_vm::tls_info(&state.tcp, id)
             .ok_or_else(|| RootedError::host("TLS session disappeared"))?;
-        let session_bytes = ssl
-            .session()
-            .map(|session| session.to_der())
-            .transpose()
-            .map_err(|error| RootedError::host(format!("serialize TLS session: {error}")))?;
         (
             ssl.verify_result().as_raw(),
             ssl.verify_result().error_string().to_owned(),
@@ -1082,10 +1120,8 @@ pub(crate) fn secure(
                     .map(|byte| char::from(*byte))
                     .collect::<String>()
             }),
-            session_bytes,
         )
     };
-    let options = get(context, socket, "_tlsOptions")?;
     if matches!(purpose, super::sessions::Purpose::Direct) {
         let yes = context.boolean(true);
         set(context, socket, "_secureEstablished", yes)?;
@@ -1213,19 +1249,10 @@ pub(crate) fn secure(
         .unwrap_or_else(|| context.boolean(false));
     set(context, socket, "alpnProtocol", alpn)?;
     super::super::net_shared_vm::authorize(&mut shared.borrow_mut().tcp, id);
+    // The sessions the peer issues reach the client as `session` events once this
+    // notification has verified it (the transport's new-session announcements).
     let event = context.string_rooted("secureConnect");
     method(context, socket, "emit", &[event])?;
-    // Node exposes each newly negotiated TLS session to clients after the
-    // secureConnect notification. TLS 1.3 can deliver tickets after this
-    // point through OpenSSL's new-session callback; this path covers sessions
-    // already available at handshake completion (notably TLS 1.2).
-    if !reused {
-        if let Some(bytes) = session_bytes {
-            let session = session_buffer(context, &bytes)?;
-            let event = context.string_rooted("session");
-            method(context, socket, "emit", &[event, session])?;
-        }
-    }
     Ok(context.undefined())
 }
 

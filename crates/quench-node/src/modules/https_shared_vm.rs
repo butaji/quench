@@ -20,6 +20,7 @@ members!(Https, "httpsMembers", [
     CreateConnection,
     GetName,
     GetSession,
+    KeepSocketAlive,
     CacheSession,
     EvictSession,
     Request,
@@ -38,6 +39,24 @@ const DEFAULT_MAX_CACHED_SESSIONS: f64 = 100.0;
 const HTTP1_ALPN: &str = "http/1.1";
 /// `http.globalAgent`'s options, which `https.globalAgent` shares.
 const GLOBAL_TIMEOUT: f64 = 5000.0;
+
+/// The number of the last request that brought its own `checkServerIdentity`
+/// (`perRequestCheckServerIdentityIndex`): each such request has an origin of its own.
+static PER_REQUEST_CHECK_INDEX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The symbol marking a request's options, and the socket made for them, with that
+/// number (`kPerRequestCheckServerIdentity`): such sockets neither share sessions nor
+/// stay alive for reuse.
+fn per_request_check_slot(c: &mut Context<'_>) -> Outcome {
+    crate::host::shared_vm::commonjs::cached_native_binding(c, "\0https:perRequestCheckServerIdentity", |c| {
+        Ok(c.symbol_rooted(Some("per-request checkServerIdentity")))
+    })
+}
+
+fn per_request_check(c: &mut Context<'_>, holder: RootId) -> Outcome {
+    let slot = per_request_check_slot(c)?;
+    c.get_property_rooted(holder, slot)
+}
 
 /// How a TLS option enters an agent's origin name (`Agent.prototype.getName`).
 enum NamePart {
@@ -94,6 +113,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         ("createConnection", Https::CreateConnection),
         ("getName", Https::GetName),
         ("_getSession", Https::GetSession),
+        ("keepSocketAlive", Https::KeepSocketAlive),
         ("_cacheSession", Https::CacheSession),
         ("_evictSession", Https::EvictSession),
     ])?;
@@ -173,6 +193,17 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let cache = get(c, this, "_sessionCache")?;
             let map = get(c, cache, "map")?;
             c.get_property_rooted(map, at(0))
+        }
+        Https::KeepSocketAlive => {
+            let isolated = per_request_check(c, at(0))?;
+            if c.truthy_rooted(isolated)? {
+                return Ok(c.boolean(false));
+            }
+            let http = crate::modules::http_shared_vm::module(c)?;
+            let http_agent = get(c, http, "Agent")?;
+            let prototype = get(c, http_agent, "prototype")?;
+            let keep = get(c, prototype, "keepSocketAlive")?;
+            c.call_rooted(keep, this, args)
         }
         Https::CacheSession => {
             cache_session(c, this, at(0), at(1))?;
@@ -298,7 +329,8 @@ fn create_connection(c: &mut Context<'_>, this: RootId, port: RootId, host: Root
         put(c, options, "host", host)?;
     }
     let key = get(c, options, "_agentKey")?;
-    let keyed = c.truthy_rooted(key)?;
+    let isolated = per_request_check(c, options)?;
+    let keyed = c.truthy_rooted(key)? && !c.truthy_rooted(isolated)?;
     if keyed {
         let session = call_method(c, this, "_getSession", &[key])?;
         if c.truthy_rooted(session)? {
@@ -310,6 +342,11 @@ fn create_connection(c: &mut Context<'_>, this: RootId, port: RootId, host: Root
     }
     let tls = tls_module(c)?;
     let socket = call_method(c, tls, "connect", &[options])?;
+    if c.truthy_rooted(isolated)? {
+        let slot = per_request_check_slot(c)?;
+        let yes = c.boolean(true);
+        c.set_property_rooted(socket, slot, yes, socket)?;
+    }
     if keyed {
         let arrived = function(c, Https::SessionArrived, "", &[this, key])?;
         on(c, socket, "session", arrived)?;
@@ -358,7 +395,38 @@ fn name_of(c: &mut Context<'_>, this: RootId, options: RootId) -> Result<String,
             name.push_str(&c.to_string(value)?);
         }
     }
+    let isolated = per_request_check(c, options)?;
+    if c.truthy_rooted(isolated)? {
+        name.push_str(&format!(":{}", c.to_string(isolated)?));
+    }
     Ok(name)
+}
+
+/// `hasAgentCheckServerIdentity(options)`: whether the request's agent (the global one by
+/// default) brings its own `checkServerIdentity`.
+fn agent_checks_identity(c: &mut Context<'_>, options: RootId, global_agent: RootId) -> Result<bool, RootedError> {
+    let agent = get(c, options, "agent")?;
+    if c.rooted_value(agent).is_some_and(|value| value.as_bool() == Some(false)) {
+        return Ok(false);
+    }
+    let agent = if is_nullish(c, agent) {
+        let create = get(c, options, "createConnection")?;
+        if c.is_callable_rooted(create)? {
+            return Ok(false);
+        }
+        global_agent
+    } else {
+        agent
+    };
+    if !c.is_object_rooted(agent)? {
+        return Ok(false);
+    }
+    let agent_options = get(c, agent, "options")?;
+    if !c.is_object_rooted(agent_options)? {
+        return Ok(false);
+    }
+    let check = get(c, agent_options, "checkServerIdentity")?;
+    Ok(!is_undefined(c, check))
 }
 
 fn cache_session(c: &mut Context<'_>, this: RootId, key: RootId, session: RootId) -> Result<(), RootedError> {
@@ -425,6 +493,17 @@ fn request(c: &mut Context<'_>, module: RootId, args: &[RootId]) -> Outcome {
         }
     }
     let default_agent = get(c, module, "globalAgent")?;
+    let check = get(c, options, "checkServerIdentity")?;
+    if !is_undefined(c, check) {
+        let tls = tls_module(c)?;
+        let default_check = get(c, tls, "checkServerIdentity")?;
+        if !c.strict_equal_rooted(check, default_check)? && !agent_checks_identity(c, options, default_agent)? {
+            let index = PER_REQUEST_CHECK_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            let slot = per_request_check_slot(c)?;
+            let index = c.number(index as f64);
+            c.set_property_rooted(options, slot, index, options)?;
+        }
+    }
     put(c, options, "_defaultAgent", default_agent)?;
     let mut values = vec![options];
     values.extend(rest);

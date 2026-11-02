@@ -39,6 +39,17 @@ fn bundled_roots() -> Result<&'static [openssl::x509::X509], openssl::error::Err
     }
 }
 
+/// The `NODE_EXTRA_CA_CERTS` certificates, read once as Node reads them at startup; an
+/// unreadable file adds none.
+fn extra_roots() -> &'static [openssl::x509::X509] {
+    static ROOTS: std::sync::OnceLock<Vec<openssl::x509::X509>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        super::discovery::extra_certificates_pem()
+            .and_then(|pem| super::trusted_certificates_from_pem(pem.as_bytes()).ok())
+            .unwrap_or_default()
+    })
+}
+
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -639,7 +650,7 @@ pub(crate) fn method(
         }
         "addCACert" => {
             let bytes = super::material_bytes(context, value, "options.ca")?;
-            let certs = openssl::x509::X509::stack_from_pem(&bytes)
+            let certs = super::trusted_certificates_from_pem(&bytes)
                 .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
             for cert in certs {
                 let result = shared
@@ -670,6 +681,7 @@ pub(crate) fn method(
                         super::super::crypto_error_shared_vm::decorated(context, error)
                     })?
                     .iter()
+                    .chain(extra_roots())
                     .map(|root| root.to_owned())
                     .collect()
             };

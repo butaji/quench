@@ -51,10 +51,12 @@ pub(crate) enum Slot {
     CloseListener,
     /// A socket's agent bookkeeping listeners (`installListeners`).
     AgentListeners,
+    /// An agent's `keylog` forwarder for its sockets, once something listens (`kOnKeylog`).
+    OnKeylog,
 }
 
 impl Slot {
-    const ALL: [Slot; 25] = [
+    const ALL: [Slot; 26] = [
         Self::OutHeaders,
         Self::NeedDrain,
         Self::Corked,
@@ -80,6 +82,7 @@ impl Slot {
         Self::Connections,
         Self::CloseListener,
         Self::AgentListeners,
+        Self::OnKeylog,
     ];
 
     fn description(self) -> &'static str {
@@ -109,6 +112,7 @@ impl Slot {
             Self::Connections => "http.server.connections",
             Self::CloseListener => "onServerResponseClose",
             Self::AgentListeners => "kAgentListeners",
+            Self::OnKeylog => "onkeylog",
         }
     }
 }

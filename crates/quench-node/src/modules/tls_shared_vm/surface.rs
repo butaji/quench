@@ -36,6 +36,14 @@ members!(Surface, "tlsSurface", [
     DestroySoon,
     Start,
     TlsError,
+    /// `_emitTLSError(err)`: the error `_tlsError` releases, as an `error` event.
+    EmitTlsError,
+    /// `_handleTimeout()`: the handshake deadline passed.
+    HandleTimeout,
+    /// `keylogNewListener(event)`: the first `keylog` listener turns on the session's key
+    /// log; `onSocketKeylog(line)` forwards a server socket's lines to its server.
+    KeylogNewListener,
+    ServerSocketKeylog,
     ReleaseControl,
     ServerRejection,
     SetSecureContext,
@@ -93,6 +101,8 @@ pub(crate) fn build(c: &mut Context<'_>, api: RootId, net: RootId, defaults: &[(
         ("destroySoon", Surface::DestroySoon),
         ("_start", Surface::Start),
         ("_tlsError", Surface::TlsError),
+        ("_emitTLSError", Surface::EmitTlsError),
+        ("_handleTimeout", Surface::HandleTimeout),
         ("_releaseControl", Surface::ReleaseControl),
     ])?;
     inherit(c, socket, net, "Socket")?;
@@ -144,8 +154,19 @@ pub(crate) fn build(c: &mut Context<'_>, api: RootId, net: RootId, defaults: &[(
     set(c, module, "createServer", create_server)?;
     let connect = function(c, Surface::Connect, "connect", &[])?;
     set(c, module, "connect", connect)?;
+    for (field, member, name) in [
+        (KEYLOG_NEW_LISTENER, Surface::KeylogNewListener, "keylogNewListener"),
+        (SERVER_SOCKET_KEYLOG, Surface::ServerSocketKeylog, "onSocketKeylog"),
+    ] {
+        let listener = function(c, member, name, &[])?;
+        set(c, api, field, listener)?;
+    }
     Ok(module)
 }
+
+/// The facade fields holding the shared key log listeners.
+pub(crate) const KEYLOG_NEW_LISTENER: &str = "keylogNewListener";
+pub(crate) const SERVER_SOCKET_KEYLOG: &str = "onSocketKeylog";
 
 fn inherit(c: &mut Context<'_>, class: RootId, net: RootId, base: &str) -> Result<(), RootedError> {
     let base = get(c, net, base)?;
@@ -239,6 +260,32 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         }
         Surface::Start => super::socket::start(c, undefined, &[this]),
         Surface::TlsError => super::socket::tls_error(c, undefined, &[this, at(0)]),
+        Surface::EmitTlsError => {
+            emit_tls_error(c, this, at(0))?;
+            Ok(undefined)
+        }
+        Surface::HandleTimeout => {
+            let error = c.error_rooted("TLS handshake timeout")?;
+            crate::modules::node_errors_shared_vm::decorate_error(c, error, "ERR_TLS_HANDSHAKE_TIMEOUT")?;
+            method(c, this, "_emitTLSError", &[error])?;
+            Ok(undefined)
+        }
+        Surface::KeylogNewListener => {
+            if c.string_text(at(0))?.as_deref() == Some("keylog") {
+                super::socket::enable_keylog(c, this)?;
+                let event = c.string_rooted("newListener");
+                let listener = get_api(c, KEYLOG_NEW_LISTENER)?;
+                method(c, this, "removeListener", &[event, listener])?;
+            }
+            Ok(undefined)
+        }
+        Surface::ServerSocketKeylog => {
+            let options = get(c, this, "_tlsOptions")?;
+            let server = get(c, options, "server")?;
+            let event = c.string_rooted("keylog");
+            method(c, server, "emit", &[event, at(0), this])?;
+            Ok(undefined)
+        }
         Surface::ReleaseControl => super::socket::release_control(c, undefined, &[this]),
         Surface::ServerRejection => {
             let (error, event, socket) = (at(0), at(1), at(2));
@@ -359,6 +406,17 @@ fn connect(c: &mut Context<'_>, args: &[RootId]) -> Outcome {
         method(c, socket, "prependListener", &[event, listener])?;
     }
     Ok(socket)
+}
+
+/// `_emitTLSError(err)`: `_tlsError` tells the owner; the socket's `error` listeners hear
+/// the error only once the socket has released control.
+fn emit_tls_error(c: &mut Context<'_>, socket: RootId, error: RootId) -> Result<(), RootedError> {
+    let released = method(c, socket, "_tlsError", &[error])?;
+    if c.truthy_rooted(released)? {
+        let event = c.string_rooted("error");
+        method(c, socket, "emit", &[event, released])?;
+    }
+    Ok(())
 }
 
 /// `toX509Certificate(certificate)`: the legacy certificate object as an

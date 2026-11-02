@@ -91,6 +91,10 @@ impl EncryptedStream {
     pub(crate) fn ssl(&self) -> &openssl::ssl::SslRef {
         self.stream.ssl()
     }
+    /// What the session reported since the last call, oldest first.
+    pub(crate) fn take_announcements<T>(&self, take: impl FnOnce(&mut crate::modules::tls_shared_vm::contexts::Announcements) -> Vec<T>) -> Vec<T> {
+        crate::modules::tls_shared_vm::contexts::with_announcements(self.stream.ssl(), take).unwrap_or_default()
+    }
     pub(crate) fn receive(&mut self, bytes: &[u8]) {
         self.stream.get_mut().received.extend(bytes);
     }

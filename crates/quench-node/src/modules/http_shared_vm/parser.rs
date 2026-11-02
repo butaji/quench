@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn oversized_head_overflows() {
-        let mut parser = Parser::new(Kind::Request, 32);
+        let mut parser = Parser::new(Kind::Request, 32, false);
         parser.push(b"GET / HTTP/1.1\r\nX: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert_eq!(parser.next().err().unwrap().code, "HPE_HEADER_OVERFLOW");
     }
