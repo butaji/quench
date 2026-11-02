@@ -264,6 +264,8 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
+    /// What its lane bodies did, under `QUENCH_JS_JIT_STATS` (`LaneBodyStats`).
+    pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_exit`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
@@ -551,6 +553,59 @@ enum LaneBody {
     /// for the direct callers that name it until they retire with it at a shape compaction.
     Retired { _method: super::compiled::LaneMethod },
     Declined,
+}
+
+/// A view's lane-body counters, which only a diagnostics run keeps
+/// (`ProgramStore::js_jit_diagnostics_enabled`): its function, its compiles and the frames the
+/// last inlined, and its runs by how they ended (`LaneExit`), in that order.
+#[derive(Default)]
+pub(super) struct LaneBodyStats {
+    function: std::cell::Cell<u32>,
+    compiles: std::cell::Cell<u32>,
+    frames: std::cell::Cell<u32>,
+    /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee.
+    ends: [std::cell::Cell<u32>; 4],
+    /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
+    leaves: std::cell::RefCell<Vec<(String, u32)>>,
+}
+
+impl LaneBodyStats {
+    fn compiled(&self, function: u32, frames: usize) {
+        self.function.set(function);
+        self.compiles.set(self.compiles.get() + 1);
+        self.frames.set(frames as u32);
+    }
+
+    fn ended(&self, exit: super::compiled::LaneExit) {
+        let index = match exit {
+            super::compiled::LaneExit::Returned { .. } => 0,
+            super::compiled::LaneExit::At(_) => 1,
+            super::compiled::LaneExit::Inlined { .. } => 2,
+            super::compiled::LaneExit::Callee => 3,
+        };
+        self.ends[index].set(self.ends[index].get() + 1);
+        let at = match exit {
+            super::compiled::LaneExit::At(pc) => pc.to_string(),
+            super::compiled::LaneExit::Inlined { frame, pc } => format!("{frame}:{pc}"),
+            _ => return,
+        };
+        let mut leaves = self.leaves.borrow_mut();
+        match leaves.iter_mut().find(|(leave, _)| *leave == at) {
+            Some((_, count)) => *count += 1,
+            None => leaves.push((at, 1)),
+        }
+    }
+
+    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`.
+    pub(super) fn report(&self, program: usize) -> Option<String> {
+        (self.compiles.get() != 0).then(|| {
+            let [completed, at, inlined, callee] = self.ends.each_ref().map(std::cell::Cell::get);
+            format!(
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{},\"compiles\":{},\"frames\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"leaves\":\"{:?}\"}}",
+                self.function.get(), self.compiles.get(), self.frames.get(), self.leaves.borrow(),
+            )
+        })
+    }
 }
 
 /// The leaves after which a body specializes again from the feedback its sites hold then: a
@@ -7148,9 +7203,14 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
+    let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = || {
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-        vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header)
+        let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header);
+        if diagnostics && let Some(method) = &method {
+            own.body_stats.compiled(function, method.inlined.len());
+        }
+        method
     };
     if now {
         own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
@@ -14292,14 +14352,14 @@ fn lane_body_inlined_activation<H: Host>(
     }
     let (mut registers, mut records) = (r, base);
     let mut view = std::ptr::null::<LaneView>();
-    for &index in chain.iter().rev() {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    for (depth, &index) in chain.iter().enumerate().rev() {
         let call = frames[index];
         let vm = unsafe { vm(cx) };
         let target = match vm.script_call_entry(call.target.callee) {
             Some(target) => target,
             None => {
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
                 vm.resolve_script_call_target(code, call.target.callee).expect("an inlined callee resolves");
                 vm.script_call_entry(call.target.callee).expect("a resolved target is cached")
             }
@@ -14309,8 +14369,16 @@ fn lane_body_inlined_activation<H: Host>(
         let parent = call.parent_base(frames);
         let this = lane_call_this(vm, target, registers.get(call.receiver - parent)).expect("a direct-object receiver binds itself");
         let (callee, _) = lane_push_activation::<H, false, false>(cx, registers, record, target, call.window - parent, this, false);
+        // The frame's registers live where it stands, the leave's PC or its inner frame's
+        // call; the exit wrote only those (`lane_region`), the rest keep the activation's.
+        let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
+        let live = code.register_root_masks(call.target.function);
         let scratch = usize::from(call.base - method.caller_registers());
-        Vm::<H>::lane_scratch(scratch, usize::from(call.registers), |register, value| callee.set(register, value));
+        Vm::<H>::lane_scratch(scratch, usize::from(call.registers), |register, value| {
+            if live.is_none_or(|live| live.is_live(at as usize, register)) {
+                callee.set(register, value);
+            }
+        });
         // The activation's records start at the context's base, past any tier prologue its
         // entry record is.
         (registers, records, view) = (callee, unsafe { (*cx).base }, target.view);
@@ -14422,6 +14490,9 @@ fn lane_body_left<H: Host>(
     method: &super::compiled::LaneMethod,
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
+    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
+        own.body_stats.ended(exit);
+    }
     let frames = Vm::<H>::take_shadow_frames();
     let (r, own, method) = match lane_materialize_frames(cx, frames) {
         // SAFETY: the materialization made the innermost frame the running activation.
@@ -18692,6 +18763,7 @@ fn derive_lane_view<'live, H: Host>(
         tier_direct: std::cell::Cell::new(None),
         tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0 }),
         retired: std::cell::RefCell::default(),
+        body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()

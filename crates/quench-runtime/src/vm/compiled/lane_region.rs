@@ -24,6 +24,12 @@ use super::object_slots::{CheckedObject, ObjectHeader, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
+/// The executable memory a lane body may take: what a unit at its instruction bound
+/// (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) lowers to, at the bytes per instruction its
+/// guards and exits cost. A larger body declines, and its function runs in the lane.
+const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
+const LANE_BODY_MAX_CODE_BYTES: usize =
+    super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -102,6 +108,8 @@ struct Lowering<'a, 'f> {
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
     /// callee's identity, which its call guards; null where they are not dense.
     frame_captures: &'a [(usize, usize)],
+    /// The function the unit specializes, whose calls a caller call's fallback makes.
+    root: &'a crate::bytecode::Function,
     context: ir::Value,
     payload: ir::Value,
     registers_base: ir::Value,
@@ -124,6 +132,10 @@ struct Lowering<'a, 'f> {
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
     frame_live: Vec<Option<&'a crate::compile::liveness::RegisterMasks>>,
     valid: bool,
+    /// The one epilogue every stop shares: it returns its status parameter.
+    leave: ir::Block,
+    /// The stop at a record: it writes its result word parameter and leaves stopped.
+    stop: ir::Block,
 }
 
 fn register_offset(register: Register) -> i32 {
@@ -462,7 +474,7 @@ pub(super) fn compile(
     let isa = super::jit_backend::target_isa("speed")?;
     let (native, count) = lower(program, function_id, unit, helpers, fields, direct, frame_captures, loop_entry, &*isa)?;
     let clif = native_dump_directory().map(|_| native.to_string());
-    let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
+    let code = compile_native_function(native, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
 }
 
@@ -523,6 +535,11 @@ fn lower(
         }
     }
     let blocks: Vec<_> = leaders.iter().map(|leader| leader.then(|| builder.create_block())).collect();
+    let (leave, stop) = (builder.create_block(), builder.create_block());
+    builder.append_block_param(leave, types::I32);
+    builder.append_block_param(stop, types::I64);
+    builder.set_cold_block(leave);
+    builder.set_cold_block(stop);
     let mut lowering = Lowering {
         builder,
         program,
@@ -542,11 +559,14 @@ fn lower(
         entry: None,
         native: 0,
         pending: Vec::new(),
-        native_calls: unit.instructions.iter().any(|instruction| instruction.op() == Op::Call),
+        native_calls: unit.native_calls().next().is_some(),
+        root: function,
         facts: super::facts::Facts::default(),
         live,
         frame_live,
         valid: true,
+        leave,
+        stop,
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
@@ -650,36 +670,42 @@ fn lower(
     let exits: Vec<_> = lowering.exits.iter().map(|(pc, block)| (*pc, *block)).collect();
     for (pc, block) in exits {
         lowering.builder.switch_to_block(block);
+        let pc = pc as usize;
         for register in lowering.written.clone().into_iter().filter(|register| *register < unit.caller_registers) {
-            if !lowering.is_live(pc as usize, register) { continue; }
+            if !lowering.is_live(pc, register) { continue; }
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
         }
-        let word = match unit.origins.get(pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
-            super::lane_unit::Origin::Caller(pc) => u64::from(pc),
-            super::lane_unit::Origin::Inlined { frame, pc } => {
+        let word = match unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
+            super::lane_unit::Origin::Caller(record) => u64::from(record),
+            super::lane_unit::Origin::Inlined { frame, pc: record } => {
                 // Each register of the frame and the frames around it, at its unit register
                 // past the caller's (`LaneMethod::scratch_width`).
                 let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
-                // A dead register reads `undefined`, so the activation keeps no stale value.
-                let undefined = lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+                // Only the live ones: the activation reads no other (`dispatch_fast::
+                // lane_body_inlined_activation`).
                 for index in unit.chain(frame) {
                     let inlined = unit.frames[index];
                     for register in inlined.base..inlined.base + inlined.registers {
-                        let bits = if lowering.is_live(pc as usize, register) {
-                            lowering.builder.use_var(lowering.registers.tagged[usize::from(register)])
-                        } else { undefined };
+                        if !lowering.is_live(pc, register) { continue; }
+                        let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
                         lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register - unit.caller_registers));
                     }
                 }
-                LaneExit::Inlined { frame, pc }.word()
+                LaneExit::Inlined { frame, pc: record }.word()
             }
         };
         let pc_value = lowering.builder.ins().iconst(types::I64, word as i64);
-        lowering.builder.ins().store(MemFlagsData::trusted(), pc_value, lowering.result, 0);
-        let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-        lowering.builder.ins().return_(&[status]);
+        lowering.builder.ins().jump(stop, &[pc_value.into()]);
     }
+    lowering.builder.switch_to_block(stop);
+    let word = lowering.builder.block_params(stop)[0];
+    lowering.builder.ins().store(MemFlagsData::trusted(), word, lowering.result, 0);
+    let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
+    lowering.builder.ins().jump(leave, &[status.into()]);
+    lowering.builder.switch_to_block(leave);
+    let status = lowering.builder.block_params(leave)[0];
+    lowering.builder.ins().return_(&[status]);
     if !lowering.valid { return None; }
     let native_count = lowering.native;
     lowering.builder.seal_all_blocks();
@@ -1022,6 +1048,21 @@ impl Lowering<'_, '_> {
                 self.continue_at(&mut other_state, next);
                 self.builder.switch_to_block(matched);
             }
+            // Past a caller call's last alternative, any other callee is the call itself, made
+            // natively, which continues where the alternatives join.
+            None if inlined.parent.is_none() => {
+                let (matched, other) = (self.builder.create_block(), self.builder.create_block());
+                self.ins().brif(same, matched, &[], other, &[]);
+                self.builder.switch_to_block(other);
+                let mut other_state = state.clone();
+                let call = self.root.instructions().nth(inlined.call as usize).expect("a marker's call is the function's");
+                if self.call(&mut other_state, pc, call) {
+                    let next = super::lane_unit::Origin::Caller(inlined.call + 1);
+                    let next = self.unit.origins.iter().position(|origin| *origin == next).unwrap_or(self.unit.instructions.len());
+                    self.continue_at(&mut other_state, next);
+                }
+                self.builder.switch_to_block(matched);
+            }
             None => emit_js_guard(&mut self.builder, same, exit),
         }
         let receiver = self.tagged(state, inlined.receiver);
@@ -1082,10 +1123,8 @@ impl Lowering<'_, '_> {
         self.ins().brif(miss, missed, &[], left, &[]);
         self.builder.switch_to_block(left);
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
-        let result = self.result;
-        self.ins().store(MemFlagsData::trusted(), word, result, 0);
-        let stopped = self.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-        self.ins().return_(&[stopped]);
+        let stop = self.stop;
+        self.ins().jump(stop, &[word.into()]);
         self.builder.switch_to_block(completed);
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
@@ -1195,7 +1234,8 @@ impl Lowering<'_, '_> {
         // A leave inside the callee stops the caller with it: the lane makes the frames'
         // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
         self.builder.switch_to_block(left);
-        self.ins().return_(&[status]);
+        let leave = self.leave;
+        self.ins().jump(leave, &[status.into()]);
         self.builder.switch_to_block(back);
         self.ins().store(MemFlagsData::trusted(), shadow, payload, offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         let value = self.ins().load(types::I64, MemFlagsData::trusted(), result, 0);
@@ -1227,7 +1267,8 @@ impl Lowering<'_, '_> {
         self.ins().store(MemFlagsData::trusted(), record, payload,
             i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"));
         let returned = self.ins().iconst(types::I32, i64::from(LANE_BODY_RETURNED));
-        self.ins().return_(&[returned]);
+        let leave = self.leave;
+        self.ins().jump(leave, &[returned.into()]);
     }
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {

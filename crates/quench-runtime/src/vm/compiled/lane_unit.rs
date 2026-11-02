@@ -84,6 +84,17 @@ impl Unit {
         chain.reverse();
         chain
     }
+
+    /// The unit PCs that call natively rather than inlined: each `Call` the unit keeps, and the
+    /// marker of a caller call's last alternative, which makes the call for any other callee
+    /// (`lane_region::Lowering::inline_call`).
+    pub(crate) fn native_calls(&self) -> impl Iterator<Item = usize> + '_ {
+        let calls = self.instructions.iter().enumerate().filter(|(_, instruction)| instruction.op() == Op::Call).map(|(pc, _)| pc);
+        let fallbacks = self.frames.iter().zip(&self.markers)
+            .filter(|(frame, _)| frame.parent.is_none() && frame.alternative.is_none())
+            .map(|(_, marker)| *marker);
+        calls.chain(fallbacks)
+    }
 }
 
 /// The longest callee body the unit inlines: each copy of it costs code and compile time at
@@ -92,7 +103,7 @@ impl Unit {
 const MAX_INLINED_INSTRUCTIONS: usize = 96;
 /// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
 /// graph, inlined, is the region an optimizing tier compiles as one function.
-const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 2048;
+pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 2048;
 /// How deep calls nest inside a unit.
 const MAX_INLINING_DEPTH: usize = 8;
 

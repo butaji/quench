@@ -3490,6 +3490,14 @@ impl Drop for ProgramStore {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
             return;
         };
+        for (program, entry) in self.programs.iter().enumerate() {
+            let Some(entry) = entry else { continue };
+            for view in entry.lane_views.arena.borrow().iter().flatten() {
+                if let Some(line) = view.body_stats.report(program) {
+                    eprintln!("{line}");
+                }
+            }
+        }
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);
         let stderr = std::io::stderr();

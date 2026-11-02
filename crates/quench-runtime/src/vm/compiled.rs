@@ -7005,8 +7005,7 @@ impl<H: Host> Vm<H> {
         let names_shapes = !fields.is_empty() || !direct.is_empty();
         let scratch_width = usize::from(unit.registers - unit.caller_registers);
         let caller_registers = unit.caller_registers;
-        let closed = unit.instructions.iter().enumerate()
-            .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
+        let closed = unit.native_calls().all(|pc| direct_sites.contains_key(&pc));
         let _direct = direct.into_iter().map(|(_, callee)| callee).collect();
         Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed })
     }
