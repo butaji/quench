@@ -67,7 +67,6 @@ struct InheritedChainProof {
     prototype: Value,
     holder: Value,
     depth: u8,
-    epoch: u64,
 }
 
 enum FieldCacheRead {
@@ -679,22 +678,11 @@ impl<H: Host> Vm<H> {
         found
     }
 
-    /// Whether no object on the prototype chain from `first` holds any array index or could
-    /// answer one outside its storage: the chain's ordinary objects and arrays hold no
-    /// index-keyed property, indexed descriptor, element or sparse element, and none is exotic.
-    /// [[Get]] of an index the chain's base lacks is then `undefined`, and its OrdinarySet
-    /// defines data on the base. Proved under the prototype layout epoch, which every change
-    /// to a prototype's shape, link or indexed descriptors advances; elements are not part of
-    /// a prototype's layout, so the proof reads its one array holder's (the intrinsic
-    /// `Array.prototype`, typically) on each use (`IndexFreeChainProof`).
+    /// Whether no prototype on the chain from `first` holds an array index: answered by the
+    /// held proof (`IndexFreeChainProof`), which a change to any prototype it read retires.
     pub(super) fn chain_holds_no_index(&self, first: Value) -> bool {
-        let epoch = crate::heap::prototype_layout_epoch();
-        match self.index_free_chain_proof.get() {
-            Some(proof) if proof.first == first && proof.epoch == epoch => {
-                proof.array.is_none_or(|array| self.array_holds_no_element(array))
-            }
-            _ => self.prove_index_free_chain(first, epoch),
-        }
+        self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.first == first)
+            || self.prove_index_free_chain(first)
     }
 
     /// Whether array `array` has no element, dense or sparse.
@@ -703,11 +691,14 @@ impl<H: Host> Vm<H> {
             && self.heap.sparse_length(array).is_none()
     }
 
-    /// `chain_holds_no_index` past its proof: the walk, recording the proof when it holds.
+    /// `chain_holds_no_index` past its proof: the walk, recording the proof on each
+    /// prototype it read when it holds and every one is watched (`Heap::mark_prototype`),
+    /// so a change to any of them retires it.
     #[cold]
     #[inline(never)]
-    fn prove_index_free_chain(&self, first: Value, epoch: u64) -> bool {
-        let mut array = None;
+    fn prove_index_free_chain(&self, first: Value) -> bool {
+        let mut subjects = Vec::new();
+        let mut array_holder = false;
         let mut current = first;
         while !current.is_null() {
             let Some(data) = self.object_data(current) else {
@@ -725,15 +716,20 @@ impl<H: Host> Vm<H> {
                 return false;
             }
             if is_array {
-                // One array holder is read on each use; a chain of more is not proved.
-                if array.is_some() || !self.array_holds_no_element(current) {
+                // One array holder is proved empty; a chain of more is not proved.
+                if array_holder || !self.array_holds_no_element(current) {
                     return false;
                 }
-                array = Some(current);
+                array_holder = true;
             }
+            subjects.push(data.watched_subject());
             current = data.proto();
         }
-        self.index_free_chain_proof.set(Some(IndexFreeChainProof { first, epoch, array }));
+        if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
+            self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
+                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first });
+            });
+        }
         true
     }
 
@@ -1011,12 +1007,12 @@ impl<H: Host> Vm<H> {
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.promise_species_proof.set(None);
-        self.index_free_chain_proof.set(None);
+        self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_fields.clear();
-        self.inherited_field_caches.clear();
+        self.heap.dependencies_mut().clear_inherited();
         self.accessor_field_caches.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; 2];
@@ -1478,34 +1474,29 @@ impl<H: Host> Vm<H> {
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
     /// which generated code reads from inline or arena storage without a VM helper.
     #[inline(always)]
-    /// The own-data (shape, slot) pairs a native OSR field read may load directly for `site`:
-    /// its primary entry, or its inline polymorphic entries, at most `NATIVE_FIELD_SHAPES`;
-    /// `None` for a site with a holder entry or hashed entries, which read through the probe.
-    pub(super) fn native_field_load_descriptor(&self, site: u16) -> Option<Vec<(u32, u16)>> {
+    pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
-        if !self.field_site_polymorphic(site) {
-            return (cache.holder == NO_FIELD_HOLDER && cache.receiver != NO_FIELD_RECEIVER)
-                .then(|| vec![(cache.receiver, cache.slot)]);
-        }
-        let table_index = self.megamorphic_field_indices.get(self.field_cache_index(site));
-        let set = self.megamorphic_fields.get(table_index as usize)?;
-        if set.overflow.is_some() {
-            return None;
-        }
-        let shapes: Vec<(u32, u16)> = set.recorded().map(|entry| (entry.receiver, entry.slot)).collect();
-        let own = set.recorded().all(|entry| entry.holder == NO_FIELD_HOLDER);
-        (own && !shapes.is_empty() && shapes.len() <= super::compiled::NATIVE_FIELD_SHAPES).then_some(shapes)
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
+        let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
+        if usize::from(cache.slot) >= storage_len { return None; }
+        let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
+            .filter(|object| object.exact_shape() == cache.receiver)
+            .and_then(Object::plain_property_storage);
+        Some(super::compiled::NativeFieldLoad {
+            shape: cache.receiver, slot: cache.slot, storage_len, storage,
+        })
     }
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
     /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
-    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<(u32, u16)> {
+    pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
-            return self.native_field_load_descriptor(site).unwrap_or_default();
+            return self.native_field_load_descriptor(site, None)
+                .into_iter().collect();
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
@@ -1514,7 +1505,12 @@ impl<H: Host> Vm<H> {
         }
         set.recorded()
             .filter(|entry| entry.holder == NO_FIELD_HOLDER && entry.receiver != NO_FIELD_RECEIVER)
-            .map(|entry| (entry.receiver, entry.slot))
+            .filter_map(|entry| {
+                let storage_len = self.shapes.get(entry.receiver as usize)?.storage_len();
+                (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
+                    shape: entry.receiver, slot: entry.slot, storage_len, storage: None,
+                })
+            })
             .collect()
     }
 
@@ -1548,14 +1544,15 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
             return false;
         }
         let Some(record_id) = object.direct_object_index() else {
             // An object without a record, as a RegExp's `lastIndex` store reaches, out of line.
-            return LOGS && self.primary_cell_field_store_hit(object, value, site);
+            return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
         let receiver = self.heap.object_record_by_id(record_id);
         if receiver.is_module_namespace() || receiver.is_arguments_object() {
@@ -1568,7 +1565,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: a matching exact shape proves the cached slot layout outside dictionary
         // storage (`Object::exact_shape`).
-        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value) } {
+        if !unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value, layout) } {
             return false;
         }
         self.profile.field_cache_hit(0, 0);
@@ -1578,11 +1575,11 @@ impl<H: Host> Vm<H> {
     /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
     /// own entry (`Heap::cell_property_set_exact`).
     #[inline(never)]
-    fn primary_cell_field_store_hit(&mut self, object: Value, value: Value, site: u16) -> bool {
+    fn primary_cell_field_store_hit(&mut self, object: Value, value: Value, site: u16, layout: crate::heap::PropertyStoreLayout) -> bool {
         let cache = self.field_cache_entry(site);
         let (shape, slot) = (cache.receiver, cache.slot as usize);
         // SAFETY: a recorded own entry names a non-dictionary shape holding `slot`.
-        cache.holder == NO_FIELD_HOLDER && unsafe { self.heap.cell_property_set_exact(object, shape, slot, value) }
+        cache.holder == NO_FIELD_HOLDER && unsafe { self.heap.cell_property_set_exact(object, shape, slot, value, layout) }
             && {
                 self.profile.field_cache_hit(0, 0);
                 true
@@ -1617,7 +1614,7 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))?;
         // SAFETY: as for `primary_own_field_store_hit`: the entry was recorded for this exact
         // shape's own data slot.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
             return None;
         }
         self.profile.field_cache_hit(2, 0);
@@ -1640,7 +1637,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
-        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value) } {
+        if !unsafe { self.heap.record_property_set_flat::<true>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::MayWiden) } {
             return false;
         }
         self.profile.field_cache_hit(2, 0);
@@ -1864,10 +1861,11 @@ impl<H: Host> Vm<H> {
         if index == NO_INHERITED_FIELD {
             return None;
         }
-        let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
+        // SAFETY: a site's index names a recorded entry (`record_inherited_field`).
+        let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
         if cache.receiver != receiver.shape()
             || function_receiver && !cache.function_links
-            || cache.proved_epoch != crate::heap::prototype_layout_epoch()
+            || !cache.proved
             || cache.proved_prototype != receiver.proto_link()
         {
             return None;
@@ -2797,10 +2795,10 @@ impl<H: Host> Vm<H> {
         let head = self.inherited_field_indices.get(site);
         let (mut index, mut previous, mut length) = (head, NO_INHERITED_FIELD, 0);
         while index != NO_INHERITED_FIELD {
-            let entry = &self.inherited_field_caches[index as usize];
+            let entry = self.heap.dependencies().inherited(index);
             if entry.receiver == cache.receiver {
                 cache.next = entry.next;
-                self.inherited_field_caches[index as usize] = cache;
+                *self.heap.dependencies_mut().inherited_mut(index) = cache;
                 return;
             }
             length += 1;
@@ -2812,14 +2810,13 @@ impl<H: Host> Vm<H> {
         let slot = if length >= INHERITED_FIELD_CACHE_WAYS {
             // The oldest entry, `index`, follows `previous`: more than one way keeps it apart
             // from the head the new entry links to.
-            self.inherited_field_caches[previous as usize].next = NO_INHERITED_FIELD;
+            self.heap.dependencies_mut().inherited_mut(previous).next = NO_INHERITED_FIELD;
             index
         } else {
-            self.inherited_field_caches.push(cache);
-            (self.inherited_field_caches.len() - 1) as u32
+            self.heap.dependencies_mut().push_inherited(cache)
         };
         cache.next = head;
-        self.inherited_field_caches[slot as usize] = cache;
+        *self.heap.dependencies_mut().inherited_mut(slot) = cache;
         self.inherited_field_indices.set(site, slot);
     }
 
@@ -2842,7 +2839,8 @@ impl<H: Host> Vm<H> {
             if index == NO_INHERITED_FIELD {
                 return None;
             }
-            let cache = unsafe { self.inherited_field_caches.get_unchecked(index as usize) };
+            // SAFETY: a site's index names a recorded entry (`record_inherited_field`).
+            let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
             if cache.receiver == receiver.shape() {
                 break cache;
             }
@@ -2857,8 +2855,7 @@ impl<H: Host> Vm<H> {
             depth: u16::from(cache.depth),
         };
         let first = receiver.proto();
-        let epoch = crate::heap::prototype_layout_epoch();
-        if cache.proved_epoch == epoch && cache.proved_prototype == receiver.proto_link() {
+        if cache.proved && cache.proved_prototype == receiver.proto_link() {
             let value = match cache.answer {
                 InheritedFieldAnswer::Slot(slot) => {
                     // A holder in the object records, as most prototypes are, without the
@@ -2897,29 +2894,30 @@ impl<H: Host> Vm<H> {
             prototype: first,
             holder: holder_value,
             depth: cache.depth,
-            epoch,
         };
         Some((hit(value), Some(proof)))
     }
 
-    /// Records that a walk proved inherited entry `proof.index`'s chain under `proof.epoch`.
-    /// Every link becomes a prototype first, so a later change to any of them advances the
-    /// epoch and retires the proof.
+    /// Records that a walk proved inherited entry `proof.index`'s chain. Every link becomes
+    /// a watched prototype first, and the proof is held as read from each of them
+    /// (`Dependencies::prove_inherited`), so a later change to any of them retires it.
     #[cold]
     #[inline(never)]
     fn prove_inherited_chain(&mut self, proof: InheritedChainProof) {
+        let mut subjects = smallvec::SmallVec::<[u32; INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
         let mut link = proof.prototype;
         for _ in 0..proof.depth {
             self.heap.mark_prototype(link);
-            link = self.heap.object(link).map_or(Value::NULL, Object::proto);
+            let Some(object) = self.heap.object(link) else { return };
+            let Some(subject) = object.watched_subject() else { return };
+            subjects.push(subject);
+            link = object.proto();
         }
-        if crate::heap::prototype_layout_epoch() != proof.epoch {
-            return;
-        }
-        let cache = &mut self.inherited_field_caches[proof.index as usize];
-        cache.proved_epoch = proof.epoch;
+        let dependencies = self.heap.dependencies_mut();
+        let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
         cache.proved_holder = proof.holder;
+        dependencies.prove_inherited(proof.index, &subjects);
     }
 
     /// Whether a function on a prototype chain answers `atom` from its shape as an ordinary
@@ -2969,7 +2967,7 @@ impl<H: Host> Vm<H> {
             depth: 0,
             function_links,
             answer: InheritedFieldAnswer::Absent,
-            proved_epoch: NO_PROVED_EPOCH,
+            proved: false,
             proved_prototype: crate::heap::ProtoLink::NULL,
             proved_holder: Value::UNDEFINED,
             next: NO_INHERITED_FIELD,
@@ -4575,14 +4573,6 @@ fn keyed_add_index(shape: u32, atom: Atom) -> usize {
     (hasher.finish() >> (u64::BITS - super::KEYED_ADD_INDEX_BITS)) as usize
 }
 
-/// `Vm::chain_holds_no_index` proved for the chain from `first` under prototype layout `epoch`,
-/// with the chain's one array holder, whose elements each use reads.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct IndexFreeChainProof {
-    first: Value,
-    epoch: u64,
-    array: Option<Value>,
-}
 
 /// Whether the prototype `holder` has the exact shape `shape` a field cache recorded for a
 /// holder. Caches never record a module namespace (`immediate_prototype_data_field`), whose

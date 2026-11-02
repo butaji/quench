@@ -213,9 +213,7 @@ impl<H: Host> Vm<H> {
         Some(call_guard.map(|call_guard| StepResult::PushFrame {
             destination,
             call_guard,
-            construct_this: None,
-            settles: None,
-            generator: None,
+            completion: CallCompletion::Value,
         }))
     }
 
@@ -242,14 +240,13 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
-        let epoch = self.heap.collection_epoch();
         let cached = self.call_targets[index];
-        if cached.callee == callee && cached.epoch == epoch && cached.realm == self.realm.globals {
+        if cached.callee == callee {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::call_eligibility(0);
             return Some(cached);
         }
-        let target = self.resolve_in_loop_call_target(p, callee, index, epoch);
+        let target = self.resolve_in_loop_call_target(p, callee, index);
         #[cfg(feature = "profile-lane-exits")]
         if target.is_some() {
             super::lane_exits::call_eligibility(1);
@@ -302,7 +299,6 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         callee: Value,
         index: usize,
-        epoch: u64,
     ) -> Option<super::InLoopCallTarget> {
         let (program, function, env) = self.same_realm_user_target(callee)?;
         let owner = if program == self.active_program {
@@ -324,8 +320,6 @@ impl<H: Host> Vm<H> {
         };
         let target = super::InLoopCallTarget {
             callee,
-            epoch,
-            realm: self.realm.globals,
             program,
             function,
             env,
@@ -1373,17 +1367,13 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::Delete => {
-                let result = self.delete_reference_property(
+                let result = self.delete_reference_property_mode(
                     p,
                     self.read(f, i.register_b()),
                     self.read(f, i.register_c()),
+                    p.function(self.frames[f].function as usize).strict
+                        || i.boolean_flag().expect("validated boolean immediate"),
                 )?;
-                if !self.truthy(result)
-                    && (p.function(self.frames[f].function as usize).strict
-                        || i.boolean_flag().expect("validated boolean immediate"))
-                {
-                    return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
-                }
                 self.write(f, i.result_register(), result);
             }
             Op::Jump => {
@@ -1628,9 +1618,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
                         call_guard,
-                        construct_this: None,
-                        settles: None,
-                        generator: None,
+                        completion: CallCompletion::Value,
                     });
                 }
                 self.profile.call_source(1);
@@ -1767,9 +1755,7 @@ impl<H: Host> Vm<H> {
                         return Ok(StepResult::PushFrame {
                             destination: i.result_register(),
                             call_guard: pushed?,
-                            construct_this: Some(this),
-                            settles: None,
-                            generator: None,
+                            completion: CallCompletion::Constructor(this),
                         });
                     }
                 }

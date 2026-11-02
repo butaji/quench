@@ -302,21 +302,8 @@ pub(crate) enum FieldLayout {
     SignedConstant,
 }
 
-/// Ershov's binding time of one instruction input: when the fact it names
-/// becomes known. The opcode table is its only authority; every specializer
-/// reads it through `Op::input_binding_times` (docs/v2/specialization.md).
 #[cfg(feature = "aot")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum BindingTime {
-    /// Fixed by the residual program: every specializer folds it.
-    Static,
-    /// Fixed storage (a register, window or slot) whose contents are dynamic:
-    /// specializers fold the address, never the value.
-    Location,
-    /// A fixed index naming mutable feedback (an inline cache or literal site):
-    /// only an online specializer may fold its contents, behind a guard.
-    Site,
-}
+pub(crate) use crate::typed_ir::BindingTime;
 
 impl FieldLayout {
     pub(crate) const fn is_register_field(self) -> bool {
@@ -772,7 +759,7 @@ macro_rules! opcodes {
     ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
-        #[quench_macros::native_operation_exports(10, "quench_js_op_")]
+        #[quench_macros::native_operation_exports(17, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         #[allow(dead_code)]

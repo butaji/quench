@@ -1047,6 +1047,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Reject a host operation unavailable to the native image. The rejection
+    /// remains visible to completion checks when guest code catches the error.
+    pub fn native_execution_unavailable(&mut self, reason: &str) -> RootedError {
+        self.vm.record_native_execution_rejection();
+        RootedError::host(reason)
+    }
+
     /// Evaluate named guest Script code in the active realm, without resetting roots.
     /// Caller lexical bindings and direct-eval grammar are not inherited.
     pub fn evaluate_script_rooted(
@@ -2031,6 +2038,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Perform strict guest deletion, including proxy traps and primitive boxing.
+    pub fn delete_property_strict_rooted(&mut self, object: RootId, key: RootId) -> Result<(), RootedError> {
+        self.vm.delete_property_strict_rooted(object, key).map_err(|error| self.error(error))
+    }
+
+    /// Guest deletion without strict-mode rejection of a non-configurable property.
+    pub fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, RootedError> {
+        self.vm.delete_property_rooted(object, key).map_err(|error| self.error(error))
+    }
+
     pub fn set_property_rooted(
         &mut self,
         object: RootId,
@@ -2039,12 +2056,6 @@ impl<'a, H: Host> NativeContext<'a, H> {
         receiver: RootId,
     ) -> Result<bool, RootedError> {
         let result = self.vm.set_property_rooted(object, key, value, receiver);
-        result.map_err(|error| self.error(error))
-    }
-
-    /// `Reflect.deleteProperty(object, key)`.
-    pub fn delete_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, RootedError> {
-        let result = self.vm.delete_property_rooted(object, key);
         result.map_err(|error| self.error(error))
     }
 

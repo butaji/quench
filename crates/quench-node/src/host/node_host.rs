@@ -39,8 +39,6 @@ pub struct NodeHost {
     pub(crate) module_assets: crate::aot::ModuleAssetState,
     #[cfg(feature = "native-execution")]
     pub(crate) native_program_resolver: Option<Box<NativeProgramResolver>>,
-    #[cfg(feature = "aot")]
-    pub(crate) native_source_staging: Option<crate::aot::HostSourceDemands>,
     /// Compiled library modules kept across runs (`compile_cache`).
     pub(crate) compile_cache: crate::host::compile_cache::CompileCache,
     /// Whether bootstrap has finished (`Host::initialize`, or `Host::resume` from a startup
@@ -454,8 +452,6 @@ impl NodeHost {
             compile_cache: crate::host::compile_cache::CompileCache::from_environment(),
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
-            #[cfg(feature = "aot")]
-            native_source_staging: None,
             bootstrapped: false,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,

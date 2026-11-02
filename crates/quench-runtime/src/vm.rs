@@ -42,7 +42,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
-use activation::{CallContext, ConstructionTarget};
+use activation::{CallCompletion, CallContext, ConstructionTarget};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -722,49 +722,13 @@ struct AccessorFieldCache {
     /// The `prototype_layout_epoch` the chain was proved under.
     epoch: u64,
 }
-/// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
-/// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
-/// `EventEmitter` and `Object.prototype`) sit five prototypes above their instances, and the
-/// Babel parser's methods up to a dozen (its parser classes and plugin mixins); deeper chains
-/// stay uncached.
-const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
-/// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
-/// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
-#[derive(Clone, Copy)]
-struct InheritedFieldCache {
-    receiver: u32,
-    atom: Atom,
-    prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
-    depth: u8,
-    /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
-    function_links: bool,
-    answer: InheritedFieldAnswer,
-    /// The `prototype_layout_epoch` under which a walk last proved the chain from
-    /// `proved_prototype` up to `proved_holder`, its last recorded prototype, or
-    /// `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
-    proved_epoch: u64,
-    /// The receiver's prototype link the proof holds for, compared undecoded; a
-    /// collection advances the epoch, so it never outlives the record it names.
-    proved_prototype: ProtoLink,
-    proved_holder: Value,
-    /// The site's next older entry, or `NO_INHERITED_FIELD`: a site keeps up to
-    /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
-    next: u32,
-}
 /// Receiver shapes one site's inherited entries remember: a method inherited from beyond the
 /// immediate prototype read on instances of several subclasses (DeltaBlue's constraints)
 /// reaches one site with a shape per class. A further shape reuses the oldest entry.
 const INHERITED_FIELD_CACHE_WAYS: usize = 4;
 // Reusing the oldest entry unlinks it from an older-than-head predecessor.
 const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum InheritedFieldAnswer {
-    /// The last recorded prototype holds the data property at this slot.
-    Slot(u16),
-    /// No recorded shape has the name and the last prototype's prototype is null: the load
-    /// is `undefined`.
-    Absent,
-}
+use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = u32::MAX;
@@ -1150,13 +1114,11 @@ impl std::ops::Index<WellKnownSymbol> for WellKnownSymbols {
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
 /// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
-/// for `callee` in `realm` until the collection after `epoch`: until then the callee's index
-/// names the same function cell, whose kind, environment and realm never change.
+/// for `callee` until collection, realm transition or heap reset clears the cache.
+/// Its function kind, environment and realm are immutable during that lifetime.
 #[derive(Clone, Copy)]
 struct InLoopCallTarget {
     callee: Value,
-    epoch: u64,
-    realm: Value,
     program: ProgramId,
     function: u32,
     env: Value,
@@ -1174,8 +1136,6 @@ enum InLoopPush {
 }
 const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     callee: Value::UNDEFINED,
-    epoch: 0,
-    realm: Value::UNDEFINED,
     program: ProgramId::MAIN,
     function: 0,
     env: Value::UNDEFINED,
@@ -1741,14 +1701,7 @@ pub(super) enum StepResult {
     PushFrame {
         destination: Register,
         call_guard: crate::stack::GuestCallGuard,
-        /// For `new`: the allocated receiver, the result unless the callee returns an object.
-        construct_this: Option<Value>,
-        /// For an async callee pushed in place: its rooted promise
-        /// (`PendingGeneralCall::settles`).
-        settles: Option<crate::heap::RootId>,
-        /// For a generator resumed in place: its rooted generator
-        /// (`PendingGeneralCall::generator`).
-        generator: Option<generator::GeneratorResume>,
+        completion: CallCompletion,
     },
     Return(Value),
     Await {
@@ -2033,7 +1986,6 @@ pub(crate) struct Vm<H> {
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,
-    index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -2078,10 +2030,9 @@ pub(crate) struct Vm<H> {
     field_caches: site_table::SiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
-    /// Per cache site, the index of its `inherited_field_caches` entry, or
+    /// Per cache site, the index of its inherited entry (`Dependencies::inherited`), or
     /// `NO_INHERITED_FIELD`.
     inherited_field_indices: site_table::SiteTable<u32>,
-    inherited_field_caches: Vec<InheritedFieldCache>,
     /// Accessor reads by field-cache index (`AccessorFieldCache`), up to
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes a site, oldest first, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
@@ -2242,6 +2193,12 @@ impl<H: Host> Vm<H> {
         if self.execution_interrupt.is_termination_requested() { Err(JsError::execution_terminated()) } else { Ok(()) }
     }
 
+    /// Retire weak callee bindings at their lifetime-changing edge. The fixed
+    /// direct-mapped cache pays no generation/realm polling on a hit.
+    fn clear_call_targets(&mut self) {
+        self.call_targets.fill(EMPTY_CALL_TARGET);
+    }
+
     /// Makes `global`'s realm current, carrying each realm's global lexical
     /// scope with it; returns the previous realm's global.
     #[inline]
@@ -2256,6 +2213,9 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
+        self.clear_call_targets();
+        // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
+        unsafe { self.programs.retire_native_calls(); }
         let leaving = ParkedRealm {
             global: previous,
             state: GlobalLexicalState {
@@ -2974,6 +2934,11 @@ impl<H: Host> Vm<H> {
         // A host may build a builtin before sealing the replacement realm.
         self.startup_intrinsics = Default::default();
         self.shared_async_waiters.clear();
+        // Reset reuses environment locators and collection counters. Retire raw
+        // capture views at this boundary before either identity can appear again.
+        self.capture_walks.fill(CaptureWalk::default());
+        // SAFETY: initialization runs outside any native body, before reuse.
+        unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();
         self.natives = Default::default();
         self.frames.clear();
@@ -3006,7 +2971,7 @@ impl<H: Host> Vm<H> {
         self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.promise_species_proof.set(None);
-        self.index_free_chain_proof.set(None);
+        self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
@@ -3027,7 +2992,7 @@ impl<H: Host> Vm<H> {
         self.well_known_symbols.clear();
         self.string_atoms = None;
         self.recent_atom_strings = None;
-        *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
+        self.clear_call_targets();
         self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
@@ -3065,7 +3030,7 @@ impl<H: Host> Vm<H> {
         self.refresh_active_field_entries();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
-        self.inherited_field_caches.clear();
+        self.heap.dependencies_mut().clear_inherited();
         self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_add_sets.clear();
@@ -3552,7 +3517,7 @@ enum StringConstantKey<'a> {
 }
 
 #[cfg(feature = "native-execution")]
-pub use compiled::{NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for};
+pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
 
 /// A proof of `Vm::embedding_builtins_intact`: per `IntactBuiltin`, the prototype holding it,
 /// its slot there and the realm's own method in it, under `epoch`.

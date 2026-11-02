@@ -31,6 +31,118 @@ impl NativeBooleanRegion {
 pub(super) const BOOLEAN_REGION_COUNT_WORD: usize = 1;
 pub(super) const CAPTURED_STORE_COUNT_WORD: usize = 2;
 
+/// Compiler-derived lookup: zero is no plan; low bits name the payload table,
+/// and the remaining bits its row. Binding validates this immutable projection.
+pub(super) struct GuardedCallIndex;
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(super) enum GuardedCallKind { Boolean = 1, CapturedStore = 2 }
+impl GuardedCallIndex {
+    const KIND_BITS: u32 = 2;
+    const KIND_MASK: usize = (1 << Self::KIND_BITS) - 1;
+    #[cfg(any(feature = "aot", test))]
+    pub(super) const fn encode(kind: GuardedCallKind, row: usize) -> Option<usize> {
+        match row.checked_mul(1 << Self::KIND_BITS) {
+            Some(word) => word.checked_add(kind as usize),
+            None => None,
+        }
+    }
+    #[inline]
+    fn decode(word: usize) -> Option<(GuardedCallKind, usize)> {
+        let kind = match word & Self::KIND_MASK {
+            code if code == GuardedCallKind::Boolean as usize => GuardedCallKind::Boolean,
+            code if code == GuardedCallKind::CapturedStore as usize => GuardedCallKind::CapturedStore,
+            _ => return None,
+        };
+        Some((kind, word >> Self::KIND_BITS))
+    }
+}
+
+pub(super) enum NativeGuardedCall<'a> {
+    Boolean(&'a NativeBooleanRegion),
+    CapturedStore(&'a NativeCapturedStore),
+}
+
+/// A verified immutable lookup. Only binding can construct it; callers cannot
+/// supply an unchecked row to the execution path.
+#[derive(Clone, Copy)]
+pub(crate) struct GuardedCalls {
+    boolean_regions: &'static [NativeBooleanRegion],
+    captured_stores: &'static [NativeCapturedStore],
+    index: &'static [usize],
+}
+impl GuardedCalls {
+    fn bind(index: &'static [usize], boolean_regions: &'static [NativeBooleanRegion],
+        captured_stores: &'static [NativeCapturedStore]) -> Result<Option<Self>, String> {
+        let mut indexed = 0;
+        for (function, word) in index.iter().copied().enumerate() {
+            if word == 0 { continue; }
+            let target = match GuardedCallIndex::decode(word) {
+                Some((GuardedCallKind::Boolean, row)) => boolean_regions.get(row).map(|plan| plan.function),
+                Some((GuardedCallKind::CapturedStore, row)) => captured_stores.get(row).map(|plan| plan.function),
+                None => None,
+            };
+            if target != u32::try_from(function).ok() { return Err("invalid native guarded-call index".into()); }
+            indexed += 1;
+        }
+        if indexed != boolean_regions.len() + captured_stores.len() { return Err("incomplete native guarded-call index".into()); }
+        Ok((indexed != 0).then_some(Self { index, boolean_regions, captured_stores }))
+    }
+
+    #[inline]
+    pub(super) fn get(&self, function: u32) -> Option<NativeGuardedCall<'static>> {
+        let (kind, row) = GuardedCallIndex::decode(*self.index.get(function as usize)?)?;
+        // SAFETY: binding checked every row and function identity. These static
+        // tables cannot change while code is installed, including across GC.
+        Some(unsafe { match kind {
+            GuardedCallKind::Boolean => NativeGuardedCall::Boolean(self.boolean_regions.get_unchecked(row)),
+            GuardedCallKind::CapturedStore => NativeGuardedCall::CapturedStore(self.captured_stores.get_unchecked(row)),
+        } })
+    }
+}
+
+#[cfg(test)]
+mod guarded_index_tests {
+    use super::*;
+    unsafe extern "C" fn predicate(_: *const f64) -> u32 { 0 }
+    static BOOLEANS: [NativeBooleanRegion; 1] = [NativeBooleanRegion {
+        function: 1, capture_count: 0, field_count: 0, flags: 0,
+        capture_slots: [0; super::super::js_compiled::MAX_CAPTURE_ARGUMENTS],
+        field_sites: [0; super::super::js_compiled::MAX_NUMERIC_FIELD_INPUTS],
+        field_sources: [0; super::super::js_compiled::MAX_NUMERIC_FIELD_INPUTS],
+        entry: predicate,
+    }];
+    static STORES: [NativeCapturedStore; 1] = [NativeCapturedStore {
+        function: 3, atom: 0, capture_slot: 0, cache_site: 0,
+        operator: super::super::js_compiled::CAPTURED_STORE_ASSIGNMENT,
+    }];
+    const BOOLEAN: usize = GuardedCallIndex::encode(GuardedCallKind::Boolean, 0).unwrap();
+    const STORE: usize = GuardedCallIndex::encode(GuardedCallKind::CapturedStore, 0).unwrap();
+
+    #[test]
+    fn verified_index_borrows_exact_payloads_and_handles_absent_functions() {
+        static INDEX: [usize; 4] = [0, BOOLEAN, 0, STORE];
+        let plans = GuardedCalls::bind(&INDEX, &BOOLEANS, &STORES).unwrap().unwrap();
+        assert!(matches!(plans.get(1), Some(NativeGuardedCall::Boolean(plan)) if std::ptr::eq(plan, &BOOLEANS[0])));
+        assert!(matches!(plans.get(3), Some(NativeGuardedCall::CapturedStore(plan)) if std::ptr::eq(plan, &STORES[0])));
+        for function in [0, 2, 4, u32::MAX] { assert!(plans.get(function).is_none()); }
+        assert!(GuardedCalls::bind(&[], &[], &[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn binding_rejects_bad_tags_rows_identities_and_missing_plans() {
+        static INVALID: [[usize; 4]; 5] = [
+            [0, BOOLEAN | STORE, 0, STORE],
+            [0, GuardedCallIndex::encode(GuardedCallKind::Boolean, 1).unwrap(), 0, STORE],
+            [BOOLEAN, 0, 0, STORE],
+            [0, BOOLEAN, 0, 0],
+            [0, 1 << GuardedCallIndex::KIND_BITS, 0, STORE],
+        ];
+        for index in &INVALID { assert!(GuardedCalls::bind(index, &BOOLEANS, &STORES).is_err()); }
+        assert!(GuardedCallIndex::encode(GuardedCallKind::Boolean, usize::MAX).is_none());
+    }
+}
+
 /// A projection of the shared captured-store proof needed by a linked call.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -54,8 +166,7 @@ const _: () = assert!(std::mem::align_of::<NativeBooleanRegion>() <= std::mem::a
 pub(crate) enum NativeJsCode {
     Linked {
         entries: &'static [NativeJsFunctionEntry],
-        boolean_regions: &'static [NativeBooleanRegion],
-        captured_stores: &'static [NativeCapturedStore],
+        guarded_calls: Option<GuardedCalls>,
     },
     Owned {
         entries: Box<[NativeJsFunctionEntry]>,
@@ -73,25 +184,14 @@ impl NativeJsCode {
         }
     }
 
+    /// A copy of the binding certificate borrows only immutable image data,
+    /// so resolving a dynamic callee can update the shared weak target cache.
     #[inline]
-    pub(super) fn boolean_region(&self, function: u32) -> Option<NativeBooleanRegion> {
-        let Self::Linked { boolean_regions, .. } = self else { return None; };
-        boolean_regions.binary_search_by_key(&function, |region| region.function)
-            .ok().map(|index| boolean_regions[index])
+    pub(super) fn guarded_calls(&self) -> Option<GuardedCalls> {
+        let Self::Linked { guarded_calls, .. } = self else { return None; };
+        *guarded_calls
     }
 
-    #[inline]
-    pub(super) fn captured_store(&self, function: u32) -> Option<NativeCapturedStore> {
-        let Self::Linked { captured_stores, .. } = self else { return None; };
-        captured_stores.binary_search_by_key(&function, |store| store.function)
-            .ok().map(|index| captured_stores[index])
-    }
-
-    #[inline]
-    pub(super) fn has_guarded_calls(&self) -> bool {
-        matches!(self, Self::Linked { boolean_regions, captured_stores, .. }
-            if !boolean_regions.is_empty() || !captured_stores.is_empty())
-    }
 }
 
 /// A program bound to native entries compiled for the same host and semantic ABI.
@@ -146,6 +246,9 @@ impl<H: Host> NativeJsProgram<H> {
         if region_count > program.function_count() {
             return Err("native boolean region count exceeds function count".into());
         }
+        let store_count = unsafe { image.cast::<usize>().add(CAPTURED_STORE_COUNT_WORD).read() };
+        let guarded_count = region_count.checked_add(store_count)
+            .filter(|count| *count <= program.function_count()).ok_or("invalid native guarded-call count")?;
         // SAFETY: the image contract supplies the full table. Skip the marker
         // before interpreting words as functions of the execution-entry ABI.
         let entries = unsafe {
@@ -154,10 +257,16 @@ impl<H: Host> NativeJsProgram<H> {
                 program.function_count(),
             )
         };
-        let region_offset = program.function_count()
+        let index_offset = program.function_count()
             .checked_mul(std::mem::size_of::<NativeJsFunctionEntry>())
             .and_then(|bytes| header_bytes.checked_add(bytes))
             .ok_or("native boolean region offset overflow")?;
+        let index_count = if guarded_count == 0 { 0 } else { program.function_count() };
+        let region_offset = index_count.checked_mul(std::mem::size_of::<usize>())
+            .and_then(|bytes| index_offset.checked_add(bytes))
+            .filter(|offset| *offset <= isize::MAX as usize).ok_or("native guarded index size overflow")?;
+        // SAFETY: the image contract supplies the index directly after entries.
+        let guarded_index = unsafe { std::slice::from_raw_parts(image.add(index_offset).cast::<usize>(), index_count) };
         if region_count.checked_mul(std::mem::size_of::<NativeBooleanRegion>())
             .is_none_or(|bytes| bytes > isize::MAX as usize)
         {
@@ -179,7 +288,6 @@ impl<H: Host> NativeJsProgram<H> {
             return Err("invalid native boolean region metadata".into());
         }
         // SAFETY: the image contract supplies the complete ABI header.
-        let store_count = unsafe { image.cast::<usize>().add(CAPTURED_STORE_COUNT_WORD).read() };
         if store_count > program.function_count() {
             return Err("native captured-store count exceeds function count".into());
         }
@@ -205,8 +313,9 @@ impl<H: Host> NativeJsProgram<H> {
         }) {
             return Err("invalid native captured-store metadata".into());
         }
+        let guarded_calls = GuardedCalls::bind(guarded_index, boolean_regions, captured_stores)?;
         // SAFETY: the linked image is static and bound to this program and H.
-        Self::bind(program, NativeJsCode::Linked { entries, boolean_regions, captured_stores })
+        Self::bind(program, NativeJsCode::Linked { entries, guarded_calls })
     }
 
     /// The canonical metadata used by host job checkpoints and source reporting.

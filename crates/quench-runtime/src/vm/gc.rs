@@ -396,6 +396,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
+        self.clear_call_targets();
         self.resolved_module_requests.clear();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
@@ -860,6 +861,9 @@ impl<H: Host> Vm<H> {
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
         let heap = &self.heap;
+        // SAFETY: native lane bodies cannot collect; sweep has finished and
+        // no cleanup allocation can yet reuse a dead function locator.
+        unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
         self.prune_function_values();
@@ -1016,7 +1020,7 @@ impl<H: Host> Vm<H> {
         self.function_name_shapes.clear();
         self.object_shapes.reset();
         self.invalidate_field_caches();
-        self.programs.clear_field_hints();
+        self.programs.invalidate_shape_bindings();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();

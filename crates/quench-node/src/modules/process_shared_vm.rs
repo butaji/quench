@@ -4299,6 +4299,17 @@ pub(crate) fn initialize_warning_policy(
     Ok(())
 }
 
+/// Whether the environment `process.env` starts from (`environment`) holds `name` with a
+/// non-empty value, without copying it.
+pub(crate) fn environment_names(context: &mut NativeContext<'_, NodeHost>, name: &str) -> bool {
+    let shared_state = context.host_mut().shared_state();
+    let state = shared_state.borrow();
+    match state.messaging.context.as_ref() {
+        Some(worker) => worker.env.iter().any(|(key, value)| key == name && !value.is_empty()),
+        None => std::env::var_os(name).is_some_and(|value| !value.is_empty()),
+    }
+}
+
 /// The environment `process.env` starts from: a worker's own, else the OS environment.
 pub(crate) fn environment(context: &mut NativeContext<'_, NodeHost>) -> Vec<(String, String)> {
     let worker_env = context.host_mut().shared_state().borrow().messaging.context.as_ref().map(|worker| worker.env.clone());

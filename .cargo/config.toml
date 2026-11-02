@@ -25,4 +25,3 @@ X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR = "/usr/include"
 # The system libcrypto archive includes zlib compression support. Declare its
 # archive dependency explicitly so static OpenSSL links resolve those symbols.
 X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS = "ssl:crypto:z"
-

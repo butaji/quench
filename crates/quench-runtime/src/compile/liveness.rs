@@ -31,6 +31,11 @@ impl RegisterMasks {
         }
     }
 
+    /// A missing mask or a register outside its width remains conservatively live.
+    pub(crate) fn is_live(&self, pc: usize, register: Register) -> bool {
+        self.get(pc).is_none_or(|mask| !register_dead(mask, usize::from(register)))
+    }
+
     #[cfg(feature = "profile-aggregate")]
     pub(crate) fn len(&self) -> usize {
         match self {
@@ -180,7 +185,7 @@ pub(super) fn transfers(
 }
 
 /// One instruction's (uses, definitions) register masks, the entry `transfers` records for it.
-pub(super) fn transfer(
+pub(crate) fn transfer(
     instruction: WideInstruction,
     methods: &(impl MethodArguments + ?Sized),
     fields: &[FieldSite],
@@ -198,18 +203,42 @@ pub(super) fn transfer(
 /// + 1]]`, which every pass then reads.
 pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, RegisterSet)]) -> Vec<RegisterSet> {
     let length = function.code.len();
+    // Legacy f.arguments can observe promoted parameters without a bytecode read.
+    // Keep them even at terminal/exception PCs; consumers include GC and native recovery.
+    // Without binding-name tables, conservatively retain every promoted parameter
+    // of a function that permits legacy reflection.
+    let observable = if function.has_restricted_legacy_caller_access() {
+        0
+    } else {
+        function.local_registers.iter().filter(|entry| entry.local < function.params)
+            .fold(0, |mask, entry| mask | register_bit(entry.register))
+    };
     let mut starts = Vec::with_capacity(length + 1);
     let mut successors = Vec::with_capacity(length);
-    let mut has_backward_successor = false;
     for (pc, instruction) in function.instructions().enumerate() {
         starts.push(successors.len());
         function.for_each_successor(pc, instruction, |successor, _| {
-            has_backward_successor |= successor <= pc;
             successors.push(successor);
         });
     }
     starts.push(successors.len());
-    let mut live = vec![0; length + 1];
+    let mut live = analyze_graph(transfers, &starts, &successors, |_| observable);
+    add_suspended_exception_roots(function, &mut live);
+    live
+}
+
+/// Solve shared instruction transfers with per-PC recovery requirements.
+/// `starts` indexes a compact successor table; the final requirement describes
+/// falling off the graph. Rewritten native units add their recovery floors here.
+pub(crate) fn analyze_graph(
+    transfers: &[(RegisterSet, RegisterSet)], starts: &[usize], successors: &[usize],
+    required: impl Fn(usize) -> RegisterSet,
+) -> Vec<RegisterSet> {
+    let length = transfers.len();
+    assert_eq!(starts.len(), length + 1);
+    let has_backward_successor = (0..length).any(|pc|
+        successors[starts[pc]..starts[pc + 1]].iter().any(|successor| *successor <= pc));
+    let mut live: Vec<_> = (0..=length).map(&required).collect();
     loop {
         let mut changed = false;
         for pc in (0..length).rev() {
@@ -219,7 +248,7 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, 
                     output | live.get(successor).copied().unwrap_or(0)
                 });
             let (read, written) = transfers[pc];
-            let next = read | (output & !written);
+            let next = required(pc) | read | (output & !written);
             if live[pc] != next {
                 live[pc] = next;
                 changed = true;
@@ -229,7 +258,6 @@ pub(super) fn analyze_transfers(function: &Function, transfers: &[(RegisterSet, 
             break;
         }
     }
-    add_suspended_exception_roots(function, &mut live);
     live
 }
 

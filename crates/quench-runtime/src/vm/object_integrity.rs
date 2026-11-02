@@ -193,6 +193,16 @@ impl<H: Host> Vm<H> {
         self.object_delete_property(p, &[target, key])
     }
 
+    pub(super) fn delete_reference_property_mode(
+        &mut self, p: &ResidualProgram, base: Value, key: Value, strict: bool,
+    ) -> Result<Value, JsError> {
+        let result = self.delete_reference_property(p, base, key)?;
+        if strict && !self.truthy(result) {
+            return Err(self.type_error(p, "Cannot delete property in strict mode".into()));
+        }
+        Ok(result)
+    }
+
     pub(super) fn object_get_prototype_of(
         &mut self,
         p: &ResidualProgram,

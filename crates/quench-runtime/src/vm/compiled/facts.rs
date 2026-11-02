@@ -6,40 +6,52 @@
 //! facts to choose each register's representation at block entry, so a fact proved on one
 //! side of a jump is not proved again on the other.
 //!
-//! The facts steer code quality, not soundness: a lowering conforms every edge to its
-//! target's facts, proving at the edge whatever its own state lacks (`Conform`). A fact the
-//! analysis gets wrong therefore costs a guard, never a wrong value.
+//! Entry guards discharge input requirements. Lowering conforms each edge to its target's
+//! semantic type and machine view: an edge proves what its state lacks with one guard, and
+//! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
+//! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Constant, ControlFlowLayout, Op, Operand, OperandKind, Register, WideInstruction};
-use crate::value::{Value, ValueLayout};
+use crate::value::Value;
+use crate::typed_ir::Type;
+use cranelift_codegen::bitset::CompoundBitSet;
+use std::num::NonZeroUsize;
 
-/// What a register is known to hold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Ty {
-    /// Anything: only its tagged bits are meaningful.
-    Tagged,
-    /// An int32 Number.
-    Int32,
-}
-
-impl Ty {
-    /// The type both `self` and `other` satisfy.
-    fn join(self, other: Self) -> Self {
-        if self == other { self } else { Ty::Tagged }
-    }
-}
+/// Scratch storage spills for larger functions without limiting region size.
+const INLINE_ANALYSIS_ITEMS: usize = 16;
 
 /// The registers' types on entry to each block leader; `None` at a PC that leads no block or
 /// that no path from the entry reaches.
 #[derive(Default)]
 pub(super) struct Facts {
-    entry: Vec<Option<Vec<Ty>>>,
+    offsets: Vec<Option<NonZeroUsize>>,
+    types: Vec<Type>,
+    registers: usize,
 }
 
 impl Facts {
-    /// The types on entry to the block led by `pc`.
-    pub(super) fn at(&self, pc: usize) -> Option<&[Ty]> {
-        self.entry.get(pc).and_then(|types| types.as_deref())
+    /// The types on entry to the block led by `pc`. Rows share one flat buffer;
+    /// the PC table stores element offsets, including reachable zero-register rows.
+    pub(super) fn at(&self, pc: usize) -> Option<&[Type]> {
+        let start = self.offsets.get(pc)?.as_ref()?.get() - 1;
+        Some(&self.types[start..start + self.registers])
+    }
+
+    fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
+        let Some(slot) = self.offsets.get_mut(pc) else { return false };
+        let Some(offset) = *slot else {
+            *slot = NonZeroUsize::new(self.types.len() + 1);
+            self.types.extend_from_slice(incoming);
+            return true;
+        };
+        let start = offset.get() - 1;
+        let mut changed = false;
+        for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
+            let joined = known.join(*incoming);
+            changed |= joined != *known;
+            *known = joined;
+        }
+        changed
     }
 }
 
@@ -47,8 +59,8 @@ impl Facts {
 enum Flow {
     /// The next instruction.
     Next,
-    /// The listed PCs.
-    To(Vec<usize>),
+    /// The explicit jump target; conditional fallthrough is handled separately.
+    To(usize),
     /// Leaves the function's native code.
     Leaves,
 }
@@ -69,19 +81,37 @@ pub(super) fn immediate(constant: &Constant) -> Option<Value> {
     }
 }
 
-/// Whether an immediate is an int32 Number in its tagged encoding.
-pub(super) fn is_int32(value: Value) -> bool {
-    value.to_bits() >> ValueLayout::TAG_SHIFT == ValueLayout::INT_TAG >> ValueLayout::TAG_SHIFT
-}
-
-/// Proves each register operand int32: the instruction leaves where one is not.
-fn prove_int32(types: &mut [Ty], operands: [Operand; 2]) {
-    for register in operands.into_iter().filter_map(register) {
-        set(types, register, Ty::Int32);
+/// The semantic type of an operand, independent of its selected machine view.
+pub(super) fn operand_type(constants: &[Constant], operand: Operand, register_type: impl Fn(Register) -> Type) -> Type {
+    match operand.kind() {
+        Some(OperandKind::Register) => register_type(operand.payload()),
+        Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).and_then(immediate)
+            .map_or(Type::ANY, Type::immediate),
+        _ => Type::ANY,
     }
 }
 
-fn set(types: &mut [Ty], register: Register, ty: Ty) {
+fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
+    for register in operands.into_iter().filter_map(register) {
+        if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
+            set(types, register, Type::NUMBER);
+        }
+    }
+}
+
+/// Whether an immediate is an int32 Number in its tagged encoding.
+pub(super) fn is_int32(value: Value) -> bool {
+    Type::immediate(value).is_subtype(Type::INT32)
+}
+
+/// Proves each register operand int32: the instruction leaves where one is not.
+fn prove_int32(types: &mut [Type], operands: [Operand; 2]) {
+    for register in operands.into_iter().filter_map(register) {
+        set(types, register, Type::INT32);
+    }
+}
+
+fn set(types: &mut [Type], register: Register, ty: Type) {
     if let Some(slot) = types.get_mut(usize::from(register)) {
         *slot = ty;
     }
@@ -89,7 +119,7 @@ fn set(types: &mut [Ty], register: Register, ty: Ty) {
 
 /// Applies `instruction` to `types`; returns where control goes next.
 fn transfer(
-    types: &mut [Ty],
+    types: &mut [Type],
     instruction: WideInstruction,
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
@@ -97,20 +127,20 @@ fn transfer(
     let op = instruction.op();
     match op {
         Op::LoadConst => {
-            let int32 = constants.get(instruction.constant_index()).and_then(immediate).is_some_and(is_int32);
-            let ty = if int32 { Ty::Int32 } else { Ty::Tagged };
+            let ty = constants.get(instruction.constant_index()).and_then(immediate)
+                .map_or(Type::ANY, Type::immediate);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
         Op::Move => {
-            let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Ty::Tagged);
+            let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             set(types, instruction.result_register(), source);
             Flow::Next
         }
         Op::IncDec if instruction.numeric_local_target().is_none() => {
             // The operand is proved int32 or the instruction leaves.
-            set(types, instruction.register_b(), Ty::Int32);
-            set(types, instruction.result_register(), Ty::Int32);
+            set(types, instruction.register_b(), Type::INT32);
+            set(types, instruction.result_register(), Type::INT32);
             Flow::Next
         }
         _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => {
@@ -119,34 +149,57 @@ fn transfer(
                 Some(bitwise) => {
                     prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
                     let result = if bitwise == super::super::operations::NumberBitwise::ShiftRightUnsigned {
-                        Ty::Tagged
+                        Type::NUMBER
                     } else {
-                        Ty::Int32
+                        Type::INT32
                     };
                     if !instruction.returns_from_frame() {
                         set(types, instruction.result_register(), result);
                     }
                 }
+                None if super::super::operations::NumberArithmetic::from_js_instruction(op, operator).is_some() => {
+                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
+                    if !instruction.returns_from_frame() {
+                        set(types, instruction.result_register(), Type::NUMBER);
+                    }
+                }
+                None if super::super::operations::NumberRelation::from_operator(operator).is_some() => {
+                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
+                    if !instruction.returns_from_frame() {
+                        set(types, instruction.result_register(), Type::language(crate::ValueType::Boolean));
+                    }
+                }
                 None => {
                     for register in written(instruction) {
-                        set(types, register, Ty::Tagged);
+                        set(types, register, Type::ANY);
                     }
                 }
             }
             if instruction.returns_from_frame() { Flow::Leaves } else { Flow::Next }
         }
+        Op::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
+            |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
+            Flow::To(instruction.jump_target() as usize)
+        }
         Op::JumpBinaryFalse => {
-            prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
-            Flow::To(vec![instruction.jump_target() as usize])
+            let operands = [instruction.operand_b(), instruction.operand_c()];
+            let integer = operands.iter().all(|operand| operand_type(constants, *operand,
+                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_subtype(Type::INT32));
+            if integer { prove_int32(types, operands); } else { prove_number(types, operands); }
+            Flow::To(instruction.jump_target() as usize)
+        }
+        Op::Call if super::guarded_call_instruction(instruction) => {
+            set(types, instruction.result_register(), Type::ANY);
+            Flow::Next
         }
         _ => {
             for register in written(instruction) {
-                set(types, register, Ty::Tagged);
+                set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
                 ControlFlowLayout::Fallthrough => Flow::Next,
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
-                    Flow::To(vec![instruction.jump_target() as usize])
+                    Flow::To(instruction.jump_target() as usize)
                 }
                 ControlFlowLayout::Call | ControlFlowLayout::BranchTable | ControlFlowLayout::Terminal => Flow::Leaves,
             }
@@ -154,55 +207,38 @@ fn transfer(
     }
 }
 
-/// The fixpoint of `transfer` over the blocks `leaders` mark, from every register `Tagged`
-/// at PC 0.
+/// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
 pub(super) fn analyze(
-    registers: usize,
+    initial: &[Type],
     instructions: &[WideInstruction],
-    leaders: &[bool],
+    leaders: &CompoundBitSet,
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
 ) -> Facts {
-    let mut entry: Vec<Option<Vec<Ty>>> = vec![None; instructions.len()];
-    let mut pending = Vec::new();
-    let merge = |entry: &mut Vec<Option<Vec<Ty>>>, pending: &mut Vec<usize>, pc: usize, types: &[Ty]| {
-        let Some(slot) = entry.get_mut(pc) else { return };
-        match slot {
-            None => {
-                *slot = Some(types.to_vec());
-                pending.push(pc);
-            }
-            Some(known) => {
-                let mut changed = false;
-                for (known, incoming) in known.iter_mut().zip(types) {
-                    let joined = known.join(*incoming);
-                    changed |= joined != *known;
-                    *known = joined;
-                }
-                if changed {
-                    pending.push(pc);
-                }
-            }
-        }
-    };
-    if !instructions.is_empty() {
-        merge(&mut entry, &mut pending, 0, &vec![Ty::Tagged; registers]);
+    let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len() };
+    let mut pending = smallvec::SmallVec::<[usize; INLINE_ANALYSIS_ITEMS]>::new();
+    let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
+    if !instructions.is_empty() && facts.merge(0, initial) {
+        pending.push(0);
     }
     while let Some(leader) = pending.pop() {
-        let mut types = entry[leader].clone().expect("a pending leader has facts");
+        types.clear();
+        types.extend_from_slice(facts.at(leader).expect("a pending leader has facts"));
         let mut pc = leader;
         loop {
             let instruction = instructions[pc];
+            // A direct own read proves its receiver before defining its result.
+            // If result and receiver alias, transfer kills that refinement.
+            if let Some((register, shape)) = own_shape(pc) {
+                set(&mut types, register, Type::direct_object(shape));
+            }
             let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
             match transfer(&mut types, instruction, constants, written) {
                 Flow::Leaves => break,
-                Flow::To(targets) => {
-                    for target in targets {
-                        merge(&mut entry, &mut pending, target, &types);
-                    }
-                    if conditional {
-                        merge(&mut entry, &mut pending, pc + 1, &types);
-                    }
+                Flow::To(target) => {
+                    if facts.merge(target, &types) { pending.push(target); }
+                    if conditional && facts.merge(pc + 1, &types) { pending.push(pc + 1); }
                     break;
                 }
                 Flow::Next => {
@@ -210,13 +246,44 @@ pub(super) fn analyze(
                     if pc >= instructions.len() {
                         break;
                     }
-                    if leaders[pc] {
-                        merge(&mut entry, &mut pending, pc, &types);
+                    if leaders.contains(pc) {
+                        if facts.merge(pc, &types) { pending.push(pc); }
                         break;
                     }
                 }
             }
         }
     }
-    Facts { entry }
+    facts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn joins_widen_only_the_reached_block_and_converge_after_storage_growth() {
+        let mut facts = Facts { offsets: vec![None; 4], types: Vec::new(), registers: 2 };
+        assert!(facts.merge(2, &[Type::INT32, Type::direct_object(7)]));
+        assert!(facts.merge(0, &[Type::NUMBER, Type::ANY]));
+        assert!(facts.merge(2, &[Type::NUMBER, Type::direct_object(8)]));
+        let widened = [Type::NUMBER, Type::language(crate::ValueType::Object)];
+        assert_eq!(facts.at(2), Some(widened.as_slice()));
+        assert_eq!(facts.at(0), Some([Type::NUMBER, Type::ANY].as_slice()));
+        assert!(facts.at(1).is_none());
+        assert!(!facts.merge(2, &[Type::INT32, Type::direct_object(7)]));
+        assert!(!facts.merge(4, &[Type::ANY, Type::ANY]));
+    }
+
+    #[test]
+    fn zero_register_blocks_keep_reachability_without_allocating_type_rows() {
+        let mut facts = Facts { offsets: vec![None; 3], types: Vec::new(), registers: 0 };
+        assert!(facts.merge(2, &[]));
+        assert!(facts.merge(0, &[]));
+        assert!(!facts.merge(2, &[]));
+        assert_eq!(facts.at(0), Some([].as_slice()));
+        assert!(facts.at(1).is_none());
+        assert_eq!(facts.at(2), Some([].as_slice()));
+        assert!(facts.types.is_empty());
+    }
 }
