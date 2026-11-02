@@ -511,6 +511,9 @@ pub(crate) fn cjs_lexer_parse(
         let error = context.type_error_rooted("source must be a string")?;
         return Err(context.throw(error));
     };
+    if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+        return Err(context.native_execution_unavailable("native source analysis required: CJS lexer is unavailable"));
+    }
     let (exports, reexports) = crate::host::shared_vm::commonjs_exports::parse(&source_text);
     let export_values = exports
         .iter()

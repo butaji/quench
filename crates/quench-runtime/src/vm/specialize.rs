@@ -33,6 +33,7 @@ impl Division {
         match time {
             BindingTime::Static | BindingTime::Location => true,
             BindingTime::Site => matches!(self, Self::Online),
+            BindingTime::Dynamic => false,
         }
     }
 

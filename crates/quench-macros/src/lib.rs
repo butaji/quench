@@ -82,6 +82,13 @@ fn derive_native_exports(
         export_arms.push(quote! { (@operation $host:ty, #symbol) => { #export }; });
         exports.push(export);
     }
+    let lane_helpers = format!("{}LaneHelpers_v{version}", prefix.value());
+    let lane_helpers_export = quote! {
+        #[unsafe(export_name = #lane_helpers)]
+        pub extern "C" fn lane_helpers() -> *const () {
+            $crate::native_js_lane_helpers::<$host>()
+        }
+    };
     let marker = format!("quench_native_js_abi_v{version}_{hash:016x}");
     Ok(quote! {
         #operations
@@ -89,7 +96,10 @@ fn derive_native_exports(
         pub const NATIVE_JS_OPERATION_PREFIX: &str = #prefix;
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
+        #[cfg(feature = "native-execution")]
+        pub const NATIVE_JS_LANE_HELPERS_SYMBOL: &str = #lane_helpers;
         /// The header contains the ABI marker, boolean-region count and captured-store count.
+        /// Nonempty plan tables are preceded by a function-indexed lookup array.
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 3;
 
@@ -105,6 +115,7 @@ fn derive_native_exports(
                     use super::*;
                     #[unsafe(export_name = #marker)]
                     pub extern "C" fn abi_marker() {}
+                    #lane_helpers_export
                     #(#exports)*
                 }
             };
@@ -120,6 +131,7 @@ fn derive_native_exports(
                 #[unsafe(export_name = #marker)]
                 pub extern "C" fn abi_marker() {}
             };
+            (@operation $host:ty, #lane_helpers) => { #lane_helpers_export };
             #(#export_arms)*
         }
     })

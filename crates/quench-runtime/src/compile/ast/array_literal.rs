@@ -15,7 +15,7 @@ impl FunctionCompiler<'_, '_> {
             .iter()
             .map(|item| {
                 item.as_expression()
-                    .and_then(|value| binding_time::expression(value).static_value())
+                    .and_then(binding_time::expression)
             })
             .collect::<Option<Vec<_>>>();
         if let Some(constants) = constants

@@ -11,6 +11,10 @@ mod access;
 mod array_elements;
 pub(crate) use array_elements::{ArrayElements, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod cell;
+mod dependencies;
+pub(crate) use dependencies::{
+    INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, ProofKind,
+};
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
@@ -84,6 +88,14 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
 };
+
+/// Whether an existing-slot store may replace its owner's property storage.
+/// Native views require Preserve until their execution ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PropertyStoreLayout {
+    Preserve,
+    MayWiden,
+}
 
 /// The native reader's view of an ordinary object record and its out-of-line property words.
 ///
@@ -516,8 +528,8 @@ use mark_bits;
 /// The objects marked as prototypes (`Heap::prototypes`).
 #[derive(Debug)]
 enum PrototypeRegistry {
-    /// Each one, weakly.
-    Known(Vec<Value>),
+    /// Each one, weakly, with its subject in the dependency table (`Dependencies::watch`).
+    Known(Vec<(Value, u32)>),
     /// Some were marked where no registry saw it.
     Unknown,
 }
@@ -623,6 +635,8 @@ pub(crate) struct Heap {
     /// `prototype_layout_epoch` only when one of them died, since only a dead prototype's
     /// record can be reused under a proof that names it (`retire_dead_prototypes`).
     prototypes: PrototypeRegistry,
+    /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
+    dependencies: dependencies::Dependencies,
     peak_live: usize,
     peak_survivors: usize,
     max_threshold: usize,
@@ -1081,20 +1095,50 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
+        let Some(unwatched) = self.prototype_object_mut(prototype).map(|object| object.watched_subject().is_none()) else {
+            return;
+        };
+        // A prototype marked without a subject (newly, or in a restored heap, whose
+        // prototypes watch nothing) takes one, which its extras keep.
+        let watch = unwatched.then(|| self.dependencies.watch());
+        let subject = watch.as_ref().and_then(dependencies::Watch::subject);
+        let object = self.prototype_object_mut(prototype).expect("the prototype just read");
+        object.mark_as_prototype();
+        if let Some(watch) = watch {
+            object.watch_as(watch);
+        }
+        if let (Some(subject), PrototypeRegistry::Known(prototypes)) = (subject, &mut self.prototypes) {
+            prototypes.push((prototype, subject));
+        }
+        self.marked_prototypes.rotate_right(1);
+        self.marked_prototypes[0] = Some(prototype);
+    }
+
+    /// The object `mark_prototype` marks: a record's, or a cell's.
+    fn prototype_object_mut(&mut self, prototype: Value) -> Option<&mut Object> {
         // A flag, not an edge: no write barrier for record prototypes.
-        let object = match prototype.direct_object_index() {
+        match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
             None => self.object_mut(prototype),
-        };
-        if let Some(object) = object {
-            let first = !object.was_used_as_prototype();
-            object.mark_as_prototype();
-            if first && let PrototypeRegistry::Known(prototypes) = &mut self.prototypes {
-                prototypes.push(prototype);
-            }
-            self.marked_prototypes.rotate_right(1);
-            self.marked_prototypes[0] = Some(prototype);
+        }
+    }
+
+    /// The proofs that rely on prototypes' layouts (`dependencies`).
+    #[inline(always)]
+    pub(crate) fn dependencies(&self) -> &dependencies::Dependencies {
+        &self.dependencies
+    }
+
+    #[inline(always)]
+    pub(crate) fn dependencies_mut(&mut self) -> &mut dependencies::Dependencies {
+        &mut self.dependencies
+    }
+
+    /// Retires the proofs that read `array`'s elements, when it is a watched prototype.
+    fn note_prototype_elements(&self, array: Value) {
+        if let Some(object) = self.object(array) {
+            object.note_prototype_elements_change();
         }
     }
 
@@ -1947,11 +1991,22 @@ impl Heap {
         let died = match std::mem::take(&mut self.prototypes) {
             PrototypeRegistry::Unknown => {
                 self.prototypes = PrototypeRegistry::Unknown;
+                self.dependencies.retire_all();
                 true
             }
             PrototypeRegistry::Known(mut prototypes) => {
                 let before = prototypes.len();
-                prototypes.retain(|prototype| self.is_live(*prototype));
+                let mut died_subjects = Vec::new();
+                prototypes.retain(|&(prototype, subject)| {
+                    let live = self.is_live(prototype);
+                    if !live {
+                        died_subjects.push(subject);
+                    }
+                    live
+                });
+                for subject in died_subjects {
+                    self.dependencies.release(subject);
+                }
                 let died = prototypes.len() != before;
                 self.prototypes = PrototypeRegistry::Known(prototypes);
                 died
@@ -3241,6 +3296,7 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
+        self.note_prototype_elements(array);
         self.write_barrier(array);
         let arrays = self
             .sparse_arrays
@@ -3261,6 +3317,7 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
+        self.note_prototype_elements(array);
         let Some(elements) = self.array_elements(array) else {
             return;
         };
@@ -3489,6 +3546,7 @@ impl Heap {
         record_id: u32,
         slot: usize,
         value: Value,
+        layout: PropertyStoreLayout,
     ) -> bool {
         // Without `LOGS`, a store the barrier would log is left to the caller, so this one
         // makes no call; the barrier does nothing for any other.
@@ -3503,7 +3561,7 @@ impl Heap {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
         };
-        store_exact_slot::<LOGS>(data, &mut self.properties, slot, value)
+        store_exact_slot(data, &mut self.properties, slot, value, layout)
     }
 
     /// `record_property_set_flat` with the write barrier for an object in a slot cell (a
@@ -3513,7 +3571,7 @@ impl Heap {
     /// # Safety
     /// `shape` is a shape outside dictionary storage holding a property at `slot`.
     #[inline(always)]
-    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value) -> bool {
+    pub(crate) unsafe fn cell_property_set_exact(&mut self, object: Value, shape: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
         let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
             return false;
         };
@@ -3525,7 +3583,9 @@ impl Heap {
         if data.exact_shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
             return false;
         }
-        store_exact_slot::<true>(data, properties, slot, value);
+        if !store_exact_slot(data, properties, slot, value, layout) {
+            return false;
+        }
         if value.heap_index().is_some() {
             self.remember(index);
         }
@@ -4283,10 +4343,10 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 
 /// Stores `value` at `slot` of `data`, whose exact shape outside dictionary storage holds it:
 /// arena values without extras need no other decoding (as `property_get_flat`), and inline
-/// values that cannot take `value` move to the arena, which without `LOGS` is left to the
-/// caller's logged store (`false`, with nothing changed).
+/// values that cannot take `value` move to the arena only under MayWiden.
+/// Preserve declines before changing storage or values.
 #[inline(always)]
-fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value) -> bool {
+fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.
@@ -4295,7 +4355,7 @@ fn store_exact_slot<const LOGS: bool>(data: &mut Object, properties: &mut ValueA
     }
     if data.properties().has_inline_property_storage() {
         if !data.store_inline_narrow(slot, value) {
-            if !LOGS {
+            if layout == PropertyStoreLayout::Preserve {
                 return false;
             }
             let length = properties.len(data.properties());

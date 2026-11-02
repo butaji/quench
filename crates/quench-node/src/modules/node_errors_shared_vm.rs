@@ -65,11 +65,6 @@ fn presentation_prototype(
     Ok(prototype)
 }
 
-#[cfg(feature = "aot")]
-pub(crate) fn stage_coded_error_support(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    prepare_coded_error_support(context)
-}
-
 fn coded_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
     code: &'static str,

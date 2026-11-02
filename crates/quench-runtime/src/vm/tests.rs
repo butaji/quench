@@ -10,6 +10,110 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn fresh_execution_does_not_reuse_a_capture_walk_from_the_previous_heap() {
+    let program = Engine::specialize("", "capture-heap-lifetime.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.initialize(&program).unwrap();
+    let (old_env, _) = vm.heap.alloc_environment(
+        Value::NULL, 1, vec![Value::number(42.0)].into(),
+        crate::heap::EnvironmentScopeRef::of_program(0),
+    );
+    vm.walked_capture_slots(old_env, false, 0).unwrap();
+    let epoch = vm.heap.collection_epoch();
+    // Keep an old value view alive outside the discarded heap: an erroneous
+    // cache hit returns 42 deterministically instead of dereferencing freed data.
+    let old_slots = Box::new(crate::heap::EnvironmentSlots::from(vec![Value::number(42.0)]));
+    vm.capture_walks.iter_mut().find(|walk| walk.cache.env == old_env).unwrap()
+        .cache.slots = std::ptr::from_ref(old_slots.as_ref());
+
+    vm.initialize(&program).unwrap();
+    let (new_env, _) = vm.heap.alloc_environment(
+        Value::NULL, 1, vec![Value::number(99.0)].into(),
+        crate::heap::EnvironmentScopeRef::of_program(0),
+    );
+    assert_eq!(new_env, old_env, "the new heap reuses the locator");
+    assert_eq!(vm.heap.collection_epoch(), epoch, "the collection counter also restarts");
+    let (slots, root) = vm.walked_capture_slots(new_env, false, 0).unwrap();
+    assert!(root.is_none());
+    // SAFETY: the returned view belongs to either the live environment or the
+    // retained old_slots test value, and neither is mutated during this read.
+    assert_eq!(unsafe { &*slots }.dense_plain(0), Some(Value::number(99.0)));
+}
+
+#[test]
+fn in_loop_callee_bindings_retire_at_collection_and_heap_reset() {
+    let program = Engine::specialize(
+        "function make(n) { return function read() { return n; }; } globalThis.kept = make(7);",
+        "callee-proof-lifetime.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let atom = vm.lookup_atom("kept").unwrap();
+    for full in [false, true] {
+        let callee = vm.own_property(vm.realm.globals, atom).unwrap();
+        let target = vm.in_loop_call_target(&program, callee).unwrap();
+        assert!(vm.call_targets.iter().any(|entry| entry.callee == callee));
+        assert_eq!(vm.call_value(&program, callee, Value::UNDEFINED, &[]).unwrap(), Value::number(7.0));
+        vm.collect_slow(&program, full);
+        assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+        let callee = vm.own_property(vm.realm.globals, atom).unwrap();
+        let rebound = vm.in_loop_call_target(&program, callee).unwrap();
+        assert_eq!((rebound.0, rebound.1), (target.0, target.1));
+        assert_eq!(vm.call_value(&program, callee, Value::UNDEFINED, &[]).unwrap(), Value::number(7.0));
+    }
+    vm.initialize(&program).unwrap();
+    assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+}
+
+#[test]
+fn retired_callee_bindings_do_not_survive_function_record_reuse() {
+    let program = Engine::specialize(
+        "globalThis.first = function first() { return 7; }; globalThis.second = function second() { return 9; };",
+        "callee-record-reuse.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    vm.collect_now(&program);
+    let first = vm.lookup_atom("first").unwrap();
+    let second = vm.lookup_atom("second").unwrap();
+    let first = vm.own_property(vm.realm.globals, first).unwrap();
+    let second = vm.own_property(vm.realm.globals, second).unwrap();
+    let orphan = vm.heap.alloc_function(vm.heap.function(first).unwrap().clone());
+    let old = vm.in_loop_call_target(&program, orphan).unwrap();
+    vm.collect_now(&program);
+    assert!(!vm.heap.is_live(orphan), "the binding must remain weak");
+    let replacement = vm.heap.alloc_function(vm.heap.function(second).unwrap().clone());
+    assert_eq!(replacement, orphan, "the swept function locator is reused");
+    let new = vm.in_loop_call_target(&program, replacement).unwrap();
+    assert_ne!(new.1, old.1, "the reused locator must resolve its new function");
+    assert_eq!(vm.call_value(&program, replacement, Value::UNDEFINED, &[]).unwrap(), Value::number(9.0));
+}
+
+#[test]
+fn in_loop_callee_bindings_retire_only_when_the_realm_changes() {
+    let program = Engine::specialize(
+        "globalThis.kept = function value() { return 7; };", "callee-proof-realm.js",
+    ).unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let original = vm.realm.globals;
+    let atom = vm.lookup_atom("kept").unwrap();
+    let callee = vm.own_property(original, atom).unwrap();
+    vm.in_loop_call_target(&program, callee).unwrap();
+    vm.switch_realm_global(original);
+    assert!(vm.call_targets.iter().any(|entry| entry.callee == callee));
+    let foreign = vm.create_realm_global(&program).unwrap();
+    vm.switch_realm_global(foreign);
+    assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+    assert!(vm.in_loop_call_target(&program, callee).is_none());
+    assert_eq!(vm.call_value(&program, callee, Value::UNDEFINED, &[]).unwrap(), Value::number(7.0));
+    assert_eq!(vm.realm.globals, foreign, "cross-realm return restores its caller");
+    assert!(vm.call_targets.iter().all(|entry| entry.callee.is_undefined()));
+    vm.switch_realm_global(original);
+    assert!(vm.in_loop_call_target(&program, callee).is_some());
+}
+
+#[test]
 fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
     let source = r#"
       function exercise() {
@@ -487,7 +591,7 @@ fn lane_constructions_forward_plain_loaded_arguments() {
 fn shape_compaction_clears_own_field_hints() {
     // Read sites warmed on one layout hold its shape id as their own-field hint. A full
     // collection that compacts the shape table renumbers ids, after which an old id can name
-    // another layout, so the compaction clears every hint (`LaneView::clear_field_hints`).
+    // another layout, so the compaction clears every hint (`LaneView::invalidate_shape_bindings`).
     const SITES: usize = 64;
     let reads: String = (0..SITES).map(|k| format!("function read{k}(o) {{ return o.a + 0; }}\n")).collect();
     let calls: String = (0..SITES).map(|k| format!("read{k},")).collect();
@@ -1992,7 +2096,7 @@ fn record_receivers_cache_virtual_names_and_inherited_fields_like_ordinary_cells
         "a prototype-held `size` read on a record receiver filled a holder entry"
     );
     assert!(
-        !vm.inherited_field_caches.is_empty(),
+        vm.heap.dependencies().inherited_count() > 0,
         "a field two prototypes above a record receiver filled the inherited cache"
     );
 }
@@ -11302,32 +11406,38 @@ fn js_jit_enters_compiled_callees_from_frameless_lane_activations() {
                 .is_some_and(|atom| &program.atoms[atom as usize] == "add")
         })
         .unwrap() as u32;
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
-        .programs
-        .js_tier(super::program_store::ProgramId::MAIN, add)
-    else {
-        panic!("the numeric callee should be compiled");
-    };
-    assert!(
-        compiled.native_entries() >= 500,
-        "the lane's frameless calls should enter native code, got {}",
-        compiled.native_entries()
-    );
-    // A loop-free callee shorter than a native entry's overhead stays a frameless activation
-    // (`JS_TIER_LANE_ENTRY_RECORDS`).
-    let plus = program
-        .functions
-        .iter()
-        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "plus"))
-        .unwrap() as u32;
-    let native = match vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus) {
-        Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.native_entries(),
-        _ => 0,
-    };
-    assert!(native < 500, "a short loop-free callee should run in the lane, got {native} native entries");
+    for lane_methods in [false, true] {
+        let mut vm = Vm::new(TestHost::default());
+        if lane_methods { vm.programs.enable_js_lane_methods(); }
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.execute(&program).unwrap();
+        // Lane units may inline `add` into `drive` instead of compiling its entry.
+        if !lane_methods {
+            let Some(super::program_store::JsTierState::Compiled(compiled)) = vm
+                .programs
+                .js_tier(super::program_store::ProgramId::MAIN, add)
+            else {
+                panic!("the numeric callee should be compiled");
+            };
+            assert!(
+                compiled.native_entries() >= 500,
+                "the lane's frameless calls should enter native code, got {}",
+                compiled.native_entries()
+            );
+        }
+        // A loop-free callee shorter than a native entry's overhead stays a frameless activation
+        // (`JS_TIER_LANE_ENTRY_RECORDS`).
+        let plus = program
+            .functions
+            .iter()
+            .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "plus"))
+            .unwrap() as u32;
+        let native = match vm.programs.js_tier(super::program_store::ProgramId::MAIN, plus) {
+            Some(super::program_store::JsTierState::Compiled(compiled)) => compiled.native_entries(),
+            _ => 0,
+        };
+        assert!(native < 500, "a short loop-free callee should run in the lane, got {native} native entries");
+    }
 }
 
 #[test]
@@ -12526,6 +12636,84 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
 #[test]
 #[cfg(not(quench_profiled))]
+fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
+    let source = r#"
+      function update(item, limit, delta) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          const before = item.value;
+          item.value = before + delta;
+          total += item.value;
+        }
+        return total;
+      }
+      function aliases(first, second, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          first.value = first.value + 1;
+          total += second.value;
+        }
+        return total;
+      }
+      function replace(item, value, limit) {
+        let total = 0;
+        for (let index = 0; index < limit; index++) {
+          total += item.value;
+          item.value = value;
+        }
+        return total;
+      }
+      const item = { value: 0, left: 1, right: 2 };
+      let total = 0;
+      for (let call = 0; call < 80; call++) total += update(item, 2000, 1);
+      item.value = -0;
+      update(item, 1, -0);
+      if (!Object.is(item.value, -0)) throw 'field cell signed zero';
+      item.value = 2147483647;
+      update(item, 3, 0.5);
+      if (item.value !== 2147483648.5) throw 'field cell precision';
+      let reads = 0, writes = 0, value = 2;
+      Object.defineProperty(item, 'value', {
+        get() { reads++; return value; },
+        set(next) { writes++; value = next; }, configurable: true
+      });
+      update(item, 3, 1);
+      if (reads !== 6 || writes !== 3 || value !== 5) throw 'field cell accessor fallback';
+      const aliased = { value: 0, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) {
+        const before = aliased.value;
+        const answer = aliases(aliased, aliased, 1000);
+        if (answer !== before * 1000 + 500500) throw 'field cell receiver alias';
+      }
+      const replaced = { value: 1, left: 1, right: 2 };
+      for (let call = 0; call < 40; call++) replace(replaced, 2, 1000);
+      const reference = {};
+      replace(replaced, reference, 3);
+      if (replaced.value !== reference) throw 'field cell tagged store fallback';
+      print(total + ' ' + reads + ' ' + writes + ' ' + value + ' ' + aliased.value);
+    "#;
+    let program = Engine::specialize(source, "osr-field-cell.js").unwrap();
+    let id = program.functions.iter().position(|body| body.header().name
+        .is_some_and(|atom| &program.atoms[atom as usize] == "update")).unwrap();
+    let interpreted = Rc::new(RefCell::new(Vec::new()));
+    let mut oracle = Vm::new(TestHost::writing_to(interpreted.clone()));
+    oracle.set_execution_mode(crate::ExecutionMode::Interpreted);
+    oracle.execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
+        .unwrap().osr_diagnostics();
+    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
 fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
     let source = r#"
       function maskedScan(values, mask) {
@@ -12791,84 +12979,6 @@ fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
-}
-
-#[test]
-#[cfg(not(quench_profiled))]
-fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
-    let source = r#"
-      function update(item, limit, delta) {
-        let total = 0;
-        for (let index = 0; index < limit; index++) {
-          const before = item.value;
-          item.value = before + delta;
-          total += item.value;
-        }
-        return total;
-      }
-      function aliases(first, second, limit) {
-        let total = 0;
-        for (let index = 0; index < limit; index++) {
-          first.value = first.value + 1;
-          total += second.value;
-        }
-        return total;
-      }
-      function replace(item, value, limit) {
-        let total = 0;
-        for (let index = 0; index < limit; index++) {
-          total += item.value;
-          item.value = value;
-        }
-        return total;
-      }
-      const item = { value: 0, left: 1, right: 2 };
-      let total = 0;
-      for (let call = 0; call < 80; call++) total += update(item, 2000, 1);
-      item.value = -0;
-      update(item, 1, -0);
-      if (!Object.is(item.value, -0)) throw 'field cell signed zero';
-      item.value = 2147483647;
-      update(item, 3, 0.5);
-      if (item.value !== 2147483648.5) throw 'field cell precision';
-      let reads = 0, writes = 0, value = 2;
-      Object.defineProperty(item, 'value', {
-        get() { reads++; return value; },
-        set(next) { writes++; value = next; }, configurable: true
-      });
-      update(item, 3, 1);
-      if (reads !== 6 || writes !== 3 || value !== 5) throw 'field cell accessor fallback';
-      const aliased = { value: 0, left: 1, right: 2 };
-      for (let call = 0; call < 40; call++) {
-        const before = aliased.value;
-        const answer = aliases(aliased, aliased, 1000);
-        if (answer !== before * 1000 + 500500) throw 'field cell receiver alias';
-      }
-      const replaced = { value: 1, left: 1, right: 2 };
-      for (let call = 0; call < 40; call++) replace(replaced, 2, 1000);
-      const reference = {};
-      replace(replaced, reference, 3);
-      if (replaced.value !== reference) throw 'field cell tagged store fallback';
-      print(total + ' ' + reads + ' ' + writes + ' ' + value + ' ' + aliased.value);
-    "#;
-    let program = Engine::specialize(source, "osr-field-cell.js").unwrap();
-    let id = program.functions.iter().position(|body| body.header().name
-        .is_some_and(|atom| &program.atoms[atom as usize] == "update")).unwrap();
-    let interpreted = Rc::new(RefCell::new(Vec::new()));
-    let mut oracle = Vm::new(TestHost::writing_to(interpreted.clone()));
-    oracle.set_execution_mode(crate::ExecutionMode::Interpreted);
-    oracle.execute(&program).unwrap();
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
-    vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
-    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
-        .unwrap().osr_diagnostics();
-    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
 }
 
 #[test]
@@ -13942,7 +14052,13 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
         print(run(globalThis));
         print(captured);
     "#;
-    let program = Engine::specialize(source, "osr-capture-global-alias.js").unwrap();
+    for dynamic in [false, true] {
+    let source = if dynamic {
+        source.replace("function run(object)", "function run(object, other)")
+            .replace("object.captured = index;", "let target = (index & 1) ? object : other; target.captured = index;")
+            .replace("run(globalThis)", "run(globalThis, globalThis)")
+    } else { source.to_owned() };
+    let program = Engine::specialize(&source, "osr-capture-global-alias.js").unwrap();
     let interpreted = Rc::new(RefCell::new(Vec::new()));
     Vm::new(TestHost::writing_to(interpreted.clone())).execute(&program).unwrap();
     assert_eq!(interpreted.borrow().as_slice(), ["4495502", "2999"]);
@@ -13951,6 +14067,7 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
+    }
 }
 
 #[test]
@@ -14326,6 +14443,73 @@ print(total + " " + w.arr.slice(35, 50).join(","));
         if compiles {
             assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
         }
+    }
+}
+
+#[test]
+fn inherited_field_proofs_retire_when_a_prototype_on_the_chain_changes() {
+    // An inherited read proved through `B.prototype` to `A.prototype` (`Dependencies::
+    // prove_inherited`) must see a property `B.prototype` gains, and a new prototype it
+    // takes, each of which retires the proof held across the warm loop.
+    let source = r#"
+(function () {
+function A() {} A.prototype.m = function () { return 1; };
+function C() {} C.prototype.m = function () { return 5; };
+function B() {} B.prototype = Object.create(A.prototype);
+var b = new B(), s = 0;
+for (var q = 0; q < 3000; q++) s += b.m();
+B.prototype.m = function () { return 3; };
+for (var q = 0; q < 3000; q++) s += b.m();
+delete B.prototype.m;
+Object.setPrototypeOf(B.prototype, C.prototype);
+for (var q = 0; q < 3000; q++) s += b.m();
+print(s);
+})();
+"#;
+    let program = Engine::specialize(source, "inherited-field-proofs.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["27000"], "{mode:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn index_free_chain_proof_retires_when_a_prototype_gains_an_index() {
+    // The proof that no prototype holds an array index (`Heap::dependencies`) is held across
+    // warm native stores; an index setter, and then an element, on `Array.prototype` each
+    // retire it, so the stores after each change take the prototype's index into account.
+    let source = r#"
+(function () {
+var log = 0;
+function fill(a, n) { for (var i = 0; i < n; i++) a[i] = i; return a; }
+for (var q = 0; q < 2000; q++) fill([], 40);
+Object.defineProperty(Array.prototype, 5, { set: function (v) { log++; }, configurable: true });
+var a = fill([], 40);
+var hole = 5 in a;
+delete Array.prototype[5];
+for (var q = 0; q < 2000; q++) fill([], 40);
+Array.prototype[7] = "p";
+var b = []; b.length = 9;
+var inherited = b[7];
+delete Array.prototype[7];
+print(log + " " + hole + " " + a.length + " " + inherited + " " + fill([], 40)[7]);
+})();
+"#;
+    let program = Engine::specialize(source, "index-free-chain-proof.js").unwrap();
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    assert_eq!(interpreted_output.borrow().as_slice(), ["1 true 40 p 7"]);
+    for policy in crate::MemoryPolicy::ALL {
+        let compiled_output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.execute(&program).unwrap();
+        assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
     }
 }
 
@@ -15227,9 +15411,8 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    // A compiled raw field load embeds an object shape ID. Collection may compact and remap
-    // those IDs, so the next loop admission must retire and rebuild the old region before
-    // it can use the old slot descriptor.
+    // A compiled raw field load embeds a shape ID. Compaction must retire it at
+    // the mutation, before another loop admission can use the old descriptor.
     let native_runs_before_collection = {
         let views = vm
             .programs
@@ -15251,6 +15434,10 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     vm.collect_now(&program);
     assert!(crate::heap::prototype_layout_epoch() > epoch_before_collection);
     assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let view = views.get(function_id).and_then(super::program_store::derived_lane_view).unwrap();
+    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 0,
+        "compaction must retire dependent code immediately, without a backedge poll");
 
     let sum_list_atom = vm.intern_atom("sumList");
     let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
@@ -15285,6 +15472,72 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
         Some(0),
         "the out-of-line changing-receiver loads still called the field probe"
     );
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_shape_invalidation_retires_only_dependent_code() {
+    let program = Engine::specialize(r#"
+        function sum(node) {
+            let result = 0;
+            while (node !== null) { result += node.value; node = node.next; }
+            return result;
+        }
+        function scalar(n) {
+            let result = 0;
+            for (let i = 0; i < n; i++) result += i;
+            return result;
+        }
+        function mutatePrototype() {
+            Object.defineProperty(Object.prototype, 'unrelatedNativeField', { value: 1 });
+        }
+        let head = null;
+        for (let value = 32; value > 0; value--) head = { pad: 0, marker: 0, value, next: head };
+        globalThis.nativeOwnHead = head;
+        for (let i = 0; i < 300; i++) if (sum(head) !== 528) throw 'sum';
+        if (scalar(3000) !== 4498500) throw 'scalar';
+    "#, "osr-reactive-shapes.js").unwrap();
+    let function_id = |name| program.functions.iter().position(|function|
+        function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let sum_id = function_id("sum");
+    let scalar_id = function_id("scalar");
+    let state = |vm: &Vm<TestHost>, function| {
+        let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+        views.get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics()
+    };
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    let before = state(&vm, sum_id);
+    assert_eq!(before.currently_compiled_sites, 1);
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
+
+    let epoch = crate::heap::prototype_layout_epoch();
+    let mutate_atom = vm.intern_atom("mutatePrototype");
+    let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
+    vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
+    assert!(crate::heap::prototype_layout_epoch() > epoch);
+    let sum_atom = vm.intern_atom("sum");
+    let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
+    let head_atom = vm.intern_atom("nativeOwnHead");
+    let head = vm.own_property(vm.realm.globals, head_atom).unwrap();
+    assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[head]).unwrap(), Value::number(528.0));
+    assert_eq!(state(&vm, sum_id).compile_successes, before.compile_successes,
+        "an unrelated prototype change does not invalidate own-field shape/slot facts");
+
+    let shapes = vm.shapes.len();
+    for index in 0..shapes * 2 {
+        let atom = vm.intern_atom(&format!("dead-reactive-shape-{index}"));
+        vm.transition_shape(0, atom);
+    }
+    let shapes_before_collection = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < shapes_before_collection);
+    assert_eq!(state(&vm, sum_id).currently_compiled_sites, 0,
+        "shape-dependent code is retired by compaction before its next entry");
+    assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1,
+        "scalar code has no shape-ID dependency");
 }
 
 #[test]
@@ -15508,6 +15761,14 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
           let repeated = 0;
           for (let call = 0; call < 300; call++) repeated += sumList(head);
           print(repeated);
+          // One logical shape can have packed, arena and prototype-extras storage.
+          head.value = 0.5;
+          print(sumList(head));
+          head.value = -0;
+          print(1 / head.value);
+          const derived = Object.create(head.next);
+          print(sumList(head));
+          print(Object.getPrototypeOf(derived) === head.next);
 
           let getterCount = 0;
           const getterNode = { next: null };
@@ -15556,7 +15817,7 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
     let interpreted_output = Rc::new(RefCell::new(Vec::new()));
     let mut interpreter = Vm::new(TestHost::writing_to(interpreted_output.clone()));
     interpreter.execute(&program).unwrap();
-    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "8", "1", "10", "2", "1", "true"]);
+    assert_eq!(interpreted_output.borrow().as_slice(), ["158400", "527.5", "-Infinity", "527", "true", "8", "1", "10", "2", "1", "true"]);
 
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
@@ -20986,37 +21247,170 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
 }
 
 #[test]
+fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
+    let program = Engine::specialize(r#"(function () {
+      function add(k, unused) { k = k + 1; this.calls = this.calls + 1; return add.arguments; }
+      function step(k) { k = k + 1; const a = this.add(k, 9); return a[0] + a[1] + step.arguments[0]; }
+      globalThis.receiver = { calls: 0, add };
+      globalThis.entry = step;
+      let sum = 0;
+      for (let i = 0; i < 2000; i++) sum += step.call(receiver, 1);
+      globalThis.answer = sum;
+    })();"#, "inline-legacy-recovery.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("answer");
+        assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::number(28000.0)));
+        let atom = vm.intern_atom("receiver");
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let atom = vm.intern_atom("entry");
+        let caller = vm.own_property(vm.realm.globals, atom).unwrap();
+        let atom = vm.intern_atom("add");
+        let callee = vm.own_property(receiver, atom).unwrap();
+        let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("script caller") };
+        let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("script callee") };
+        let body = program.function(caller_id as usize);
+        let callee_body = program.function(callee_id as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
+        let mut targets = vec![None; body.code.len()];
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
+        let method = vm.compile_lane_method(&program, caller_id, &targets).expect("legacy-observable inlined unit");
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = Value::number(5.0);
+        let env = vm.heap.function(caller).unwrap().env;
+        let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
+        let slots = std::ptr::from_ref(slots);
+        let exit = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, slots);
+        assert_eq!(registers[usize::from(parameter)], Value::number(6.0), "suspended caller retains its reflected parameter");
+        let super::compiled::LaneExit::Inlined { frame, pc } = exit else { panic!("expected exact callee exit, got {exit:?}") };
+        assert_eq!(frame, 0);
+        assert_eq!(callee_body.instructions().nth(pc as usize).unwrap().op(), crate::bytecode::Op::GetField);
+        let parameter = callee_body.parameter_registers.or_else(|| callee_body.promoted_register(0)).unwrap();
+        let mut recovered = Value::UNDEFINED;
+        Vm::<TestHost>::lane_scratch(usize::from(callee_body.registers), |register, value| {
+            if register == parameter { recovered = value; }
+        });
+        assert_eq!(recovered, Value::number(7.0), "recovery retains the changed reflected parameter");
+        let atom = vm.intern_atom("calls");
+        assert_eq!(vm.own_property(receiver, atom), Some(Value::number(2001.0)), "store runs exactly once before recovery");
+    }
+}
+
+#[test]
+fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
+    let program = Engine::specialize(r#"
+      globalThis.receiver = {
+        add(k) { return k + 1; },
+        other(k) { return k + 2; },
+        step(k) { return this.add(k) + 3; }
+      };
+      for (let i = 0; i < 40; i++) receiver.step(i);
+    "#, "published-native-calls.js").unwrap();
+    for transition in ["collection", "realm", "reset"] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("receiver");
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let add = vm.intern_atom("add");
+        let step = vm.intern_atom("step");
+        let callee = vm.get_property(&program, receiver, add).unwrap();
+        let caller = vm.get_property(&program, receiver, step).unwrap();
+        let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("caller") };
+        let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("callee") };
+        let body = program.function(caller_id as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
+        let mut targets = vec![None; body.code.len()];
+        let other = vm.intern_atom("other");
+        let other = vm.get_property(&program, receiver, other).unwrap();
+        let crate::heap::FunctionKind::User(_, other_id) = vm.heap.function(other).unwrap().kind else { panic!("other") };
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: other_id });
+        assert!(vm.compile_lane_method(&program, caller_id, &targets).is_none(),
+            "publication must reject a callee paired with the wrong function body");
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
+        let method = vm.compile_lane_method(&program, caller_id, &targets).unwrap();
+        assert_eq!(method.inlined.len(), 1);
+        let published = vm.programs.publish_lane_method(method);
+        vm.collect_now(&program);
+        assert!(published.method().is_some(), "a live callee binding survives collection");
+        match transition {
+            "collection" => {
+                // A second publication names an unrooted function clone. It must
+                // retire without rooting that function or dropping the live proof.
+                let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
+                targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(orphan), function: callee_id });
+                let method = vm.compile_lane_method(&program, caller_id, &targets).unwrap();
+                let dead = vm.programs.publish_lane_method(method);
+                vm.collect_now(&program);
+                assert!(!vm.heap.is_live(orphan));
+                assert!(dead.method().is_none(), "retire before the function locator can be reused");
+                assert!(published.method().is_some(), "unrelated live binding is retained");
+                let replacement = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
+                assert_eq!(replacement, orphan);
+                assert!(dead.method().is_none());
+            }
+            "realm" => {
+                let foreign = vm.create_realm_global(&program).unwrap();
+                vm.switch_realm_global(foreign);
+                assert!(published.method().is_none());
+            }
+            "reset" => {
+                vm.initialize(&program).unwrap();
+                assert!(published.method().is_none());
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
 fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
     // body. A string total makes `add` leave inside it, a double makes its int path
     // leave, and swapping `add` makes the call's guard leave at the call itself. The callee
-    // reads no capture: its environment is not its caller's.
+    // captures its scale in an environment distinct from the caller's mutable bias.
     let source = r#"(function () {
       function Counter(n) { this.n = n; this.total = 0; this.calls = 0; }
-      Counter.prototype.add = function (k) {
+      let bias = 7, coercions = 0;
+      function makeAdder(scale) {
+        globalThis.changeScale = function (value) { scale = value; };
+        return function (k) {
         this.calls = this.calls + 1;
-        this.total = this.total + k;
+        this.total = this.total + k * scale;
         if (this.total > 1000) { this.total = this.total - 1000; }
         return this.total;
-      };
+      }; }
+      Counter.prototype.add = makeAdder(1);
       Counter.prototype.step = function (k) {
         const t = this.add(k);
-        return t + this.n;
+        return t + this.n + bias;
       };
+      const COUNTERS = 6, ROUNDS = 4000, REPLACE_AT = 3000;
       const counters = [];
-      for (let i = 0; i < 6; i++) counters.push(new Counter(i));
+      for (let i = 0; i < COUNTERS; i++) counters.push(new Counter(i));
       let sum = 0;
-      for (let round = 0; round < 4000; round++) {
+      for (let round = 0; round < ROUNDS; round++) {
         for (const c of counters) sum = (sum + c.step(round & 31)) % 1000003;
         if (round === 1500) counters[2].total = "x";
         if (round === 1501) counters[2].total = 0;
+        if (round === 1700) changeScale({ valueOf() { coercions++; return 1; } });
+        if (round === 1701) changeScale(1);
         if (round === 2200) counters[3].total = 0.25;
         if (round === 2201) counters[3].total = 0;
-        if (round === 3000) Counter.prototype.add = function (k) { this.total = (this.total + 2 * k) % 1000; return this.total; };
+        if (round === REPLACE_AT) { Counter.prototype.add = makeAdder(2); bias = 11; }
       }
       let calls = 0;
       for (const c of counters) calls += c.calls;
+      if (calls !== COUNTERS * ROUNDS) throw Error('repeated or lost inlined store');
+      if (coercions !== COUNTERS) throw Error('repeated or lost capture coercion');
       globalThis.answer = sum + calls;
+      globalThis.totals = counters.map(c => c.total).join(',');
+      globalThis.inlineCounter = counters[0];
+      globalThis.inlineStep = Counter.prototype.step;
     })();"#;
     let program = Engine::specialize(source, "lane-inline.js").unwrap();
     let mut answers = Vec::new();
@@ -21028,13 +21422,50 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        let answer = vm.own_property(global, atom).map(Value::to_bits);
+        let atom = vm.intern_atom("totals");
+        let totals = vm.own_property(global, atom).and_then(|value| vm.heap.string(value))
+            .map(ToString::to_string);
+        answers.push((answer, totals));
+        let caller = vm.intern_atom("inlineStep");
+        let caller = vm.own_property(global, caller).unwrap();
+        let callee = vm.intern_atom("inlineCounter");
+        let receiver = vm.own_property(global, callee).unwrap();
+        let callee = vm.intern_atom("add");
+        let callee = vm.get_property(&program, receiver, callee).unwrap();
+        let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("script caller") };
+        let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("script callee") };
+        let body = program.function(caller_id as usize);
+        let mut targets = vec![None; body.code.len()];
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
+        targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
+        let method = vm.compile_lane_method(&program, caller_id, &targets).expect("closure capture unit compiles");
+        assert_eq!(method.inlined.len(), 1, "callee captures must not retain a guest call");
+        let total = vm.intern_atom("total");
+        let calls = vm.intern_atom("calls");
+        let before_total = vm.own_property(receiver, total).unwrap().as_number().unwrap();
+        let before_calls = vm.own_property(receiver, calls).unwrap().as_number().unwrap();
+        let expected_total = before_total + 3.0 * 2.0;
+        let expected_total = if expected_total > 1000.0 { expected_total - 1000.0 } else { expected_total };
+        let env = vm.heap.function(caller).unwrap().env;
+        let (slots, _) = vm.environment_capture_slots(env, false, 0).unwrap();
+        let slots = std::ptr::from_ref(slots);
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = Value::number(3.0);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, slots).caller_pc().expect("inlined closure reaches caller return");
+        let terminal = body.instructions().nth(pc).unwrap();
+        assert_eq!(terminal.op(), crate::bytecode::Op::Return);
+        assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
+        assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
+        assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
         if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
             let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "the storing callee runs inlined in its caller's lane body");
         }
     }
-    assert!(answers[0].is_some());
+    assert!(answers[0].0.is_some() && answers[0].1.is_some());
     assert_eq!(answers[0], answers[1]);
 }
 
@@ -21103,4 +21534,572 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     }
     assert!(answers[0].is_some());
     assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_bodies_leave_before_a_store_changes_property_storage() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(r#"
+      function put(value) {
+        this.value = value;
+        return this.value + 1;
+      }
+      function aliasPut(value) {
+        const alias = this;
+        this.value = value;
+        return alias.value + 1;
+      }
+      globalThis.direct = { value: 0 };
+      globalThis.aliased = { value: 0 };
+      for (let i = 0; i < 100; i++) {
+        put.call(direct, 0);
+        aliasPut.call(aliased, 0);
+      }
+    "#, "lane-storage-transition.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    for (name, object_name) in [("put", "direct"), ("aliasPut", "aliased")] {
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let body = program.function(id);
+        let instructions: Vec<_> = body.instructions().collect();
+        let store_pc = instructions.iter().position(|instruction|
+            matches!(instruction.op(), Op::SetThisField | Op::SetThisFieldStrict)).unwrap();
+        let method = vm.compile_lane_method(&program, id as u32, &[]).expect("warmed lane method");
+        let atom = vm.intern_atom(object_name);
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        registers[0] = Value::number(0.5);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+        assert_eq!(pc, store_pc, "{name}: decline before changing the native entry's storage facts");
+        let value_atom = vm.intern_atom("value");
+        assert_eq!(vm.own_property(receiver, value_atom), Some(Value::integer(0)));
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        assert_eq!(vm.call_value(&program, function, receiver, &[Value::number(0.5)]).unwrap(), Value::number(1.5));
+
+        // The same artifact proves the new arena form at its next entry.
+        registers.fill(Value::UNDEFINED);
+        registers[0] = Value::number(2.5);
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+        let instruction = instructions[pc];
+        assert_eq!(instruction.op(), Op::Return);
+        assert_eq!(registers[usize::from(instruction.register_a())], Value::number(3.5));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_numbers_keep_native_views_and_exact_recovery() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/typed-lane-numbers.js");
+    let typescript = source
+        .replace("function accumulate(input, count)", "function accumulate(input: number, count: number): number")
+        .replace("function scratch(input)", "function scratch(input: number): number")
+        .replace("function mixed(input, flag)", "function mixed(input: number, flag: boolean): number | boolean")
+        .replace("function preserve(input, flag)", "function preserve(input: number, flag: boolean): number")
+        .replace("function floatingBranch(input)", "function floatingBranch(input: number): number");
+    for program in [Engine::specialize(source, "typed-lane-numbers.js"),
+        Engine::specialize_typescript(&typescript, "typed-lane-numbers.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let inputs = [0.0, -0.0, 0.5, f64::from(i32::MIN), f64::from(i32::MAX),
+            f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+        for name in ["accumulate", "scratch", "mixed", "preserve", "floatingBranch"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("typed lane method");
+            let atom = vm.intern_atom(name);
+            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+            for input in inputs {
+                for count in [0, 1, 7] {
+                    let arguments = [Value::number(input), Value::integer(count)];
+                    let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                    let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                    registers[..arguments.len()].copy_from_slice(&arguments);
+                    let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                    let instruction = instructions[pc];
+                    assert_eq!(instruction.op(), Op::Return, "{name}({input}, {count}) exited at {pc}");
+                    let actual = registers[usize::from(instruction.register_a())];
+                    assert_eq!(actual.to_bits(), expected.to_bits(), "{name}({input}, {count})");
+                }
+            }
+            if name != "accumulate" { continue; }
+            let atom = vm.intern_atom("counting");
+            let counting = vm.own_property(vm.realm.globals, atom).unwrap();
+            let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+            registers[0] = Value::number(0.5);
+            registers[1] = counting;
+            let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+            assert_eq!(pc, 0, "a non-Number bound leaves before any coercion");
+            let atom = vm.intern_atom("countCoercions");
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
+            assert_eq!(vm.call_value(&program, function, Value::UNDEFINED,
+                &[Value::number(0.5), counting]).unwrap(), Value::number(0.890625));
+            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3)),
+                "loop-bound coercion remains once per JS comparison");
+            for input_name in ["textInput", "bigInput", "coercing"] {
+                let atom = vm.intern_atom(input_name);
+                let input = vm.own_property(vm.realm.globals, atom).unwrap();
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                registers[0] = input;
+                registers[1] = Value::integer(1);
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                assert!(pc < instructions.len() && instructions[pc].op() != Op::Return,
+                    "{input_name} must leave before numeric effects");
+                assert_eq!(registers[0].to_bits(), input.to_bits(), "recover the original input");
+                let atom = vm.intern_atom("coercions");
+                assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(0)));
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &[input, Value::integer(1)]);
+                if input_name == "bigInput" {
+                    assert!(result.is_err());
+                } else if input_name == "coercing" {
+                    assert_eq!(result.unwrap(), Value::number(3.9375));
+                    assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(1)));
+                } else {
+                    assert!(result.unwrap().as_number().unwrap().is_nan());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(r#"
+      function loose(value) { let result=0; if (value==null) result=1; return result; }
+      function strictNull(value) { let result=0; if (value===null) result=1; return result; }
+      function strictUndefined(value) { let result=0; if (value===(void 0)) result=1; return result; }
+      function reversed(value) { let result=1; if ((void 0)!=value) result=0; return result; }
+      globalThis.nullValue=null;
+      globalThis.undefinedValue=undefined;
+      globalThis.zeroValue=0;
+      globalThis.nanValue=NaN;
+      globalThis.booleanValue=false;
+      globalThis.objectValue={ valueOf() { throw 'must not coerce'; } };
+      globalThis.arrayValue=[];
+      globalThis.stringValue='';
+      globalThis.bigValue=1n;
+      globalThis.functionValue=function(){};
+      globalThis.symbolValue=Symbol('nullish');
+      globalThis.htmlValue=$262.IsHTMLDDA;
+    "#, "typed-lane-nullish.js").unwrap();
+    let mut vm = Vm::new(TestHost::default().with_test262());
+    vm.execute(&program).unwrap();
+    for name in ["loose", "strictNull", "strictUndefined", "reversed"] {
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+        let body = program.function(id);
+        let instructions: Vec<_> = body.instructions().collect();
+        let method = vm.compile_lane_method(&program, id as u32, &[]).expect("nullish lane method");
+        let atom = vm.intern_atom(name);
+        let function = vm.own_property(vm.realm.globals, atom).unwrap();
+        for value_name in ["nullValue", "undefinedValue", "zeroValue", "nanValue", "booleanValue",
+            "objectValue", "arrayValue", "stringValue", "bigValue", "functionValue", "symbolValue", "htmlValue"] {
+            let atom = vm.intern_atom(value_name);
+            let value = vm.own_property(vm.realm.globals, atom).unwrap();
+            let expected = vm.call_value(&program, function, Value::UNDEFINED, &[value]).unwrap();
+            let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+            registers[0] = value;
+            let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+            let instruction = instructions[pc];
+            if name.starts_with("strict") || value.is_record() || value.heap_reference().is_none() {
+                assert_eq!(instruction.op(), Op::Return, "{name}({value_name}) exited at {pc}: {instructions:?}");
+                assert_eq!(registers[usize::from(instruction.register_a())], expected, "{name}({value_name})");
+            } else {
+                assert_eq!(instruction.op(), Op::JumpBinaryFalse, "legacy heap values need IsHTMLDDA recovery");
+                assert_eq!(registers[0].to_bits(), value.to_bits());
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_lane_recovery_preserves_observable_parameter_updates() {
+    let program = Engine::specialize(r#"
+      function exposed(value) { value=123; return globalThis.probe.value; }
+      globalThis.probe={ get value() { return exposed.arguments[0]; } };
+    "#, "typed-lane-reflected-parameter.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "exposed")).unwrap();
+    let body = program.function(id);
+    let method = vm.compile_lane_method(&program, id as u32, &[]).expect("native prefix");
+    let parameter = usize::from(body.promoted_register(0).expect("promoted parameter"));
+    let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+    registers[parameter] = Value::integer(111);
+    let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+        &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+    assert!(pc < body.code.len());
+    assert_eq!(registers[parameter], Value::integer(123),
+        "f.arguments observes a current parameter even when bytecode no longer reads it");
+    let atom = vm.intern_atom("exposed");
+    let function = vm.own_property(vm.realm.globals, atom).unwrap();
+    assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[Value::integer(111)]).unwrap(), Value::integer(123));
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn typed_shape_edges_preserve_joins_reassignment_and_layout_fallback() {
+    use crate::bytecode::Op;
+    let source = r#"
+        var packed={left:3,right:5}, arena={left:3.5,right:5.5};
+        var other={right:11,padding:99,left:4}, root={left:3,right:5,next:null};
+        root.next=root;
+        function read(o, flag) { let n=o.left; if(flag) n+=1; return n+o.right; }
+        function joined(o, other, flag) { let n=o.left; if(flag) o=other; return n+o.right; }
+        function reload(o, flag) { let n=o.left; if(flag) o=o.next; return n+o.right; }
+        function update(o, flag, value) { let n=o.left; if(flag) o.right=value; return n+o.right; }
+        function setNext(value) { root.next=value; }
+        read(packed,false); read(arena,true);
+        joined(packed,packed,false); joined(packed,packed,true);
+        reload(root,false); reload(root,true);
+        update(packed,false,6); update(packed,true,6);
+    "#;
+    let typescript = source.replace("function read(o, flag)",
+        "function read(o: {left:number,right:number}, flag:boolean): number");
+    for program in [Engine::specialize(source, "typed-shape-edges.js"),
+        Engine::specialize_typescript(&typescript, "typed-shape-edges.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let packed = global(&mut vm, "packed");
+        let arena = global(&mut vm, "arena");
+        let other = global(&mut vm, "other");
+        let root = global(&mut vm, "root");
+        for name in ["read", "joined", "reload", "update"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("typed shape artifact");
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, arguments: &[Value]| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in arguments.iter().copied().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).unwrap();
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null())
+                    .caller_pc().expect("caller exit");
+                (pc, registers)
+            };
+            if name == "update" {
+                let right = vm.intern_atom("right");
+                for value in [Value::integer(7), Value::number(7.5)] {
+                    let before = vm.own_property(packed, right).unwrap();
+                    let (pc, registers) = run(&mut vm, &[packed, Value::TRUE, value]);
+                    if value.as_int().is_some() {
+                        assert_eq!(instructions[pc].op(), Op::Return);
+                        assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::integer(10));
+                        assert_eq!(vm.own_property(packed, right), Some(value));
+                    } else {
+                        assert_eq!(instructions[pc].op(), Op::SetField);
+                        assert_eq!(vm.own_property(packed, right), Some(before), "exit before storage migration");
+                    }
+                }
+                continue;
+            }
+            let cases = match name {
+                "read" => vec![(vec![packed, Value::FALSE], true), (vec![arena, Value::TRUE], true),
+                    (vec![Value::integer(5), Value::FALSE], false)],
+                "joined" => vec![(vec![packed, packed, Value::TRUE], true),
+                    (vec![packed, other, Value::FALSE], true), (vec![packed, other, Value::TRUE], false)],
+                "reload" => {
+                    let (pc, registers) = run(&mut vm, &[root, Value::TRUE]);
+                    assert_eq!(instructions[pc].op(), Op::Return);
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::integer(8));
+                    let setter = global(&mut vm, "setNext");
+                    vm.call_value(&program, setter, Value::UNDEFINED, &[other]).unwrap();
+                    vec![(vec![root, Value::FALSE], true), (vec![root, Value::TRUE], false)]
+                }
+                _ => unreachable!(),
+            };
+            for (arguments, completes) in cases {
+                let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                let (pc, registers) = run(&mut vm, &arguments);
+                if completes {
+                    assert_eq!(instructions[pc].op(), Op::Return, "{name} at {pc}");
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+                } else {
+                    assert_eq!(instructions[pc].op(), Op::GetField, "{name} at {pc}");
+                    let Some(crate::bytecode::FieldLookup::Atom { base, .. }) = instructions[pc].field_lookup()
+                        else { panic!("own-field recovery") };
+                    let receiver = registers[usize::from(base.register_index().unwrap())];
+                    assert_eq!(receiver, if name == "read" { Value::integer(5) } else { other });
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_own_slot_proofs_preserve_alias_stores_and_receiver_changes() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/own-slot-proofs.js");
+    let typescript = source
+        .replace("function readPair(node)", "function readPair(node: {left: number, right: number}): number")
+        .replace("function update(value)", "function update(value: number): number");
+    for program in [Engine::specialize(source, "own-slot-proofs.js"),
+        Engine::specialize_typescript(&typescript, "own-slot-proofs.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let packed = global(&mut vm, "packed");
+        let arena = global(&mut vm, "arena");
+        let wider = global(&mut vm, "wider");
+        for name in ["readPair", "reassigned", "joined", "update"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).expect("own-slot native artifact");
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, receiver, arguments: &[Value]| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in arguments.iter().copied().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).expect("register parameter");
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), receiver, std::ptr::null()).caller_pc().expect("caller exit");
+                (pc, registers)
+            };
+            if name != "update" {
+                for object in [packed, arena] {
+                    for flag in [Value::FALSE, Value::TRUE] {
+                        let arguments = [object, if name == "reassigned" { wider } else { arena }, flag];
+                        let expected = vm.call_value(&program, function, Value::UNDEFINED, &arguments).unwrap();
+                        let (pc, registers) = run(&mut vm, Value::UNDEFINED, &arguments[..usize::from(body.params)]);
+                        assert_eq!(instructions[pc].op(), Op::Return, "{name} left at {pc}: {instructions:?}");
+                        assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+                    }
+                }
+                if name == "readPair" {
+                    let effects = vm.intern_atom("effects");
+                    for (name, expected, count) in [("getter", 23, 1), ("proxy", 27, 2), ("extras", 10, 0)] {
+                        let object = global(&mut vm, name);
+                        let before = vm.own_property(vm.realm.globals, effects).unwrap().as_int().unwrap();
+                        let (pc, _) = run(&mut vm, Value::UNDEFINED, &[object]);
+                        assert_eq!(instructions[pc].op(), Op::GetField, "{name} leaves before the first read");
+                        assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before)));
+                        assert_eq!(vm.call_value(&program, function, Value::UNDEFINED, &[object]).unwrap(), Value::integer(expected));
+                        assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before + count)));
+                    }
+                }
+                continue;
+            }
+            let left = vm.intern_atom("left");
+            let right = vm.intern_atom("right");
+            for object in [packed, arena] {
+                for value in [Value::integer(5), Value::integer(7)] {
+                    let before = vm.own_property(object, left).unwrap().as_number().unwrap();
+                    let other = vm.own_property(object, right).unwrap().as_number().unwrap();
+                    let expected = Value::number(before + value.as_number().unwrap() + other);
+                    let (pc, registers) = run(&mut vm, object, &[value]);
+                    assert_eq!(instructions[pc].op(), Op::Return, "alias store left at {pc}");
+                    assert_eq!(registers[usize::from(instructions[pc].register_a())], expected,
+                        "a layout proof must not snapshot writable packed contents");
+                    assert_eq!(vm.own_property(object, left), Some(value));
+                }
+            }
+            let (pc, _) = run(&mut vm, packed, &[Value::number(0.5)]);
+            assert!(matches!(instructions[pc].op(), Op::SetThisField | Op::SetThisFieldStrict),
+                "leave before packed storage widens, after proving its first read");
+            assert_eq!(vm.own_property(packed, left), Some(Value::integer(7)));
+            assert_eq!(vm.call_value(&program, function, packed, &[Value::number(0.5)]).unwrap(), Value::number(9.5));
+            let (pc, registers) = run(&mut vm, packed, &[Value::number(1.5)]);
+            assert_eq!(instructions[pc].op(), Op::Return, "the same artifact admits the new arena layout");
+            assert_eq!(registers[usize::from(instructions[pc].register_a())], Value::number(4.0));
+        }
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn native_own_stores_share_barriers_and_exact_fallback() {
+    use crate::bytecode::Op;
+    let source = include_str!("../../tests/fixtures/own-store-proof.js");
+    let typescript = source
+        .replace("function write(object, value)", "function write(object: {left: number, right: number}, value: number): number")
+        .replace("function strictWrite(object, value)", "function strictWrite(object: {left: number, right: number}, value: number): number");
+    for program in [Engine::specialize(source, "own-store-proof.js"),
+        Engine::specialize_typescript(&typescript, "own-store-proof.ts")] {
+        let program = program.unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let left = vm.intern_atom("left");
+        let effects = vm.intern_atom("effects");
+        for name in ["updateAlias", "write", "strictWrite"] {
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let body = program.function(id);
+            let instructions: Vec<_> = body.instructions().collect();
+            let function = global(&mut vm, name);
+            let run = |vm: &mut Vm<TestHost>, method: &super::compiled::LaneMethod, object, value| {
+                let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+                for (index, value) in [object, value].into_iter().enumerate() {
+                    let register = body.parameter_registers.map(|base| base + index as u16)
+                        .or_else(|| body.promoted_register(index as u16)).unwrap();
+                    registers[usize::from(register)] = value;
+                }
+                let pc = vm.run_lane_method(method, super::program_store::ProgramId::MAIN,
+                    &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+                (pc, registers)
+            };
+            let method = vm.compile_lane_method(&program, id as u32, &[])
+                .unwrap_or_else(|| panic!("native {name}: {instructions:?}"));
+            for object_name in ["packed", "arena"] {
+                let object = global(&mut vm, object_name);
+                let before = vm.own_property(object, left).unwrap().as_number().unwrap();
+                let right = vm.intern_atom("right");
+                let other = vm.own_property(object, right).unwrap().as_number().unwrap();
+                let (pc, registers) = run(&mut vm, &method, object, Value::integer(7));
+                assert_eq!(instructions[pc].op(), Op::Return, "{name}({object_name}) left at {pc}");
+                assert_eq!(vm.own_property(object, left), Some(Value::integer(7)));
+                let expected = if name == "updateAlias" { Value::number(before + 7.0 + other) } else { Value::integer(7) };
+                assert_eq!(registers[usize::from(instructions[pc].register_a())], expected);
+            }
+            if name == "updateAlias" { continue; }
+            for object_name in ["accessor", "readonly", "proxy"] {
+                let object = global(&mut vm, object_name);
+                let before = vm.own_property(vm.realm.globals, effects).unwrap();
+                let (pc, _) = run(&mut vm, &method, object, Value::integer(3));
+                assert!(matches!(instructions[pc].op(), Op::SetField | Op::SetFieldStrict), "{object_name} leaves before writing");
+                assert_eq!(vm.own_property(vm.realm.globals, effects), Some(before));
+                let result = vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(3)]);
+                assert_eq!(result.is_err(), name == "strictWrite" && object_name == "readonly");
+                let increment = match object_name { "accessor" => 3, "proxy" => 1, _ => 0 };
+                assert_eq!(vm.own_property(vm.realm.globals, effects), Some(Value::integer(before.as_int().unwrap() + increment)));
+            }
+            // A marked owner must use the logged helper. Recompile after GC may
+            // renumber shapes, then create a young value with no independent root.
+            vm.collect_now(&program);
+            vm.collect_now(&program);
+            let object = global(&mut vm, "arena");
+            vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
+            let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
+            let marked = |vm: &Vm<TestHost>, object: Value| {
+                let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+                let id = object.direct_object_index().unwrap() as usize;
+                let (blocks, count) = vm.heap.native_object_mark_blocks();
+                let block = id / layout.mark_records_per_block;
+                assert!(block < count);
+                let within = id % layout.mark_records_per_block;
+                let offset = block * layout.mark_block_size + layout.mark_offset
+                    + (within / layout.mark_word_bits) * std::mem::size_of::<u64>();
+                // SAFETY: the rooted live record names an initialized mark block;
+                // the authoritative layout derives aligned bitmap offsets.
+                let word = unsafe { blocks.add(offset).cast::<u64>().read() };
+                word & (1 << (within % layout.mark_word_bits)) != 0
+            };
+            assert!(marked(&vm, object), "the first heap write must require logging");
+            let child = vm.heap.alloc_object(crate::heap::Object::new(Value::NULL));
+            let (pc, registers) = run(&mut vm, &method, object, child);
+            assert_eq!(instructions[pc].op(), Op::Return, "a heap write remains native with the logged helper");
+            assert_eq!(registers[usize::from(instructions[pc].register_a())], child);
+            assert_eq!(vm.own_property(object, left), Some(child));
+            assert!(!marked(&vm, object), "the shared barrier records and unmarks its owner");
+            vm.collect_slow(&program, false);
+            assert!(vm.heap.object_record(child).is_some(), "the stored young value survives collection");
+            // Restore the Number fixture for the next function's oracle.
+            vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
+        }
+        let object = global(&mut vm, "methodOwner");
+        let invoke = global(&mut vm, "invoke");
+        assert_eq!(vm.call_value(&program, invoke, Value::UNDEFINED, &[object]).unwrap(), Value::integer(1));
+        // This frontend's Call site uses its lane cache. Install a valid legacy
+        // method entry explicitly to exercise the shared atom-admission policy.
+        let original = vm.own_property(object, left).unwrap();
+        let shape = vm.heap.object_record(object).unwrap().shape();
+        let target = vm.call_target(original).unwrap();
+        let slot = vm.shape_slot(shape, left).unwrap() as u16;
+        let site = vm.method_caches.len();
+        vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
+        vm.record_method_cache(site, MethodCache { shape, atom: left, proto: object,
+            callee: original, guard: super::MethodGuard { owner: object, owner_shape: shape, slot, depth: 0 },
+            target: Some(target) });
+        assert!(vm.method_caches_may_name(left));
+        let id = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
+        let body = program.function(id);
+        let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
+        let replacement = global(&mut vm, "replacement");
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        for (index, value) in [object, replacement].into_iter().enumerate() {
+            let register = body.parameter_registers.map(|base| base + index as u16)
+                .or_else(|| body.promoted_register(index as u16)).unwrap();
+            registers[usize::from(register)] = value;
+        }
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), Value::UNDEFINED, std::ptr::null()).caller_pc().expect("caller exit");
+        assert_eq!(body.instructions().nth(pc).unwrap().op(), Op::SetField);
+        assert_eq!(vm.own_property(object, left), Some(original), "method invalidation happens before the write");
+        let write = global(&mut vm, "write");
+        vm.call_value(&program, write, Value::UNDEFINED, &[object, replacement]).unwrap();
+        assert_eq!(vm.call_value(&program, invoke, Value::UNDEFINED, &[object]).unwrap(), Value::integer(2));
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn native_chain_append_completes_without_a_store_handoff() {
+    use crate::bytecode::Op;
+    let program = Engine::specialize(include_str!("../../tests/fixtures/own-store-proof.js"),
+        "own-store-chain.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "append")).unwrap();
+    let body = program.function(id);
+    let instructions: Vec<_> = body.instructions().collect();
+    assert!(instructions.iter().any(|instruction| instruction.op() == Op::SetField));
+    let method = vm.compile_lane_method(&program, id as u32, &[]).unwrap();
+    let left = vm.intern_atom("left");
+    for (head_name, item_name) in [("head", "item"), ("arenaHead", "arenaItem")] {
+        let atom = vm.intern_atom(head_name);
+        let head = vm.own_property(vm.realm.globals, atom).unwrap();
+        let tail = vm.own_property(head, left).unwrap();
+        let atom = vm.intern_atom(item_name);
+        let item = vm.own_property(vm.realm.globals, atom).unwrap();
+        let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
+        let parameter = body.parameter_registers.or_else(|| body.promoted_register(0)).unwrap();
+        registers[usize::from(parameter)] = head;
+        let pc = vm.run_lane_method(&method, super::program_store::ProgramId::MAIN,
+            &program, registers.as_mut_ptr(), item, std::ptr::null()).caller_pc().expect("caller exit");
+        assert_eq!(instructions[pc].op(), Op::Return, "append leaves at {pc}: {instructions:?}");
+        assert_eq!(registers[usize::from(instructions[pc].register_a())], head);
+        assert_eq!(vm.own_property(tail, left), Some(item));
+        assert_eq!(vm.own_property(item, left), Some(Value::NULL));
+    }
 }

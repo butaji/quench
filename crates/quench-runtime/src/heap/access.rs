@@ -673,10 +673,17 @@ impl Heap {
     /// The current base and length of out-of-line ordinary-object property values.
     ///
     /// Native readers may use these only during synchronous no-safepoint execution and must
-    /// bounds-check every slot. Property arena growth and compaction invalidate the base.
+    /// bounds-check every slot. Compaction relocates property ranges; the ordinary
+    /// allocation fallback may also move the base when the arena grows.
     pub(crate) fn native_property_values(&self) -> (*const Value, usize) {
         self.properties.native_values()
     }
+
+    /// Offset of the property allocator header within this heap. Bind native
+    /// readers from the live VM's raw pointer, so later mutable VM callouts
+    /// reborrow the same allocation provenance rather than a shared header view.
+    pub(crate) const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
+        + crate::value_vec::ValueArena::BUFFER_OFFSET;
 
     /// The object of an object, array or promise record, whose field reads the field cache
     /// answers by shape alone (a promise's internal slots change no object operation). A

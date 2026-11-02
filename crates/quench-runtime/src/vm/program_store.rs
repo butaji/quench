@@ -903,6 +903,7 @@ pub(crate) enum ModuleImport {
     Binding(ProgramId, u16, Value),
 }
 
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct ProgramId(u32);
 
@@ -932,6 +933,8 @@ struct OwnedScript {
 }
 
 pub(crate) struct ProgramStore {
+    /// Weak native-call proofs; guest functions are never rooted by compiled code.
+    native_call_bindings: std::cell::RefCell<Vec<Weak<super::compiled::PublishedLaneMethod>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -991,6 +994,7 @@ pub(crate) struct ProgramStore {
 impl Default for ProgramStore {
     fn default() -> Self {
         Self {
+            native_call_bindings: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
@@ -1040,6 +1044,40 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
+    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod)
+        -> Rc<super::compiled::PublishedLaneMethod>
+    {
+        let calls = !method.inlined.is_empty();
+        let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
+        if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
+        published
+    }
+
+    /// # Safety
+    /// Collection has stopped native execution and no method reference is held.
+    pub(super) unsafe fn retire_dead_native_calls(&self, live: impl Fn(Value) -> bool) {
+        self.native_call_bindings.borrow_mut().retain(|weak| {
+            let Some(code) = weak.upgrade() else { return false; };
+            let Some(method) = code.method() else { return false; };
+            if method.inlined.iter().any(|call| call.target.identity().is_none_or(|callee| !live(callee))) {
+                // SAFETY: forwarded from the collector's publication boundary.
+                unsafe { code.retire(); }
+                false
+            } else { true }
+        });
+    }
+
+    /// # Safety
+    /// Realm/heap transition excludes active native code and method references.
+    pub(super) unsafe fn retire_native_calls(&self) {
+        for weak in self.native_call_bindings.borrow_mut().drain(..) {
+            if let Some(code) = weak.upgrade() {
+                // SAFETY: forwarded from the lifecycle boundary.
+                unsafe { code.retire(); }
+            }
+        }
+    }
+
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
@@ -3260,11 +3298,11 @@ impl ProgramStore {
         Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
     }
 
-    /// Forgets the own-field hints of every program's lane views: a shape compaction
-    /// renumbered the shapes they name.
-    pub(super) fn clear_field_hints(&self) {
+    /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
+    /// the IDs held by field hints and native own-field descriptors.
+    pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.clear_field_hints();
+            entry.lane_views.invalidate_shape_bindings();
         }
     }
 
@@ -3948,10 +3986,10 @@ fn derive_lane_view<'s>(
 }
 
 impl LaneViews {
-    /// Forgets the own-field hints of every derived view (`LaneView::clear_field_hints`).
-    fn clear_field_hints(&self) {
+    /// Notifies every derived view that shape compaction invalidated its bindings.
+    fn invalidate_shape_bindings(&self) {
         for view in self.arena.borrow().iter().flatten() {
-            view.clear_field_hints();
+            view.invalidate_shape_bindings();
         }
     }
 

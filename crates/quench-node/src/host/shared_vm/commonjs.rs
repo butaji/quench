@@ -446,10 +446,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_console_global");
     crate::host::resident_pages::release_read_only_pages();
-    #[cfg(feature = "aot")]
-    if let Some(demands) = context.host_mut().native_source_staging.take() {
-        return crate::aot::stage_host_sources(context, demands);
-    }
     if let Some(kind) = context.host_mut().building_snapshot {
         return crate::host::startup_snapshot::preload(context, kind);
     }
@@ -1054,29 +1050,6 @@ pub(crate) fn initialize_console_global(
 /// Public module.filename mutation cannot grant access to the timer adapter.
 /// The private global through which a builtin's ESM facade reads its exports.
 pub(crate) const BUILTIN_EXPORT_VALUES: &str = "\0quench:builtinExportValues";
-
-/// Capture SDK definitions behind the exports an imported builtin can expose.
-/// Reading a policy does not invoke its exported operations or train an app.
-#[cfg(feature = "aot")]
-pub(crate) fn stage_builtin_exports(context: &mut Context<'_>, name: &str) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let key = context.string_rooted(BOOTSTRAP_REQUIRE);
-    let require = context.get_property_rooted(global, key)?;
-    let specifier = context.string_rooted(name);
-    let receiver = context.undefined();
-    let module = context.call_rooted(require, receiver, &[specifier])?;
-    for name in super::builtin_export_names(name.strip_prefix("node:").unwrap_or(name)) {
-        context.scoped(|context| {
-            let key = context.string_rooted(name);
-            let own = context.own_property_descriptor_rooted(module, key)?;
-            if !context.rooted_value(own).is_some_and(|value| value.is_undefined()) {
-                context.get_property_rooted(module, key)?;
-            }
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
 
 /// The values of a builtin module's named exports (`args`: the module and the export names),
 /// aligned with the names. As lib/internal/bootstrap/realm.js `syncExports` does, each is read
@@ -1781,11 +1754,6 @@ pub(crate) fn path_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
 
 pub(crate) fn url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Url)
-}
-
-#[cfg(feature = "aot")]
-pub(crate) fn internal_url_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    cached_builtin(context, BuiltinModule::InternalUrl)
 }
 
 /// Private namespaces project the same original objects as the public globals.

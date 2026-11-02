@@ -387,6 +387,31 @@ therefore:
 | R10 (parallel) | Collection throughput and nursery; Splay all-modes RSS | P11 | Splay, EarleyBoyer | TOD-1223 |
 | R11 | Continuous memory gate and qualification (eleven rounds, Linux and M4) | P11 | all | TOD-123, TOD-1239 |
 
+### Quench's own ten performance decisions
+
+The ten decisions Quench's V8-v7 performance rests on, ranked by how much of the suite
+rides on each. Shares are fixed-work callgrind instructions at `6d905df3e` (Linux x86-64,
+4 vCPUs, `--jit`, default tiers). Lane bodies, copy-and-patch stencils, binding-time
+literal folding and lazy bodies are not on the list: today they cost more than they save,
+or affect only startup.
+
+| # | Decision | Carries | Weakness today | Polish |
+| --- | --- | --- | --- | --- |
+| 1 | Frameless direct-threaded lane interpreter: 24-byte records, tail-called handlers, carried accumulator, one-way requickening | Richards, DeltaBlue, RayTrace, EarleyBoyer: 68–80% of instructions | Untyped registers re-check tags; polymorphic sites stay generic | Dead-result store elision for every producer; typed records on proven registers (TOD-1247) |
+| 2 | Shapes with per-site field caches and a record-local hint | Field reads: about 18% of Richards, about 10% of EarleyBoyer | About 37 instructions per hit: record lookup, shape compare, storage-form decode | Per-storage-form record variants; shape-fixed storage (R1, TOD-1243) |
+| 3 | Frameless call activations, a call-target cache with answered call kinds, construct plans | Calls: about 15% of Richards, 14% of DeltaBlue, 9% of EarleyBoyer; construction about 16% of RayTrace | About 78 instructions and an 88-byte activation per call; every callee register filled; targets re-resolved after each collection | Fill only registers read before written; key targets on function death |
+| 4 | OSR loop tier on Cranelift | Crypto (about 61% native), NavierStokes (45%, the one fixture already won) | No calls; element type from an 8-element sample; per-entry guards | Exact element census instead of the sample; one region for `am3` |
+| 5 | Record fusion and returning records at lane-view build | Small getters and operator pairs across the OO fixtures | Hand-written per pair; fused records fall back to their parts | Add the most frequent missing pairs, counted on RayTrace and DeltaBlue |
+| 6 | NaN-boxed values with an int32 tag and 32-bit record locators | Everything; int32 paths in Crypto and NavierStokes | Integral canonicalization on every float result; record-table indirection | Canonicalize only where a value escapes |
+| 7 | 16-byte object records with two narrow inline slots and a shared property arena | RSS everywhere; Splay and EarleyBoyer objects mostly fit | A third field or a non-narrow value migrates storage; arena allocate and release about 3% of RayTrace | Construct plans choose storage from observed arguments; per-site capacity (R1) |
+| 8 | Sticky-mark generational, non-moving collector over record spaces | Splay, EarleyBoyer | Synchronous; no bump allocation in native code | Young budget within the RSS bar; a per-block run allocator |
+| 9 | Copy-on-write tagged array backings with an O(1) int32 census | Crypto, NavierStokes | Always tagged; hole checks per read | PackedFloat64 kind (TOD-1249) |
+| 10 | RegExp with an automaton backend and a backtracker, and rope strings | RegExp, EarleyBoyer strings | Backtracker has no literal prefilter; flattening copies | Backend census; literal-prefix prefilter |
+
+Every row is polished by fixed-work instruction counts with the jit+aot suite passing. The
+structural rows (2, 3 and 7 through R1 and R3) carry the gap to the peers; the rest are
+single-digit polish.
+
 ### Measured: why the method tier does not move the OO fixtures yet
 
 At `b2f946f4f` (callgrind, fixed work, release, Linux x86-64, 4 vCPUs), opt-in lane bodies

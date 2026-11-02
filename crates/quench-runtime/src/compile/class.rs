@@ -981,7 +981,7 @@ impl FunctionCompiler<'_, '_> {
 /// constant (`binding_time::expression`), or an array or object literal of static constants
 /// with plain keys. Each evaluation still makes a fresh array or object.
 fn observes_nothing(initializer: &Expression<'_>) -> bool {
-    let constant = |value: &Expression<'_>| binding_time::expression(value).static_value().is_some();
+    let constant = |value: &Expression<'_>| binding_time::expression(value).is_some();
     match initializer {
         Expression::ParenthesizedExpression(inner) => observes_nothing(&inner.expression),
         Expression::ArrayExpression(array) => array.elements.iter().all(|element| {
@@ -1013,7 +1013,7 @@ pub(super) fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Express
 /// initializer function would provide (its receiver, home object or new.target) and names
 /// no function, so the definition stores the constant itself.
 fn class_field_constant(field: ClassField<'_>) -> Option<Constant> {
-    class_field_value(field).and_then(|value| super::binding_time::expression(value).static_value())
+    class_field_value(field).and_then(super::binding_time::expression)
 }
 
 /// The initializer expression a field evaluates in a function of its own: any but a constant.
