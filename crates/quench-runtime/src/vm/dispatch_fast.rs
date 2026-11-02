@@ -6173,6 +6173,22 @@ script_handler! {
 }
 
 script_handler! {
+    /// The private for-in key check has no guest callee or argument window. Ordinary
+    /// lookups use the shared query; an exotic lookup runs through the general step.
+    fn lane_for_in_key_is_enumerable<>(cx, r, ip, i, view) {
+        // SAFETY: the running program outlives its lane.
+        let code = unsafe { &*(*cx).code };
+        let Some(enumerable) = (unsafe { vm(cx) })
+            .plain_for_in_key_is_enumerable(code, r.get(i.b), r.get(i.c))
+        else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, enumerable);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// `CopyDataProperties` (an object spread or rest) that a plain copy answers
     /// (`Vm::copy_plain_data_properties`), which runs no guest code and cannot throw, so it
     /// runs beside activations; any other copy takes `lane_general_step`.
@@ -16734,6 +16750,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CheckPrivate => Some(lane_check_private::<H>),
         Op::PrivateIn => Some(lane_private_in::<H>),
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
+        Op::ForInKeyIsEnumerable => Some(lane_for_in_key_is_enumerable::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),
         op if matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) => {
@@ -16787,74 +16804,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
     }
 }
 
-/// Dense fast handlers cover the first opcode byte; later opcodes use general dispatch.
-const TABLE_SLOTS: usize = 1 << u8::BITS;
-
-/// Opcodes per generated table row.
-const TABLE_ROW: u16 = 16;
-const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
-
-macro_rules! table_row {
-    ($h:ty, $backward:literal, $acc:expr, $row:literal) => {
-        [
-            handler_for::<$h, { $row * TABLE_ROW }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 1 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 2 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 3 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 4 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 5 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 6 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 7 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 8 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 9 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 10 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 11 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 12 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 13 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 14 }, $backward, { $acc }>(),
-            handler_for::<$h, { $row * TABLE_ROW + 15 }, $backward, { $acc }>(),
-        ]
-    };
-}
-
-const fn flatten_rows(
-    rows: [[Option<LaneHandler>; TABLE_ROW as usize]; TABLE_ROWS],
-) -> [Option<LaneHandler>; TABLE_SLOTS] {
-    let mut table = [None; TABLE_SLOTS];
-    let mut slot = 0;
-    while slot < TABLE_SLOTS {
-        table[slot] = rows[slot / TABLE_ROW as usize][slot % TABLE_ROW as usize];
-        slot += 1;
-    }
-    table
-}
-
-/// One handler table: the opcode's handler for one jump direction and one
-/// accumulator field.
-type Table = [Option<LaneHandler>; TABLE_SLOTS];
-
-macro_rules! lane_table {
-    ($h:ty, $backward:literal, $acc:expr) => {
-        flatten_rows([
-            table_row!($h, $backward, $acc, 0),
-            table_row!($h, $backward, $acc, 1),
-            table_row!($h, $backward, $acc, 2),
-            table_row!($h, $backward, $acc, 3),
-            table_row!($h, $backward, $acc, 4),
-            table_row!($h, $backward, $acc, 5),
-            table_row!($h, $backward, $acc, 6),
-            table_row!($h, $backward, $acc, 7),
-            table_row!($h, $backward, $acc, 8),
-            table_row!($h, $backward, $acc, 9),
-            table_row!($h, $backward, $acc, 10),
-            table_row!($h, $backward, $acc, 11),
-            table_row!($h, $backward, $acc, 12),
-            table_row!($h, $backward, $acc, 13),
-            table_row!($h, $backward, $acc, 14),
-            table_row!($h, $backward, $acc, 15),
-        ])
-    };
-}
+/// One handler for each declared opcode, derived from the opcode catalog.
+type Table = [Option<LaneHandler>; Op::COUNT];
 
 struct LaneTable<H>(std::marker::PhantomData<H>);
 
@@ -16863,18 +16814,18 @@ impl<H: Host> LaneTable<H> {
     /// safepoint) and by accumulator field.
     const TABLES: [[Table; ACC_POSITIONS]; 2] = [
         [
-            lane_table!(H, false, ACC_NONE),
-            lane_table!(H, false, ACC_A),
-            lane_table!(H, false, ACC_B),
-            lane_table!(H, false, ACC_C),
-            lane_table!(H, false, ACC_PAIR),
+            crate::bytecode::opcode_table!(handler_for, H, false, ACC_NONE),
+            crate::bytecode::opcode_table!(handler_for, H, false, ACC_A),
+            crate::bytecode::opcode_table!(handler_for, H, false, ACC_B),
+            crate::bytecode::opcode_table!(handler_for, H, false, ACC_C),
+            crate::bytecode::opcode_table!(handler_for, H, false, ACC_PAIR),
         ],
         [
-            lane_table!(H, true, ACC_NONE),
-            lane_table!(H, true, ACC_A),
-            lane_table!(H, true, ACC_B),
-            lane_table!(H, true, ACC_C),
-            lane_table!(H, true, ACC_PAIR),
+            crate::bytecode::opcode_table!(handler_for, H, true, ACC_NONE),
+            crate::bytecode::opcode_table!(handler_for, H, true, ACC_A),
+            crate::bytecode::opcode_table!(handler_for, H, true, ACC_B),
+            crate::bytecode::opcode_table!(handler_for, H, true, ACC_C),
+            crate::bytecode::opcode_table!(handler_for, H, true, ACC_PAIR),
         ],
     ];
 }

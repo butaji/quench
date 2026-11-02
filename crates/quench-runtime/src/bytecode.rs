@@ -756,11 +756,13 @@ impl ImmediateLayout {
 }
 
 macro_rules! opcodes {
-    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
+    ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         #[quench_macros::native_operation_exports(17, "quench_js_op_")]
         pub enum Op { $($name),+ }
+
+        opcodes!(@table $d; $($name),+);
 
         #[allow(dead_code)]
         impl Op {
@@ -835,6 +837,15 @@ macro_rules! opcodes {
             }
         }
     };
+    (@table $d:tt; $($name:ident),+) => {
+        /// Generate a semantic handler table from the complete opcode catalog.
+        macro_rules! opcode_table {
+            ($d handler:ident, $d host:ty, $d backward:expr, $d acc:expr) => {
+                [$($d handler::<$d host, { crate::bytecode::Op::$name as u16 }, { $d backward }, { $d acc }>()),+]
+            };
+        }
+        pub(crate) use opcode_table;
+    };
     (@layout $layout:ident) => { ImmediateLayout::$layout };
     (@result $result:ident) => { ResultLayout::$result };
     (@flow $flow:ident) => { ControlFlowLayout::$flow };
@@ -872,7 +883,7 @@ const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
-opcodes!(
+opcodes!($;
     Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop, @ Register, @ fields(Unused, Unused, Unused),
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
@@ -1157,6 +1168,8 @@ opcodes!(
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
 
+    // An engine-private enumeration operation, not a guest function call.
+    ForInKeyIsEnumerable => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );
 
 const _: () = {
@@ -4329,7 +4342,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 113;
+    pub const FORMAT_VERSION: u8 = 114;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

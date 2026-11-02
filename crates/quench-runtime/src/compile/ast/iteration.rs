@@ -168,22 +168,9 @@ impl FunctionCompiler<'_, '_> {
         let keys = self.load_atom(keys_atom);
         let value = self.reg();
         self.emit(Op::GetIndex, value, keys, index, 0);
-        let validate = self.load_name(crate::bytecode::FOR_IN_KEY_IS_ENUMERABLE_BINDING);
         let object = self.load_atom(object_atom);
-        let base = self.next_reg;
-        let object_arg = self.reg();
-        self.emit(Op::Move, object_arg, object, 0, 0);
-        let key_arg = self.reg();
-        self.emit(Op::Move, key_arg, value, 0, 0);
         let valid = self.reg();
-        let this = self.literal(Constant::Undefined);
-        self.emit(
-            Op::Call,
-            valid,
-            validate,
-            this,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
-        );
+        self.emit(Op::ForInKeyIsEnumerable, valid, object, value, 0);
         let invalid = self.emit(Op::JumpFalse, valid, 0, 0, 0);
         self.push_control(ControlKind::Loop, label);
         if clone_environment

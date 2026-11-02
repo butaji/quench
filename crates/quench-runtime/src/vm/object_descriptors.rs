@@ -816,9 +816,6 @@ impl<H: Host> Vm<H> {
         source: Value,
         key: Value,
     ) -> Option<Value> {
-        if self.for_in_own_key_listed(source, key) {
-            return Some(Value::TRUE);
-        }
         let mut current = source;
         loop {
             if let Some(enumerable) = self.plain_own_enumerability(p, current, key)? {

@@ -1045,6 +1045,12 @@ impl<H: Host> Vm<H> {
                 let value = self.to_numeric(p, self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), value);
             }
+            Op::ForInKeyIsEnumerable => {
+                let enumerable = self.object_for_in_key_is_enumerable(
+                    p, self.read(f, i.register_b()), self.read(f, i.register_c()),
+                )?;
+                self.write(f, i.result_register(), Value::boolean(enumerable));
+            }
             Op::CopyDataProperties => self.copy_data_properties(
                 p,
                 self.read(f, i.register_a()),

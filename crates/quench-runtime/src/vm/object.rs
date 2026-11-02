@@ -1004,7 +1004,6 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.array_iteration_proof = None;
         self.array_species_proof = None;
-        self.for_in_own_keys = None;
         self.species_slot_proof.set(None);
         self.promise_species_proof.set(None);
         self.heap.dependencies_mut().retire_all();
