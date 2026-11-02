@@ -772,11 +772,12 @@ pub(crate) fn set_trace_sig_int(c: &mut Context<'_>, _: RootId, args: &[RootId])
 }
 
 /// The lazy `TextDecoder` and `TextEncoder` exports: the globals of those names.
-pub(crate) fn global_export(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn global_export(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let global = c.global_root()?;
+    let module = super::util_shared_vm::module(c)?;
     for name in ["TextDecoder", "TextEncoder"] {
         let value = get(c, global, name)?;
-        put(c, this, name, value)?;
+        put(c, module, name, value)?;
     }
     Ok(c.undefined())
 }
