@@ -110,6 +110,19 @@ for (let i = 0; i < 40; i++) {
   if (acrossCall(7, changeArgument) !== '8:changed:7') throw Error('call-edge alias recovery');
 }
 output.push(acrossCall(7, changeArgument));
+function throughGetter(value, box) {
+  const computed = value + 1;
+  box.args = arguments;
+  const result = box.value;
+  return computed + ':' + value + ':' + result;
+}
+const aliasGetter = {
+  get value() { this.args[0] = 'changed'; return 9; }
+};
+for (let i = 0; i < 40; i++) {
+  if (throughGetter(7, aliasGetter) !== '8:changed:9') throw Error('getter-edge alias recovery');
+}
+output.push(throughGetter(7, aliasGetter));
 function reflectedAfterWrite(value) {
   value = value + 1;
   return reflectedAfterWrite.arguments[0];

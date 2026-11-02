@@ -7608,18 +7608,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         }
 
         let frame = &mut vm.frames[dispatch.frame];
-        if !js_native_frame_storage_unchanged(frame, dispatch) {
-            // A prior resumable callback changed the frame storage. Leave this
-            // instruction untouched and finish through the ordinary dispatcher.
-            frame.pc = pc;
-            frame.pc_is_resume = true;
-            vm.active_registers = frame.registers.as_mut_ptr();
-            return Ok(JsCalloutStep::Stop(JsNativeStep {
-                instruction_pc: pc,
-                next_pc: pc,
-                result: Ok(super::StepResult::Continue),
-            }));
-        }
+        // Entry admits these homes, and every effectful continuation validates
+        // them before native code resumes. No frame-storage mutation occurs
+        // between that edge and this callout; polling here duplicates its proof.
         frame.pc = pc;
         frame.pc_is_resume = false;
         if let Err(error) = vm.check_execution_interrupt() {
@@ -7675,14 +7666,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 *destination = value;
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
-                if !js_native_frame_storage_unchanged(frame, dispatch) {
-                    vm.active_registers = frame.registers.as_mut_ptr();
-                    return Ok(JsCalloutStep::Stop(JsNativeStep {
-                        instruction_pc: pc,
-                        next_pc,
-                        result: Ok(super::StepResult::Continue),
-                    }));
-                }
                 return Ok(JsCalloutStep::Continue(next_pc));
             }
         }
@@ -7720,14 +7703,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next_pc;
                 frame.pc_is_resume = true;
-                if !js_native_frame_storage_unchanged(frame, dispatch) {
-                    vm.active_registers = frame.registers.as_mut_ptr();
-                    return Ok(JsCalloutStep::Stop(JsNativeStep {
-                        instruction_pc: pc,
-                        next_pc,
-                        result: Ok(super::StepResult::Continue),
-                    }));
-                }
                 return Ok(JsCalloutStep::Continue(next_pc));
             }
         }
