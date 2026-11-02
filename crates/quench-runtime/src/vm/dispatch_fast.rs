@@ -50,6 +50,10 @@ pub(super) struct LaneInstruction {
     call_link: std::cell::Cell<u16>,
 }
 
+/// The callees a call site's history keeps (`LaneStack::call_sites`): a region inlines a site
+/// of at most this many as a guarded switch, the polymorphic inline cache's width.
+const CALL_SITE_TARGETS: usize = 4;
+
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
@@ -580,14 +584,23 @@ impl LaneView {
                             .map(|call| fill_room::<SCRIPT_FILL_BLOCK>(usize::from(call.registers)))
                             .max()
                             .unwrap_or(0);
-                        let prologue = self.prologue.get();
-                        // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
-                        let tier_prologue = unsafe { std::mem::replace(&mut (*prologue).handler, entry as *const ()) };
+                        let room = u16::try_from(room).unwrap_or(u16::MAX);
+                        // A body whose entry would not pay for itself serves native callers
+                        // only (`lane_body_call`, direct calls); the lane's own entries keep
+                        // the records, and it has no trial to run.
+                        let (tier_prologue, runs) = if method.amortizes_entry() {
+                            let prologue = self.prologue.get();
+                            // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
+                            (unsafe { std::mem::replace(&mut (*prologue).handler, entry as *const ()) }, 0)
+                        } else {
+                            self.release_from_tier();
+                            (unsafe { (*self.prologue.get()).handler }, LANE_BODY_TRIAL_RUNS)
+                        };
                         LaneBody::Specialized {
                             method,
                             tier_prologue,
-                            room: u16::try_from(room).unwrap_or(u16::MAX),
-                            runs: std::cell::Cell::new(0),
+                            room,
+                            runs: std::cell::Cell::new(runs),
                             leaves: std::cell::Cell::new(0),
                         }
                     }
@@ -1165,6 +1178,16 @@ enum CallEntry {
 }
 
 impl CallEntry {
+    /// Whether a plain call's activation of the target holds its registers alone: the
+    /// entries whose calls a read answers activate like `Activates` once the read misses,
+    /// which is the activation a lane body's inlined call materializes
+    /// (`lane_body_inlined_activation`).
+    fn activates_registers_only(self) -> bool {
+        matches!(self, Self::Activates | Self::Reads | Self::ReadsElement | Self::ForwardsRead | Self::ReadsCapture | Self::ReadsThis)
+    }
+}
+
+impl CallEntry {
     /// An entry another program's call activates frameless (`Vm::cross_call_entry`): a plain
     /// or keeping activation, which `lane_activate_keeping` enters across programs.
     #[inline(always)]
@@ -1628,6 +1651,10 @@ const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
 /// usual frame stack. The register storage grows only between activations,
 /// so register windows stay put while any exists.
 pub(super) struct LaneStack {
+    /// Per call record (by its `call_link`'s address), the callees it linked before its
+    /// latest, newest last, up to `CALL_SITE_TARGETS`: the targets a region inlines as a
+    /// guarded switch (`lane_unit::unit`). Recorded only where a link changes.
+    call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; CALL_SITE_TARGETS]>>>,
     values: Vec<Value>,
     activations: Vec<Activation>,
     /// Wasm activation payload represented by `values` before lane materialization.
@@ -1692,6 +1719,7 @@ impl Default for LaneStack {
             values: Vec::new(),
             activations: Vec::new(),
             wasm_storage_bytes: 0,
+            call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
@@ -7082,7 +7110,7 @@ fn lane_loop_body_or_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &Loo
             let code = unsafe { &*(*cx).code };
             own.specialize_lane_body_now(lane_body_entry::<H>, || {
                 let direct = code.function_get(site.function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-                vm.compile_lane_method(code, site.function, &|function, pc| lane_unit_target(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, Some(site.header))
+                vm.compile_lane_method(code, site.function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, Some(site.header))
             });
             own.lane_body().is_some_and(|method| method.loop_header == Some(site.header))
         });
@@ -10588,6 +10616,22 @@ impl<H: Host> Vm<H> {
             linked
         } else {
             let index = self.script_call_index(callee)?;
+            // A record that linked another callee is polymorphic: its earlier target joins
+            // its history (`LaneStack::call_sites`).
+            if let Some(previous) = self.lane_stack.script_targets.entries.get(linked)
+                && previous.callee != callee
+                && previous.generation == self.lane_stack.generation
+            {
+                let mut sites = self.lane_stack.call_sites.borrow_mut();
+                let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
+                let target = super::compiled::CallTarget { callee: previous.callee, function: previous.function };
+                if !site.contains(&target) {
+                    if site.len() == CALL_SITE_TARGETS {
+                        site.remove(0);
+                    }
+                    site.push(target);
+                }
+            }
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
@@ -13971,8 +14015,7 @@ fn lane_tier_enter<H: Host>(
     {
         if !own.specialize_lane_body(lane_body_entry::<H>, || {
             let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
-            vm.compile_lane_method(code, function, &|function, pc| lane_unit_target(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, None)
-                .filter(super::compiled::LaneMethod::amortizes_entry)
+            vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, None)
         }) {
             own.release_from_tier();
         }
@@ -14000,18 +14043,52 @@ fn lane_tier_enter<H: Host>(
     None
 }
 
-/// The script target the call record at `pc` of `view` links (`call_link`), where a plain
-/// call of it binds an ordinary `this` and activates in place: what a lane body inlines
-/// (`lane_unit::unit`).
-fn lane_site_target<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Option<super::compiled::CallTarget> {
+/// The script targets the call record at `pc` of `view` linked (`call_link`), newest first:
+/// its latest and its history (`LaneStack::call_sites`), each where a plain call of it binds
+/// an ordinary `this` and activates in place: what a lane body inlines (`lane_unit::unit`).
+fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super::compiled::CallTarget> {
     // SAFETY: the view holds a record per PC; reading its link changes nothing.
-    let record = unsafe { &*view.records.get(pc as usize)?.get() };
-    let target = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
-    (target.generation == vm.lane_stack.generation
-        && target.program == vm.active_program
-        && target.entry == CallEntry::Activates
-        && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
-    .then_some(super::compiled::CallTarget { callee: target.callee, function: target.function })
+    let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
+    // A collection since the site linked retires its entry; the callee's own entry of this
+    // generation, where a call resolved it again, is the same target.
+    let latest = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).and_then(|linked| {
+        if linked.generation == vm.lane_stack.generation {
+            Some(linked)
+        } else {
+            // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
+            vm.script_call_entry(linked.callee).map(|target| unsafe { &*target })
+        }
+    }).filter(|target| {
+        target.program == vm.active_program
+            && target.entry.activates_registers_only()
+            && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict)
+    });
+    // A site that runs only in its function's lane body links nothing: the body's own
+    // inlined calls name its targets (`lane_unit::Frame`).
+    let Some(latest) = latest else {
+        return view.lane_body().map_or_else(Vec::new, |method| {
+            method.inlined.iter()
+                .filter(|frame| frame.parent.is_none() && frame.call == pc)
+                .map(|frame| frame.target)
+                .collect()
+        });
+    };
+    let latest = super::compiled::CallTarget { callee: latest.callee, function: latest.function };
+    let history = vm.lane_stack.call_sites.borrow();
+    let earlier = history.get(&std::ptr::from_ref(&record.call_link).addr());
+    std::iter::once(latest)
+        .chain(earlier.into_iter().flatten().rev().copied().filter(|target| *target != latest))
+        .take(CALL_SITE_TARGETS)
+        .collect()
+}
+
+/// `lane_site_targets` of any function of the running program, by its view.
+fn lane_unit_targets<H: Host>(cx: *mut LaneContext<H>, function: u32, pc: u32) -> Vec<super::compiled::CallTarget> {
+    // SAFETY: the program's views outlive the lane run.
+    let Some(view) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else {
+        return Vec::new();
+    };
+    lane_site_targets(unsafe { vm(cx) }, view, pc)
 }
 
 /// The dense capture slots of `callee`'s environment (`EnvironmentSlots::native_dense_view`),
@@ -14022,13 +14099,6 @@ fn lane_callee_captures<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> (usi
         .and_then(|target| unsafe { capture_reads((*target).capture).as_ref() })
         .and_then(crate::heap::EnvironmentSlots::native_dense_view)
         .map_or((0, 0), |(values, len)| (values.addr(), len))
-}
-
-/// `lane_site_target` of any function of the running program, by its view.
-fn lane_unit_target<H: Host>(cx: *mut LaneContext<H>, function: u32, pc: u32) -> Option<super::compiled::CallTarget> {
-    // SAFETY: the program's views outlive the lane run.
-    let view = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)?;
-    lane_site_target(unsafe { vm(cx) }, view, pc)
 }
 
 /// Per PC of `body`, the callee its call record links where the callee's own lane body
@@ -14260,6 +14330,7 @@ enum LaneBodyLeft {
     /// The activation completes with the value, by the record.
     Completed(Ip, Value),
 }
+
 
 
 fn lane_body_left<H: Host>(

@@ -6949,7 +6949,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
         function: u32,
-        targets: &dyn Fn(u32, u32) -> Option<CallTarget>,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,

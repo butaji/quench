@@ -49,6 +49,9 @@ pub(crate) struct Frame {
     /// The callee's register 0.
     pub(crate) base: Register,
     pub(crate) registers: u16,
+    /// The unit PC of the call's next alternative's marker, where a callee other than this
+    /// frame's goes; `None` for the last, which leaves at the call.
+    pub(crate) alternative: Option<usize>,
 }
 
 impl Frame {
@@ -89,9 +92,9 @@ impl Unit {
 const MAX_INLINED_INSTRUCTIONS: usize = 96;
 /// The callee instructions one unit inlines in all, the region's budget: a hot loop's call
 /// graph, inlined, is the region an optimizing tier compiles as one function.
-const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 768;
+const MAX_UNIT_INLINED_INSTRUCTIONS: usize = 2048;
 /// How deep calls nest inside a unit.
-const MAX_INLINING_DEPTH: usize = 4;
+const MAX_INLINING_DEPTH: usize = 8;
 
 /// Whether the lane-body lowering runs `instruction` of an inlined callee: a capture of its
 /// own environment only, no fusion but a returning one, which splits into the
@@ -110,7 +113,7 @@ fn inlinable(instruction: WideInstruction) -> bool {
         // renames it through the frame (`Lowering::get_field`), and its sink stores to `this`.
         Op::GetField => match instruction.field_lookup() {
             Some(FieldLookup::Atom { .. }) => plain,
-            Some(FieldLookup::Site(_)) => instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0,
+            Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
         },
         Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
@@ -127,8 +130,27 @@ fn returns_or_keeps(instruction: WideInstruction) -> bool {
 /// The unit PCs an inlined call takes past its marker and its callee's: in the caller, a
 /// returning call's completion is a `Return` of its register; an inlined callee's returning
 /// call completes the callee itself.
-fn call_length(instruction: WideInstruction, root: bool, callee: &Plan) -> u32 {
-    1 + callee.length(false) + u32::from(root && instruction.returns_from_frame())
+fn call_length(instruction: WideInstruction, root: bool, alternatives: &[InlinedPlan]) -> u32 {
+    alternatives.iter().map(|callee| 1 + callee.plan.length(false)).sum::<u32>()
+        + u32::from(root && instruction.returns_from_frame())
+}
+
+/// Whether an inlined callee's `instruction` renames to the unit's registers
+/// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
+/// unit it plans always emits.
+fn renamable(instruction: WideInstruction) -> bool {
+    match instruction.op() {
+        Op::Call | Op::Return | Op::LoadThis => true,
+        Op::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
+        _ => {
+            let plain = if super::osr_loop::inlined_returning(instruction) {
+                WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
+            } else {
+                instruction
+            };
+            super::osr_loop::renamed(plain, &|register| register, 0, &|target| Some(target)).is_some()
+        }
+    }
 }
 
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
@@ -150,7 +172,11 @@ fn decoded(function: &Function) -> Vec<WideInstruction> {
 /// A function's code as the unit splices it: per PC, the call it inlines there, if any.
 struct Plan {
     code: Vec<WideInstruction>,
-    calls: Vec<Option<Box<InlinedPlan>>>,
+    /// Per PC, the callees its call inlines, as a switch on the callee; empty for none.
+    calls: Vec<Vec<InlinedPlan>>,
+    /// Whether a call the plan does not inline has run (its site linked a target): an
+    /// inlined callee's never-run call is an exit of the unit, one that runs is not.
+    blocked: bool,
 }
 
 struct InlinedPlan {
@@ -168,17 +194,17 @@ impl Plan {
         self.code
             .iter()
             .zip(&self.calls)
-            .map(|(instruction, call)| match call {
-                Some(call) => call_length(*instruction, root, &call.plan),
-                None if root => 1,
-                None => completion_length(*instruction),
+            .map(|(instruction, calls)| match calls.as_slice() {
+                [] if root => 1,
+                [] => completion_length(*instruction),
+                alternatives => call_length(*instruction, root, alternatives),
             })
             .sum()
     }
 }
 
 struct Planner<'t, 'f> {
-    targets: &'t dyn Fn(u32, u32) -> Option<CallTarget>,
+    targets: &'t dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
@@ -188,28 +214,56 @@ impl Planner<'_, '_> {
     /// The plan of `function`'s `code`, its calls inlined where the budget allows. A callee
     /// is inlined only whole: every call of its own inlined too.
     fn plan(&mut self, function: u32, code: Vec<WideInstruction>, depth: usize) -> Plan {
+        let mut blocked = false;
         let calls = code
             .iter()
             .enumerate()
-            .map(|(pc, instruction)| self.inline(function, pc as u32, *instruction, depth).map(Box::new))
+            .map(|(pc, instruction)| {
+                let (calls, ran) = self.inline(function, pc as u32, *instruction, depth);
+                blocked |= calls.is_empty() && ran;
+                calls
+            })
             .collect();
-        Plan { code, calls }
+        Plan { code, calls, blocked }
     }
 
-    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
-        if instruction.op() != Op::Call || !returns_or_keeps(instruction) || instruction.direct_eval()
+    /// The callees the call at `pc` of `function` inlines: every target its site linked, or
+    /// none, so a callee the switch names never leaves it for a call.
+    /// With whether the call has run: a call the plan may not inline counts as run.
+    fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> (Vec<InlinedPlan>, bool) {
+        if instruction.op() != Op::Call {
+            return (Vec::new(), false);
+        }
+        if !returns_or_keeps(instruction) || instruction.direct_eval()
             || instruction.parameter_eval() || depth >= MAX_INLINING_DEPTH
         {
-            return None;
+            return (Vec::new(), true);
         }
-        let target = (self.targets)(function, pc)?;
+        let (registers, budget) = (self.registers, self.budget);
+        let found = (self.targets)(function, pc);
+        let ran = !found.is_empty();
+        let alternatives: Option<Vec<InlinedPlan>> = found
+            .into_iter()
+            .map(|target| self.inline_target(target, instruction, depth))
+            .collect();
+        match alternatives {
+            Some(alternatives) if !alternatives.is_empty() => (alternatives, true),
+            _ => {
+                (self.registers, self.budget) = (registers, budget);
+                (Vec::new(), ran)
+            }
+        }
+    }
+
+    fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
         if code.len() > MAX_INLINED_INSTRUCTIONS
             || code.len() > self.budget
             || ImmediateLayout::argument_count(instruction.imm()) > callee.registers
-            || !code.iter().all(|instruction| inlinable(*instruction))
-            || !code.iter().any(|instruction| completion_length(*instruction) > 1)
+            || !code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
+            || !code.iter().any(|instruction| completion_length(*instruction) > 1
+                || (instruction.op() == Op::Call && instruction.returns_from_frame()))
         {
             return None;
         }
@@ -220,8 +274,7 @@ impl Planner<'_, '_> {
         self.registers += u32::from(callee.registers);
         self.budget -= code.len();
         let plan = self.plan(target.function, code, depth + 1);
-        let whole = plan.code.iter().zip(&plan.calls).all(|(instruction, call)| instruction.op() != Op::Call || call.is_some());
-        if !whole {
+        if plan.blocked {
             (self.registers, self.budget) = (registers, budget);
             return None;
         }
@@ -252,42 +305,23 @@ impl Emitter {
         let root = frame.is_none();
         let mut flat = Vec::with_capacity(plan.code.len() + 1);
         let mut at = self.unit.instructions.len() as u32;
-        for (instruction, call) in plan.code.iter().zip(&plan.calls) {
+        for (instruction, calls) in plan.code.iter().zip(&plan.calls) {
             flat.push(at);
-            at += match call {
-                Some(call) => call_length(*instruction, root, &call.plan),
-                None if root => 1,
-                None => completion_length(*instruction),
+            at += match calls.as_slice() {
+                [] if root => 1,
+                [] => completion_length(*instruction),
+                alternatives => call_length(*instruction, root, alternatives),
             };
         }
         flat.push(at);
         let target_of = |target: u32| flat.get(target as usize).copied();
         let register = |register: Register| base + register;
-        for (pc, (instruction, call)) in plan.code.iter().copied().zip(&plan.calls).enumerate() {
+        for (pc, (instruction, calls)) in plan.code.iter().copied().zip(&plan.calls).enumerate() {
             let origin = match frame {
                 None => Origin::Caller(pc as u32),
                 Some(frame) => Origin::Inlined { frame, pc: pc as u32 },
             };
-            if let Some(call) = call {
-                let index = self.unit.frames.len();
-                self.unit.markers.push(self.unit.instructions.len());
-                let callee_base = Register::try_from(call.base).ok()?;
-                let frame_record = Frame {
-                    parent: frame,
-                    call: pc as u32,
-                    target: call.target,
-                    callee_register: register(instruction.register_b()),
-                    receiver: register(instruction.register_c()),
-                    window: register(ImmediateLayout::call_window_base(instruction.imm())),
-                    arguments: ImmediateLayout::argument_count(instruction.imm()),
-                    base: callee_base,
-                    registers: call.registers,
-                };
-                self.unit.frames.push(frame_record);
-                // The marker: the call's guards and bindings (`Lowering::inline_call`); a guard
-                // that fails leaves at the call itself, before any of its effects.
-                self.unit.instructions.push(WideInstruction::new(Op::Nop, 0, 0, 0, 0));
-                self.unit.origins.push(origin);
+            if !calls.is_empty() {
                 // A returning call's callee completes what makes the call: an inlined callee
                 // completes the call that inlined it, so its result and continuation pass
                 // through; the caller completes with a `Return` of the call's register.
@@ -297,7 +331,32 @@ impl Emitter {
                     (true, true) => (register(instruction.result_register()), flat[pc + 1] - 1),
                     (false, _) => (register(instruction.result_register()), flat[pc + 1]),
                 };
-                self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
+                for (alternative, call) in calls.iter().enumerate() {
+                    let index = self.unit.frames.len();
+                    let marker = self.unit.instructions.len();
+                    self.unit.markers.push(marker);
+                    let callee_base = Register::try_from(call.base).ok()?;
+                    let next = (alternative + 1 < calls.len()).then(|| marker + 1 + call.plan.length(false) as usize);
+                    let frame_record = Frame {
+                        parent: frame,
+                        call: pc as u32,
+                        target: call.target,
+                        callee_register: register(instruction.register_b()),
+                        receiver: register(instruction.register_c()),
+                        window: register(ImmediateLayout::call_window_base(instruction.imm())),
+                        arguments: ImmediateLayout::argument_count(instruction.imm()),
+                        base: callee_base,
+                        registers: call.registers,
+                        alternative: next,
+                    };
+                    self.unit.frames.push(frame_record);
+                    // The marker: the call's guards and bindings (`Lowering::inline_call`); a
+                    // callee other than this frame's goes to the next alternative, and past the
+                    // last leaves at the call itself, before any of its effects.
+                    self.unit.instructions.push(WideInstruction::new(Op::Nop, 0, 0, 0, 0));
+                    self.unit.origins.push(origin);
+                    self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
+                }
                 if returns && root {
                     self.unit.instructions.push(WideInstruction::new(Op::Return, instruction.result_register(), 0, 0, 0));
                     self.unit.origins.push(origin);
@@ -316,8 +375,14 @@ impl Emitter {
                 continue;
             }
             if super::osr_loop::inlined_returning(instruction) {
-                let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
-                self.unit.instructions.push(super::osr_loop::renamed(plain, &register, receiver, &target_of)?);
+                let computed = if instruction.op() == Op::GetField && instruction.b() == crate::bytecode::FieldBase::NESTED {
+                    // A nested lookup keeps its site, whose base the lowering renames.
+                    WideInstruction::new(instruction.op(), register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
+                } else {
+                    let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
+                    super::osr_loop::renamed(plain, &register, receiver, &target_of)?
+                };
+                self.unit.instructions.push(computed);
                 self.unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.result_register()), 0, 0));
                 self.unit.instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
                 self.unit.origins.extend([origin; 3]);
@@ -349,7 +414,7 @@ impl Emitter {
 pub(crate) fn unit<'f>(
     function_id: u32,
     function: &Function,
-    targets: &dyn Fn(u32, u32) -> Option<CallTarget>,
+    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;

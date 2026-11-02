@@ -495,7 +495,14 @@ fn lower(
         builder.def_var(registers.int[register], zero);
         builder.def_var(registers.float[register], float_zero);
     }
-    let leaders = leaders(&unit.instructions);
+    // An alternative of a call's switch starts a block: a callee other than the one before
+    // it branches there (`Lowering::inline_call`).
+    let mut leaders = leaders(&unit.instructions);
+    for alternative in unit.frames.iter().filter_map(|frame| frame.alternative) {
+        if let Some(leader) = leaders.get_mut(alternative) {
+            *leader = true;
+        }
+    }
     let blocks: Vec<_> = leaders.iter().map(|leader| leader.then(|| builder.create_block())).collect();
     let mut lowering = Lowering {
         builder,
@@ -801,7 +808,7 @@ impl Lowering<'_, '_> {
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
-            Op::GetField if instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER == 0 => self.get_field(state, pc, instruction),
+            Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`).
                 let exit = self.guard_exit(state, pc32);
@@ -982,7 +989,17 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let callee = self.tagged(state, inlined.callee_register);
         let same = self.ins().icmp_imm_u(IntCC::Equal, callee, inlined.target.callee.to_bits() as i64);
-        emit_js_guard(&mut self.builder, same, exit);
+        match inlined.alternative {
+            Some(next) => {
+                let (matched, other) = (self.builder.create_block(), self.builder.create_block());
+                self.ins().brif(same, matched, &[], other, &[]);
+                self.builder.switch_to_block(other);
+                let mut other_state = state.clone();
+                self.continue_at(&mut other_state, next);
+                self.builder.switch_to_block(matched);
+            }
+            None => emit_js_guard(&mut self.builder, same, exit),
+        }
         let receiver = self.tagged(state, inlined.receiver);
         let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
         let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
@@ -1216,9 +1233,13 @@ impl Lowering<'_, '_> {
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        if instruction.returns_from_frame() {
-            return None;
-        }
+        // A returning read completes the activation with its value, at a caller record; an
+        // inlined callee's is the unit's read, move and jump (`lane_unit`).
+        let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
+            (false, _) => None,
+            (true, Some(super::lane_unit::Origin::Caller(record))) => Some(record),
+            (true, _) => return None,
+        };
         // A nested lookup is a chain of reads from one base, each through its own site; a
         // guard that fails anywhere in it leaves at the instruction, whose reads have no effect.
         // A nested lookup that writes the current `this` stores the chain's value to `this`'s
@@ -1264,6 +1285,10 @@ impl Lowering<'_, '_> {
         }
         if let Some((atom, site)) = sink {
             self.store_field(state, sink_owner, atom, site, value, false, exit)?;
+        }
+        if let Some(record) = completes {
+            self.return_value(record, value);
+            return Some(false);
         }
         self.set_tagged(state, destination, value);
         Some(true)
@@ -1626,7 +1651,7 @@ mod tests {
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
             &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &fields, &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -1649,7 +1674,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| None, &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
             &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
