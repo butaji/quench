@@ -179,29 +179,9 @@ impl Unit {
         let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
-
-    /// A closed suffix entered with the caller's canonical homes at `header`.
-    /// Source origins survive rebasing, including entry misses and liveness.
-    #[cfg(feature = "aot")]
-    pub(super) fn suffix(mut self, header: usize) -> Option<Self> {
-        if header >= self.instructions.len() { return None; }
-        if header == 0 { return Some(self); }
-        if self.markers.iter().any(|marker| *marker < header) { return None; }
-        for marker in &mut self.markers { *marker -= header; }
-        for alternative in self.frames.iter_mut().filter_map(|frame| frame.alternative.as_mut()) { *alternative -= header; }
-        self.instructions.drain(..header);
-        self.origins.drain(..header);
-        for instruction in &mut self.instructions {
-            if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
-                let target = instruction.jump_target().checked_sub(u32::try_from(header).ok()?)?;
-                instruction.set_jump_target(target);
-            }
-        }
-        Some(self)
-    }
 }
 
-/// Static method-name hints, resolved once per module into flat per-PC targets.
+/// Static method-name and local-closure hints, resolved into flat per-PC targets.
 /// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
 #[cfg(feature = "aot")]
 pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
@@ -235,11 +215,14 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
                     Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).copied().flatten().flatten(),
                     _ => None,
                 },
+                Op::MakeClosure => Some(instruction.closure_function_index()),
                 Op::Move => methods_by_register[usize::from(instruction.register_b())],
                 _ => None,
             };
             if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
-            if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { methods_by_register.fill(None); }
+            // Hints survive control-flow edges, including loops around a local
+            // closure. They are hypotheses only: inline admission checks the
+            // actual closure/program/body before any callee effect.
             target
         }).collect()
     })).collect()
@@ -287,6 +270,7 @@ fn inlinable(instruction: WideInstruction) -> bool {
 /// leaf. A miss may restart that call without replaying effects. Captured stores
 /// additionally allow one final write with an infallible tail.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
+    if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
     if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
         Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex | Op::Call => false,
@@ -694,9 +678,12 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn function_binding_materializes_effectful_prefixes_and_backward_branches() {
-        for body in ["this.state=1;return this.next+1;", "let x=0;while(x<4)x++;return x;",
-            "this.next.value=1;return this.other+1;"] {
+    fn function_binding_distinguishes_effectful_prefixes_from_pure_numeric_loops() {
+        for (body, recovery) in [
+            ("this.state=1;return this.next+1;", CallRecovery::Materialize),
+            ("let x=0;while(x<4)x++;return x;", CallRecovery::RestartCall),
+            ("let x=0;while(x<4)x++;this.state=x;return this.next+1;", CallRecovery::Materialize),
+            ("this.next.value=1;return this.other+1;", CallRecovery::Materialize)] {
             let source = format!("let o={{}};o.unsafeProbe=function(){{{body}}};function run(o){{let r=o.unsafeProbe();if(r)return 11;return 12;}}");
             let program = crate::Engine::specialize(&source, "non-restartable.js").unwrap();
             let caller = program.functions.iter().position(|body|
@@ -708,7 +695,7 @@ mod tests {
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exact recovery admits {body}");
-            assert_eq!(unit.frames[0].recovery, CallRecovery::Materialize);
+            assert_eq!(unit.frames[0].recovery, recovery, "{body}");
         }
     }
 

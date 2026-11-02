@@ -24,7 +24,7 @@ use super::object_slots::{CheckedObject, ObjectHeader, ObjectRecord, PackedAcces
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
 
-const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
+pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
 const INLINE_FIELD_BINDINGS: usize = 4;
@@ -129,6 +129,8 @@ struct Entry {
     this: Variable,
     /// Flat per-site immutable slot inputs; no per-operation probe.
     fields: smallvec::SmallVec<[(u16, FieldSlotBinding); INLINE_FIELD_BINDINGS]>,
+    /// Function-bound numeric calls whose invariant closure was admitted here.
+    calls: CompoundBitSet,
 }
 
 pub(super) struct LaneRegion {
@@ -179,6 +181,8 @@ struct Lowering<'a, 'f> {
     exits: Vec<Option<ir::Block>>,
     entry: Option<Entry>,
     native: usize,
+    /// Whether this entry's caller loop reaches its native latch.
+    backedge: bool,
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
     pending: Vec<(ir::Block, State, u32)>,
     /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
@@ -217,7 +221,20 @@ enum Liveness<'a> {
 /// How much of the unit must run natively: a prefix (a lane body, which leaves to the lane
 /// anywhere), or all of it but the leaves to its source (a static typed region).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Coverage { Prefix, Full }
+#[cfg_attr(not(feature = "aot"), allow(dead_code))]
+pub(super) enum Coverage {
+    Prefix,
+    Full,
+    /// A caller-origin entry into the original unit CFG. Opaque operations
+    /// leave at their exact origin; earlier loops and effects are not replayed.
+    PrefixFrom(usize),
+    FullFrom(usize),
+}
+
+impl Coverage {
+    fn entry(self) -> usize { match self { Self::PrefixFrom(pc) | Self::FullFrom(pc) => pc, _ => 0 } }
+    fn full(self) -> bool { matches!(self, Self::Full | Self::FullFrom(_)) }
+}
 
 /// How a run ends: a lane body's status and result word (`LaneExit`), or a static typed
 /// region's source PC, which its canonical code continues at.
@@ -232,7 +249,16 @@ pub(super) enum Completion {
 
 /// No heap, environment or guest-call effect may precede scalar-call recovery.
 fn numeric_unit(program: &ResidualProgram, unit: &super::lane_unit::Unit) -> bool {
-    unit.frames.is_empty() && unit.instructions.iter().all(|instruction| {
+    unit.frames.is_empty() && numeric_instructions(program, &unit.instructions)
+}
+
+pub(super) fn restartable_numeric_function(program: &ResidualProgram, function: &crate::bytecode::Function,
+    instructions: &[WideInstruction]) -> bool {
+    super::super::js_compiled::function_candidate(function, program) && numeric_instructions(program, instructions)
+}
+
+fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstruction]) -> bool {
+    instructions.iter().all(|instruction| {
         if instruction.writes_current_this()
             || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
         match instruction.op() {
@@ -478,8 +504,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
                     else if ty == Type::NUMBER { Representation::Float64 }
                     else { Representation::Tagged };
                 let Some(fact) = RegisterFact::admit(Fact { ty, representation,
-                    binding: if pc == 0 { BindingTime::Location } else { BindingTime::Dynamic },
-                    proof: if pc != 0 { Proof::Definition }
+                    binding: if pc == self.coverage.entry() { BindingTime::Location } else { BindingTime::Dynamic },
+                    proof: if pc != self.coverage.entry() { Proof::Definition }
                         else if ty == Type::ANY { Proof::CanonicalValue } else { Proof::EntryGuard },
                     projection: Projection::Exact,
                 }) else { self.valid = false; return state; };
@@ -683,6 +709,9 @@ pub(super) fn lower(
     // An alternative of a call's switch starts a block: a callee other than the one before
     // it branches there (`Lowering::inline_call`).
     let mut leaders = leaders(&unit.instructions);
+    let entry_pc = coverage.entry();
+    if !matches!(unit.origins.get(entry_pc), Some(super::lane_unit::Origin::Caller(_))) { return None; }
+    leaders.insert(entry_pc);
     for alternative in unit.frames.iter().filter_map(|frame| frame.alternative) {
         if alternative < unit.instructions.len() { leaders.insert(alternative); }
     }
@@ -713,6 +742,7 @@ pub(super) fn lower(
         exits: vec![None; unit.instructions.len() + 1],
         entry: None,
         native: 0,
+        backedge: false,
         pending: Vec::new(),
         // A static typed region's calls are guarded leaves (`guarded_call_instruction`).
         native_calls: completion == Completion::StatusAndPc
@@ -771,17 +801,39 @@ pub(super) fn lower(
             if *current != Type::INT32 { *current = required; }
         }
     }
-    lowering.facts = super::facts::analyze(&initial, &instructions, &leaders, &program.constants, &writes, &|pc| {
+    let own_shape = |pc: usize| {
         let instruction = instructions[pc];
         if instruction.op() != Op::GetField || instruction.result_flags() != 0 { return None; }
         let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
         let [field] = fields.get(&cache_site)?.as_slice() else { return None };
         field.holder.is_none().then_some((base.register_index()?, field.shape))
-    });
+    };
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape);
+    if matches!(coverage, Coverage::PrefixFrom(_) | Coverage::FullFrom(_)) {
+        // Backedge definitions choose a numeric entry signature. Conformance
+        // proves the external input once; every subsequent edge carries the
+        // same verified SSA view. This is an admission requirement, not a fact
+        // assumed about the source program or a TypeScript annotation.
+        let mut refined = false;
+        for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge()) {
+            if matches!(*carried, Type::INT32 | Type::NUMBER) && *input != *carried {
+                *input = *carried;
+                refined = true;
+            }
+        }
+        if refined {
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape);
+        }
+        lowering.written = CompoundBitSet::with_capacity(count);
+        for (pc, instruction) in instructions.iter().copied().enumerate() {
+            if !lowering.facts.reached(pc) { continue; }
+            for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
+        }
+    }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry)); }
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
-    let starts: Vec<usize> = std::iter::once(0).chain(loop_entry).collect();
+    let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
     if let [at_first, at_header] = start_blocks[..] {
         let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
@@ -843,7 +895,10 @@ pub(super) fn lower(
                 lowering.conform(&mut state, pc);
                 lowering.builder.ins().jump(block, &[]);
             }
-            if numeric && lowering.facts.at(pc).is_none() { reachable = false; continue; }
+            if (numeric || matches!(coverage, Coverage::PrefixFrom(_) | Coverage::FullFrom(_))) && lowering.facts.at(pc).is_none() {
+                reachable = false;
+                continue;
+            }
             lowering.builder.switch_to_block(block);
             state = lowering.entry_state(pc, count);
             lowering.prove_loop_objects(&mut state, pc);
@@ -857,6 +912,7 @@ pub(super) fn lower(
     if reachable {
         lowering.exit(&mut state, instructions.len() as u32);
     }
+    if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge { return None; }
     for (block, mut leaving, pc) in std::mem::take(&mut lowering.pending) {
         lowering.builder.switch_to_block(block);
         lowering.exit(&mut leaving, pc);
@@ -1188,11 +1244,47 @@ impl Lowering<'_, '_> {
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
         let mut miss = None;
+        let mut calls = CompoundBitSet::with_capacity(self.unit.frames.len());
+        if self.completion == Completion::SourcePc {
+            // Roots name canonical caller homes never written by this unit.
+            // Local Move aliases are valid only within their basic block.
+            let roots: Vec<_> = (0..self.unit.registers).map(|register|
+                (register < self.unit.caller_registers && !self.written.contains(usize::from(register)))
+                    .then_some(register)).collect();
+            let mut aliases = roots.clone();
+            let mut admitted = smallvec::SmallVec::<[(Register, u32); 2]>::new();
+            for (pc, instruction) in instructions.iter().copied().enumerate() {
+                if self.blocks[pc].is_some() { aliases.copy_from_slice(&roots); }
+                if !self.facts.reached(pc) { continue; }
+                if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
+                    let call = self.unit.frames[frame];
+                    let body = self.program.function(call.target.function as usize);
+                    if call.target.callee == CalleeBinding::Function && call.alternative.is_none()
+                        && restartable_numeric_function(self.program, body, &body.instructions().collect::<Vec<_>>())
+                        && let Some(root) = aliases[usize::from(call.callee_register)] {
+                        let binding = (root, call.target.function);
+                        if !admitted.contains(&binding) {
+                            let callee = self.builder.ins().load(types::I64, MemFlagsData::trusted(),
+                                self.registers_base, register_offset(root));
+                            let matched = self.function_binding(callee, call.target.function);
+                            let exit = *miss.get_or_insert_with(|| self.builder.create_block());
+                            emit_js_guard(&mut self.builder, matched, exit);
+                            admitted.push(binding);
+                        }
+                        calls.insert(frame);
+                    }
+                }
+                let root = (instruction.op() == Op::Move)
+                    .then(|| aliases[usize::from(instruction.register_b())]).flatten();
+                for register in writes(instruction) { aliases[usize::from(register)] = root; }
+            }
+        }
         #[cfg(feature = "aot")]
         let fields = {
             let mut fields = smallvec::SmallVec::new();
             if matches!(self.helpers, LaneHelpers::Bound(_)) {
-                for instruction in instructions {
+                for (pc, instruction) in instructions.iter().enumerate() {
+                    if !self.facts.reached(pc) { continue; }
                     // A field chain names sequential sites, not alternatives for
                     // one polymorphic access. Bind each distinct column once.
                     let mut sites = smallvec::SmallVec::<[u16; 3]>::new();
@@ -1236,7 +1328,7 @@ impl Lowering<'_, '_> {
                 super::lane_unit::Origin::Caller(pc) => u64::from(pc),
                 super::lane_unit::Origin::Inlined { .. } => unreachable!("a run starts in the caller"),
             };
-            let first = origin(0);
+            let first = origin(self.coverage.entry());
             match loop_entry {
                 None => self.return_at(first),
                 Some(header) => {
@@ -1252,7 +1344,7 @@ impl Lowering<'_, '_> {
             }
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields }
+        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls }
     }
 
     /// Bind physical receiver facts once. The expanded unit's write set owns
@@ -1463,6 +1555,7 @@ impl Lowering<'_, '_> {
             Op::Jump if plain => {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {
+                    self.backedge |= target == self.coverage.entry();
                     self.interrupt_check(state, pc32);
                     if let Some(header) = instructions.get(target).copied()
                         && matches!(header.op(), Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
@@ -1543,7 +1636,7 @@ impl Lowering<'_, '_> {
                 falls
             }
             None => {
-                if self.coverage == Coverage::Full && (self.completion == Completion::Number
+                if self.coverage.full() && (self.completion == Completion::Number
                     || !((instruction.op() == Op::Return && plain) || instruction.returns_from_frame())) {
                     self.valid = false;
                 }
@@ -1680,15 +1773,11 @@ impl Lowering<'_, '_> {
                 Some(self.ins().icmp_imm_u(IntCC::Equal, callee, identity.to_bits() as i64)),
                 Some(Type::function(identity).expect("admitted callee locator")),
             ),
-            CalleeBinding::Function => {
-                let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
-                    std::mem::offset_of!(JsStepDispatch, program_id) as i32);
-                let program = self.ins().uextend(types::I64, program);
-                let function = self.ins().iconst(types::I64, i64::from(inlined.target.function));
-                let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionBinding);
-                let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
-                (Some(self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)), Some(Type::language(crate::ValueType::Function)))
-            }
+            CalleeBinding::Function => (
+                if self.entry.as_ref().expect("entry facts").calls.contains(frame) { None }
+                    else { Some(self.function_binding(callee, inlined.target.function)) },
+                Some(Type::language(crate::ValueType::Function)),
+            ),
         };
         if let Some(same) = same {
             match inlined.alternative {
@@ -1714,7 +1803,10 @@ impl Lowering<'_, '_> {
         let admitted = state.headers[usize::from(inlined.receiver)].is_some()
             || entry.records[usize::from(inlined.receiver)].is_some()
             || (state.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
-        if !admitted {
+        let callee = self.program.function(inlined.target.function as usize);
+        let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
+            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
+        if !admitted && !numeric {
             let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
             let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
             emit_js_guard(&mut self.builder, object, exit);
@@ -1724,7 +1816,6 @@ impl Lowering<'_, '_> {
             let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
             self.set_tagged(state, destination, undefined);
         }
-        let callee = self.program.function(inlined.target.function as usize);
         for argument in 0..inlined.arguments.min(callee.params) {
             if let Some(register) = callee.parameter_registers.map(|base| base + argument)
                 .or_else(|| callee.promoted_register(argument)) {
@@ -1732,6 +1823,16 @@ impl Lowering<'_, '_> {
             }
         }
         true
+    }
+
+    fn function_binding(&mut self, callee: ir::Value, function: u32) -> ir::Value {
+        let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
+            std::mem::offset_of!(JsStepDispatch, program_id) as i32);
+        let program = self.ins().uextend(types::I64, program);
+        let function = self.ins().iconst(types::I64, i64::from(function));
+        let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionBinding);
+        let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
+        self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)
     }
 
     /// A call the unit does not inline, made natively (`dispatch_fast::lane_body_call`) from
@@ -1944,6 +2045,7 @@ impl Lowering<'_, '_> {
     }
 
     fn branch(&mut self, state: &mut State, pc: usize, target: usize, taken: ir::Value) {
+        self.backedge |= target <= pc && target == self.coverage.entry();
         let taken_block = self.builder.create_block();
         let fall_block = self.builder.create_block();
         self.ins().brif(taken, taken_block, &[], fall_block, &[]);

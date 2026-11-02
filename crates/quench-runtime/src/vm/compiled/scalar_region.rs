@@ -444,7 +444,7 @@ mod tests {
                 &*isa,
                 JsGeneralCallout::Dynamic,
                 &plans,
-                None,
+                &[],
             )
             .unwrap();
             let memory = publish_eager_graph(native, &*isa).unwrap();

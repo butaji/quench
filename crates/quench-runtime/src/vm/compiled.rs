@@ -2290,49 +2290,61 @@ pub(super) struct StaticTypedRegion {
 }
 
 #[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: u32, targets: &[Option<u32>],
-    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Option<StaticTypedRegion>
+pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Option<u32>],
+    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Vec<StaticTypedRegion>
 {
-    if isa.pointer_type() != types::I64 { return None; }
-    let function = program.function_get(function_id as usize)?;
-    if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
-    // Source-PC recovery materializes one callee frame (`lane_materialize_inline`): the
-    // region inlines its own calls, of callees that call nothing.
+    if isa.pointer_type() != types::I64 { return Vec::new(); }
+    let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
+    if function_id == 0 || !js_general_dispatch_candidate(program, function) { return Vec::new(); }
+    // Source-PC recovery materializes one callee frame. Static regions inline
+    // root calls of leaves; the same unit owns all origins and recovery masks.
     let leaf = |function: u32| program.function_get(function as usize)
         .is_some_and(|body| body.instructions().all(|instruction| instruction.op() != Op::Call));
-    let unit = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
+    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
         .then(|| targets.get(pc as usize).copied().flatten()).flatten().filter(|callee| leaf(*callee))
         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
-        &|id| program.function_get(id as usize))?;
-    // A closed loop must re-enter after an opaque call returns. Its effectful
-    // initialization remains in canonical code and may not run on a backedge.
-    let loop_header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
-        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
-            .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
-    }).min().filter(|header| unit.markers.iter().all(|marker| marker >= header)
-        && unit.instructions[*header..].iter().all(|instruction|
-            instruction.op().immediate_role() != crate::bytecode::ImmediateRole::JumpTarget
-                || instruction.jump_target() as usize >= *header));
+        &|id| program.function_get(id as usize)) else { return Vec::new(); };
+    let mut headers = smallvec::SmallVec::<[usize; 4]>::new();
+    for (pc, instruction) in unit.instructions.iter().enumerate() {
+        if matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump) {
+            let target = instruction.jump_target() as usize;
+            if target <= pc && matches!(unit.origins.get(target), Some(lane_unit::Origin::Caller(_))) {
+                headers.push(target);
+            }
+        }
+    }
+    headers.sort_unstable();
+    headers.dedup();
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
-    // A scalar function has no opaque observation between its preheader and
-    // loop. Keep the definitions in the unit so loop phis inherit their types;
-    // native backedges still target the loop, never the initialization.
     let scalar = !has_calls && unit.instructions.iter().all(|instruction|
         instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
             || matches!(instruction.op(), Op::Nop | Op::LoadConst | Op::Move | Op::IncDec
                 | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse | Op::Return));
-    let lower = |unit: &lane_unit::Unit| lane_region::lower(program, function_id, unit,
-        LaneHelpers::Linked(helper_symbol), &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, isa, lane_region::Coverage::Full,
-        lane_region::Completion::SourcePc).filter(|region| region.native != 0).map(|region| region.function);
-    if scalar && loop_header.is_some()
-        && let Some(function) = lower(&unit) {
-        return Some(StaticTypedRegion { header: 0, function });
+    let lower = |coverage| {
+        let entry = match coverage { lane_region::Coverage::PrefixFrom(pc) | lane_region::Coverage::FullFrom(pc) => pc, _ => 0 };
+        let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
+        lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
+            &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, isa,
+            coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
+            .map(|mut region| {
+                region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, header);
+                StaticTypedRegion { header: header as usize, function: region.function }
+            })
+    };
+    // Preserve pure preheaders in the SSA graph. Otherwise, first try the
+    // complete region previously admitted by the whole-suffix contract.
+    if scalar && !headers.is_empty() && let Some(region) = lower(lane_region::Coverage::Full) {
+        return vec![region];
     }
-    let header = loop_header.or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))?;
-    let lane_unit::Origin::Caller(source_header) = unit.origins[header] else { return None; };
-    let unit = unit.suffix(header)?;
-    Some(StaticTypedRegion { header: source_header as usize, function: lower(&unit)? })
+    if let Some(header) = headers.first().copied().or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))
+        && let Some(region) = lower(lane_region::Coverage::FullFrom(header)) {
+        return vec![region];
+    }
+    // Independent loop entries share the original unit PC/frame IDs. Prefix
+    // lowering stops before an opaque operation and returns its exact origin;
+    // neither initialization nor a preceding loop is replayed on re-entry.
+    headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).collect()
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
@@ -2351,7 +2363,7 @@ pub(super) fn compile_js_general_dispatch(
         .ok_or("target-isa-unavailable")?;
     let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
         program, function_id, unresolved_names_are_global, &*isa,
-        JsGeneralCallout::Dynamic, &[], None,
+        JsGeneralCallout::Dynamic, &[], &[],
     )?;
     let function = program.function_get(function_id as usize).ok_or("missing-function")?;
     let code = compile_native_function(
@@ -2416,7 +2428,7 @@ pub(super) fn lower_js_general_dispatch(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     callout_kind: JsGeneralCallout,
     _scalar_regions: &[StaticRegionEntry<'_>],
-    _typed_region: Option<StaticTypedRegionEntry<'_>>,
+    _typed_regions: &[StaticTypedRegionEntry<'_>],
 ) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
@@ -2425,7 +2437,7 @@ pub(super) fn lower_js_general_dispatch(
         return Err("general-dispatch-requires-64-bit-pointers");
     }
     #[cfg(feature = "aot")]
-    if _typed_region.is_some() && !callout_kind.fixed_operations() {
+    if !_typed_regions.is_empty() && !callout_kind.fixed_operations() {
         return Err("typed-region-requires-fixed-native-control");
     }
     let function = program
@@ -2459,7 +2471,7 @@ pub(super) fn lower_js_general_dispatch(
     let continue_block = builder.create_block();
     let continue_pc = builder.append_block_param(continue_block, types::I64);
     #[cfg(feature = "aot")]
-    let typed_continue = _typed_region.map(|_| {
+    let typed_continue = (!_typed_regions.is_empty()).then(|| {
         let block = builder.create_block();
         let pc = builder.append_block_param(block, types::I64);
         (block, pc)
@@ -2491,17 +2503,17 @@ pub(super) fn lower_js_general_dispatch(
         .collect();
     let entries = std::borrow::Cow::Borrowed(blocks.as_slice());
     #[cfg(feature = "aot")]
-    let (entries, typed_entry) = {
+    let (entries, typed_entries) = {
         let mut entries = entries;
         for entry in _scalar_regions {
             entries.to_mut()[entry.range.start] = builder.create_block();
         }
-        let typed_entry = if let Some(unit) = _typed_region {
+        let typed_entries: Vec<_> = _typed_regions.iter().copied().map(|unit| {
             let fallback = entries[unit.header];
             entries.to_mut()[unit.header] = builder.create_block();
-            Some((unit, fallback))
-        } else { None };
-        (entries, typed_entry)
+            (unit, fallback)
+        }).collect();
+        (entries, typed_entries)
     };
     let mut general_dispatch_native_pcs = vec![0; instruction_count];
     // Start from the caller's exact resume PC. The artifact is shared by normal
@@ -3621,21 +3633,21 @@ pub(super) fn lower_js_general_dispatch(
     }
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
-        let gate = typed_entry.filter(|(unit, _)| unit.header == entry.range.start)
-            .map_or(entries[entry.range.start], |(_, fallback)| fallback);
+        let gate = typed_entries.iter().find(|(unit, _)| unit.header == entry.range.start)
+            .map_or(entries[entry.range.start], |(_, fallback)| *fallback);
         let call = scalar_region::emit_entry(&mut builder, isa, entry, gate,
             context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc, &control);
         frame_flow.residual(call, entry.frame);
     }
     #[cfg(feature = "aot")]
-    let mut typed_return = None;
+    let mut typed_returns = Vec::new();
     #[cfg(feature = "aot")]
-    if let Some((unit, fallback)) = typed_entry {
+    for (unit, fallback) in &typed_entries {
         builder.switch_to_block(entries[unit.header]);
         let run = builder.create_block();
         let specialized = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-        builder.ins().brif(admitted, run, &[], fallback, &[]);
+        builder.ins().brif(admitted, run, &[], *fallback, &[]);
         builder.switch_to_block(run);
         let signature = builder.import_signature(native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
         let name = builder.func.declare_imported_user_function(unit.function.name.get_user()
@@ -3646,7 +3658,7 @@ pub(super) fn lower_js_general_dispatch(
         // After inlining ordinary exits preserve SSA edges. Exact callee
         // materialization owns a canonical frame boundary below.
         let pc = builder.inst_results(call)[0];
-        typed_return = Some(pc);
+        typed_returns.push((unit.header, pc));
         let pc = builder.ins().uextend(types::I64, pc);
         builder.ins().jump(typed_continue.expect("typed continuation").0, &[ir::BlockArg::Value(pc)]);
     }
@@ -3666,56 +3678,62 @@ pub(super) fn lower_js_general_dispatch(
         builder.ins().brif(materialized, stopped_block, &[], source, &[]);
         builder.switch_to_block(source);
         let targets: Vec<_> = entries.iter().copied().enumerate().map(|(pc, entry)|
-            typed_entry.filter(|(unit, _)| unit.header == pc).map_or(entry, |(_, fallback)| fallback)).collect();
+            typed_entries.iter().find(|(unit, _)| unit.header == pc).map_or(entry, |(_, fallback)| *fallback)).collect();
         emit_js_pc_dispatch(&mut builder, pc, &targets, invalid_pc);
     }
     builder.seal_block(continue_block);
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
     #[cfg(feature = "aot")]
-    if let Some((unit, _)) = typed_entry {
+    if !typed_entries.is_empty() {
         use cranelift_codegen::inline::{Inline, InlineCommand};
-        struct TypedResidual<'a>(&'a ir::Function);
+        struct TypedResidual<'a>(&'a [StaticTypedRegionEntry<'a>]);
         impl Inline for TypedResidual<'_> {
             fn inline(&mut self, caller: &ir::Function, _: ir::Inst, _: ir::Opcode,
                 callee: ir::FuncRef, _: &[ir::Value]) -> InlineCommand<'_> {
                 let ir::ExternalName::User(name) = caller.dfg.ext_funcs[callee].name else { return InlineCommand::KeepCall };
-                if Some(&caller.params.user_named_funcs()[name]) != self.0.name.get_user() { return InlineCommand::KeepCall; }
-                InlineCommand::Inline { callee: std::borrow::Cow::Borrowed(self.0), visit_callee: false }
+                let Some(unit) = self.0.iter().find(|unit|
+                    Some(&caller.params.user_named_funcs()[name]) == unit.function.name.get_user()) else { return InlineCommand::KeepCall; };
+                InlineCommand::Inline { callee: std::borrow::Cow::Borrowed(unit.function), visit_callee: false }
             }
         }
-        cranelift_codegen::verify_function(unit.function, isa).map_err(|_| "typed-residual-verification-failed")?;
+        for unit in _typed_regions {
+            cranelift_codegen::verify_function(unit.function, isa).map_err(|_| "typed-residual-verification-failed")?;
+        }
         // Cranelift's append-only instruction arena separates the cloned,
         // verified helper calls from the caller's guest/semantic callouts.
         let first_inlined = native.dfg.num_insts();
         let mut context = cranelift_codegen::Context::for_function(native);
-        if !context.inline(TypedResidual(unit.function)).map_err(|_| "typed-residual-inlining-failed")? {
+        if !context.inline(TypedResidual(_typed_regions)).map_err(|_| "typed-residual-inlining-failed")? {
             return Err("typed-residual-call-not-found");
         }
         native = context.func;
         // The residual returns a statically fixed source PC on every exit.
         // Link those edges before frame promotion instead of dispatching a
         // known PC through a memory/result join and another jump table.
-        let result = native.dfg.resolve_aliases(typed_return.expect("typed source-PC result"));
-        let ir::ValueDef::Param(join, parameter) = native.dfg.value_def(result) else {
-            return Err("typed-residual-return-is-not-a-join");
-        };
-        let exits: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter_map(|instruction| {
-                let ir::InstructionData::Jump { destination, .. } = native.dfg.insts[instruction] else { return None };
-                if destination.block(&native.dfg.value_lists) != join { return None; }
-                let ir::BlockArg::Value(value) = destination.args(&native.dfg.value_lists).nth(parameter)? else { return None };
-                let ir::ValueDef::Result(constant, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
-                let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
-                let pc = usize::try_from(imm.bits()).ok()?;
-                if pc == JS_INLINE_MATERIALIZED_PC as usize { return Some((instruction, stopped_block)); }
-                let target = *entries.get(pc)?;
-                let target = typed_entry.filter(|(unit, _)| unit.header == pc).map_or(target, |(_, fallback)| fallback);
-                Some((instruction, target))
-            }).collect();
-        for (instruction, target) in exits {
-            let destination = native.dfg.block_call(target, &[]);
-            native.dfg.insts[instruction] = ir::InstructionData::Jump { opcode: ir::Opcode::Jump, destination };
+        for (header, result) in typed_returns {
+            let result = native.dfg.resolve_aliases(result);
+            let ir::ValueDef::Param(join, parameter) = native.dfg.value_def(result) else {
+                return Err("typed-residual-return-is-not-a-join");
+            };
+            let exits: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+                .filter_map(|instruction| {
+                    let ir::InstructionData::Jump { destination, .. } = native.dfg.insts[instruction] else { return None };
+                    if destination.block(&native.dfg.value_lists) != join { return None; }
+                    let ir::BlockArg::Value(value) = destination.args(&native.dfg.value_lists).nth(parameter)? else { return None };
+                    let ir::ValueDef::Result(constant, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
+                    let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
+                    let pc = usize::try_from(imm.bits()).ok()?;
+                    if pc == JS_INLINE_MATERIALIZED_PC as usize { return Some((instruction, stopped_block)); }
+                    let target = *entries.get(pc)?;
+                    let target = typed_entries.iter().find(|(unit, _)| unit.header == header && header == pc)
+                        .map_or(target, |(_, fallback)| *fallback);
+                    Some((instruction, target))
+                }).collect();
+            for (instruction, target) in exits {
+                let destination = native.dfg.block_call(target, &[]);
+                native.dfg.insts[instruction] = ir::InstructionData::Jump { opcode: ir::Opcode::Jump, destination };
+            }
         }
         // Static exit linking can orphan the synthetic return/dispatch join.
         // Discard it before dirty-state analysis so unreachable edges cannot
@@ -17197,7 +17215,7 @@ mod tests {
             "invariant-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, 1, &[], &*isa, 0).unwrap();
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next().unwrap();
         let native = &region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
@@ -17644,7 +17662,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
-        let region = lower_static_typed_region(&program, id as u32, &targets[id], &*isa, 0).unwrap();
+        let region = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0).into_iter().next().unwrap();
         let native = &region.function;
         let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|instruction| matches!(native.dfg.insts[*instruction],
@@ -17684,31 +17702,35 @@ mod tests {
             context.host_mut().state::<mpsc::Sender<()>>().send(()).unwrap();
             Ok(context.undefined())
         }
-        let (ready, entered) = mpsc::channel::<()>();
-        let (handle_sender, handle_receiver) = mpsc::channel();
-        let (completed, completion) = mpsc::channel();
-        let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
-            let source = "function spin(){started();let x=1;for(let i=0;i<1/0;i=(i+1)|0){x=x^(x<<13);}return x;}spin();";
-            let program = crate::Engine::specialize(source, "rotated-interrupt.cjs").unwrap();
-            let native = linked_optimized_test_program(program);
-            let host = crate::test_host::TestHost::default()
-                .with_natives(crate::host_functions![global "started" (0) => started])
-                .with_state(Rc::new(ready));
-            let mut vm = Vm::new(host);
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            handle_sender.send(vm.execution_interrupt.clone()).unwrap();
-            let budget = crate::stack::GuestCallGuard::remaining();
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert!(error.is_execution_terminated(), "{error}");
-            assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
-            completed.send(()).unwrap();
-        }).unwrap();
-        let handle = handle_receiver.recv_timeout(WAIT_TIMEOUT).unwrap();
-        entered.recv_timeout(WAIT_TIMEOUT).unwrap();
-        thread::sleep(Duration::from_millis(20));
-        handle.request_termination();
-        completion.recv_timeout(WAIT_TIMEOUT).expect("native infinite loop must observe the live interrupt");
-        worker.join().unwrap();
+        for source in [
+            "function spin(){started();let x=1;for(let i=0;i<1/0;i=(i+1)|0){x=x^(x<<13);}return x;}spin();",
+            "function run(){function spin(x){for(let i=0;i<1/0;i=(i+1)|0)x=x^(x<<13);return x;}started();for(let n=0;n<2;n++)spin(n);}run();",
+        ] {
+            let (ready, entered) = mpsc::channel::<()>();
+            let (handle_sender, handle_receiver) = mpsc::channel();
+            let (completed, completion) = mpsc::channel();
+            let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
+                let program = crate::Engine::specialize(source, "rotated-interrupt.cjs").unwrap();
+                let native = linked_optimized_test_program(program);
+                let host = crate::test_host::TestHost::default()
+                    .with_natives(crate::host_functions![global "started" (0) => started])
+                    .with_state(Rc::new(ready));
+                let mut vm = Vm::new(host);
+                vm.set_execution_mode(ExecutionMode::NativeOnly);
+                handle_sender.send(vm.execution_interrupt.clone()).unwrap();
+                let budget = crate::stack::GuestCallGuard::remaining();
+                let error = vm.execute_native_program(&native, true).unwrap_err();
+                assert!(error.is_execution_terminated(), "{error}");
+                assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
+                completed.send(()).unwrap();
+            }).unwrap();
+            let handle = handle_receiver.recv_timeout(WAIT_TIMEOUT).unwrap();
+            entered.recv_timeout(WAIT_TIMEOUT).unwrap();
+            thread::sleep(Duration::from_millis(20));
+            handle.request_termination();
+            completion.recv_timeout(WAIT_TIMEOUT).expect("native infinite loop must observe the live interrupt");
+            worker.join().unwrap();
+        }
     }
 
     #[cfg(feature = "aot")]
@@ -17734,7 +17756,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
-        let region = lower_static_typed_region(&program, id as u32, &targets[id], &*isa, 0).unwrap();
+        let region = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0).into_iter().next().unwrap();
         assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
             .any(|instruction| region.function.dfg.insts[instruction].opcode() == ir::Opcode::Fadd),
@@ -17753,8 +17775,8 @@ mod tests {
         let mut owners = Vec::new();
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
-            let mut region = lower_static_typed_region(&program, id as u32, &targets[id], &*isa, 0);
-            if let Some(region) = &mut region {
+            let mut regions = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0);
+            for region in &mut regions {
                 // Bind the pure helper-table resolver as the image linker does.
                 let instructions: Vec<_> = region.function.layout.blocks()
                     .flat_map(|block| region.function.layout.block_insts(block)).collect();
@@ -17767,9 +17789,10 @@ mod tests {
                     }
                 }
             }
+            let typed: Vec<_> = regions.iter().map(|region|
+                StaticTypedRegionEntry {header:region.header,function:&region.function}).collect();
             let lowered = lower_js_general_dispatch(&program,id as u32,false,&*isa,
-                JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),&[],
-                region.as_ref().map(|region|StaticTypedRegionEntry {header:region.header,function:&region.function}));
+                JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),&[], &typed);
             let (memory,entry,operands)=match lowered {
                 Ok((body,_)) => {
                     let (memory,entry)=compile_and_publish_entry(body,&*isa,usize::MAX).unwrap();
@@ -17782,6 +17805,101 @@ mod tests {
         }
         // SAFETY: all entries use this exact program/host ABI and owner retains code.
         unsafe {crate::NativeJsProgram::from_entries(program,entries,Rc::new(owners))}.unwrap()
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn independent_typed_loops_preserve_effect_boundaries_and_local_call_binding() {
+        let source = r#"
+            let effects='';
+            function pipe(count,seed,hook){
+                function step(x){x=x|0;for(let j=0;j<1;j=(j+1)|0)x=(x^(x<<3))|0;return x|0;}
+                for(let warm=0;warm<3;warm++)step(warm);
+                hook();
+                let rounds=count,value=seed;
+                for(let i=0;i<rounds;i=(i+1)|0)value=step(value);
+                return value;
+            }
+            function oracle(n,x){for(let i=0;i<n;i++)x=(x^(x<<3))|0;return x;}
+            let hook=()=>{effects+='h';};
+            if(pipe(8,17,hook)!==oracle(8,17)||effects!=='h')throw 'separated loops';
+            let coercions=0;
+            let input={valueOf(){effects+='v';coercions++;return 7;}};
+            if(pipe(3,input,hook)!==oracle(3,7)||effects!=='hhv'||coercions!==1)throw 'coercion replay';
+            for(let value of [1.5,-0,2147483648,Infinity,NaN]){
+                if(pipe(3,value,()=>{})!==oracle(3,value))throw 'numeric entry fallback';
+            }
+            if(pipe(3.25,7,()=>{})!==oracle(3.25,7))throw 'fractional loop bound';
+            let untouched={valueOf(){throw 'zero-trip coercion';}};
+            if(pipe(0,untouched,()=>{})!==untouched||pipe(NaN,untouched,()=>{})!==untouched)throw 'zero-trip identity';
+            for(let value of [1n,Symbol()]){
+                try{pipe(2,value,()=>{});throw 'missing type error';}
+                catch(e){if(!(e instanceof TypeError))throw e;}
+            }
+            let sentinel={};
+            let bad={valueOf(){throw sentinel;}};
+            try{pipe(2,bad,()=>{});throw 'missing coercion throw';}catch(e){if(e!==sentinel)throw e;}
+            try{pipe(2,3,()=>{effects+='t';throw sentinel;});throw 'missing throw';}
+            catch(e){if(e!==sentinel||effects!=='hhvt')throw 'opaque throw';}
+            function rebound(n){
+                function plus(x){for(let j=0;j<1;j++)x=(x+1)|0;return x;}
+                let x=0;
+                for(let i=0;i<n;i++){
+                    if(i===2)plus=function(x){return (x+10)|0;};
+                    x=plus(x);
+                }
+                return x;
+            }
+            if(rebound(4)!==22)throw 'rebound callee';
+            throw 42;
+        "#;
+        for typescript in [false, true] {
+            let annotated = source.replace("function pipe(count,seed,hook)",
+                "function pipe(count:number,seed:number,hook:()=>void)");
+            let program = if typescript { crate::Engine::specialize_typescript(&annotated, "separate.cts") }
+                else { crate::Engine::specialize(source, "separate.cjs") }.unwrap();
+            let id = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
+            let targets = static_call_targets(&program);
+            let body = program.function(id);
+            let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
+                instruction.op() == Op::Call && targets[id][*pc].is_some()).count();
+            assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
+            let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
+                (caller == id as u32).then(|| targets[id][pc as usize]).flatten()
+                    .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                &|id| program.function_get(id as usize)).unwrap();
+            assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let regions = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0);
+            assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
+            assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
+            for region in &regions {
+                let function = &region.function;
+                let bindings: Vec<_> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+                    .filter(|instruction| {
+                        if function.dfg.insts[*instruction].opcode() != ir::Opcode::CallIndirect { return false; }
+                        let target = function.dfg.resolve_aliases(function.dfg.inst_args(*instruction)[0]);
+                        let ir::ValueDef::Result(load, _) = function.dfg.value_def(target) else { return false; };
+                        matches!(function.dfg.insts[load], ir::InstructionData::Load { offset, .. }
+                            if i32::from(offset) == LaneHelper::FunctionBinding as i32 * std::mem::size_of::<usize>() as i32)
+                    }).collect();
+                assert_eq!(bindings.len(), 1, "one actual callee admission per region: {function}\n{}", program.disassemble());
+                let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
+                let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(function, &cfg);
+                for block in function.layout.blocks() {
+                    if !dom.is_reachable(block) { continue; }
+                    for header in cfg.succ_iter(block).filter(|target| dom.dominates(*target, block, &function.layout)) {
+                        assert!(dom.dominates(bindings[0], header, &function.layout), "callee admission must precede every loop");
+                    }
+                }
+            }
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
     }
 
     #[cfg(feature = "aot")]
@@ -17801,7 +17919,7 @@ mod tests {
         assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0)
+        let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next()
             .expect("a write followed by a fallible read has exact recovery");
         let offset = LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32;
         assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -17843,7 +17961,7 @@ mod tests {
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
-            let mut region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0).unwrap();
+            let mut region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next().unwrap();
             let consume = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
             let read = program.function(consume).instructions().position(|instruction|
@@ -17867,7 +17985,7 @@ mod tests {
                 let (memory, entry, operands) = if id == caller {
                     let (body, _) = lower_js_general_dispatch(&program, id as u32, false, &*isa,
                         JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[],
-                        Some(StaticTypedRegionEntry { header: region.header, function: &region.function })).unwrap();
+                        &[StaticTypedRegionEntry { header: region.header, function: &region.function }]).unwrap();
                     let (memory, entry) = compile_and_publish_entry(body, &*isa, usize::MAX).unwrap();
                     (memory, entry, Vec::new())
                 } else { live_native_function(&program, id as u32, None) };
@@ -17898,7 +18016,7 @@ mod tests {
         ).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let residual = lower_static_typed_region(&program, 1, &[], &*isa, 0).expect("call-free typed loop");
+        let residual = lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next().expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
         let has_field_helper = |native: &ir::Function, resolver_symbol: u32| {
             let load_base = |value: ir::Value, expected_offset: i32| {
@@ -17978,7 +18096,7 @@ mod tests {
         assert_eq!(unit.frames.len(), 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0)
+        let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next()
             .expect("closed loop with an inlined store");
         assert!(region.header > 0, "prefix store cannot execute again on loop reentry");
         assert!(program.function(caller).instructions().any(|instruction|
@@ -17998,7 +18116,7 @@ mod tests {
             "fixture must exercise a fused read/read/sink instruction");
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_region(&program, 1, &[], &*isa, 0).is_some(),
+        assert!(lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next().is_some(),
             "fused field sites must use the shared typed region");
     }
 
@@ -18019,7 +18137,7 @@ mod tests {
         assert_eq!(unit.frames[0].arguments, 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0).is_some());
+        assert!(lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next().is_some());
     }
 
     #[cfg(feature = "aot")]
@@ -18039,7 +18157,7 @@ mod tests {
         assert_eq!(unit.frames[0].target.callee, CalleeBinding::Function);
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0)
+        let region = lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).into_iter().next()
             .expect("restartable captured store inline region");
         let scratch_offset = std::mem::offset_of!(JsStepDispatch, inlined) as i32;
         assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
@@ -18056,7 +18174,7 @@ mod tests {
             "shared-header.js").unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, 1, &[], &*isa, 0).expect("typed field/call region");
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next().expect("typed field/call region");
         let families = region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block))
             .filter(|instruction| matches!(region.function.dfg.insts[*instruction],
@@ -18078,11 +18196,11 @@ mod tests {
         let body = program.function_get(1).unwrap();
         assert!(body.instructions().any(|instruction| instruction.op() == Op::Call
             && instruction.returns_from_frame() && instruction.call_window().count == 1));
-        let region = lower_static_typed_region(&program, 1, &[], &*isa, 0).expect("typed prefix before terminal call");
+        let region = lower_static_typed_regions(&program, 1, &[], &*isa, 0).into_iter().next().expect("typed prefix before terminal call");
         assert_eq!(region.header, 0);
         let nonterminal = crate::Engine::specialize(
             "function pipe(object){object.finish(3);return object.seen;}", "nonterminal-call.js").unwrap();
-        assert!(lower_static_typed_region(&nonterminal, 1, &[], &*isa, 0).is_none(),
+        assert!(lower_static_typed_regions(&nonterminal, 1, &[], &*isa, 0).into_iter().next().is_none(),
             "unsupported nonterminal calls still require a full effect/recovery boundary");
     }
 
@@ -18096,7 +18214,7 @@ mod tests {
             function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pipe")).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_region(&program, function as u32, &[], &*isa, 0).expect("guarded call region");
+        let region = lower_static_typed_regions(&program, function as u32, &[], &*isa, 0).into_iter().next().expect("guarded call region");
         assert_eq!(region.header, 0, "call pipes start at the function's entry");
         let helper_offset = LaneHelper::GuardedCall as i32 * std::mem::size_of::<usize>() as i32;
         assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block)).any(|instruction| {
@@ -18749,7 +18867,7 @@ mod tests {
                         live_native_function(&program, id as u32, None)
                     } else {
                         let (native, _) = lower_js_general_dispatch(&program, id as u32, false, &*isa,
-                            JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[], None).unwrap();
+                            JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[], &[]).unwrap();
                         let entry_block = native.layout.entry_block().unwrap();
                         let context = native.dfg.block_params(entry_block)[0];
                         let instructions: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).collect();
