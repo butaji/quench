@@ -2176,7 +2176,12 @@ fn moved_shape_lookup_index_matches_the_derived_index() {
         };
         let derived = super::object::derive_shape_lookup_index(&vm.shapes, shape as u32);
         assert!(index.entries == derived.entries, "shape {shape} entries");
-        assert!(index.attributes == derived.attributes, "shape {shape} attributes");
+        for slot in 0..vm.shapes[shape].storage_len as usize {
+            assert!(
+                index.attributes.get(slot) == derived.attributes.get(slot),
+                "shape {shape} slot {slot} attributes"
+            );
+        }
         compared += 1;
     }
     assert!(compared > 0, "the wide object's shapes keep an index");

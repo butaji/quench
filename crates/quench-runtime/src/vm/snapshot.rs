@@ -348,7 +348,6 @@ impl<H: Host> Vm<H> {
             closure_templates: _,
             enumerable_keys: _,
             capture_walks: _,
-            shape_attribute_memo: _,
             name_atom_memo: _,
             atom_text,
             atoms: _,

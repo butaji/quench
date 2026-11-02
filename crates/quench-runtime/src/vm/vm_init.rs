@@ -129,7 +129,6 @@ impl<H: Host> Vm<H> {
             promise_species_proof: Default::default(),
             index_free_chain_proof: Default::default(),
             enumerable_keys: Default::default(),
-            shape_attribute_memo: Default::default(),
             name_atom_memo: Default::default(),
             shapes: Shape::table(),
             shape_constructors: Vec::new(),

@@ -1465,12 +1465,61 @@ impl DictionaryTrigger {
         }
     }
 }
+/// Slot-indexed columns: frequent descriptor flags are contiguous bytes; accessor
+/// indices allocate separately only when a slot actually names accessor functions.
+/// A column's omitted tail has its default value.
+#[derive(Default)]
+struct ShapeSlotAttributes {
+    flags: Vec<u8>,
+    accessors: Vec<u32>,
+}
+impl ShapeSlotAttributes {
+    const WRITABLE: u8 = 1 << 0;
+    const ENUMERABLE: u8 = 1 << 1;
+    const CONFIGURABLE: u8 = 1 << 2;
+    const ACCESSOR: u8 = 1 << 3;
+    const DEFAULT_FLAGS: u8 = Self::encode_flags(DEFAULT_SHAPE_ATTRIBUTES);
+
+    const fn encode_flags(attributes: ShapeAttributes) -> u8 {
+        (attributes.writable as u8) * Self::WRITABLE
+            | (attributes.enumerable as u8) * Self::ENUMERABLE
+            | (attributes.configurable as u8) * Self::CONFIGURABLE
+            | (attributes.accessor as u8) * Self::ACCESSOR
+    }
+
+    fn get(&self, slot: usize) -> ShapeAttributes {
+        let flags = self.flags.get(slot).copied().unwrap_or(Self::DEFAULT_FLAGS);
+        ShapeAttributes {
+            writable: flags & Self::WRITABLE != 0,
+            enumerable: flags & Self::ENUMERABLE != 0,
+            configurable: flags & Self::CONFIGURABLE != 0,
+            accessor: flags & Self::ACCESSOR != 0,
+            accessors: self.accessors.get(slot).copied().unwrap_or(NO_SHAPE_ACCESSORS),
+        }
+    }
+    fn record(&mut self, slot: u32, attributes: ShapeAttributes) {
+        let slot = slot as usize;
+        let flags = Self::encode_flags(attributes);
+        if slot >= self.flags.len() && flags != Self::DEFAULT_FLAGS {
+            self.flags.resize(slot + 1, Self::DEFAULT_FLAGS);
+        }
+        if let Some(stored) = self.flags.get_mut(slot) {
+            *stored = flags;
+        }
+        if slot >= self.accessors.len() && attributes.accessors != NO_SHAPE_ACCESSORS {
+            self.accessors.resize(slot + 1, NO_SHAPE_ACCESSORS);
+        }
+        if let Some(stored) = self.accessors.get_mut(slot) {
+            *stored = attributes.accessors;
+        }
+    }
+}
 struct ShapeLookupIndex {
     /// The shape's live properties in definition order, with their slots.
     entries: Vec<(property_key::PropertyKey, u32)>,
     /// Positions in `entries`, hashed by key: the pairs themselves are stored once.
     positions: hashbrown::HashTable<u32>,
-    attributes: FxHashMap<u32, ShapeAttributes>,
+    attributes: ShapeSlotAttributes,
 }
 impl ShapeLookupIndex {
     fn key_hash(key: property_key::PropertyKey) -> u64 {
@@ -1481,7 +1530,7 @@ impl ShapeLookupIndex {
     }
     fn new(
         entries: Vec<(property_key::PropertyKey, u32)>,
-        attributes: FxHashMap<u32, ShapeAttributes>,
+        attributes: ShapeSlotAttributes,
     ) -> Self {
         let mut positions = hashbrown::HashTable::with_capacity(entries.len());
         for (position, &(key, _)) in entries.iter().enumerate() {
@@ -1514,10 +1563,10 @@ impl ShapeLookupIndex {
                     .insert_unique(Self::key_hash(key), position, |&position| {
                         Self::key_hash(entries[position as usize].0)
                     });
-                self.record_attributes(slot, attributes.shape());
+                self.attributes.record(slot, attributes.shape());
             }
             ShapeTransition::Descriptor { slot, attributes } => {
-                self.record_attributes(slot, attributes);
+                self.attributes.record(slot, attributes);
             }
             ShapeTransition::Delete { .. } => return None,
             ShapeTransition::FunctionName { .. }
@@ -1530,14 +1579,6 @@ impl ShapeLookupIndex {
         }
         Some(self)
     }
-    /// The slot's newest attributes; default ones are not stored.
-    fn record_attributes(&mut self, slot: u32, attributes: ShapeAttributes) {
-        if attributes == DEFAULT_SHAPE_ATTRIBUTES {
-            self.attributes.remove(&slot);
-        } else {
-            self.attributes.insert(slot, attributes);
-        }
-    }
     fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
         self.positions
             .find(Self::key_hash(key), |&position| {
@@ -1549,7 +1590,8 @@ impl ShapeLookupIndex {
     fn payload_capacity_bytes(&self) -> usize {
         self.entries.capacity() * size_of::<(property_key::PropertyKey, u32)>()
             + self.positions.capacity() * (size_of::<u32>() + 1)
-            + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
+            + self.attributes.flags.capacity() * size_of::<u8>()
+            + self.attributes.accessors.capacity() * size_of::<u32>()
     }
 }
 /// Facts a shape inherits from its chain: once a transition introduces one, every descendant
@@ -1572,6 +1614,9 @@ impl ShapeFacts {
     /// property is, rather than a getter alone: its functions in `Vm::shape_accessors`
     /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
     const ACCESSOR_PAIRS: u8 = 1 << 3;
+    /// A transition introduced non-default slot attributes. Without this fact every
+    /// allocated slot has the default data descriptor, including vacated slots.
+    const NON_DEFAULT_ATTRIBUTES: u8 = 1 << 4;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
@@ -1581,6 +1626,11 @@ impl ShapeFacts {
         Self(
             self.0
                 | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
+                | introduced(
+                    matches!(transition, ShapeTransition::Add { attributes, .. } if attributes != DEFAULT_DATA_ATTRIBUTES)
+                        || descriptor(|attributes| attributes != DEFAULT_SHAPE_ATTRIBUTES),
+                    Self::NON_DEFAULT_ATTRIBUTES,
+                )
                 | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
                 | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
                 | introduced(
@@ -1588,6 +1638,10 @@ impl ShapeFacts {
                     Self::ACCESSOR_PAIRS,
                 ),
         )
+    }
+
+    fn default_attributes(self) -> bool {
+        self.0 & Self::NON_DEFAULT_ATTRIBUTES == 0
     }
 
     fn accessor_pairs(self) -> bool {
@@ -1993,7 +2047,6 @@ pub(crate) struct Vm<H> {
     promise_species_proof: std::cell::Cell<Option<promise::PromiseSpeciesProof>>,
     index_free_chain_proof: std::cell::Cell<Option<object::IndexFreeChainProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
-    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
@@ -2968,7 +3021,6 @@ impl<H: Host> Vm<H> {
         self.promise_species_proof.set(None);
         self.index_free_chain_proof.set(None);
         self.enumerable_keys.clear();
-        self.shape_attribute_memo.clear();
         self.atom_strings.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();

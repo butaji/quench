@@ -114,8 +114,21 @@ mod shape_trace {
 pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     let mut entries = Vec::new();
     let mut seen_keys = FxHashSet::default();
-    let mut seen_slots = FxHashSet::default();
-    let mut attributes = FxHashMap::default();
+    // Four words keep the first 256 slots on the stack (32 bytes), with an exact
+    // heap spill for wider objects rather than a property-count limit.
+    const INLINE_SLOT_WORDS: usize = 4;
+    let mut seen_slots: smallvec::SmallVec<[u64; INLINE_SLOT_WORDS]> = smallvec::smallvec![
+        0u64;
+        (shapes[shape as usize].storage_len as usize).div_ceil(u64::BITS as usize)
+    ];
+    let mut first_slot = |slot: u32| {
+        let word = &mut seen_slots[slot as usize / u64::BITS as usize];
+        let mask = 1u64 << (slot % u64::BITS);
+        let first = *word & mask == 0;
+        *word |= mask;
+        first
+    };
+    let mut attributes = ShapeSlotAttributes::default();
     let mut current = Some(shape);
     while let Some(id) = current {
         let shape = &shapes[id as usize];
@@ -128,20 +141,20 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
                 if seen_keys.insert(key) {
                     entries.push((key, slot));
                 }
-                if seen_slots.insert(slot) && value != DEFAULT_DATA_ATTRIBUTES {
-                    attributes.insert(slot, value.shape());
+                if first_slot(slot) && value != DEFAULT_DATA_ATTRIBUTES {
+                    attributes.record(slot, value.shape());
                 }
             }
             ShapeTransition::Delete { key, slot } => {
                 seen_keys.insert(key);
-                seen_slots.insert(slot);
+                first_slot(slot);
             }
             ShapeTransition::Descriptor {
                 slot,
                 attributes: value,
             } => {
-                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
-                    attributes.insert(slot, value);
+                if first_slot(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
+                    attributes.record(slot, value);
                 }
             }
             ShapeTransition::FunctionName { .. }
@@ -374,25 +387,13 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_slot_attributes(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
-            return Some(
-                index
-                    .attributes
-                    .get(&(slot as u32))
-                    .copied()
-                    .unwrap_or(DEFAULT_SHAPE_ATTRIBUTES),
-            );
+            return Some(index.attributes.get(slot));
         }
-        let memo_slot = u32::try_from(slot).ok().filter(|_| !self.shape_is_dictionary(shape));
-        if let Some(memo_slot) = memo_slot
-            && let Some(attributes) = self.shape_attribute_memo.get(shape, memo_slot)
-        {
-            return attributes;
+        let layout = &self.shapes[shape as usize];
+        if layout.facts.default_attributes() && !self.shape_is_dictionary(shape) {
+            return (slot < layout.storage_len()).then_some(DEFAULT_SHAPE_ATTRIBUTES);
         }
-        let attributes = self.walked_shape_attribute(shape, slot);
-        if let Some(memo_slot) = memo_slot {
-            self.shape_attribute_memo.record(shape, memo_slot, attributes);
-        }
-        attributes
+        self.walked_shape_attribute(shape, slot)
     }
     /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
     fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
