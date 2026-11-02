@@ -146,3 +146,24 @@ for (let phase = 0; phase < 3; phase++) {
   projectionLive.b = phase;
 }
 show(keys(projectionLive));
+
+// The engine's legacy intrinsic exposes fresh arrays; it cannot expose the loop's view.
+const legacyForInView = globalThis['\0quench:for-in-keys'];
+if (typeof legacyForInView === 'function') {
+  const sourceForInView = {a: 1, b: 2};
+  const firstForInView = legacyForInView(sourceForInView);
+  const secondForInView = legacyForInView(sourceForInView);
+  if (firstForInView === secondForInView) throw new Error('legacy key array identity');
+  if (Object.getPrototypeOf(firstForInView) !== Array.prototype) throw new Error('legacy key array prototype');
+  const visitedForInView = [];
+  for (const key in sourceForInView) {
+    visitedForInView.push(key);
+    if (key === 'a') {
+      const exposedForInView = legacyForInView(sourceForInView);
+      exposedForInView[1] = 'poisoned';
+      exposedForInView.length = 0;
+      gc();
+    }
+  }
+  if (visitedForInView.join() !== 'a,b') throw new Error('private key view escaped');
+}
