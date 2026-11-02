@@ -1460,6 +1460,21 @@ impl Lowering<'_, '_> {
             };
             return Some(projection.read(&mut self.builder, field.slot));
         }
+        // A layout family: own fields at one slot in every shape. One membership test and one
+        // read serve them all, bounded by the shortest storage, which still holds the slot.
+        if let [first, ..] = shapes
+            && shapes.iter().all(|field| field.holder.is_none() && field.slot == first.slot && field.storage == first.storage) {
+            let mut member = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(first.shape));
+            for field in &shapes[1..] {
+                let same = self.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+                member = self.ins().bor(member, same);
+            }
+            emit_js_guard(&mut self.builder, member, exit);
+            let shortest = shapes.iter().copied().min_by_key(|field| field.storage_len).expect("a family has a shape");
+            let projection = CheckedObject::prove(&mut self.builder, object, inline, properties,
+                properties_len, shortest, PackedAccess::Reload, exit)?;
+            return Some(projection.read(&mut self.builder, first.slot));
+        }
         let join = self.builder.create_block();
         let value = self.builder.append_block_param(join, types::I64);
         for field in shapes {
