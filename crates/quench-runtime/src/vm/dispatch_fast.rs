@@ -20,6 +20,7 @@
 //! safepoint jump leaves the lane.
 
 use super::dispatch_frame::PendingGeneralCall;
+use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
@@ -17113,7 +17114,7 @@ fn derive_lane_view<'live, H: Host>(
             // Control reaches this record only from the previous one when no
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.
-            let carried = producer.take().filter(|_| ACCUMULATOR && !jump_targets[pc]);
+            let carried = producer.take().filter(|_| ACCUMULATOR && !jump_targets.contains(pc));
             let acc = carried.map_or(ACC_NONE, |register| {
                 accumulator_field(instruction, register)
             });
@@ -17565,11 +17566,11 @@ fn derive_lane_view<'live, H: Host>(
     // entry stays a plain jump, since tables take the entry's jump without
     // running its record. This runs before the fusions below, which take a
     // following jump's record as a plain jump.
-    let mut entry_jumps = vec![false; records.len()];
+    let mut entry_jumps = InstructionSet::new(records.len());
     for (pc, &instruction) in decoded.iter().enumerate() {
         if instruction.op() == Op::WasmBranchTable {
             for entry in crate::bytecode::branch_table_entries(pc, instruction) {
-                entry_jumps[entry] = true;
+                entry_jumps.insert(entry);
             }
         }
     }
@@ -17578,7 +17579,7 @@ fn derive_lane_view<'live, H: Host>(
         let target = instruction.imm() as usize;
         if instruction.op() != Op::Jump
             || jump_direction(records[pc].handler).is_none()
-            || entry_jumps[pc]
+            || entry_jumps.contains(pc)
             || target + 1 >= records.len()
         {
             continue;
@@ -17753,7 +17754,7 @@ fn derive_lane_view<'live, H: Host>(
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
                     || next.op() != Op::WasmF64Store
                     || next.a() != instruction.a()
-                    || jump_targets[pc + 1]
+                    || jump_targets.contains(pc + 1)
                     || !store_runs
                 {
                     return None;
@@ -17852,7 +17853,7 @@ fn derive_lane_view<'live, H: Host>(
                 if carrying_zero_jump(records[pc].handler).is_some() {
                     continue;
                 }
-                if instruction.op() != Op::Jump || entry_jumps[pc] || jump_targets[pc] || pc == 0 {
+                if instruction.op() != Op::Jump || entry_jumps.contains(pc) || jump_targets.contains(pc) || pc == 0 {
                     return None;
                 }
                 let then = JumpFusions::<H>::THEN
@@ -17869,7 +17870,7 @@ fn derive_lane_view<'live, H: Host>(
                             } as *const ()
                     });
                 // Entering a pair's second move runs that move's own record.
-                if pair && !then && jump_targets[pc - 1] && carried_through(records, pc - 1).is_none() {
+                if pair && !then && jump_targets.contains(pc - 1) && carried_through(records, pc - 1).is_none() {
                     return None;
                 }
                 let register = if then || pair {
@@ -17955,9 +17956,9 @@ fn derive_lane_view<'live, H: Host>(
                     && jump == pc + 4
                     && instruction.a() == moving.b()
                     && load.a() == moving.b()
-                    && !jump_targets[pc + 1]
-                    && !jump_targets[pc + 2]
-                    && !jump_targets[pc + 3]
+                    && !jump_targets.contains(pc + 1)
+                    && !jump_targets.contains(pc + 2)
+                    && !jump_targets.contains(pc + 3)
                     && decoded[pc + 3].op() == Op::Move
                     && let Some(store_op) = Some(decoded[pc + 2].op())
                     && let Some(fused) = store_move_handler::<H>(store_op, ACC_NONE)
@@ -19094,17 +19095,63 @@ fn accumulator_field(instruction: WideInstruction, register: u16) -> u8 {
     }
 }
 
-/// The instructions some jump of `function` targets.
-fn jump_targets(instructions: &[WideInstruction]) -> Vec<bool> {
-    let mut targets = vec![false; instructions.len()];
+/// Two inline words cover 128 instruction PCs without a heap allocation;
+/// larger functions spill to contiguous words without limiting their size.
+const INLINE_INSTRUCTION_WORDS: usize = 2;
+const INSTRUCTION_WORD_BITS: usize = u64::BITS as usize;
+
+struct InstructionSet(SmallVec<[u64; INLINE_INSTRUCTION_WORDS]>);
+
+impl InstructionSet {
+    fn new(count: usize) -> Self {
+        Self(std::iter::repeat_n(0, count.div_ceil(INSTRUCTION_WORD_BITS)).collect())
+    }
+
+    fn insert(&mut self, pc: usize) {
+        self.0[pc / INSTRUCTION_WORD_BITS] |= 1 << (pc % INSTRUCTION_WORD_BITS);
+    }
+
+    fn contains(&self, pc: usize) -> bool {
+        self.0[pc / INSTRUCTION_WORD_BITS] & (1 << (pc % INSTRUCTION_WORD_BITS)) != 0
+    }
+}
+
+/// The instruction PCs targeted by a jump.
+fn jump_targets(instructions: &[WideInstruction]) -> InstructionSet {
+    let mut targets = InstructionSet::new(instructions.len());
     for instruction in instructions {
+        let target = instruction.imm() as usize;
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget
-            && let Some(target) = targets.get_mut(instruction.imm() as usize)
+            && target < instructions.len()
         {
-            *target = true;
+            targets.insert(target);
         }
     }
     targets
+}
+
+#[cfg(test)]
+mod instruction_set_tests {
+    use super::*;
+
+    #[test]
+    fn instruction_membership_crosses_word_and_inline_boundaries() {
+        for count in [0, 1, INSTRUCTION_WORD_BITS, INSTRUCTION_WORD_BITS + 1,
+            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS,
+            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS + 1]
+        {
+            let mut set = InstructionSet::new(count);
+            assert_eq!(set.0.len(), count.div_ceil(INSTRUCTION_WORD_BITS));
+            assert_eq!(set.0.spilled(), count > INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS);
+            for pc in 0..count {
+                assert!(!set.contains(pc));
+                set.insert(pc);
+                assert!(set.contains(pc));
+                if pc + 1 < count { assert!(!set.contains(pc + 1)); }
+            }
+            for pc in 0..count { assert!(set.contains(pc)); }
+        }
+    }
 }
 
 pub(super) fn decoded_instruction(
