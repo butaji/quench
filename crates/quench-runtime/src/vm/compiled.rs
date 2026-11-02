@@ -13703,15 +13703,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let code = self.programs.native_js_code(program_id)?;
-        if !code.has_guarded_calls() { return None; }
+        let calls = self.programs.native_js_code(program_id)?.guarded_calls()?;
         let callee = *self.frames[frame].registers.get(usize::from(instruction.register_b()))?;
         let receiver = *self.frames[frame].registers.get(usize::from(instruction.register_c()))?;
         // An ordinary object binds identically for strict and sloppy methods.
         receiver.direct_object_index()?;
-        let (target_program, function, env) = self.same_realm_user_target(callee)?;
+        let (target_program, function, env) = self.in_loop_call_target(program, callee)?;
         if target_program != program_id { return None; }
-        let region = match code.guarded_call(function)? {
+        let region = match calls.get(function)? {
             NativeGuardedCall::CapturedStore(store) => {
                 let _guard = crate::stack::GuestCallGuard::enter().ok()?;
                 if self.execution_interrupt.atomic_flag().load(std::sync::atomic::Ordering::Relaxed) {

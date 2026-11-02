@@ -84,6 +84,16 @@ for (let i = 0; i < 40; i++) {
   if (another.value !== 9) throw Error('closure-specific store');
   if (!another.check()) throw Error('closure-specific guarded calls');
 }
+const originalCheck = state.check;
+state.check = another.check;
+state.value = 9;
+if (!state.check()) throw Error('callee binding lost closure environment');
+record(() => state.check());
+state.value = 1;
+if (state.check()) throw Error('callee binding reused another closure');
+record(() => state.check());
+state.check = originalCheck;
+state.value = 2;
 record(() => state.check());
 state.assign(); output.push(String(state.value));
 state.change('2', 7); state.value = '1'; state.mark();

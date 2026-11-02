@@ -65,6 +65,7 @@ pub(super) enum NativeGuardedCall<'a> {
 
 /// A verified immutable lookup. Only binding can construct it; callers cannot
 /// supply an unchecked row to the execution path.
+#[derive(Clone, Copy)]
 pub(crate) struct GuardedCalls {
     boolean_regions: &'static [NativeBooleanRegion],
     captured_stores: &'static [NativeCapturedStore],
@@ -89,7 +90,7 @@ impl GuardedCalls {
     }
 
     #[inline]
-    fn get(&self, function: u32) -> Option<NativeGuardedCall<'static>> {
+    pub(super) fn get(&self, function: u32) -> Option<NativeGuardedCall<'static>> {
         let (kind, row) = GuardedCallIndex::decode(*self.index.get(function as usize)?)?;
         // SAFETY: binding checked every row and function identity. These static
         // tables cannot change while code is installed, including across GC.
@@ -183,16 +184,14 @@ impl NativeJsCode {
         }
     }
 
+    /// A copy of the binding certificate borrows only immutable image data,
+    /// so resolving a dynamic callee can update the shared weak target cache.
     #[inline]
-    pub(super) fn guarded_call(&self, function: u32) -> Option<NativeGuardedCall<'static>> {
+    pub(super) fn guarded_calls(&self) -> Option<GuardedCalls> {
         let Self::Linked { guarded_calls, .. } = self else { return None; };
-        guarded_calls.as_ref()?.get(function)
+        *guarded_calls
     }
 
-    #[inline]
-    pub(super) fn has_guarded_calls(&self) -> bool {
-        matches!(self, Self::Linked { guarded_calls: Some(_), .. })
-    }
 }
 
 /// A program bound to native entries compiled for the same host and semantic ABI.
