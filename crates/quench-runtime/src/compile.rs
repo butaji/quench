@@ -3927,8 +3927,10 @@ impl<'a> Compiler<'a> {
         let root_strict = self.root_strict || options.strict;
         let mut function_scope =
             self.collect_locals(body, &mut locals, root_strict, parent.is_some());
+        // Only a function-scope binding (a parameter, `var`, top-level declaration) shadows
+        // the expression's own name; a block's or a catch clause's binding does not.
         let name_binding = options.name_binding.and_then(|source_name| {
-            if locals.contains(&source_name) {
+            if function_scope.contains(&source_name) {
                 None
             } else {
                 let name = self.atoms[source_name as usize].to_string();
