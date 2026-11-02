@@ -270,7 +270,17 @@ pub(crate) fn unit<'f>(
     let mut registers = u32::from(caller_registers);
     for (pc, instruction) in caller.iter().copied().enumerate() {
         let Some(target) = target_at(pc) else { continue };
-        if instruction.op() != Op::Call || instruction.result_flags() != 0 || instruction.direct_eval() || instruction.parameter_eval() {
+        if instruction.op() != Op::Call
+            || !matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER)
+            || instruction.direct_eval() || instruction.parameter_eval()
+        {
+            continue;
+        }
+        // A completed terminal call uses the caller's existing final Return,
+        // as fused numeric returns do. Recovery still owns the original Call.
+        // Strict terminal calls retain the VM's proper-tail-call policy.
+        if instruction.returns_from_frame() && (function.strict || !caller.last().is_some_and(|last|
+            last.op() == Op::Return && last.result_flags() == 0)) {
             continue;
         }
         let Some(callee) = body(target.function) else { continue };
@@ -344,7 +354,12 @@ pub(crate) fn unit<'f>(
         // fails leaves at the call itself, before any of its effects.
         unit.instructions.push(WideInstruction::new(Op::Nop, 0, 0, 0, 0));
         unit.origins.push(Origin::Caller(pc as u32));
-        let continuation = caller_flat[pc + 1];
+        let (result, continuation) = if caller[pc].returns_from_frame() {
+            let terminal = caller.len() - 1;
+            (caller[terminal].register_a(), caller_flat[terminal])
+        } else {
+            (caller[pc].result_register(), caller_flat[pc + 1])
+        };
         let mut callee_flat = Vec::with_capacity(code.len());
         let mut at = unit.instructions.len() as u32;
         for instruction in code {
@@ -358,14 +373,13 @@ pub(crate) fn unit<'f>(
             if super::osr_loop::inlined_returning(instruction) {
                 let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
                 unit.instructions.push(super::osr_loop::renamed(plain, &register, frame.receiver, &callee_target)?);
-                unit.instructions.push(WideInstruction::new(Op::Move, caller[pc].result_register(), register(instruction.result_register()), 0, 0));
+                unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.result_register()), 0, 0));
                 unit.instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
                 unit.origins.extend([origin, origin, origin]);
                 continue;
             }
             let rewritten = match instruction.op() {
                 Op::Return => {
-                    let result = caller[pc].result_register();
                     unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.register_a()), 0, 0));
                     unit.origins.push(origin);
                     WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
@@ -383,6 +397,37 @@ pub(crate) fn unit<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn terminal_leaf_uses_the_existing_caller_return_and_strict_calls_residualize() {
+        for strict in [false, true] {
+            let directive = if strict { "'use strict';" } else { "" };
+            let source = format!("let p={{}};p.leaf=function(x){{this.count=this.count+1;return x+this.count;}};function run(o,x){{{directive}return o.leaf(x);}}");
+            let program = crate::Engine::specialize(&source, "terminal-inline.js").unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+            let targets = static_call_targets(&program);
+            let unit = unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
+                .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+                &|id| program.function_get(id as usize)).unwrap();
+            if strict {
+                assert!(unit.frames.is_empty(), "strict terminal calls preserve VM tail-call policy");
+                continue;
+            }
+            assert_eq!(unit.frames.len(), 1);
+            assert!(!unit.instructions.iter().any(|instruction| instruction.op() == Op::Call));
+            let terminal = unit.instructions.len() - 1;
+            let returned = unit.instructions[terminal];
+            assert_eq!(returned.op(), Op::Return);
+            assert!(unit.instructions.iter().any(|instruction| instruction.op() == Op::Move
+                && instruction.result_register() == returned.register_a()));
+            assert!(unit.instructions.iter().any(|instruction| instruction.op() == Op::Jump
+                && instruction.jump_target() as usize == terminal));
+            let live = unit.register_masks(&program, caller as u32).expect("terminal splice liveness");
+            assert!(live.is_live(terminal, returned.register_a()));
+        }
+    }
 
     #[cfg(feature = "aot")]
     #[test]

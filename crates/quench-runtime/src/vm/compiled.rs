@@ -2060,6 +2060,8 @@ unsafe extern "C" fn lane_materialize_inline<H: Host>(
 ) -> u64 {
     #[cfg(test)]
     INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((function as u32, source_pc as u32))));
     // SAFETY: the native entry owns all three bindings through this call.
     let (vm, program, dispatch) = unsafe {
         (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
@@ -2100,6 +2102,7 @@ const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
 #[cfg(test)]
 thread_local! {
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16772,28 +16775,38 @@ mod tests {
         let source = r#"
             let keep={value:42}, marker={}; let p={};
             p.consume=function consume(input){this.count=this.count+1;input=input.next;return input.value+this.count;};
-            function run(owner,input){let result=owner.consume(input);return result+3;}
+            let runner={run:function run(owner,input){let result=owner.consume(input);return result+3;}};
             let owner=Object.create(p);owner.count=0;
             let leaf={value:7},input={next:leaf};
-            for(let i=0;i<20;i++)run(owner,input);
+            for(let i=0;i<20;i++)runner.run(owner,input);
             Object.defineProperty(leaf,'value',{get(){
                 $262.gc();
-                if(p.consume.arguments[0]!==leaf||p.consume.caller!==run)throw 'reflection';
+                if(p.consume.arguments[0]!==leaf||p.consume.caller!==runner.run)throw 'reflection';
                 return keep.value;
             },configurable:true});
-            if(run(owner,input)!==66||owner.count!==21)throw 'prefix';
+            if(runner.run(owner,input)!==66||owner.count!==21)throw 'prefix';
             Object.defineProperty(leaf,'value',{get(){$262.gc();throw marker;}});
-            try{run(owner,input);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
+            try{runner.run(owner,input);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
             if(owner.count!==22)throw 'replay';throw keep.value;
         "#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "exact-gc.cts") }
-                else { crate::Engine::specialize(source, "exact-gc.cjs") }.unwrap();
+        for (typescript, terminal) in [false, true].into_iter()
+            .flat_map(|typescript| [false, true].map(|terminal| (typescript, terminal))) {
+            let source = if terminal {
+                source.replace("let result=owner.consume(input);return result+3;", "return owner.consume(input);")
+                    .replace("!==66", "!==63")
+            } else { source.to_owned() };
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "exact-gc.cts") }
+                else { crate::Engine::specialize(&source, "exact-gc.cjs") }.unwrap();
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
             let isa = super::super::jit_backend::target_isa("speed").unwrap();
             let mut region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0).unwrap();
+            let consume = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
+            let read = program.function(consume).instructions().position(|instruction|
+                instruction.op() == Op::GetField && matches!(instruction.field_lookup(),
+                    Some(FieldLookup::Atom { atom, .. }) if &program.atoms[atom as usize] == "value")).unwrap();
             // Bind the image's pure helper-table resolver to this test host.
             // All other lowering and recovery are the production paths.
             let instructions: Vec<_> = region.function.layout.blocks()
@@ -16829,6 +16842,8 @@ mod tests {
             assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
             assert!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get) > before,
                 "the exact callee materialization path must actually execute");
+            assert_eq!(INLINE_LAST_MATERIALIZATION.with(std::cell::Cell::get), Some((consume as u32, read as u32)),
+                "recovery must occur at the read after the native prefix store and parameter update");
         }
     }
 
