@@ -2,6 +2,72 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::value::HeapReference;
 
+#[cfg(all(test, feature = "aot"))]
+mod tests {
+    use super::*;
+    use crate::test_host::TestHost;
+
+    #[test]
+    fn native_only_field_probes_use_semantic_specialization_permission() {
+        let program = crate::Engine::specialize(r#"
+            var own={value:7};
+            function Static(){}
+            Static.value=8;
+            var inherited=Object.create({value:9});
+            var getterCalls=0;
+            var accessor={get value(){getterCalls++;return 11;}};
+            function readOwn(object){return object.value;}
+            function readCell(object){return object.value;}
+            function readInherited(object){return object.value;}
+            for(let i=0;i<4;i++){
+                if(readOwn(own)!==7||readCell(Static)!==8||readInherited(inherited)!==9)throw 'data';
+            }
+        "#, "native-field-permission.js").unwrap();
+        let native = crate::NativeJsProgram::<TestHost>::compile_eager(program).unwrap();
+        let program = native.residual();
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        vm.execute_native_program(&native, true).unwrap();
+        assert!(vm.specialized_operations_enabled(program));
+        assert!(!vm.lane_admits(program), "native semantics do not admit interpreter lane dispatch");
+        let site = |name: &str| {
+            let function = program.functions.iter().position(|body| body.header().name
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
+                Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, .. })
+                    if &program.atoms[atom as usize] == "value" => Some(cache_site),
+                _ => None,
+            }).unwrap()
+        };
+        let mut global = |name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let own = global("own");
+        let function = global("Static");
+        let inherited = global("inherited");
+        let accessor = global("accessor");
+        let own_site = site("readOwn");
+        let cell_site = site("readCell");
+        let inherited_site = site("readInherited");
+        assert_eq!(vm.primary_own_field_hit(program, own, own_site), Some(Value::integer(7)));
+        assert_eq!(vm.cell_own_field_hit(program, function, cell_site), Some(Value::integer(8)));
+        assert_eq!(vm.primary_holder_field_hit(program, inherited, inherited_site), Some(Value::integer(9)));
+        assert_eq!(vm.primary_record_holder_field_hit(program, inherited, inherited_site), Some(Value::integer(9)));
+        assert!(matches!(vm.cached_field_hit(program, function, cell_site), FieldCacheProbe::Hit(value)
+            if value == Value::integer(8)));
+        assert_eq!(vm.cell_own_field_hit(program, accessor, own_site), None,
+            "a data probe must leave accessor semantics untouched");
+        let value = vm.intern_atom("value");
+        assert_eq!(vm.get_field_cached(program, accessor, value, own_site).unwrap(), Value::integer(11));
+        let calls = vm.intern_atom("getterCalls");
+        assert_eq!(vm.own_property(vm.realm.globals, calls), Some(Value::integer(1)));
+        vm.specialized = false;
+        assert!(!vm.specialized_operations_enabled(program));
+        assert!(matches!(vm.cached_field_hit(program, own, own_site), FieldCacheProbe::Ineligible));
+    }
+}
+
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
@@ -1425,6 +1491,22 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
+        // A polymorphic site's prototype-held entries, keyed by both exact shapes.
+        if let Some(record) = receiver.proto_link().object_record_id() {
+            let holder = self.heap.object_record_by_id(record);
+            if let Some(cache) = self.megamorphic_field_cache(index, receiver.exact_shape(), holder.exact_shape()) {
+                // SAFETY: as `ordinary_holder_entry_value`: the entry was recorded for an
+                // immediate-prototype data property of these exact shapes.
+                return FieldCacheProbe::Hit(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) });
+            }
+        }
+        // The tiers the lane's own handlers read past these: a receiver a heap cell holds, and
+        // a field inherited from beyond the immediate prototype.
+        if let Some(value) = self.cell_own_field_hit(p, object, site)
+            .or_else(|| self.cell_holder_field_hit(p, object, site))
+            .or_else(|| self.inherited_field_hit(p, object, site)) {
+            return FieldCacheProbe::Hit(value);
+        }
         FieldCacheProbe::OrdinaryMiss
     }
 
@@ -1437,7 +1519,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER {
@@ -1482,7 +1564,7 @@ impl<H: Host> Vm<H> {
             .filter(|object| object.exact_shape() == cache.receiver)
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
-            shape: cache.receiver, slot: cache.slot, storage_len, storage,
+            shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
         })
     }
 
@@ -1490,12 +1572,26 @@ impl<H: Host> Vm<H> {
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
     /// they stay inline (`FIELD_MEGAMORPHIC_INLINE`); none for a megamorphic site.
     pub(super) fn native_field_load_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+        self.native_field_descriptors(site, false)
+    }
+
+    /// `native_field_load_descriptors` with the entries whose slot an immediate prototype
+    /// holds (`NativeFieldLoad::holder`): what a read, not a store, may take from the site.
+    pub(super) fn native_field_read_descriptors(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
+        self.native_field_descriptors(site, true)
+    }
+
+    fn native_field_descriptors(&self, site: u16, holders: bool) -> Vec<super::compiled::NativeFieldLoad> {
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { self.megamorphic_field_indices.get_unchecked(index) };
         if table_index == NO_MEGAMORPHIC_FIELD {
-            return self.native_field_load_descriptor(site, None)
-                .into_iter().collect();
+            let cache = self.field_cache_entry(site);
+            return match cache.holder {
+                NO_FIELD_HOLDER => self.native_field_load_descriptor(site, None).into_iter().collect(),
+                _ if holders => self.native_field_entry(cache).into_iter().collect(),
+                _ => Vec::new(),
+            };
         }
         // SAFETY: every non-sentinel index was installed together with its table.
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
@@ -1503,14 +1599,20 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         set.recorded()
-            .filter(|entry| entry.holder == NO_FIELD_HOLDER && entry.receiver != NO_FIELD_RECEIVER)
-            .filter_map(|entry| {
-                let storage_len = self.shapes.get(entry.receiver as usize)?.storage_len();
-                (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
-                    shape: entry.receiver, slot: entry.slot, storage_len, storage: None,
-                })
-            })
+            .filter(|entry| holders || entry.holder == NO_FIELD_HOLDER)
+            .filter_map(|entry| self.native_field_entry(*entry))
             .collect()
+    }
+
+    /// The descriptor of one cache entry: its receiver's shape, its holder's where it names
+    /// one, and the slot, which the shape that holds it must cover.
+    fn native_field_entry(&self, entry: FieldCache) -> Option<super::compiled::NativeFieldLoad> {
+        if entry.receiver == NO_FIELD_RECEIVER { return None; }
+        let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
+        let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
+        (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
+            shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
+        })
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
@@ -1554,9 +1656,6 @@ impl<H: Host> Vm<H> {
             return LOGS && self.primary_cell_field_store_hit(object, value, site, layout);
         };
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.is_module_namespace() || receiver.is_arguments_object() {
-            return false;
-        }
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
@@ -1598,15 +1697,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> Option<FieldCache> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
             return None;
         }
         let record_id = object.direct_object_index()?;
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.is_module_namespace() || receiver.is_arguments_object() {
-            return None;
-        }
         let (index, shape) = (self.field_cache_index(site), receiver.exact_shape());
         let slot = self
             .inline_megamorphic_field_slot(index, shape)
@@ -1632,7 +1728,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let receiver = self.heap.object_record_by_id(record_id);
-        if receiver.exact_shape() != hint.receiver || receiver.is_module_namespace() || receiver.is_arguments_object() {
+        if receiver.exact_shape() != hint.receiver {
             return false;
         }
         // SAFETY: as for `polymorphic_own_field_store_hit`, whose hit recorded the pair.
@@ -1753,7 +1849,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
@@ -1771,7 +1867,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let cache = self.field_cache_entry(site);
         if cache.holder == NO_FIELD_HOLDER {
             return None;
@@ -1790,7 +1886,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
@@ -1812,7 +1908,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object(object)?;
         let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
@@ -1830,7 +1926,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let (receiver, function_receiver) = self.inherited_receiver(object)?;
         let (hit, proof) =
             self.cached_inherited_field_value(self.field_cache_index(site), receiver, function_receiver)?;
@@ -1853,7 +1949,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let (receiver, function_receiver) = self.inherited_receiver(object)?;
         // SAFETY: as for `cached_inherited_field_value`.
         let index = unsafe { self.inherited_field_indices.get_unchecked(self.field_cache_index(site)) };
@@ -1959,7 +2055,7 @@ impl<H: Host> Vm<H> {
         site: u16,
         hint: FieldCache,
     ) -> Option<(Value, PolymorphicHit)> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         debug_assert!(hint.holder == NO_FIELD_HOLDER);
         // Any record receiver, an array's too: entries name only shape slots, which an
         // array's length and elements are not.
@@ -2872,7 +2968,7 @@ impl<H: Host> Vm<H> {
         let mut holder_value = Value::UNDEFINED;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
             let data = self.inherited_chain_link(prototype, cache.atom, cache.function_links)?;
-            if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
+            if data.ordinary_shape() != shape {
                 return None;
             }
             holder_value = prototype;
@@ -3571,15 +3667,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let data = self.heap.object(object)?;
-        if data.is_module_namespace() || data.is_arguments_object() {
-            return None;
-        }
         let properties = data.properties();
         if properties.has_inline_property_storage() || properties.is_dictionary() {
             return None;
         }
         let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER || cache.receiver != data.shape() {
+        if cache.holder != NO_FIELD_HOLDER || cache.receiver != data.exact_shape() {
             return None;
         }
         let slot = cache.slot as usize;
@@ -4581,4 +4674,33 @@ fn cached_holder_matches(holder: &crate::heap::Object, shape: u32) -> bool {
     let matches = holder.exact_shape() == shape;
     debug_assert!(!matches || !holder.is_module_namespace(), "a field cache names no module namespace");
     matches
+}
+
+impl<H> Vm<H> {
+    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_JS_JIT_STATS`): the
+    /// polymorphic sites by how many receiver shapes they recorded, how many name only own
+    /// fields and of those how many find the field at one slot in every shape (a layout whose
+    /// subclasses share their parent's prefix reads them at a fixed offset), and how many name
+    /// prototype-held fields.
+    pub(super) fn field_site_report(&self) -> String {
+        let (mut sizes, mut own, mut one_slot, mut holders, mut overflowed) = ([0_usize; 4], 0, 0, 0, 0);
+        for set in &self.megamorphic_fields {
+            let entries: Vec<FieldCache> = match &set.overflow {
+                Some(overflow) => { overflowed += 1; overflow.values().copied().collect() }
+                None => set.recorded().copied().collect(),
+            };
+            let bucket = match entries.len() { 0..=2 => 0, 3..=4 => 1, 5..=16 => 2, _ => 3 };
+            sizes[bucket] += 1;
+            if entries.iter().all(|entry| entry.holder == NO_FIELD_HOLDER) {
+                own += 1;
+                if entries.windows(2).all(|pair| pair[0].slot == pair[1].slot) { one_slot += 1; }
+            } else {
+                holders += 1;
+            }
+        }
+        format!(
+            "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
+            self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
+        )
+    }
 }

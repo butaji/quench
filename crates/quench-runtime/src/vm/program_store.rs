@@ -1051,24 +1051,34 @@ impl ProgramStore {
     pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod)
         -> Rc<super::compiled::PublishedLaneMethod>
     {
-        let calls = !method.inlined.is_empty();
+        let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
         if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
         published
     }
 
+    /// Retires each published body whose code names a callee that died: an inlined one, or a
+    /// direct one, whose body's own retirement retires its direct callers in turn.
+    ///
     /// # Safety
     /// Collection has stopped native execution and no method reference is held.
     pub(super) unsafe fn retire_dead_native_calls(&self, live: impl Fn(Value) -> bool) {
-        self.native_call_bindings.borrow_mut().retain(|weak| {
-            let Some(code) = weak.upgrade() else { return false; };
-            let Some(method) = code.method() else { return false; };
-            if method.inlined.iter().any(|call| call.target.identity().is_none_or(|callee| !live(callee))) {
-                // SAFETY: forwarded from the collector's publication boundary.
-                unsafe { code.retire(); }
-                false
-            } else { true }
-        });
+        let mut bindings = self.native_call_bindings.borrow_mut();
+        loop {
+            let before = bindings.len();
+            bindings.retain(|weak| {
+                let Some(code) = weak.upgrade() else { return false; };
+                let Some(method) = code.method() else { return false; };
+                let dead = method.inlined.iter().any(|call| call.target.identity().is_none_or(|callee| !live(callee)))
+                    || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.method().is_none());
+                if dead {
+                    // SAFETY: forwarded from the collector's publication boundary.
+                    unsafe { code.retire(); }
+                }
+                !dead
+            });
+            if bindings.len() == before { break; }
+        }
     }
 
     /// # Safety
@@ -3550,6 +3560,14 @@ impl Drop for ProgramStore {
         let Some(diagnostics) = &self.js_jit_diagnostics else {
             return;
         };
+        for (program, entry) in self.programs.iter().enumerate() {
+            let Some(entry) = entry else { continue };
+            for view in entry.lane_views.arena.borrow().iter().flatten() {
+                if let Some(line) = view.body_stats.report(program) {
+                    eprintln!("{line}");
+                }
+            }
+        }
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);
         let stderr = std::io::stderr();

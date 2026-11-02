@@ -1,5 +1,8 @@
 #![deny(warnings)]
 #![feature(rust_preserve_none_cc)]
+// `heap::array_proofs` reads its armed pointer as a plain thread-local load on every array
+// storage change (`ARMED_PROOFS`).
+#![feature(thread_local)]
 
 mod execution_interrupt;
 pub use execution_interrupt::ExecutionInterrupt;

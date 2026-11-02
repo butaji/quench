@@ -33,6 +33,13 @@ fn others(values: &[Value]) -> u32 {
     values.iter().map(|value| other(*value)).sum()
 }
 
+/// A backing's count of other values once a write added `added` and overwrote `removed`;
+/// `OTHERS_UNKNOWN` saturates and stays.
+#[inline(always)]
+fn recounted(others: u32, added: u32, removed: u32) -> u32 {
+    others.saturating_add(added).saturating_sub(removed)
+}
+
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
@@ -213,6 +220,45 @@ impl ArrayElements {
         self.header().owners as usize
     }
 
+    /// The first value of the backing this array alone owns, which a replacement writes in
+    /// place (`ArrayElements::replace_through`); `None` when shared (or the shared empty
+    /// header), where a write must copy first (`make_mut`). Taking it changes no backing.
+    #[inline(always)]
+    pub(crate) fn unique_values(&mut self) -> Option<NonNull<Value>> {
+        // SAFETY: a unique backing's values follow its header.
+        self.is_unique().then(|| unsafe { NonNull::new_unchecked(self.values()) })
+    }
+
+    /// Replaces the value at `index`, below the length, in place where this array alone owns
+    /// its backing (`UniqueElements::set`, which keeps the count of other values); `false`
+    /// changes nothing where the backing is shared. Changes no backing.
+    #[inline(always)]
+    pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
+        if !self.is_unique() {
+            return false;
+        }
+        // SAFETY: `UniqueElements` is a transparent wrapper; the backing is this array's own.
+        unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }.set(index, value);
+        true
+    }
+
+    /// `UniqueElements::set` through the first value a unique backing gave
+    /// (`unique_values`): the count of other values in its header keeps the write.
+    ///
+    /// # Safety
+    /// `values` is the first value of a backing its array still owns alone, and `index` is
+    /// below its length.
+    #[inline(always)]
+    pub(crate) unsafe fn replace_through(values: NonNull<Value>, index: usize, value: Value) {
+        // SAFETY: the caller's contract; the header precedes the values in the allocation.
+        unsafe {
+            let header = values.as_ptr().cast::<u8>().sub(VALUES_OFFSET).cast::<Header>();
+            let slot = values.as_ptr().add(index);
+            (*header).others = recounted((*header).others, other(value), other(*slot));
+            slot.write(value);
+        }
+    }
+
     /// This array's values for writing: its own backing, copied first when shared (or when it
     /// is the shared empty header).
     #[inline(always)]
@@ -253,6 +299,8 @@ impl From<Vec<Value>> for ArrayElements {
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
         if self.capacity() != 0 {
+            // An owner more makes in-place replacement reach another array.
+            super::array_proofs::retire_array_storage_proofs();
             let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
             // SAFETY: arrays are single-threaded; the header is live and only owners write it.
             unsafe { (*self.header.as_ptr()).owners = owners };
@@ -315,8 +363,7 @@ impl UniqueElements {
     #[inline(always)]
     fn recount(&mut self, added: u32, removed: u32) {
         if added != removed {
-            let others = self.0.header().others;
-            self.set_others(others.saturating_add(added).saturating_sub(removed));
+            self.set_others(recounted(self.0.header().others, added, removed));
         }
     }
 
@@ -565,6 +612,25 @@ mod tests {
         };
         assert_eq!(current_values, (*shared).as_ptr());
         assert_eq!(shared.len(), 3);
+    }
+
+    #[test]
+    fn in_place_replacements_keep_the_others_count_exact() {
+        // An array storage proof's store writes through the backing (`replace_through`),
+        // as an in-place replacement does: the count stays the one authority.
+        let mut elements = ArrayElements::from(vec![Value::integer(1), Value::integer(2)]);
+        assert!(elements.replace_in_place(0, Value::number(0.5)));
+        assert!(!elements.holds_only_int32());
+        let values = elements.unique_values().expect("a unique backing");
+        // SAFETY: the backing stays unique and both indices are below its length.
+        unsafe { ArrayElements::replace_through(values, 0, Value::integer(3)) };
+        assert!(elements.holds_only_int32());
+        unsafe { ArrayElements::replace_through(values, 1, Value::NULL) };
+        assert!(!elements.holds_only_int32());
+        let shared = elements.clone();
+        assert!(!elements.replace_in_place(1, Value::integer(4)));
+        assert!(elements.unique_values().is_none());
+        assert_eq!(shared[1], Value::NULL);
     }
 
     #[test]

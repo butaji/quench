@@ -2873,6 +2873,9 @@ impl<H: Host> Vm<H> {
         // SAFETY: `vm` is never used or dropped again, so each field read here is dropped
         // exactly once and the rest are never dropped.
         unsafe {
+            if vm.programs.js_jit_diagnostics_enabled() {
+                eprintln!("{}", vm.field_site_report());
+            }
             if vm.programs.reports_on_drop() {
                 drop(std::ptr::read(&vm.programs));
             }

@@ -325,6 +325,55 @@ and against at least two external sources. It found:
 - **P12 TypeScript annotations prove nothing.** Only the JavaScript that TS and JSX emit,
   such as class-field order and object-literal shapes, is a usable fact.
 
+### Program-level knowledge: Fact, Assumption, Unknown
+
+Dynamic code mostly behaves as static code, so knowledge is kept per program, not per
+function, and every mechanism aims to turn what it learns into Facts. Each thing the
+execution reads has exactly one of three knowledge levels, and the IR carries it:
+
+| Level | Holds | Cost per use | Owner of the proof |
+| --- | --- | --- | --- |
+| **Fact** | for the lifetime of its carrier (the program, an object, a region) | none: folded into the code or the representation | the event that made it true (compilation, an object becoming exotic, a binding's only write) |
+| **Assumption** | until a named event changes its subject | none: the subject's change invalidates every dependent | the dependency table: subject → dependents (records, compiled bodies, caches) |
+| **Unknown** | per execution | one guard, hoisted to where it is first proved; after it the value is a Fact of the region | the guard |
+
+Rules:
+- **No use re-checks a held Fact or Assumption.** A check that follows a proof of the same
+  thing is removed, and its proof is moved into the representation (a bit of the shape
+  word, a record's handler, a compiled constant).
+- **Facts are made at events, not at uses.** An object that becomes exotic, a binding
+  written for the only time, a shape created, a function linked: the event records what
+  follows from it once.
+- **Assumptions are reactive.** Their subjects (shapes, prototypes, program bindings,
+  function slots, element kinds, method-cache names) are program-level entries of the
+  dependency table (`heap::dependencies`). A change retires its dependents: a lane record
+  is requickened to its general handler, a compiled body is dropped and its activations
+  continue in the lane at their exact PC. The work is proportional to the dependents.
+- **Unknowns are minimized.** Each remaining guard is a per-execution fact (a receiver's
+  shape, an int32 range); a guard proves it once per value or region, and every later use
+  reads the proof.
+
+Program-level subjects, with the checks they retire (measured on Richards' fixed work,
+default path):
+
+1. **Exotic access as a shape fact (done).** Arguments objects and module namespaces carry
+   `value_vec::EXOTIC_ACCESS` in the shape word from the moment they become exotic, so no
+   recorded shape matches them, and the per-store `is_module_namespace`/
+   `is_arguments_object` tests after a shape match go (8% of Richards' instructions were
+   those tests and the extras loads behind them).
+2. **Single-write program bindings.** A module-scope binding written at one site outside a
+   loop of a body that runs once (the CommonJS wrapper, an IIFE) holds one value after its
+   write: its reads fold to that value (`STATE_HELD`, `ID_IDLE`, top-level functions).
+3. **Linked call facts.** Once a call record links its target, everything about the target
+   (entry kind, parameter count, program, `this` binding) is a Fact of the record; the call
+   checks only the callee's identity (Unknown), or nothing where the callee is itself a
+   Fact (2) or an Assumption on a prototype's method slot.
+4. **Method-cache names as an Assumption.** A store tests `method_caches_may_name(atom)`
+   on every execution; the event of a method cache first naming an atom instead
+   requickens the store records of that atom.
+5. **Prototype chains and constant fields.** Already subjects of the dependency table
+   (R2b); their consumers move from epoch compares to retirement.
+
 ### The ten engine decisions, mapped onto Quench
 
 V8 and JavaScriptCore converge on ten decisions. An audit of `v2-jit-futamura` (code read,
