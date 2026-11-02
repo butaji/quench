@@ -2863,7 +2863,7 @@ fn record_hmr_load(
 pub(crate) fn hmr_loaded(context: &mut Context<'_>, path: &Path) -> Result<bool, RootedError> {
     let cache = commonjs_cache(context)?;
     let module = get(context, cache, &path.to_string_lossy())?;
-    Ok(context.is_object_rooted(module)?)
+    context.is_object_rooted(module)
 }
 
 /// Replace the CommonJS module at `path` with a new record executed from its file, when

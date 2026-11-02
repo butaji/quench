@@ -2932,7 +2932,7 @@ impl NodeHost {
             .unwrap_or("");
         if extension == "wasm" {
             #[cfg(feature = "aot")]
-            self.record_module_bytes(&path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
+            self.record_module_bytes(path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
             // Node's `wasm` format: the module record is a facade over the instance.
             let source = esm_wasm::facade(&name, path, &bytes)?;
             return Ok(quench_runtime::ModuleSource::text(name, source));
