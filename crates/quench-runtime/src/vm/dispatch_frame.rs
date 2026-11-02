@@ -1013,7 +1013,7 @@ impl<H: Host> Vm<H> {
 
     /// The shape and property values of an arguments object of `args` from the realm's
     /// template (`cache_arguments_object_template`): `length`, `callee` (the callable when
-    /// `expose_callee`, else the template's thrower slot left undefined) and the iterator.
+    /// `expose_callee`, else the template's %ThrowTypeError% accessor slot) and the iterator.
     /// `None` before the realm made one.
     fn arguments_template_properties(
         &self,
@@ -1042,7 +1042,9 @@ impl<H: Host> Vm<H> {
         properties[template.callee_slot] = if expose_callee {
             callable.ok_or_else(|| JsError::validation("arguments object requires callable identity".into()))?
         } else {
-            Value::UNDEFINED
+            self.heap
+                .property_get(anchor, template.callee_slot)
+                .expect("arguments template has a callee accessor")
         };
         properties[template.iterator_slot] = iterator;
         Ok(Some((anchor.shape(), properties)))
@@ -1173,6 +1175,13 @@ impl<H: Host> Vm<H> {
             return;
         };
         properties[iterator_slot] = iterator_method;
+        let (_, expose_callee) = key;
+        if !expose_callee {
+            let Some(thrower) = self.heap.property_get(object, callee_slot) else {
+                return;
+            };
+            properties[callee_slot] = thrower;
+        }
         let anchor = self
             .heap
             .alloc_object_with_properties(proto, shape, &properties);
