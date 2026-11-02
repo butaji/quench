@@ -494,6 +494,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "moduleInitPaths" (0) => crate::modules::module_shared_vm::init_paths,
         method "moduleResolveLookupPaths" (2) => crate::modules::module_shared_vm::resolve_lookup_paths,
         method "moduleLoad" (2) => crate::modules::module_shared_vm::load,
+        method "moduleExtensionDefault" (2) => crate::modules::module_shared_vm::extension_default,
         method "navigatorGet" (0) => crate::host::shared_vm::commonjs::navigator_get,
         method "lazyGlobalGet" (0) => crate::host::shared_vm::commonjs::lazy_global_get,
         method "lazyGlobalSet" (1) => crate::host::shared_vm::commonjs::lazy_global_set,
