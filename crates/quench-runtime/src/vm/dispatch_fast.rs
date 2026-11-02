@@ -19786,3 +19786,5 @@ mod instruction_set_tests {
             }
             for pc in 0..count { assert!(set.contains(pc)); }
         }
+    }
+}
