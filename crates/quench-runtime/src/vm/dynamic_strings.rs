@@ -26,23 +26,20 @@ impl<H: Host> Vm<H> {
         let mut hasher = rustc_hash::FxHasher::default();
         text.hash(&mut hasher);
         let hash = hasher.finish();
-        if let Some(value) = self
-            .dynamic_strings
-            .as_ref()
-            .and_then(|strings| strings.get(&hash))
-            .copied()
-            && self.heap.string(value).is_some_and(|candidate| candidate == &text)
-        {
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.dynamic_string(true);
-            return value;
+        let strings = self.dynamic_strings.get_or_insert_with(|| Box::new(FxHashMap::default()));
+        let entry = strings.entry(hash);
+        if let std::collections::hash_map::Entry::Occupied(slot) = &entry {
+            let value = *slot.get();
+            if self.heap.string(value).is_some_and(|candidate| candidate == &text) {
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.dynamic_string(true);
+                return value;
+            }
         }
         #[cfg(feature = "profile-aggregate")]
         self.profile.dynamic_string(false);
         let value = self.heap.alloc_string(text);
-        self.dynamic_strings
-            .get_or_insert_with(|| Box::new(FxHashMap::default()))
-            .insert(hash, value);
+        entry.insert_entry(value);
         value
     }
 }
