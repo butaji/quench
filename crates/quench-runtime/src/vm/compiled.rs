@@ -7444,6 +7444,9 @@ struct JsNativeActivation {
 }
 
 impl JsNativeActivation {
+    // Expose construction to its consumers: an out-of-line aggregate return
+    // adds a frame and wider record copies at every native entry.
+    #[inline(always)]
     fn new<H: Host>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize, allow_inline_calls: bool) -> Option<Self> {
         let program = vm.programs.get(program_id)?;
         let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
