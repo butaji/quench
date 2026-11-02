@@ -217,7 +217,11 @@ impl FrameFlow {
     }
 
     fn known_call(&self, native: &ir::Function, instruction: ir::Inst, callout: ir::Value) -> bool {
-        self.recovery_pc(native, instruction, callout).is_some() || self.residuals.contains_key(&instruction)
+        // Effect identity does not require a static PC: bounded native entry
+        // carries a dynamic PC through the same fixed semantic operation table.
+        (native.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect
+            && native.dfg.resolve_aliases(native.dfg.inst_args(instruction)[0]) == native.dfg.resolve_aliases(callout))
+            || self.residuals.contains_key(&instruction)
     }
 }
 

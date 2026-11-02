@@ -1294,6 +1294,16 @@ fn emit_js_int32_arithmetic(
     builder.ins().jump(next, &[]);
 }
 
+enum JsCalloutPc {
+    Static(usize),
+    #[cfg(feature = "aot")]
+    Dynamic(ir::Value),
+}
+
+impl From<usize> for JsCalloutPc {
+    fn from(pc: usize) -> Self { Self::Static(pc) }
+}
+
 fn emit_js_step_fallback(
     builder: &mut FunctionBuilder<'_>,
     context: ir::Value,
@@ -1302,9 +1312,13 @@ fn emit_js_step_fallback(
     result_pointer: ir::Value,
     stopped_block: ir::Block,
     continue_block: ir::Block,
-    pc: usize,
+    pc: impl Into<JsCalloutPc>,
 ) {
-    let pc_value = builder.ins().iconst(types::I64, pc as i64);
+    let pc_value = match pc.into() {
+        JsCalloutPc::Static(pc) => builder.ins().iconst(types::I64, pc as i64),
+        #[cfg(feature = "aot")]
+        JsCalloutPc::Dynamic(pc) => pc,
+    };
     let call = builder.ins().call_indirect(
         callout_signature,
         callout,
@@ -2157,7 +2171,17 @@ pub(super) enum JsGeneralCallout {
     Dynamic,
     #[cfg(feature = "aot")]
     Relocatable(u32),
+    #[cfg(all(feature = "aot", test))]
+    Address(usize),
 }
+
+impl JsGeneralCallout {
+    #[cfg(feature = "aot")]
+    fn fixed_operations(self) -> bool { !matches!(self, Self::Dynamic) }
+}
+
+#[cfg(feature = "aot")]
+pub(super) enum NativeStopControl { Unbounded, Unproven }
 
 /// A relocatable typed region and its guarded entry inputs. JIT general
 /// dispatch supplies no static regions; its hot region publisher owns entry.
@@ -2241,6 +2265,8 @@ pub(super) fn lower_js_general_dispatch(
             });
             builder.ins().symbol_value(isa.pointer_type(), address)
         }
+        #[cfg(all(feature = "aot", test))]
+        JsGeneralCallout::Address(address) => builder.ins().iconst(isa.pointer_type(), address as i64),
     };
     let blocks: Vec<_> = (0..instruction_count)
         .map(|_| builder.create_block())
@@ -2271,16 +2297,38 @@ pub(super) fn lower_js_general_dispatch(
     let start_pc = builder
         .ins()
         .load(types::I64, MemFlagsData::trusted(), start_pc_address, 0);
-    builder
-        .ins()
-        .jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
-
     let mut callout_signature = Signature::new(isa.default_call_conv());
     for _ in 0..4 {
         callout_signature.params.push(AbiParam::new(types::I64));
     }
     callout_signature.returns.push(AbiParam::new(types::I64));
     let callout_signature = builder.import_signature(callout_signature);
+    #[cfg(feature = "aot")]
+    let control = if callout_kind.fixed_operations() {
+        // The bound belongs to this activation and never changes through a
+        // semantic callout. Divide once: normal native code is unbounded;
+        // bounded execution uses the same fixed semantic operations.
+        let stop_pc = builder.ins().load(types::I64, invariant(), payload,
+            std::mem::offset_of!(JsStepDispatch, stop_pc) as i32);
+        let unbounded = builder.ins().icmp_imm_u(IntCC::Equal, stop_pc, JS_NO_STOP_PC as i64);
+        let bounded = builder.create_block();
+        let pc = builder.append_block_param(bounded, types::I64);
+        builder.ins().brif(unbounded, continue_block, &[ir::BlockArg::Value(start_pc)],
+            bounded, &[ir::BlockArg::Value(start_pc)]);
+        builder.switch_to_block(bounded);
+        let run = builder.create_block();
+        let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, instruction_count as i64);
+        builder.ins().brif(in_range, run, &[], invalid_pc, &[ir::BlockArg::Value(pc)]);
+        builder.switch_to_block(run);
+        emit_js_step_fallback(&mut builder, context, callout, callout_signature,
+            result_pointer, stopped_block, bounded, JsCalloutPc::Dynamic(pc));
+        NativeStopControl::Unbounded
+    } else {
+        builder.ins().jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
+        NativeStopControl::Unproven
+    };
+    #[cfg(not(feature = "aot"))]
+    builder.ins().jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
     builder.switch_to_block(stopped_block);
     // A nonzero callout status has a rooted `JsStepDispatch` result in the
     // adapter payload. The status itself only tells the outer entry to stop.
@@ -2307,25 +2355,6 @@ pub(super) fn lower_js_general_dispatch(
     let resume_entries: Vec<_> = (0..instruction_count).map(|_| builder.create_block()).collect();
     for (pc, block) in blocks.iter().copied().enumerate() {
         builder.switch_to_block(block);
-        #[cfg(feature = "aot")]
-        if matches!(callout_kind, JsGeneralCallout::Relocatable(_)) {
-            let stop_pc = builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                payload,
-                std::mem::offset_of!(JsStepDispatch, stop_pc) as i32,
-            );
-            let at_stop = builder.ins().icmp_imm_u(IntCC::Equal, stop_pc, pc as i64);
-            let stop = builder.create_block();
-            let fast = builder.create_block();
-            builder.ins().brif(at_stop, stop, &[], fast, &[]);
-            builder.switch_to_block(stop);
-            emit_js_step_fallback(
-                &mut builder, context, callout, callout_signature, result_pointer,
-                stopped_block, continue_block, pc,
-            );
-            builder.switch_to_block(fast);
-        }
         let packed = function.code[pc];
         let instruction = super::dispatch_fast::decoded_instruction(function, packed);
         let next = entries.get(pc + 1).copied();
@@ -3369,7 +3398,7 @@ pub(super) fn lower_js_general_dispatch(
     #[cfg(feature = "aot")]
     for entry in _scalar_regions {
         let call = scalar_region::emit_entry(&mut builder, isa, entry,
-            context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc);
+            context, payload, arguments, result_pointer, &blocks, &entries, invalid_pc, &control);
         frame_flow.residual(call, entry.frame);
     }
     let live = program.register_root_masks(function_id);
@@ -16669,6 +16698,78 @@ mod tests {
         // owner retains the code, operands and counter storage it addresses.
         let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }.unwrap();
         (native, counts, weak)
+    }
+
+    #[cfg(feature = "aot")]
+    unsafe extern "C" fn fixed_test_semantic(
+        context: *mut CallContext, pc: u64, _: *const u64, result: *mut u64,
+    ) -> i64 {
+        // SAFETY: the test activation retains this body and the native graph
+        // checks its PC before selecting a fixed semantic operation.
+        let instruction = unsafe {
+            let dispatch = &*(*context).adapter_payload.cast::<JsStepDispatch>();
+            let body = &*dispatch.body;
+            super::super::dispatch_fast::decoded_instruction(body, body.code[pc as usize])
+        };
+        let operands = super::super::native_operands::NativeJsOperands::new(
+            instruction.a(), instruction.b(), instruction.c(), instruction.imm());
+        // The adapter supplies live addresses where production object emission
+        // supplies linker relocations; both select the same semantic entries.
+        unsafe { (instruction.op().native_semantic_entry::<crate::test_host::TestHost>())(
+            context.cast(), pc, operands.as_ptr(), result) }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn linked_general_entry_divides_stop_control_once_and_preserves_generator_parameters() {
+        let sources = [
+            "let trace=''; function* values(x=(trace+='p',1)) { trace+='b'; yield x; trace+='r'; return 2; } const g=values(); if(trace!=='p') throw 'early body'; const first=g.next(); const last=g.next(); if(first.value!==1||first.done||last.value!==2||!last.done) throw 'bad yield'; throw trace;",
+            "let trace=''; function fail(){trace+='p';throw 7;} function* values(x=fail()){trace+='bad';yield x;} try{values();throw 'missed parameter error';}catch(e){if(e!==7)throw e;} throw trace;",
+        ];
+        for typescript in [false, true] {
+            for (source, expected) in sources.iter().zip(["pbr", "p"]) {
+                let program = if typescript { crate::Engine::specialize_typescript(source, "bounded.cts") }
+                    else { crate::Engine::specialize(source, "bounded.cjs") }.unwrap();
+                let isa = super::super::jit_backend::target_isa("speed").unwrap();
+                let mut owners = Vec::new();
+                let mut entries = Vec::new();
+                for id in 0..program.function_count() {
+                    let (memory, entry, operands) = if id == 0 {
+                        live_native_function(&program, id as u32, None)
+                    } else {
+                        let (native, _) = lower_js_general_dispatch(&program, id as u32, false, &*isa,
+                            JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[]).unwrap();
+                        let entry_block = native.layout.entry_block().unwrap();
+                        let context = native.dfg.block_params(entry_block)[0];
+                        let instructions: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).collect();
+                        let payload = instructions.iter().find_map(|inst| match native.dfg.insts[*inst] {
+                            ir::InstructionData::Load { arg, offset, .. }
+                                if native.dfg.resolve_aliases(arg) == context
+                                    && i32::from(offset) == std::mem::offset_of!(CallContext, adapter_payload) as i32 =>
+                                Some(native.dfg.first_result(*inst)),
+                            _ => None,
+                        }).unwrap();
+                        assert_eq!(instructions.iter().filter(|inst| matches!(native.dfg.insts[**inst],
+                            ir::InstructionData::Load { arg, offset, .. }
+                                if native.dfg.resolve_aliases(arg) == payload
+                                    && i32::from(offset) == std::mem::offset_of!(JsStepDispatch, stop_pc) as i32)).count(), 1,
+                            "the activation stop fact is read once, never per instruction");
+                        let (memory, entry) = compile_and_publish_entry(native, &*isa, usize::MAX).unwrap();
+                        (memory, entry, Vec::new())
+                    };
+                    // SAFETY: only the spelling of the opaque context differs.
+                    entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
+                    owners.push((memory, operands));
+                }
+                let owner: Rc<dyn std::any::Any> = Rc::new(owners);
+                // SAFETY: this owner retains every entry lowered for this exact program/host.
+                let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }.unwrap();
+                let mut vm = Vm::new(crate::test_host::TestHost::default());
+                vm.set_execution_mode(ExecutionMode::NativeOnly);
+                let error = vm.execute_native_program(&native, true).unwrap_err();
+                assert_eq!(vm.heap.string(error.thrown_value().unwrap()).unwrap().to_string(), expected);
+            }
+        }
     }
 
     #[cfg(feature = "aot")]

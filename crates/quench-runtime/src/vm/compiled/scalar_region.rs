@@ -203,29 +203,32 @@ pub(super) fn emit_entry(
     baseline: &[ir::Block],
     entries: &[ir::Block],
     invalid: ir::Block,
+    control: &NativeStopControl,
 ) -> ir::Inst {
     let range = entry.range.clone();
     builder.switch_to_block(entries[range.start]);
-    // Parameter initialization may stop at any instruction inside the region.
-    let stop = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        payload,
-        std::mem::offset_of!(JsStepDispatch, stop_pc) as i32,
-    );
-    let after_start =
+    // An activation whose bound was not discharged may stop inside the region.
+    if matches!(control, NativeStopControl::Unproven) {
+        let stop = builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            payload,
+            std::mem::offset_of!(JsStepDispatch, stop_pc) as i32,
+        );
+        let after_start =
+            builder
+                .ins()
+                .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, stop, range.start as i64);
+        let before_end = builder
+            .ins()
+            .icmp_imm_u(IntCC::UnsignedLessThan, stop, range.end as i64);
+        let stops_inside = builder.ins().band(after_start, before_end);
+        let native = builder.create_block();
         builder
             .ins()
-            .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, stop, range.start as i64);
-    let before_end = builder
-        .ins()
-        .icmp_imm_u(IntCC::UnsignedLessThan, stop, range.end as i64);
-    let stops_inside = builder.ins().band(after_start, before_end);
-    let native = builder.create_block();
-    builder
-        .ins()
-        .brif(stops_inside, baseline[range.start], &[], native, &[]);
-    builder.switch_to_block(native);
+            .brif(stops_inside, baseline[range.start], &[], native, &[]);
+        builder.switch_to_block(native);
+    }
 
     let word_bytes = std::mem::size_of::<u64>();
     let record_slot = builder.create_sized_stack_slot(ir::StackSlotData::new(

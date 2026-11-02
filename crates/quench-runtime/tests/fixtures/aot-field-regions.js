@@ -118,5 +118,23 @@ for (let i = 0; i < 40; i++) {
   if (reflectedAfterWrite(3) !== 4) throw Error('reflected return state');
 }
 output.push(String(reflectedAfterWrite(3)));
+let phase = '';
+function* deferred(value = (phase += 'p', 2)) {
+  phase += 'b';
+  yield value;
+  phase += 'r';
+  return 3;
+}
+const suspended = deferred();
+output.push(phase);
+output.push(JSON.stringify(suspended.next()));
+output.push(JSON.stringify(suspended.next()));
+output.push(phase);
+function* invalidParameter(value = (() => { throw Error('parameter'); })()) {
+  phase += 'unexpected';
+  yield value;
+}
+record(() => invalidParameter());
+output.push(phase);
 output.push(events.join(','));
 console.log(JSON.stringify(output));
