@@ -21302,6 +21302,72 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
 }
 
 #[test]
+fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
+    let program = Engine::specialize(r#"
+      globalThis.receiver = {
+        add(k) { return k + 1; },
+        other(k) { return k + 2; },
+        step(k) { return this.add(k) + 3; }
+      };
+      for (let i = 0; i < 40; i++) receiver.step(i);
+    "#, "published-native-calls.js").unwrap();
+    for transition in ["collection", "realm", "reset"] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("receiver");
+        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
+        let add = vm.intern_atom("add");
+        let step = vm.intern_atom("step");
+        let callee = vm.get_property(&program, receiver, add).unwrap();
+        let caller = vm.get_property(&program, receiver, step).unwrap();
+        let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("caller") };
+        let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("callee") };
+        let body = program.function(caller_id as usize);
+        let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
+        let mut targets = vec![None; body.code.len()];
+        let other = vm.intern_atom("other");
+        let other = vm.get_property(&program, receiver, other).unwrap();
+        let crate::heap::FunctionKind::User(_, other_id) = vm.heap.function(other).unwrap().kind else { panic!("other") };
+        targets[call] = Some(super::compiled::CallTarget { callee, function: other_id });
+        assert!(vm.compile_lane_method(&program, caller_id, &targets).is_none(),
+            "publication must reject a callee paired with the wrong function body");
+        targets[call] = Some(super::compiled::CallTarget { callee, function: callee_id });
+        let method = vm.compile_lane_method(&program, caller_id, &targets).unwrap();
+        assert_eq!(method.inlined.len(), 1);
+        let published = vm.programs.publish_lane_method(method);
+        vm.collect_now(&program);
+        assert!(published.method().is_some(), "a live callee binding survives collection");
+        match transition {
+            "collection" => {
+                // A second publication names an unrooted function clone. It must
+                // retire without rooting that function or dropping the live proof.
+                let orphan = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
+                targets[call] = Some(super::compiled::CallTarget { callee: orphan, function: callee_id });
+                let method = vm.compile_lane_method(&program, caller_id, &targets).unwrap();
+                let dead = vm.programs.publish_lane_method(method);
+                vm.collect_now(&program);
+                assert!(!vm.heap.is_live(orphan));
+                assert!(dead.method().is_none(), "retire before the function locator can be reused");
+                assert!(published.method().is_some(), "unrelated live binding is retained");
+                let replacement = vm.heap.alloc_function(vm.heap.function(callee).unwrap().clone());
+                assert_eq!(replacement, orphan);
+                assert!(dead.method().is_none());
+            }
+            "realm" => {
+                let foreign = vm.create_realm_global(&program).unwrap();
+                vm.switch_realm_global(foreign);
+                assert!(published.method().is_none());
+            }
+            "reset" => {
+                vm.initialize(&program).unwrap();
+                assert!(published.method().is_none());
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
 fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     // `step` calls `add`, which stores `this` fields: the call inlines into `step`'s lane
     // body. A string total makes `add` leave inside it, a double makes its int path

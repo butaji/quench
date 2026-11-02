@@ -25,6 +25,7 @@ enum TypeKind {
     Language(u16),
     Int32,
     DirectObjectShape(u32),
+    FunctionIdentity(Value),
 }
 
 /// A set of language types, with an optional semantic refinement.
@@ -49,6 +50,7 @@ impl Type {
             TypeKind::Language(kinds) => kinds,
             TypeKind::Int32 => 1 << ValueType::Number as u16,
             TypeKind::DirectObjectShape(_) => 1 << ValueType::Object as u16,
+            TypeKind::FunctionIdentity(_) => 1 << ValueType::Function as u16,
         }
     }
 
@@ -65,6 +67,17 @@ impl Type {
             TypeKind::DirectObjectShape(shape) => Some(shape),
             _ => None,
         }
+    }
+
+    /// A function identity protected by a published weak binding and a
+    /// dominating value check. It cannot cross collection or realm retirement.
+    pub(crate) fn function(identity: Value) -> Option<Self> {
+        (identity.direct_function_index().is_some() || identity.legacy_heap_index().is_some())
+            .then_some(Self(TypeKind::FunctionIdentity(identity)))
+    }
+
+    pub(crate) fn function_identity(self) -> Option<Value> {
+        match self.0 { TypeKind::FunctionIdentity(identity) => Some(identity), _ => None }
     }
 
     /// Facts available from a canonical value alone. Heap language types need
@@ -177,7 +190,8 @@ impl Fact {
             }
         })
             && match self.binding {
-                BindingTime::Static => self.proof == Proof::Static && self.ty.object_shape().is_none(),
+                BindingTime::Static => self.proof == Proof::Static && self.ty.object_shape().is_none()
+                    && self.ty.function_identity().is_none(),
                 BindingTime::Location | BindingTime::Site => {
                     self.proof == Proof::EntryGuard
                         || (self.proof == Proof::CanonicalValue
@@ -222,6 +236,27 @@ impl Fact {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_identities_join_without_conflating_closures_or_static_proofs() {
+        let first = Type::function(Value::direct_function(7)).unwrap();
+        let second = Type::function(Value::direct_function(9)).unwrap();
+        let function = Type::language(ValueType::Function);
+        assert_eq!(first.function_identity(), Some(Value::direct_function(7)));
+        assert_eq!(first.join(first), first);
+        assert_eq!(first.join(second), function);
+        assert_eq!(first.join(function), function);
+        assert!(first.is_subtype(function));
+        assert!(!function.is_subtype(first));
+        assert!(!first.is_subtype(second));
+        let fact = Fact { ty: first, representation: Representation::Tagged,
+            binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact };
+        assert!(fact.verify());
+        assert!(!Fact { binding: BindingTime::Static, proof: Proof::Static, ..fact }.verify());
+        assert!(Type::function(Value::integer(7)).is_none());
+        assert_eq!(Type::immediate(Value::direct_function(7)), Type::ANY,
+            "tag bits and source annotations cannot manufacture a function proof");
+    }
 
     #[test]
     fn joins_do_not_turn_bigint_or_unknown_into_number() {

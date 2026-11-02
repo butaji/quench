@@ -861,6 +861,9 @@ impl<H: Host> Vm<H> {
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
         let heap = &self.heap;
+        // SAFETY: native lane bodies cannot collect; sweep has finished and
+        // no cleanup allocation can yet reuse a dead function locator.
+        unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
         self.prune_function_values();

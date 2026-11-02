@@ -919,8 +919,17 @@ impl Lowering<'_, '_> {
         let inlined = self.unit.frames[frame];
         let exit = self.guard_exit(state, pc as u32);
         let callee = self.tagged(state, inlined.callee_register);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, callee, inlined.target.callee.to_bits() as i64);
-        emit_js_guard(&mut self.builder, same, exit);
+        if state.values[usize::from(inlined.callee_register)].value.ty.function_identity()
+            != Some(inlined.target.callee)
+        {
+            let same = self.ins().icmp_imm_u(IntCC::Equal, callee, inlined.target.callee.to_bits() as i64);
+            emit_js_guard(&mut self.builder, same, exit);
+            state.values[usize::from(inlined.callee_register)] = RegisterFact::admit(Fact {
+                ty: Type::function(inlined.target.callee).expect("admitted callee locator"),
+                representation: Representation::Tagged,
+                binding: BindingTime::Location, proof: Proof::EntryGuard, projection: Projection::Exact,
+            }).expect("published function identity and dominating value check");
+        }
         let receiver = self.tagged(state, inlined.receiver);
         let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
         let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);

@@ -2181,6 +2181,8 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.clear_call_targets();
+        // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
+        unsafe { self.programs.retire_native_calls(); }
         let leaving = ParkedRealm {
             global: previous,
             state: GlobalLexicalState {
@@ -2902,6 +2904,8 @@ impl<H: Host> Vm<H> {
         // Reset reuses environment locators and collection counters. Retire raw
         // capture views at this boundary before either identity can appear again.
         self.capture_walks.fill(CaptureWalk::default());
+        // SAFETY: initialization runs outside any native body, before reuse.
+        unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();
         self.natives = Default::default();
         self.frames.clear();

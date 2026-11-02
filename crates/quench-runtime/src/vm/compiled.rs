@@ -6793,6 +6793,26 @@ pub(super) struct LaneMethod {
     pub(super) names_shapes: bool,
     /// The calls it runs inlined (`lane_unit::unit`), by frame.
     pub(super) inlined: Vec<InlinedCall>,
+    /// Maximum space needed to materialize one inlined leaf at recovery.
+    pub(super) recovery_room: Option<u16>,
+}
+
+/// Weakly published code. Retirement runs only outside native execution, before
+/// a dead callee locator can be reused; it releases the code, not a guest root.
+pub(super) struct PublishedLaneMethod(std::cell::UnsafeCell<Option<LaneMethod>>);
+
+impl PublishedLaneMethod {
+    pub(super) fn new(method: LaneMethod) -> Self { Self(std::cell::UnsafeCell::new(Some(method))) }
+    pub(super) fn method(&self) -> Option<&LaneMethod> {
+        // SAFETY: retirement requires that no method reference remains live.
+        unsafe { &*self.0.get() }.as_ref()
+    }
+    /// # Safety
+    /// No native body is running and no reference returned by `method` is held.
+    pub(super) unsafe fn retire(&self) {
+        // SAFETY: the lifecycle edge excludes active native code and borrowers.
+        unsafe { &mut *self.0.get() }.take();
+    }
 }
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
@@ -6971,7 +6991,12 @@ impl<H: Host> Vm<H> {
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames })
+        let mut recovery_room = None::<u16>;
+        for frame in &unit.frames {
+            let room = self.bind_inlined_call(program, frame.target.callee, frame.target.function)?;
+            recovery_room = Some(recovery_room.unwrap_or(0).max(room));
+        }
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, recovery_room })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A

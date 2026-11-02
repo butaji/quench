@@ -932,6 +932,8 @@ struct OwnedScript {
 }
 
 pub(crate) struct ProgramStore {
+    /// Weak native-call proofs; guest functions are never rooted by compiled code.
+    native_call_bindings: std::cell::RefCell<Vec<Weak<super::compiled::PublishedLaneMethod>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
@@ -991,6 +993,7 @@ pub(crate) struct ProgramStore {
 impl Default for ProgramStore {
     fn default() -> Self {
         Self {
+            native_call_bindings: Default::default(),
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
@@ -1040,6 +1043,40 @@ impl Default for ProgramStore {
 }
 
 impl ProgramStore {
+    pub(super) fn publish_lane_method(&self, method: super::compiled::LaneMethod)
+        -> Rc<super::compiled::PublishedLaneMethod>
+    {
+        let calls = !method.inlined.is_empty();
+        let published = Rc::new(super::compiled::PublishedLaneMethod::new(method));
+        if calls { self.native_call_bindings.borrow_mut().push(Rc::downgrade(&published)); }
+        published
+    }
+
+    /// # Safety
+    /// Collection has stopped native execution and no method reference is held.
+    pub(super) unsafe fn retire_dead_native_calls(&self, live: impl Fn(Value) -> bool) {
+        self.native_call_bindings.borrow_mut().retain(|weak| {
+            let Some(code) = weak.upgrade() else { return false; };
+            let Some(method) = code.method() else { return false; };
+            if method.inlined.iter().any(|call| !live(call.target.callee)) {
+                // SAFETY: forwarded from the collector's publication boundary.
+                unsafe { code.retire(); }
+                false
+            } else { true }
+        });
+    }
+
+    /// # Safety
+    /// Realm/heap transition excludes active native code and method references.
+    pub(super) unsafe fn retire_native_calls(&self) {
+        for weak in self.native_call_bindings.borrow_mut().drain(..) {
+            if let Some(code) = weak.upgrade() {
+                // SAFETY: forwarded from the lifecycle boundary.
+                unsafe { code.retire(); }
+            }
+        }
+    }
+
     /// What the JavaScript tier finds at the entries of `function` (`JsEntryFacts`), derived on
     /// its first entry.
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {

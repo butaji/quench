@@ -524,7 +524,7 @@ struct ActivationShape {
 enum LaneBody {
     /// Counting its entries toward specialization.
     Unspecialized { entries: u16 },
-    Specialized(super::compiled::LaneMethod),
+    Specialized(std::rc::Rc<super::compiled::PublishedLaneMethod>),
     Declined,
 }
 
@@ -536,19 +536,22 @@ const LANE_BODY_WARMUP_ENTRIES: u16 = 32;
 impl LaneView {
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<&super::compiled::LaneMethod> {
-        // SAFETY: the body changes only at specialization and at a shape compaction, when
-        // no body of this view runs and no reference into it is held.
+        // SAFETY: specialization and lifecycle retirement run without a native
+        // body or method borrower; the published owner lives with this view.
         match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Specialized(method) => Some(method),
+            LaneBody::Specialized(code) => code.method(),
             LaneBody::Unspecialized { .. } | LaneBody::Declined => None,
         }
     }
 
     /// Counts an entry toward the frameless body and specializes it at the warm-up; whether
     /// the body is still warming or specialized, so its prologue stays.
-    fn specialize_lane_body(&self, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) -> bool {
+    fn specialize_lane_body(&self, specialize: impl FnOnce() -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>>) -> bool {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
+        if matches!(body, LaneBody::Specialized(code) if code.method().is_none()) {
+            *body = LaneBody::Unspecialized { entries: 0 };
+        }
         if let LaneBody::Unspecialized { entries } = body {
             *entries += 1;
             if *entries >= LANE_BODY_WARMUP_ENTRIES {
@@ -563,9 +566,11 @@ impl LaneView {
     pub(super) fn invalidate_shape_bindings(&self) {
         // SAFETY: no lane body runs during a collection.
         let body = unsafe { &mut *self.tier_lane.get() };
-        if let LaneBody::Specialized(method) = body
-            && method.names_shapes
+        if let LaneBody::Specialized(code) = body
+            && code.method().is_some_and(|method| method.names_shapes)
         {
+            // SAFETY: compaction runs without native bodies or method borrowers.
+            unsafe { code.retire(); }
             *body = LaneBody::Unspecialized { entries: 0 };
         }
         for &pc in &self.field_records {
@@ -10493,6 +10498,18 @@ impl<H: Host> Vm<H> {
             .map(std::ptr::from_ref)
     }
 
+    /// Admit the immutable activation facts once, when native code is published.
+    /// GC and realm transitions retire the published owner before these expire.
+    pub(super) fn bind_inlined_call(&mut self, code: &ResidualProgram,
+        callee: Value, function: u32) -> Option<u16>
+    {
+        let target = self.resolve_script_call_target(code, callee)?;
+        (target.program == self.active_program && target.function == function
+            && target.entry == CallEntry::Activates
+            && matches!(target.this_binding, ThisBinding::Sloppy | ThisBinding::Strict))
+            .then_some(target.room)
+    }
+
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
@@ -13746,7 +13763,7 @@ script_handler! {
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
         if let Some(own) = own
             && let Some(method) = own.lane_body()
-            && lane_inlined_calls_activate(cx, method)
+            && lane_inlined_calls_activate(vm, unsafe { (*cx).script_calls }, method)
         {
             // SAFETY: the activation just set the context to its own receiver.
             let this = unsafe { (*cx).this };
@@ -13847,6 +13864,7 @@ fn lane_tier_enter<H: Host>(
             && own.specialize_lane_body(|| {
                 let targets = code.function_get(function as usize).map(|body| lane_call_targets(vm, own, body)).unwrap_or_default();
                 vm.compile_lane_method(code, function, &targets)
+                    .map(|method| vm.programs.publish_lane_method(method))
             })
         {
             return None;
@@ -13877,23 +13895,17 @@ fn lane_call_targets<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytecod
         .collect()
 }
 
-/// Whether the lane can make the activation of every call `method` inlines, should the body
-/// leave inside it (`lane_body_inlined_activation`): each callee still resolves to the
-/// target it was inlined as, activating in place in this program, with room on the stack.
-fn lane_inlined_calls_activate<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod) -> bool {
-    let vm = unsafe { vm(cx) };
-    method.inlined.iter().all(|call| {
-        vm.script_call_entry(call.target.callee).is_some_and(|target| {
-            // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
-            let target = unsafe { &*target };
-            target.function == call.target.function
-                && target.entry == CallEntry::Activates
-                && target.program == unsafe { (*cx).program }
-                && unsafe { (*cx).script_calls }
-                && !vm.with_scope_entered
-                && lane_activation_room(vm, target)
-        })
-    })
+/// Immutable callee facts are admitted by publication and retired by lifecycle
+/// events. Entry checks only dynamic permissions and the maximum recovery room.
+fn lane_inlined_calls_activate<H: Host>(vm: &Vm<H>, script_calls: bool,
+    method: &super::compiled::LaneMethod) -> bool
+{
+    let Some(room) = method.recovery_room else { return true; };
+    // Callee identity/realm proofs are retired at their lifecycle edges. Only
+    // dynamic execution permission and recovery capacity remain at entry.
+    script_calls && !vm.with_scope_entered
+        && vm.lane_stack.activations.len() < vm.lane_stack.activation_limit.get()
+        && vm.lane_stack.values.capacity() - vm.lane_stack.values.len() >= usize::from(room)
 }
 
 /// The activation a lane body that left inside inlined `call`, at its callee's PC `pc`,
@@ -13908,10 +13920,17 @@ fn lane_body_inlined_activation<H: Host>(
     call: &super::compiled::InlinedCall,
     pc: u32,
 ) -> (Registers, Ip, Carried) {
+    // Cache eviction is not invalidation of an immutable callee binding. Resolve
+    // only when recovery needs the activation, rather than scanning at entry.
     let vm = unsafe { vm(cx) };
-    let target = vm.script_call_entry(call.target.callee).expect("the entry checked the inlined call");
-    // SAFETY: as `Vm::script_call_entry`; the record is the call's in the running view.
-    let (target, record) = unsafe { (&*target, base.add(call.call as usize)) };
+    let target = vm.script_call_entry(call.target.callee)
+        // SAFETY: copy the current cache row before any cache mutation.
+        .map(|target| unsafe { *target })
+        .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, call.target.callee))
+        .expect("published inlined callee binding");
+    let target = &target;
+    // SAFETY: the record is the call's in the running view.
+    let record = unsafe { base.add(call.call as usize) };
     let this = lane_call_this(vm, target, r.get(call.receiver)).expect("a direct-object receiver binds itself");
     let (registers, _) = lane_push_activation::<H, false, false>(cx, r, record, target, call.window, this, false);
     Vm::<H>::lane_scratch(usize::from(call.registers), |register, value| registers.set(register, value));
