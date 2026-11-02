@@ -1303,7 +1303,7 @@ impl Lowering<'_, '_> {
             let done = self.builder.create_block();
             let result = self.builder.append_block_param(done, types::I64);
             let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header);
+                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header);
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(slow);
