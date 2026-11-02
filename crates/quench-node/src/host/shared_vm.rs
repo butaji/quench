@@ -1375,6 +1375,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "webBroadcastChannelInitialize" (0) => crate::modules::broadcast_channel_shared_vm::initialize_global,
         method "assertCall" (0) => crate::modules::assert_shared_vm::call,
         method "assertAssertionError" (1) => crate::modules::assert_shared_vm::error_constructor,
+        method "assertAssert" (1) => crate::modules::assert_shared_vm::assert_constructor,
         method "assertErrorToString" (0) => crate::modules::assert_shared_vm::error_to_string,
         method "assertSettled" (1) => crate::modules::assert_shared_vm::settled,
         method "assertRejected" (1) => crate::modules::assert_shared_vm::rejected,

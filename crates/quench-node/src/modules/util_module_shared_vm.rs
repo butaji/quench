@@ -400,21 +400,26 @@ pub(crate) fn key_type_check(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
     let data = c.host_function_data()?;
     let class = c.to_string(data)?;
     let value = argument(c, args, 0);
+    let matches = is_key_class(c, value, &class)?;
+    Ok(c.boolean(matches))
+}
+
+/// Whether `value` is an instance of the crypto key class `class` (`KeyObject` or `CryptoKey`).
+pub(crate) fn is_key_class(c: &mut Context<'_>, value: RootId, class: &str) -> Result<bool, RootedError> {
     if !c.is_object_rooted(value)? {
-        return Ok(c.boolean(false));
+        return Ok(false);
     }
     let global = c.global_root()?;
     let constructor = if class == "KeyObject" {
         let crypto = crate::host::shared_vm::commonjs::library_require(c, "crypto")?;
-        get(c, crypto, &class)?
+        get(c, crypto, class)?
     } else {
-        get(c, global, &class)?
+        get(c, global, class)?
     };
     if !c.is_callable_rooted(constructor)? {
-        return Ok(c.boolean(false));
+        return Ok(false);
     }
-    let matches = c.instance_of_rooted(value, constructor)?;
-    Ok(c.boolean(matches))
+    c.instance_of_rooted(value, constructor)
 }
 
 pub(crate) fn legacy_is(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
