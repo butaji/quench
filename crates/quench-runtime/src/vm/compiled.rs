@@ -1316,38 +1316,19 @@ fn emit_value_index_offset(builder: &mut FunctionBuilder<'_>, index: ir::Value) 
     builder.ins().ishl_imm_u(index, i64::from(stride.trailing_zeros()))
 }
 
-/// Lower a present dense own-array read. The receiver and key come from the
-/// canonical tagged frame on every execution; the record and its current
-/// backing are also reloaded per access so receiver changes and COW writes are
-/// visible. Every failed proof leaves the destination untouched and resumes
-/// `Vm::step` at this GetIndex PC.
-#[allow(clippy::too_many_arguments)]
-fn emit_js_dense_array_get(
+/// The present element `key` of the dense own-array `base`, both tagged: the record and
+/// its current backing reloaded per access, so receiver changes and copy-on-write writes are
+/// visible. Any other base, key or a hole leaves through `fallback`, with nothing read.
+pub(super) fn emit_dense_element_read(
     builder: &mut FunctionBuilder<'_>,
-    arguments: ir::Value,
     payload: ir::Value,
-    base_offset: i32,
+    base: ir::Value,
     key: ir::Value,
-    destination_offset: i32,
-    next: ir::Block,
-    context: ir::Value,
-    callout: ir::Value,
-    callout_signature: ir::SigRef,
-    result_pointer: ir::Value,
-    stopped_block: ir::Block,
-    continue_block: ir::Block,
-    pc: usize,
-) {
+    fallback: ir::Block,
+) -> ir::Value {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     use crate::value::ValueLayout;
 
-    let fallback = builder.create_block();
-    let base = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        arguments,
-        base_offset,
-    );
     let family = builder
         .ins()
         .band_imm_u(base, ValueLayout::HEAP_FAMILY_MASK as i64);
@@ -1444,6 +1425,39 @@ fn emit_js_dense_array_get(
     );
     emit_js_guard(builder, is_present, fallback);
 
+    value
+}
+
+/// Lower a present dense own-array read. The receiver and key come from the
+/// canonical tagged frame on every execution; the record and its current
+/// backing are also reloaded per access so receiver changes and COW writes are
+/// visible. Every failed proof leaves the destination untouched and resumes
+/// `Vm::step` at this GetIndex PC.
+#[allow(clippy::too_many_arguments)]
+fn emit_js_dense_array_get(
+    builder: &mut FunctionBuilder<'_>,
+    arguments: ir::Value,
+    payload: ir::Value,
+    base_offset: i32,
+    key: ir::Value,
+    destination_offset: i32,
+    next: ir::Block,
+    context: ir::Value,
+    callout: ir::Value,
+    callout_signature: ir::SigRef,
+    result_pointer: ir::Value,
+    stopped_block: ir::Block,
+    continue_block: ir::Block,
+    pc: usize,
+) {
+    let fallback = builder.create_block();
+    let base = builder.ins().load(
+        types::I64,
+        MemFlagsData::trusted(),
+        arguments,
+        base_offset,
+    );
+    let value = emit_dense_element_read(builder, payload, base, key, fallback);
     builder.ins().store(
         MemFlagsData::trusted(),
         value,
@@ -2041,10 +2055,11 @@ macro_rules! lane_helper_inventory {
     };
 }
 lane_helper_inventory! { H;
-    Capture => lane_capture_read,
     FunctionCapture => lane_function_capture_read::<H>,
     FieldGet => lane_field_get::<H>,
     FieldSet => lane_field_set::<H>,
+    Call => super::dispatch_fast::lane_body_call::<H>,
+    IndexSet => lane_index_set::<H>,
     GuardedCall => lane_guarded_call::<H>,
     FunctionBinding => lane_function_binding::<H>,
     MaterializeInline => lane_materialize_inline::<H>,
@@ -2228,8 +2243,14 @@ pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: 
     if isa.pointer_type() != types::I64 { return None; }
     let function = program.function_get(function_id as usize)?;
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
-    let unit = lane_unit::unit(program, function, &|pc| targets.get(pc).copied().flatten()
-        .map(|function| CallTarget { function, callee: CalleeBinding::Function }), &|id| program.function_get(id as usize))?;
+    // Source-PC recovery materializes one callee frame (`lane_materialize_inline`): the
+    // region inlines its own calls, of callees that call nothing.
+    let leaf = |function: u32| program.function_get(function as usize)
+        .is_some_and(|body| body.instructions().all(|instruction| instruction.op() != Op::Call));
+    let unit = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
+        .then(|| targets.get(pc as usize).copied().flatten()).flatten().filter(|callee| leaf(*callee))
+        .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+        &|id| program.function_get(id as usize))?;
     // A closed loop must re-enter after an opaque call returns. Its effectful
     // initialization remains in canonical code and may not run on a backedge.
     let loop_header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
@@ -2245,7 +2266,8 @@ pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: 
     let lane_unit::Origin::Caller(source_header) = unit.origins[header] else { return None; };
     let unit = unit.suffix(header)?;
     let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
-        &[], isa, lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
+        &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, isa,
+        lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
     (count != 0).then_some(StaticTypedRegion { header: source_header as usize, function: native })
 }
 
@@ -7003,8 +7025,6 @@ struct JsStepDispatch {
     stores_specialized: usize,
     /// A lane body's receiver (`GeneralDispatchMode::Lane`); `DELETED` elsewhere.
     receiver: u64,
-    /// A lane body's dense capture slots (`LaneContext::capture`, its tag cleared), or null.
-    captures: usize,
     /// A lane body's VM and running residual, which its semantic helpers take.
     vm: usize,
     residual: usize,
@@ -7013,6 +7033,17 @@ struct JsStepDispatch {
     /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     inlined: usize,
+    /// A lane body's running lane context, which its native calls make activations in.
+    lane_context: usize,
+    /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
+    returned_pc: usize,
+    /// A lane run's free lane-stack values, where a direct call places its callee's
+    /// registers (`DirectCallee`): the next and the end of the stack's capacity.
+    native_top: usize,
+    native_end: usize,
+    /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
+    shadow_top: usize,
+    shadow_end: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7023,6 +7054,10 @@ struct JsStepDispatch {
 /// A general-dispatch body specialized for frameless lane activations
 /// (`GeneralDispatchMode::Lane`): it runs on the activation's own registers, so they stay
 /// the interpreter's exact state, and leaves at the PC of any instruction it does not run.
+/// The length below which a lane body without loops or inlined calls declines
+/// (`Vm::compile_lane_method`).
+const LANE_BODY_MIN_INSTRUCTIONS: usize = 24;
+
 pub(super) struct LaneMethod {
     _code: CodeMemory,
     entry: Entry,
@@ -7031,12 +7066,50 @@ pub(super) struct LaneMethod {
     pub(super) names_shapes: bool,
     /// The calls it runs inlined (`lane_unit::unit`), by frame.
     pub(super) inlined: Vec<InlinedCall>,
-    /// Maximum space needed to materialize one inlined leaf at recovery.
-    pub(super) recovery_room: Option<u16>,
+    /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
+    /// per register of the inlined callees, the unit's past the caller's.
+    scratch_width: usize,
+    caller_registers: u16,
+    /// The loop header PC of its function a run may also start at (`Vm::run_lane_method`).
+    pub(super) loop_header: Option<u32>,
+    /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
+    amortizes: bool,
+    /// The callees it calls by their compiled entries, which its code names.
+    pub(super) direct: Box<[DirectCallee]>,
+    /// Whether every call it makes is inlined or direct: under a direct caller's native
+    /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
+    /// a body is called directly.
+    closed: bool,
+}
+
+impl LaneMethod {
+    /// The registers of the function it runs, which an inlined callee's follow.
+    pub(super) fn caller_registers(&self) -> u16 {
+        self.caller_registers
+    }
+
+    /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
+    pub(super) fn entry_address(&self) -> usize {
+        self.entry as usize
+    }
+
+    /// Whether an entry, which costs a few hundred instructions the lane's own run of a
+    /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
+    /// (`LANE_BODY_MIN_INSTRUCTIONS`). A short leaf runs in the lane, or inlined.
+    pub(super) fn amortizes_entry(&self) -> bool {
+        self.amortizes
+    }
+
+    /// Whether a direct caller may call it (`LaneMethod::closed`).
+    pub(super) fn calls_only_natively(&self) -> bool {
+        self.closed
+    }
 }
 
 /// Weakly published code. Retirement runs only outside native execution, before
 /// a dead callee locator can be reused; it releases the code, not a guest root.
+/// A direct caller holds its callee's publication (`DirectCallee::method`) and is
+/// retired with it (`ProgramStore::retire_dead_native_calls`).
 pub(super) struct PublishedLaneMethod(std::cell::UnsafeCell<Option<LaneMethod>>);
 
 impl PublishedLaneMethod {
@@ -7053,31 +7126,71 @@ impl PublishedLaneMethod {
     }
 }
 
+/// Where a run of a lane body starts (`Vm::run_lane_method`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LaneStart {
+    First,
+    /// Its loop header (`LaneMethod::loop_header`), from the lane's backward jump there.
+    LoopHeader,
+}
+
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
 /// whose activation the lane then makes (`Vm::lane_body_inlined_activation`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneExit {
     At(usize),
     Inlined { frame: usize, pc: u32 },
+    /// A native call made its callee's activation and the lane continues in it
+    /// (`dispatch_fast::lane_body_call`).
+    Callee,
+    /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
+    Returned { pc: usize, value: Value },
 }
 
 /// The bit of a lane body's result word that marks a leave inside an inlined frame, whose
 /// index sits above the callee PC's word.
 const INLINED_EXIT: u64 = 1 << 63;
+/// The result word of a leave into a native call's callee activation.
+const CALLEE_EXIT: u64 = 1 << 62;
+/// The status of a lane body whose activation completes: its result word holds the value,
+/// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
+/// sits below the general dispatch's return statuses and above every small status.
+pub(super) const LANE_BODY_RETURNED: u32 = JS_GENERAL_RETURN_STATUS_BASE - 1;
+
+/// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
+/// result in the call's register; missed before any effect, so the body leaves at the call;
+/// or left the lane in the callee's activation it made.
+pub(super) const LANE_CALL_COMPLETED: u64 = 0;
+pub(super) const LANE_CALL_MISSED: u64 = 1;
+pub(super) const LANE_CALL_LEFT: u64 = 2;
 
 impl LaneExit {
+    /// The caller PC a leave or completion is at, with a completion's value written to the
+    /// register its record names, where a test reads a `Return`'s result.
+    #[cfg(test)]
+    pub(super) fn settled(self, registers: &mut [Value], instructions: &[crate::bytecode::WideInstruction]) -> Option<usize> {
+        if let Self::Returned { pc, value } = self {
+            registers[usize::from(instructions[pc].register_a() & crate::bytecode::REGISTER_MASK)] = value;
+        }
+        self.caller_pc()
+    }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) => Some(pc), Self::Inlined { .. } => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Inlined { .. } | Self::Callee => None }
     }
     pub(super) fn word(self) -> u64 {
         match self {
             Self::At(pc) => pc as u64,
             Self::Inlined { frame, pc } => INLINED_EXIT | (frame as u64) << u32::BITS | u64::from(pc),
+            Self::Callee => CALLEE_EXIT,
+            Self::Returned { .. } => unreachable!("a completion is a status, not a leave word"),
         }
     }
 
     fn decode(word: u64) -> Self {
+        if word == CALLEE_EXIT {
+            return Self::Callee;
+        }
         if word & INLINED_EXIT == 0 {
             return Self::At(usize::try_from(word).unwrap_or(0));
         }
@@ -7157,19 +7270,13 @@ fn guarded_call_instruction(instruction: WideInstruction) -> bool {
         && instruction.call_window().count == 0
 }
 
-/// A lane body's read of the running function's capture `slot`, by the lane's own rule
-/// (`EnvironmentSlots::dense_plain`); `DELETED` where that rule finds no plain value, which
-/// leaves native code for the lane's full read.
-unsafe extern "C" fn lane_capture_read(slots: u64, slot: u64) -> u64 {
-    let slots = slots as *const crate::heap::EnvironmentSlots;
-    if slots.is_null() {
-        return Value::DELETED.to_bits();
-    }
-    // SAFETY: the payload holds the running activation's dense capture slots, which
-    // outlive the body's run, and nothing collects while it runs.
-    unsafe { &*slots }
-        .dense_plain(usize::try_from(slot).unwrap_or(usize::MAX))
-        .map_or(Value::DELETED.to_bits(), Value::to_bits)
+/// A lane body's element store: the lane's own in-place replacement of a record array's
+/// element (`Vm::try_replace_record_element`), whose miss changes nothing and leaves the
+/// body at the store.
+unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; a replacement allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    u64::from(vm.try_replace_record_element(Value::from_bits(object), Value::from_bits(key), Value::from_bits(value)))
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking
@@ -7188,54 +7295,81 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 }
 
 impl<H: Host> Vm<H> {
-    /// The receiver field sites of `function` whose cache entries prove a holderless exact
-    /// shape and slot now (`Vm::native_field_load_descriptor`), by PC.
-    fn lane_receiver_fields(&self, program: &ResidualProgram, function: u32) -> Vec<Vec<NativeFieldLoad>> {
-        let Some(body) = program.function_get(function as usize) else { return Vec::new() };
-        body.code
+    /// The field cache sites `unit` reads or writes, each with the exact shapes and slots its
+    /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
+    /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
+    /// per read of its chain, and its sink's store.
+    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit) -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        unit.instructions
             .iter()
-            .map(|packed| {
-                let instruction = super::dispatch_fast::decoded_instruction(body, *packed);
-                let site = match instruction.op() {
+            .flat_map(|instruction| -> Vec<(u16, bool)> {
+                match instruction.op() {
                     Op::GetField => match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
-                        _ => return Vec::new(),
+                        Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
+                        Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
+                            let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
+                            reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
+                        }),
+                        None => Vec::new(),
                     },
-                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => instruction.cache_site_index(),
-                    _ => return Vec::new(),
-                };
-                self.native_field_load_descriptors(site)
+                    Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => vec![(instruction.cache_site_index(), false)],
+                    _ => Vec::new(),
+                }
             })
+            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }))
+            .filter(|(_, shapes)| !shapes.is_empty())
             .collect()
     }
 
     /// Specialize `function` for lane activations, admitting a body only where its first
     /// instruction runs natively: an entry that leaves at once is pure cost.
-    pub(super) fn compile_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &[Option<CallTarget>]) -> Option<LaneMethod> {
+    pub(super) fn compile_lane_method(
+        &mut self,
+        program: &ResidualProgram,
+        function: u32,
+        targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
+        captures: &dyn Fn(Value) -> (usize, usize),
+        direct: Vec<Option<DirectCallee>>,
+        loop_header: Option<u32>,
+    ) -> Option<LaneMethod> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
         let body = program.function_get(function as usize)?;
         // Captured stores already use the shared frameless kernel. Unit entry
         // and capture admission add work without improving that compact proof.
-        let unit = lane_unit::unit(program, body, &|pc| targets.get(pc).copied().flatten(), &|callee| program.function_get(callee as usize)
+        let unit = lane_unit::unit(program, function, body, targets, &|callee| program.function_get(callee as usize)
             .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
-        // Keep unresolved calls in the frameless lane until their verified inputs
-        // can be bound before entry rather than admitted on every invocation.
-        if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) {
+        if !unit.frames.iter().all(|frame| frame.target.identity()
+            .is_some_and(|callee| self.lane_inlined_target_admitted(program, callee, frame.target.function))) {
             self.host.after_native_compilation();
             return None;
         }
-        let caller_fields = self.lane_receiver_fields(program, function);
-        let callee_fields: Vec<_> = unit.frames.iter().map(|frame| self.lane_receiver_fields(program, frame.target.function)).collect();
-        let receiver_fields: Vec<Vec<NativeFieldLoad>> = unit
-            .origins
-            .iter()
-            .map(|origin| match *origin {
-                lane_unit::Origin::Caller(pc) => caller_fields.get(pc as usize).cloned().unwrap_or_default(),
-                lane_unit::Origin::Inlined { frame, pc } => callee_fields[frame].get(pc as usize).cloned().unwrap_or_default(),
+        let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
+            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && (instruction.imm() as usize) <= pc
+        });
+        let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
+        let loop_entry = match loop_header {
+            Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
+            None => None,
+        };
+        let fields = self.lane_unit_fields(program, &unit);
+        // The calls the unit still makes (none it inlines) whose callees have bodies.
+        let mut direct = direct;
+        // The code names each callee by its address in this boxed slice, which never moves.
+        let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
+            .filter(|(_, instruction)| instruction.op() == Op::Call)
+            .filter_map(|(pc, _)| match unit.origins[pc] {
+                lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take().map(|callee| (pc, callee)),
+                lane_unit::Origin::Inlined { .. } => None,
             })
-            .collect();
-        let region = lane_region::compile(program, function, &unit, helpers, &receiver_fields);
+            .unzip();
+        let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
+        let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
+            pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
+        let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
+            .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
+        let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites, &frame_captures, loop_entry);
         self.host.after_native_compilation();
         let region = region?;
         if region.native == 0 {
@@ -7251,18 +7385,120 @@ impl<H: Host> Vm<H> {
         LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
-        let names_shapes = receiver_fields.iter().any(|shapes| !shapes.is_empty());
-        let mut recovery_room = None::<u16>;
-        for frame in &unit.frames {
-            let room = self.bind_inlined_call(program, frame.target.identity()?, frame.target.function)?;
-            recovery_room = Some(recovery_room.unwrap_or(0).max(room));
-        }
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, recovery_room })
+        // A body that names a callee's body retires with it (`DirectCallee::method`).
+        let names_shapes = !fields.is_empty() || !direct.is_empty();
+        let scratch_width = usize::from(unit.registers - unit.caller_registers);
+        let caller_registers = unit.caller_registers;
+        let closed = unit.instructions.iter().enumerate()
+            .all(|(pc, instruction)| instruction.op() != Op::Call || direct_sites.contains_key(&pc));
+        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, direct, closed })
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
     /// native `Return` leaves at its own record, whose register already holds the result.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn run_lane_method(
+        &mut self,
+        method: &LaneMethod,
+        start: LaneStart,
+        direct_calls: bool,
+        program: ProgramId,
+        residual: &ResidualProgram,
+        registers: *mut Value,
+        receiver: Value,
+        captures: *const crate::heap::EnvironmentSlots,
+        lane_context: *mut (),
+    ) -> LaneExit {
+        let frame = lane_frame();
+        // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
+        let (capture_values, capture_len) = unsafe { captures.as_ref() }
+            .and_then(crate::heap::EnvironmentSlots::native_dense_view)
+            .unwrap_or((std::ptr::null(), 0));
+        // SAFETY: the frame lives for the thread and is never moved once made; no reference
+        // into it is held across the body's run, which may enter it again
+        // (`run_nested_lane_method`).
+        let context = unsafe {
+            if (*frame).scratch.len() < method.scratch_width {
+                (*frame).scratch.resize(method.scratch_width, Value::UNDEFINED);
+            }
+            let dispatch = &raw mut (*frame).dispatch;
+            LaneEntry {
+                lane_context: lane_context.addr(),
+                native_registers: registers,
+                receiver: receiver.to_bits(),
+                capture_values,
+                capture_len,
+                residual: residual as *const ResidualProgram as usize,
+            }
+            .install(&mut *dispatch);
+            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
+            (*dispatch).program_id = program;
+            (*dispatch).refresh_object_bases(self);
+            (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
+            let vm = self as *mut Self;
+            (*dispatch).vm = vm.addr();
+            (*dispatch).bind_property_buffer(vm);
+            // A run starts with no native frames; its direct calls place their callees past
+            // the stack's values.
+            let (top, end, activations) = self.lane_stack_spare();
+            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
+            let shadow = (*frame).shadow.as_mut_ptr();
+            // A run whose lane may not make the frames' activations makes no direct call.
+            let frames = if direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
+            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
+            let context = &raw mut (*frame).context;
+            (*context).adapter_payload = dispatch.cast();
+            (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            context
+        };
+        let mut word = 0_u64;
+        // SAFETY: the body was compiled for this function, never allocates or collects, and
+        // reads only the registers, constants and heap bases set above.
+        let start = match start {
+            LaneStart::First => 0,
+            LaneStart::LoopHeader => {
+                debug_assert!(method.loop_header.is_some(), "a loop entry runs a body compiled with one");
+                1
+            }
+        };
+        let status = unsafe { (method.entry)(&mut *context, start, 0, registers.cast_const().cast(), &mut word) };
+        if status == LANE_BODY_RETURNED {
+            // SAFETY: as above; the body wrote the record before it returned.
+            let pc = unsafe { (*frame).dispatch.returned_pc };
+            return LaneExit::Returned { pc, value: Value::from_bits(word) };
+        }
+        Self::lane_method_exit(status, word)
+    }
+
+    /// The native frames the last run left inside, outermost first, which the lane now
+    /// materializes (`ShadowFrame`); none once taken.
+    pub(super) fn take_shadow_frames() -> &'static [ShadowFrame] {
+        let frame = lane_frame();
+        // SAFETY: no lane body runs while the lane reads the frame, and the frames read stay
+        // as they are until the next run, which the lane starts only after materializing them.
+        unsafe {
+            let base = (*frame).shadow.as_mut_ptr();
+            let top = (*frame).dispatch.shadow_top as *mut ShadowFrame;
+            let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
+            (*frame).dispatch.shadow_top = base.addr();
+            std::slice::from_raw_parts(base, count)
+        }
+    }
+
+    /// Whether a running body has native frames below the innermost: a helper's activation
+    /// would sit under them, so a call from one takes the body's exit instead
+    /// (`dispatch_fast::lane_body_call`).
+    pub(super) fn lane_shadow_active() -> bool {
+        let frame = lane_frame();
+        // SAFETY: as `take_shadow_frames`; the running body wrote the top before its call.
+        unsafe { (*frame).dispatch.shadow_top != (*frame).shadow.as_mut_ptr().addr() }
+    }
+
+    /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
+    /// caller's body continues with the per-entry words it entered with. Its callee runs in
+    /// the same program (`lane_crosses`) and allocates nothing, so the program's bases stand.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_nested_lane_method(
         &mut self,
         method: &LaneMethod,
         program: ProgramId,
@@ -7270,50 +7506,107 @@ impl<H: Host> Vm<H> {
         registers: *mut Value,
         receiver: Value,
         captures: *const crate::heap::EnvironmentSlots,
+        lane_context: *mut (),
     ) -> LaneExit {
-        let (status, word) = LANE_FRAME.with(|frame| {
-            // SAFETY: a lane body never re-enters the VM, so no other borrow of this
-            // thread's frame is live; the frame is never moved once made.
-            let frame = unsafe { &mut *frame.get() };
-            let frame = frame.get_or_insert_with(LaneFrame::new);
-            let width = method.inlined.iter().map(|call| usize::from(call.registers)).max().unwrap_or(0);
-            if frame.scratch.len() < width {
-                frame.scratch.resize(width, Value::UNDEFINED);
-            }
-            let dispatch = &mut frame.dispatch;
-            dispatch.inlined = frame.scratch.as_mut_ptr().addr();
-            dispatch.program_id = program;
-            dispatch.native_registers = registers;
-            dispatch.receiver = receiver.to_bits();
-            dispatch.captures = captures as usize;
-            dispatch.residual = residual as *const ResidualProgram as usize;
-            dispatch.refresh_object_bases(self);
-            dispatch.stores_specialized = usize::from(self.specialized && residual.specialized);
-            let context = &mut frame.context;
-            context.adapter_payload = (dispatch as *mut JsStepDispatch).cast();
-            context.interrupt = self.execution_interrupt.atomic_flag() as *const _;
-            let vm = self as *mut Self;
-            dispatch.vm = vm as usize;
-            dispatch.bind_property_buffer(vm);
-            let mut word = 0_u64;
-            // SAFETY: the body was compiled for this function, never allocates or
-            // collects, and reads only the registers and heap bases set above.
-            let status = unsafe { (method.entry)(context, 0, 0, registers.cast_const().cast(), &mut word) };
-            (status, word)
-        });
-        Self::lane_method_exit(status, word)
+        let frame = lane_frame();
+        // SAFETY: as `run_lane_method`; the caller's entry made the frame.
+        let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
+        // SAFETY: as above; the callee's run may have grown the scratch window.
+        unsafe {
+            saved.install(&mut (*frame).dispatch);
+            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
+        }
+        exit
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
-    pub(super) fn lane_scratch(count: usize, mut write: impl FnMut(u16, Value)) {
+    pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
         LANE_FRAME.with(|frame| {
             // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
             let Some(frame) = (unsafe { &*frame.get() }).as_ref() else { return };
-            for (register, value) in frame.scratch[..count].iter().enumerate() {
+            for (register, value) in frame.scratch[start..start + count].iter().enumerate() {
                 write(register as u16, *value);
             }
         });
+    }
+}
+
+/// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
+/// target the lane would activate, fixed by the callee's identity, which the call guards,
+/// and its specialized body. The caller's body owns it.
+pub(super) struct DirectCallee {
+    pub(super) target: super::dispatch_fast::ScriptCallTarget,
+    /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
+    /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
+    /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
+    pub(super) method: Rc<PublishedLaneMethod>,
+    /// The caller's call record, which the callee's activation returns to.
+    pub(super) call: usize,
+    pub(super) callee: Value,
+    pub(super) registers: u16,
+    /// The values past its registers a leave inside a call it inlines takes
+    /// (`LaneView::lane_body_room`), which the call proves free with its own.
+    pub(super) reserve: u16,
+    /// The callee binds a sloppy receiver: the call takes only a direct object one directly.
+    pub(super) sloppy: bool,
+    /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
+    pub(super) capture_values: *const Value,
+    pub(super) capture_len: usize,
+}
+
+/// A native frame of a direct call (`DirectCallee`), which the lane materializes as an
+/// activation only if a run leaves inside it (`Vm::take_shadow_frames`).
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(super) struct ShadowFrame {
+    /// The caller's call record.
+    pub(super) call: usize,
+    pub(super) callee: *const DirectCallee,
+    /// The callee's registers, in the lane stack's capacity past the caller's.
+    pub(super) window: *mut Value,
+    pub(super) this: u64,
+}
+
+impl ShadowFrame {
+    const EMPTY: Self = Self { call: 0, callee: std::ptr::null(), window: std::ptr::null_mut(), this: 0 };
+}
+
+/// Direct calls a run nests natively: past them, a call takes the lane's helper path. The
+/// machine stack each costs a frame; the bound keeps a native recursion within it.
+const SHADOW_FRAMES: usize = 64;
+
+/// The words of `JsStepDispatch` one lane body entry owns (`Vm::run_lane_method`).
+#[derive(Clone, Copy)]
+struct LaneEntry {
+    lane_context: usize,
+    native_registers: *mut Value,
+    receiver: u64,
+    capture_values: *const Value,
+    capture_len: usize,
+    residual: usize,
+}
+
+impl LaneEntry {
+    fn of(dispatch: &JsStepDispatch) -> Self {
+        Self {
+            lane_context: dispatch.lane_context,
+            native_registers: dispatch.native_registers,
+            receiver: dispatch.receiver,
+            capture_values: dispatch.capture_values,
+            capture_len: dispatch.capture_len,
+            residual: dispatch.residual,
+        }
+    }
+
+    fn install(self, dispatch: &mut JsStepDispatch) {
+        dispatch.lane_context = self.lane_context;
+        dispatch.native_registers = self.native_registers;
+        dispatch.receiver = self.receiver;
+        dispatch.capture_values = self.capture_values;
+        dispatch.capture_len = self.capture_len;
+        dispatch.residual = self.residual;
     }
 }
 
@@ -7324,6 +7617,9 @@ struct LaneFrame {
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
+    /// The native frames of the bodies a run calls directly, outermost first, from
+    /// `dispatch.shadow_top` down (`ShadowFrame`).
+    shadow: Box<[ShadowFrame; SHADOW_FRAMES]>,
 }
 
 impl LaneFrame {
@@ -7358,11 +7654,16 @@ impl LaneFrame {
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
                 receiver: Value::DELETED.to_bits(),
-                captures: 0,
                 vm: 0,
                 residual: 0,
                 body: std::ptr::null(),
                 inlined: 0,
+                lane_context: 0,
+                returned_pc: 0,
+                native_top: 0,
+                native_end: 0,
+                shadow_top: 0,
+                shadow_end: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7370,12 +7671,21 @@ impl LaneFrame {
                 outcome: None,
             },
             scratch: Vec::new(),
+            shadow: Box::new([ShadowFrame::EMPTY; SHADOW_FRAMES]),
         }
     }
 }
 
 thread_local! {
     static LANE_FRAME: std::cell::UnsafeCell<Option<LaneFrame>> = const { std::cell::UnsafeCell::new(None) };
+}
+
+/// This thread's lane frame, made at its first lane body run.
+fn lane_frame() -> *mut LaneFrame {
+    let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
+    // SAFETY: the frame is reached only through this pointer, on its thread, and no
+    // reference into it outlives the statement that makes it.
+    unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame }
 }
 
 impl<H: Host> Vm<H> {
@@ -7485,11 +7795,16 @@ impl JsNativeActivation {
             field_entries: 0, method_cache_atoms: 0, method_cache_atom_words: 0,
             stores_specialized: 0,
             receiver: Value::DELETED.to_bits(),
-            captures: 0,
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
             body,
             inlined: 0,
+            lane_context: 0,
+            returned_pc: 0,
+            native_top: 0,
+            native_end: 0,
+            shadow_top: 0,
+            shadow_end: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]
@@ -7515,6 +7830,7 @@ impl JsStepDispatch {
     /// Allocation or collection between native entries may move any of them.
     fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let atoms = vm.method_cache_atoms.words();
@@ -7527,18 +7843,15 @@ impl JsStepDispatch {
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
             .map_or(std::ptr::null(), |frame| &frame.this as *const Value);
-        let captures = vm.frames.get(self.frame).and_then(|_| vm.current_capture_slots(self.frame))
+        (self.capture_values, self.capture_len) = vm.frames.get(self.frame)
+            .and_then(|_| vm.current_capture_slots(self.frame))
             .and_then(|(slots, root)| {
                 if root.is_some() { return None; }
                 // SAFETY: the frame's current memo owns these slots through this
                 // collection epoch. Only dense, non-projected storage is admitted.
-                let (values, length) = unsafe { &*slots }.native_dense_view()?;
-                Some((slots as usize, values, length))
-            });
-        let (slots, values, length) = captures.unwrap_or((0, std::ptr::null(), 0));
-        self.captures = slots;
-        (self.capture_values, self.capture_len) = (values, length);
-        self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
+                unsafe { &*slots }.native_dense_view()
+            })
+            .unwrap_or((std::ptr::null(), 0));
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
     }
@@ -16749,8 +17062,9 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            .get(pc as usize).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
         assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
@@ -16914,8 +17228,9 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            .get(pc as usize).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
         let isa = super::super::jit_backend::target_isa_for("speed",
@@ -16953,8 +17268,9 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            .get(pc as usize).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
         assert_eq!(unit.frames[0].arguments, 1);
@@ -16972,8 +17288,9 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            .get(pc as usize).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1, "the static method hint must reach the shared inliner");
         assert_eq!(unit.frames[0].target.callee, CalleeBinding::Function);
@@ -17136,11 +17453,10 @@ mod tests {
         };
         JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, vm| {
             assert_eq!(activation.dispatch.fixed_this_slot, &vm.frames[0].this as *const Value);
-            assert_ne!(activation.dispatch.captures, 0);
+            assert!(!activation.dispatch.capture_values.is_null());
         }).unwrap();
         vm.frames[0].capture_cache.root = Some(Some(ProgramId::MAIN.raw()));
         JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, |activation, _| {
-            assert_eq!(activation.dispatch.captures, 0);
             assert!(activation.dispatch.capture_values.is_null());
         }).unwrap();
     }

@@ -614,7 +614,10 @@ impl Heap {
     /// Grows the elements `array` owns through `grow`, charging what their capacity grew
     /// toward the next collection (`charge_payload_growth`) at the weight `alloc` gives a
     /// cell's own payload. A live array's element storage grows only through here, so a loop
-    /// that only stores into arrays still makes collections due (TOD-125).
+    /// that only stores into arrays still makes collections due (TOD-125). Inlined into each
+    /// append: out of line it cost each `push` 30 more instructions (V8-v7 DeltaBlue,
+    /// Callgrind, once retiring array storage proofs grew `ArrayObject::elements_mut`).
+    #[inline(always)]
     pub(crate) fn grow_array_elements<R>(
         &mut self,
         array: Value,

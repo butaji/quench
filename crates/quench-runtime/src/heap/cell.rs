@@ -1650,10 +1650,32 @@ impl ArrayObject {
         &self.elements
     }
 
+    /// The elements for any change, including their backing's: the running lane's array
+    /// storage proofs retire first (`retire_array_storage_proofs`).
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
+        super::array_proofs::retire_array_storage_proofs();
         &mut self.elements
+    }
+
+    /// Replaces the present element at `index` in place where this array alone owns its
+    /// backing (`ArrayElements::replace_in_place`); `false` changes nothing. A replacement
+    /// changes no backing, so no array storage proof retires; a prototype's dependents do.
+    #[inline(always)]
+    pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
+        if !self.elements.replace_in_place(index, value) {
+            return false;
+        }
+        self.object.note_prototype_elements_change();
+        true
+    }
+
+    /// The first value of the backing this array alone owns, which an array storage proof
+    /// replaces elements through (`ArrayStorageProofs::replace`); `None` where it is shared.
+    #[inline(always)]
+    pub(crate) fn unique_values(&mut self) -> Option<std::ptr::NonNull<Value>> {
+        self.elements.unique_values()
     }
 }
 
@@ -1975,7 +1997,8 @@ impl Object {
     /// word that held an inline value, so callers move inline values out first.
     pub(crate) fn set_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
-        self.auxiliary = auxiliary;
+        // Exotic access is a fact of the object, not of the storage that replaces its own.
+        self.auxiliary = auxiliary | (self.auxiliary & crate::value_vec::EXOTIC_ACCESS);
         let flags = self.meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
         let position = start & VALUE_VEC_START_BITS;
         if properties.has_inline_property_storage() {
@@ -2420,6 +2443,8 @@ impl Object {
 
     pub(crate) fn mark_as_prototype(&mut self) {
         if !self.was_used_as_prototype() {
+            // A prototype's elements answer its dependents' reads: no proof replaces them.
+            super::array_proofs::retire_array_storage_proofs();
             self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
         }
     }
@@ -2438,12 +2463,19 @@ impl Object {
     pub(crate) fn shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
-    /// The shape with its dictionary bit (`ValueVec::exact_auxiliary`): a cache entry,
-    /// which records only non-dictionary shapes, matches it exactly when it matches the
-    /// shape of an object outside dictionary storage.
+    /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
+    /// entry, which records only shapes, matches it exactly when it matches the shape of an
+    /// ordinary object outside dictionary storage.
     #[inline(always)]
     pub(crate) fn exact_shape(&self) -> u32 {
         ValueVec::from_parts(0, self.auxiliary).exact_auxiliary()
+    }
+    /// The shape with its exotic bit and without its dictionary bit: a recorded shape
+    /// matches it exactly when it matches the shape of an ordinary object, in whatever
+    /// storage (`ValueVec::EXOTIC_ACCESS`).
+    #[inline(always)]
+    pub(crate) fn ordinary_shape(&self) -> u32 {
+        self.auxiliary & !crate::value_vec::DICTIONARY_STORAGE
     }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32) {
@@ -2473,6 +2505,7 @@ impl Object {
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.note_prototype_layout_change();
+        super::array_proofs::retire_array_storage_proofs();
         let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
@@ -2491,10 +2524,12 @@ impl Object {
             .map(usize::from)
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
+        super::array_proofs::retire_array_storage_proofs();
         self.extras_mut().arguments_map = Some(mapping);
     }
     pub(crate) fn set_arguments_object(&mut self) {
         self.extras_mut().arguments_object = true;
+        self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     /// Whether the object's elements are ordinary, as `dense_array_length` needs them: it
     /// is extensible and not frozen, and holds no indexed or `length` descriptor and no
@@ -2515,6 +2550,7 @@ impl Object {
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.note_prototype_layout_change();
+        super::array_proofs::retire_array_storage_proofs();
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn has_length_descriptor(&self) -> bool {
@@ -2556,6 +2592,7 @@ impl Object {
     }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
+        self.auxiliary |= crate::value_vec::EXOTIC_ACCESS;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
         self.extras().map_or(&[], |extras| &extras.module_bindings)

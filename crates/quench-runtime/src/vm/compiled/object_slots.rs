@@ -64,6 +64,9 @@ impl ObjectHeader {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFieldLoad {
     pub(crate) shape: u32,
+    /// The exact shape of the receiver's prototype, an object record, that holds the slot;
+    /// `None` for the receiver's own (`FieldCache::holder`).
+    pub(crate) holder: Option<u32>,
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
@@ -84,7 +87,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, slot: 0, storage_len: 1, storage: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

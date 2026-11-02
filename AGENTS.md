@@ -51,6 +51,19 @@ Every line carries domain meaning. Code is a liability; data is leverage.
     or is derived from a named layout. Keep literal zero/one where they are
     ordinary indices or arithmetic identities, not hidden semantic policy.
 
+## Data-oriented design
+
+Process contiguous data in batches, not scattered objects.
+
+- Replace hash tables with flat arrays. Store indices (not pointers) and pack frequent
+  flags into the high bits of the index.
+- Caching is a symptom of slow design. Remove caches and redesign the core path so the
+  work is cheap enough that caching is unnecessary.
+- Prefer structure-of-arrays over array-of-structures so hot fields stay contiguous and
+  vectorizable.
+- Prefer stack allocation with a small inline capacity over heap-allocated lists.
+- Use a bitset instead of an array of bools.
+
 Functions and modules should be cohesive and reviewable. There are no mandatory
 line-count or complexity caps. There is no architectural ceiling on region size,
 register allocation, SIMD or additional optimization tiers. Compilation/cache
