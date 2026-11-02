@@ -2243,15 +2243,15 @@ pub(super) fn lower_static_typed_loop(program: &ResidualProgram, function_id: u3
     let unit = unit.suffix(header)?;
     if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) { return None; }
     let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
-        &[], isa, lane_region::Coverage::Full)?;
+        &[], isa, lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
     (count != 0).then_some(StaticTypedLoop { header, function: native })
 }
 
-#[cfg(feature = "aot")]
+#[cfg_attr(not(feature = "aot"), allow(dead_code))]
 #[derive(Clone, Copy)]
-pub(super) struct StaticTypedLoopEntry {
+pub(super) struct StaticTypedLoopEntry<'a> {
     pub(super) header: usize,
-    pub(super) symbol: u32,
+    pub(super) function: &'a ir::Function,
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -2263,7 +2263,7 @@ pub(super) fn compile_js_general_dispatch(
         .ok_or("target-isa-unavailable")?;
     let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(
         program, function_id, unresolved_names_are_global, &*isa,
-        JsGeneralCallout::Dynamic, &[],
+        JsGeneralCallout::Dynamic, &[], None,
     )?;
     let function = program.function_get(function_id as usize).ok_or("missing-function")?;
     let code = compile_native_function(
@@ -2289,7 +2289,7 @@ pub(super) fn compile_js_general_dispatch(
 pub(super) enum JsGeneralCallout {
     Dynamic,
     #[cfg(feature = "aot")]
-    Relocatable { fallback: u32, unit: Option<StaticTypedLoopEntry> },
+    Relocatable { fallback: u32 },
     #[cfg(all(feature = "aot", test))]
     Address(usize),
 }
@@ -2328,12 +2328,17 @@ pub(super) fn lower_js_general_dispatch(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     callout_kind: JsGeneralCallout,
     _scalar_regions: &[StaticRegionEntry<'_>],
+    _typed_loop: Option<StaticTypedLoopEntry<'_>>,
 ) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
     }
     if isa.pointer_type() != types::I64 {
         return Err("general-dispatch-requires-64-bit-pointers");
+    }
+    #[cfg(feature = "aot")]
+    if _typed_loop.is_some() && !callout_kind.fixed_operations() {
+        return Err("typed-loop-requires-fixed-native-control");
     }
     let function = program
         .function_get(function_id as usize)
@@ -2365,6 +2370,12 @@ pub(super) fn lower_js_general_dispatch(
     let stopped_block = builder.create_block();
     let continue_block = builder.create_block();
     let continue_pc = builder.append_block_param(continue_block, types::I64);
+    #[cfg(feature = "aot")]
+    let typed_continue = _typed_loop.map(|_| {
+        let block = builder.create_block();
+        let pc = builder.append_block_param(block, types::I64);
+        (block, pc)
+    });
     let invalid_pc = builder.create_block();
     let invalid_pc_value = builder.append_block_param(invalid_pc, types::I64);
     let callout = match callout_kind {
@@ -2397,7 +2408,7 @@ pub(super) fn lower_js_general_dispatch(
         for entry in _scalar_regions {
             entries.to_mut()[entry.range.start] = builder.create_block();
         }
-        let typed_entry = if let JsGeneralCallout::Relocatable { unit: Some(unit), .. } = callout_kind {
+        let typed_entry = if let Some(unit) = _typed_loop {
             let fallback = entries[unit.header];
             entries.to_mut()[unit.header] = builder.create_block();
             Some((unit, fallback))
@@ -3529,6 +3540,8 @@ pub(super) fn lower_js_general_dispatch(
         frame_flow.residual(call, entry.frame);
     }
     #[cfg(feature = "aot")]
+    let mut typed_return = None;
+    #[cfg(feature = "aot")]
     if let Some((unit, fallback)) = typed_entry {
         builder.switch_to_block(entries[unit.header]);
         let run = builder.create_block();
@@ -3537,16 +3550,17 @@ pub(super) fn lower_js_general_dispatch(
         builder.ins().brif(admitted, run, &[], fallback, &[]);
         builder.switch_to_block(run);
         let signature = builder.import_signature(native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
-        let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-            super::native_object::NATIVE_FUNCTION_NAMESPACE, unit.symbol));
+        let name = builder.func.declare_imported_user_function(unit.function.name.get_user()
+            .expect("typed residual has an internal symbol").clone());
         let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
             signature, colocated: false, patchable: false });
         let call = builder.ins().call(target, &parameters);
-        // Publish dirty canonical inputs before the no-GC unit. Exact source-PC
-        // recovery reloads its outputs and bypasses this entry's admission.
-        frame_flow.recovery(call);
-        let pc = builder.ins().load(types::I64, MemFlagsData::trusted(), result_pointer, 0);
-        builder.ins().jump(continue_block, &[ir::BlockArg::Value(pc)]);
+        // After inlining these are SSA-preserving edges, not guest recovery:
+        // no helper can collect or observe the canonical frame homes.
+        let pc = builder.inst_results(call)[0];
+        typed_return = Some(pc);
+        let pc = builder.ins().uextend(types::I64, pc);
+        builder.ins().jump(typed_continue.expect("typed continuation").0, &[ir::BlockArg::Value(pc)]);
     }
     let live = program.register_root_masks(function_id);
     for (pc, resume) in resume_entries.iter().copied().enumerate() {
@@ -3559,33 +3573,92 @@ pub(super) fn lower_js_general_dispatch(
         builder.ins().jump(target, &[]);
     }
     builder.switch_to_block(continue_block);
-    let select_block = builder.create_block();
-    let in_range = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThan, continue_pc, instruction_count as i64,
-    );
-    builder.ins().brif(
-        in_range, select_block, &[], invalid_pc,
-        &[ir::BlockArg::Value(continue_pc)],
-    );
-    builder.switch_to_block(select_block);
-    let selector = builder.ins().ireduce(types::I32, continue_pc);
-    let cases: Vec<_> = resume_entries
-        .iter()
-        .map(|target| builder.func.dfg.block_call(*target, &[]))
-        .collect();
-    let invalid_argument = ir::BlockArg::Value(continue_pc);
-    let default = builder
-        .func
-        .dfg
-        .block_call(invalid_pc, &[invalid_argument]);
-    let table = ir::JumpTableData::new(default, &cases);
-    let table = builder.create_jump_table(table);
-    builder.ins().br_table(selector, table);
+    emit_js_pc_dispatch(&mut builder, continue_pc, &resume_entries, invalid_pc);
+    #[cfg(feature = "aot")]
+    if let Some((block, pc)) = typed_continue {
+        builder.switch_to_block(block);
+        let targets: Vec<_> = entries.iter().copied().enumerate().map(|(pc, entry)|
+            typed_entry.filter(|(unit, _)| unit.header == pc).map_or(entry, |(_, fallback)| fallback)).collect();
+        emit_js_pc_dispatch(&mut builder, pc, &targets, invalid_pc);
+    }
     builder.seal_block(continue_block);
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
+    #[cfg(feature = "aot")]
+    if let Some((unit, _)) = typed_entry {
+        use cranelift_codegen::inline::{Inline, InlineCommand};
+        struct TypedResidual<'a>(&'a ir::Function);
+        impl Inline for TypedResidual<'_> {
+            fn inline(&mut self, caller: &ir::Function, _: ir::Inst, _: ir::Opcode,
+                callee: ir::FuncRef, _: &[ir::Value]) -> InlineCommand<'_> {
+                let ir::ExternalName::User(name) = caller.dfg.ext_funcs[callee].name else { return InlineCommand::KeepCall };
+                if Some(&caller.params.user_named_funcs()[name]) != self.0.name.get_user() { return InlineCommand::KeepCall; }
+                InlineCommand::Inline { callee: std::borrow::Cow::Borrowed(self.0), visit_callee: false }
+            }
+        }
+        cranelift_codegen::verify_function(unit.function, isa).map_err(|_| "typed-residual-verification-failed")?;
+        // Cranelift's append-only instruction arena separates the cloned,
+        // verified helper calls from the caller's guest/semantic callouts.
+        let first_inlined = native.dfg.num_insts();
+        let mut context = cranelift_codegen::Context::for_function(native);
+        if !context.inline(TypedResidual(unit.function)).map_err(|_| "typed-residual-inlining-failed")? {
+            return Err("typed-residual-call-not-found");
+        }
+        native = context.func;
+        // The residual returns a statically fixed source PC on every exit.
+        // Link those edges before frame promotion instead of dispatching a
+        // known PC through a memory/result join and another jump table.
+        let result = native.dfg.resolve_aliases(typed_return.expect("typed source-PC result"));
+        let ir::ValueDef::Param(join, parameter) = native.dfg.value_def(result) else {
+            return Err("typed-residual-return-is-not-a-join");
+        };
+        let exits: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+            .filter_map(|instruction| {
+                let ir::InstructionData::Jump { destination, .. } = native.dfg.insts[instruction] else { return None };
+                if destination.block(&native.dfg.value_lists) != join { return None; }
+                let ir::BlockArg::Value(value) = destination.args(&native.dfg.value_lists).nth(parameter)? else { return None };
+                let ir::ValueDef::Result(constant, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
+                let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
+                let pc = usize::try_from(imm.bits()).ok()?;
+                let target = *entries.get(pc)?;
+                let target = typed_entry.filter(|(unit, _)| unit.header == pc).map_or(target, |(_, fallback)| fallback);
+                Some((instruction, target))
+            }).collect();
+        for (instruction, target) in exits {
+            let destination = native.dfg.block_call(target, &[]);
+            native.dfg.insts[instruction] = ir::InstructionData::Jump { opcode: ir::Opcode::Jump, destination };
+        }
+        // Static exit linking can orphan the synthetic return/dispatch join.
+        // Discard it before dirty-state analysis so unreachable edges cannot
+        // inflate the live frame footprint of a real semantic callout.
+        let mut context = cranelift_codegen::Context::for_function(native);
+        context.compute_cfg();
+        context.compute_domtree();
+        context.eliminate_unreachable_code(isa).map_err(|_| "typed-residual-cfg-pruning-failed")?;
+        native = context.func;
+        for instruction in native.layout.blocks().flat_map(|block| native.layout.block_insts(block)) {
+            if instruction.as_u32() as usize >= first_inlined && native.dfg.insts[instruction].opcode().is_call() {
+                frame_flow.no_frame(instruction);
+            }
+        }
+    }
     frame_flow.promote(&mut native, callout, live, isa.frontend_config());
     Ok((native, general_dispatch_native_pcs))
+}
+
+/// Exact-PC dispatch; callers choose whether the edge admits canonical homes
+/// or carries already-verified SSA state. Invalid PCs share one diagnostic exit.
+fn emit_js_pc_dispatch(builder: &mut FunctionBuilder<'_>, pc: ir::Value,
+    targets: &[ir::Block], invalid: ir::Block) {
+    let select = builder.create_block();
+    let valid = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, targets.len() as i64);
+    builder.ins().brif(valid, select, &[], invalid, &[ir::BlockArg::Value(pc)]);
+    builder.switch_to_block(select);
+    let selector = builder.ins().ireduce(types::I32, pc);
+    let cases: Vec<_> = targets.iter().map(|target| builder.func.dfg.block_call(*target, &[])).collect();
+    let default = builder.func.dfg.block_call(invalid, &[ir::BlockArg::Value(pc)]);
+    let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
+    builder.ins().br_table(selector, table);
 }
 
 /// Canonical, owner-free description of the inputs that affect GeneralDispatch
@@ -16573,24 +16646,39 @@ mod tests {
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
         let residual = lower_static_typed_loop(&program, 1, &*isa, 0).expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
-        let native = residual.function;
-        let load_base = |value: ir::Value, expected_offset: i32| {
-            let ir::ValueDef::Result(instruction, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
-            let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return None };
-            (i32::from(offset) == expected_offset).then(|| native.dfg.inst_args(instruction)[0])
+        let has_field_helper = |native: &ir::Function, resolver_symbol: u32| {
+            let load_base = |value: ir::Value, expected_offset: i32| {
+                let ir::ValueDef::Result(instruction, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
+                let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return None };
+                (i32::from(offset) == expected_offset).then(|| native.dfg.inst_args(instruction)[0])
+            };
+            native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).any(|instruction| {
+                if native.dfg.insts[instruction].opcode() != ir::Opcode::CallIndirect { return false; }
+                let target = native.dfg.inst_args(instruction)[0];
+                let Some(table) = load_base(target, LaneHelper::FieldGet as i32 * std::mem::size_of::<usize>() as i32) else { return false };
+                let ir::ValueDef::Result(resolver, _) = native.dfg.value_def(native.dfg.resolve_aliases(table)) else { return false };
+                let ir::InstructionData::Call { func_ref, .. } = native.dfg.insts[resolver] else { return false };
+                let ir::ExternalName::User(name) = native.dfg.ext_funcs[func_ref].name else { return false };
+                native.params.user_named_funcs()[name] == ir::UserExternalName::new(
+                    super::super::native_object::NATIVE_FUNCTION_NAMESPACE, resolver_symbol)
+            })
         };
-        assert!(native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).any(|instruction| {
-            if native.dfg.insts[instruction].opcode() != ir::Opcode::CallIndirect { return false; }
-            let target = native.dfg.inst_args(instruction)[0];
-            let Some(table) = load_base(target, LaneHelper::FieldGet as i32 * std::mem::size_of::<usize>() as i32) else { return false };
-            let ir::ValueDef::Result(resolver, _) = native.dfg.value_def(native.dfg.resolve_aliases(table)) else { return false };
-            let ir::InstructionData::Call { func_ref, .. } = native.dfg.insts[resolver] else { return false };
-            let ir::ExternalName::User(name) = native.dfg.ext_funcs[func_ref].name else { return false };
-            native.params.user_named_funcs()[name].index == 0
-        }), "indirect field helper must come from the linked runtime resolver");
+        assert!(has_field_helper(&residual.function, 0), "field helper must come from the linked runtime resolver");
         let module = crate::lower_native_js_module(&program, "typed_loop_test").unwrap();
-        assert!(module.functions.iter().any(|function| matches!(function,
-            super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_loop"))));
+        let caller = module.functions.iter().find_map(|function| match function {
+            super::super::native_object::NativeFunction::Definition { name, function }
+                if name == "typed_loop_test_function_1" => Some(function), _ => None,
+        }).unwrap();
+        let resolver = module.functions.iter().position(|function| matches!(function,
+            super::super::native_object::NativeFunction::Import { name, .. }
+                if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)).unwrap() as u32;
+        assert!(has_field_helper(caller, resolver), "the exact field-helper chain must be inlined into the caller");
+        let dynamic_pc_tables = caller.layout.blocks().flat_map(|block| caller.layout.block_insts(block))
+            .filter(|instruction| caller.dfg.insts[*instruction].opcode() == ir::Opcode::BrTable).count();
+        assert!(dynamic_pc_tables <= 1, "only canonical source-PC admission may retain a dynamic dispatcher");
+        assert!(!module.functions.iter().any(|function| matches!(function,
+            super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_loop"))),
+            "the inlined residual must not retain a second native body");
         let leaf = crate::Engine::specialize("function id(x) { return x; } id(1);", "leaf.js").unwrap();
         let leaf = crate::lower_native_js_module(&leaf, "leaf_test").unwrap();
         assert!(!leaf.functions.iter().any(|function| matches!(function,
@@ -16961,7 +17049,7 @@ mod tests {
                         live_native_function(&program, id as u32, None)
                     } else {
                         let (native, _) = lower_js_general_dispatch(&program, id as u32, false, &*isa,
-                            JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[]).unwrap();
+                            JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[], None).unwrap();
                         let entry_block = native.layout.entry_block().unwrap();
                         let context = native.dfg.block_params(entry_block)[0];
                         let instructions: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).collect();

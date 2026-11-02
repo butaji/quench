@@ -14,24 +14,28 @@ pub(super) struct FrameFlow {
     registers: ir::Value,
     count: u16,
     roots: BTreeMap<ir::Inst, u16>,
-    residuals: BTreeMap<ir::Inst, BTreeSet<u16>>,
-    recoveries: BTreeSet<ir::Inst>,
+    calls: BTreeMap<ir::Inst, FrameCallEffect>,
 }
+
+/// Frame effects are independent of heap effects. A verified no-GC helper may
+/// read/write heap slots while neither observing nor changing canonical homes.
+#[cfg_attr(not(feature = "aot"), allow(dead_code))]
+enum FrameCallEffect { Canonical(BTreeSet<u16>), NoFrame }
 
 impl FrameFlow {
     pub(super) fn new(registers: ir::Value, count: u16) -> Self {
-        Self { registers, count, roots: BTreeMap::new(), residuals: BTreeMap::new(), recoveries: BTreeSet::new() }
+        Self { registers, count, roots: BTreeMap::new(), calls: BTreeMap::new() }
     }
 
     /// This call targets a verified scalar residual: canonical writes, no GC.
     #[cfg(feature = "aot")]
     pub(super) fn residual(&mut self, call: ir::Inst, frame: &[Register]) {
-        self.residuals.insert(call, frame.iter().copied().collect());
+        self.calls.insert(call, FrameCallEffect::Canonical(frame.iter().copied().collect()));
     }
 
-    /// A no-GC typed unit returns through fresh canonical resume entries.
+    /// A helper copied from the verified typed residual: no frame access or GC.
     #[cfg(feature = "aot")]
-    pub(super) fn recovery(&mut self, call: ir::Inst) { self.recoveries.insert(call); }
+    pub(super) fn no_frame(&mut self, call: ir::Inst) { self.calls.insert(call, FrameCallEffect::NoFrame); }
 
     pub(super) fn resume(&mut self, builder: &mut FunctionBuilder<'_>,
         live: Option<&crate::compile::liveness::RegisterMasks>, pc: usize) {
@@ -81,8 +85,9 @@ impl FrameFlow {
                         if store { current.insert(register); }
                     }
                     if native.dfg.insts[*instruction].opcode().is_call() {
-                        match self.residuals.get(instruction) {
-                            Some(frame) => current.retain(|register| !frame.contains(register)),
+                        match self.calls.get(instruction) {
+                            Some(FrameCallEffect::Canonical(frame)) => current.retain(|register| !frame.contains(register)),
+                            Some(FrameCallEffect::NoFrame) => {},
                             None => current.clear(),
                         }
                     }
@@ -129,7 +134,10 @@ impl FrameFlow {
                 let cell = self.cell(builder.func, *instruction);
                 let root = self.roots.get(instruction).copied();
                 let pc = self.recovery_pc(builder.func, *instruction, callout);
-                let residual = self.residuals.get(instruction);
+                let residual = match self.calls.get(instruction) {
+                    Some(FrameCallEffect::Canonical(frame)) => Some(frame), _ => None,
+                };
+                let no_frame = matches!(self.calls.get(instruction), Some(FrameCallEffect::NoFrame));
                 if root.is_some() { current.clear(); }
                 builder.func.dfg.clear_results(*instruction);
                 // Branch argument lists are owned by the replacement. SSA
@@ -150,7 +158,7 @@ impl FrameFlow {
                 }
                 let is_call = data.opcode().is_call();
                 let is_return = data.opcode() == ir::Opcode::Return;
-                if is_call || is_return {
+                if (is_call && !no_frame) || is_return {
                     for register in &current {
                         if residual.is_some_and(|frame| !frame.contains(register)) { continue; }
                         if pc.is_some_and(|pc| live.is_some_and(|live| !live.is_live(pc, *register))) { continue; }
@@ -226,7 +234,7 @@ impl FrameFlow {
         // carries a dynamic PC through the same fixed semantic operation table.
         (native.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect
             && native.dfg.resolve_aliases(native.dfg.inst_args(instruction)[0]) == native.dfg.resolve_aliases(callout))
-            || self.residuals.contains_key(&instruction) || self.recoveries.contains(&instruction)
+            || self.calls.contains_key(&instruction)
     }
 }
 

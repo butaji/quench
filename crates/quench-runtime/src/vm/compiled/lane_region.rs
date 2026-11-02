@@ -121,10 +121,14 @@ struct Lowering<'a, 'f> {
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
     valid: bool,
     coverage: Coverage,
+    completion: Completion,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Coverage { Prefix, Full }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Completion { StatusAndPc, SourcePc }
 
 fn register_offset(register: Register) -> i32 {
     i32::from(register) * std::mem::size_of::<u64>() as i32
@@ -429,7 +433,7 @@ pub(super) fn compile(
     fields: &[Vec<NativeFieldLoad>],
 ) -> Option<LaneRegion> {
     let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa, Coverage::Prefix)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, &*isa, Coverage::Prefix, Completion::StatusAndPc)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, super::js_compiled::MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
     Some(LaneRegion { code, native: count, clif })
@@ -444,9 +448,11 @@ pub(super) fn lower(
     fields: &[Vec<NativeFieldLoad>],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     coverage: Coverage,
+    completion: Completion,
 ) -> Option<(ir::Function, usize)> {
     let function = program.function_get(function_id as usize)?;
-    if fields.iter().flatten().any(|field| !field.valid()) { return None; }
+    if fields.iter().flatten().any(|field| !field.valid())
+        || (completion == Completion::SourcePc && !unit.frames.is_empty()) { return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_JS_GENERAL_DISPATCH_BLOCKS {
         return None;
     }
@@ -520,6 +526,7 @@ pub(super) fn lower(
         live,
         valid: true,
         coverage,
+        completion,
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
@@ -622,10 +629,7 @@ pub(super) fn lower(
                 LaneExit::Inlined { frame, pc: source_pc }.word()
             }
         };
-        let pc_value = lowering.builder.ins().iconst(types::I64, word as i64);
-        lowering.builder.ins().store(MemFlagsData::trusted(), pc_value, lowering.result, 0);
-        let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-        lowering.builder.ins().return_(&[status]);
+        lowering.return_at(word);
     }
     if !lowering.valid { return None; }
     let native_count = lowering.native;
@@ -635,6 +639,21 @@ pub(super) fn lower(
 }
 
 impl Lowering<'_, '_> {
+    /// Boundary projections share one exit PC. Published lane entries retain
+    /// their status/word ABI; inlined regions carry the PC directly in SSA.
+    fn return_at(&mut self, word: u64) {
+        let result = match self.completion {
+            Completion::StatusAndPc => {
+                let pc = self.builder.ins().iconst(types::I64, word as i64);
+                self.builder.ins().store(MemFlagsData::trusted(), pc, self.result, 0);
+                self.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED))
+            }
+            Completion::SourcePc => self.builder.ins().iconst(types::I32,
+                i64::from(u32::try_from(word).expect("source PC has no inlined-frame tag"))),
+        };
+        self.builder.ins().return_(&[result]);
+    }
+
     fn entry_facts(&mut self, instructions: &[WideInstruction]) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
@@ -751,10 +770,7 @@ impl Lowering<'_, '_> {
             // No guest operation has run and canonical registers are untouched.
             // Decline the whole unit once, even for a speculative unused capture.
             let super::lane_unit::Origin::Caller(pc) = self.unit.origins[0] else { unreachable!("unit entry belongs to caller") };
-            let pc = self.builder.ins().iconst(types::I64, i64::from(pc));
-            self.builder.ins().store(MemFlagsData::trusted(), pc, self.result, 0);
-            let stopped = self.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-            self.builder.ins().return_(&[stopped]);
+            self.return_at(u64::from(pc));
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, receiver_shapes, store_atoms, captures, this, fields }
@@ -1429,7 +1445,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(function, &[], &|_| None).unwrap();
         let (native, _) = lower(&program, 1, &unit,
-            LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix).unwrap();
+            LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
                 if i32::from(offset) == crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
@@ -1457,7 +1473,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix).unwrap();
+            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -1480,7 +1496,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(program.function(id), &[], &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &[], &*isa, Coverage::Prefix).expect("typed Number residual");
+            &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &[], &*isa, Coverage::Prefix, Completion::StatusAndPc).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
