@@ -1079,6 +1079,8 @@ enum CallEntry {
     /// it (`lane_script_call_settles`), whose promise its return settles
     /// (`Completion::SettlesPromise`).
     Settles,
+    /// A proven conditional append to a captured binding, completed without activation.
+    AppendsCapture,
 }
 
 impl CallEntry {
@@ -2393,6 +2395,7 @@ fn frame_window_local<H: Host>(vm: &Vm<H>, frame: usize, slot: usize, environmen
     (!value.is_deleted()).then_some(value)
 }
 
+mod capture_append;
 mod string_case_filter;
 
 script_handler! {
@@ -10747,6 +10750,8 @@ impl<H: Host> Vm<H> {
                     CallEntry::ReadsCapture
                 } else if this_read_body(body) {
                     CallEntry::ReadsThis
+                } else if capture_append::recognizes(body, &code.constants) {
+                    CallEntry::AppendsCapture
                 } else {
                     CallEntry::Activates
                 },
@@ -11116,7 +11121,7 @@ script_handler! {
         } else {
             let passed = ReadArguments { registers: r, base: arguments, passed: argc };
             // SAFETY: as `lane_call_read`.
-            unsafe { lane_answered_read(cx, ip, target, passed, this) }
+            unsafe { lane_answered_call(cx, ip, target, passed, this) }
         };
         let Some(value) = value else {
             // An activation keeping values past the parameters, a full lane stack or another
@@ -15362,23 +15367,24 @@ unsafe fn lane_read_capture<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget) 
     vm.owned_capture(unsafe { &*slots }, root, slot)
 }
 
-/// The values a call that a read answers passed (`lane_call_read`): parameter `k` is the
-/// call window's register `base + k` while `k < passed`, else unpassed. A concrete value,
-/// not a closure, so the reads it feeds are one copy whatever forwarded them.
-/// `lane_call_read` of the call at `site`, memoized when it answers (`lane_note_read`). Out
-/// of line: the read's calls take stack temporaries, which a handler inlining them would hold
-/// across its dispatch, which then could not be a sibling call.
+/// Complete an elided call through its captured mutation or pure read operation. Only a
+/// read records an answer for later calls. Out of line so handlers do not retain these
+/// operations' stack temporaries across dispatch, preventing sibling calls.
 ///
 /// # Safety
 /// As `lane_call_read`.
 #[inline(never)]
-unsafe fn lane_answered_read<H: Host>(
+unsafe fn lane_answered_call<H: Host>(
     cx: *mut LaneContext<H>,
     site: Ip,
     target: &ScriptCallTarget,
     arguments: ReadArguments,
     this: Value,
 ) -> Option<Value> {
+    if target.entry == CallEntry::AppendsCapture {
+        // A mutating operation must never enter the pure read memo.
+        return unsafe { capture_append::run(cx, target, arguments) };
+    }
     // SAFETY: the caller's contract.
     let value = unsafe { lane_call_read(cx, target, arguments, this) };
     if value.is_some() {
@@ -15387,6 +15393,7 @@ unsafe fn lane_answered_read<H: Host>(
     value
 }
 
+/// Passed arguments stay in the call window; missing parameters read as absent.
 #[derive(Clone, Copy)]
 struct ReadArguments {
     registers: Registers,
