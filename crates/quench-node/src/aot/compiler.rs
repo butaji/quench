@@ -154,3 +154,166 @@ impl CompiledSources {
     }
 }
 
+impl SourceManifest {
+    pub fn insert(&mut self, name: &str, parts: &[&str]) -> Result<bool, String> {
+        Ok(self.units.insert(NativeSourceKey::new(name, parts)?))
+    }
+
+    pub(in crate::aot) fn insert_key(&mut self, key: NativeSourceKey) { self.units.insert(key); }
+
+    pub fn add_module_graph(&mut self, entry: &Path) -> Result<DependencyGraph, String> {
+        let graph = super::graph::discover(self, entry)?;
+        self.assets.entry = Some(entry.canonicalize().map_err(|error| error.to_string())?);
+        Ok(graph)
+    }
+
+    pub fn units(&self) -> impl ExactSizeIterator<Item = &NativeSourceKey> { self.units.iter() }
+    pub fn assets(&self) -> &ModuleAssets { &self.assets }
+
+    /// Stage only Node's existing pre-entry bootstrap lifecycle. The snapshot
+    /// boundary forbids process-state capture and stops before user preloads,
+    /// entry loading, IPC activation and event-loop execution.
+    pub fn capture_bootstrap() -> Result<Self, String> {
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Bootstrap)
+    }
+
+    /// The existing Node snapshot preload set, staged before any application.
+    pub fn capture_preloaded() -> Result<Self, String> {
+        Self::capture(crate::host::startup_snapshot::SnapshotKind::Preloaded)
+    }
+
+    /// Node SDK policies are Rust; only startup inputs can contribute guest source.
+    /// Keep this entry point for callers combining bootstrap and application manifests.
+    pub fn capture_for_graph(_graph: &DependencyGraph) -> Result<Self, String> {
+        Self::capture_bootstrap()
+    }
+
+    pub fn extend(&mut self, other: Self) -> Result<(), String> {
+        self.assets.extend(other.assets)?;
+        self.units.extend(other.units);
+        Ok(())
+    }
+
+    fn capture(stage: crate::host::startup_snapshot::SnapshotKind) -> Result<Self, String> {
+        let inputs = Rc::new(RefCell::new(Self::default()));
+        let captured = inputs.clone();
+        let mut host = NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?
+            .with_native_programs(move |name, parts| {
+                captured.borrow_mut().insert(name, parts)?;
+                Ok(None)
+            });
+        host.building_snapshot = Some(stage);
+        let assets = Rc::new(RefCell::new(ModuleAssets::default()));
+        host.module_assets = ModuleAssetState::Capture(assets.clone());
+        let mut runtime = Runtime::new(host);
+        let entry = Engine::specialize("", NATIVE_ENTRY_NAME).map_err(|errors| format!("{errors:?}"))?;
+        runtime.execute_deferred_jobs(&entry).map_err(|error| {
+            match error.source_location() {
+                Some((file, line, column, _)) => format!("{file}:{line}:{column}: {error}"),
+                None => error.to_string(),
+            }
+        })?;
+        drop(runtime);
+        let mut manifest = Rc::try_unwrap(inputs).map_err(|_| "bootstrap source collector is still borrowed".to_owned())?.into_inner();
+        manifest.assets = Rc::try_unwrap(assets).map_err(|_| "module asset collector is still borrowed".to_owned())?.into_inner();
+        Ok(manifest)
+    }
+
+    /// Compile every recorded body before execution; no application is trained
+    /// or executed to create these native compilation records.
+    pub fn compile(self) -> Result<CompiledSources, String> {
+        let mut compiler = NativeJsCompiler::new(true);
+        let entry = match self.assets.entry.as_ref().and_then(|path| self.assets.files.get(path).map(|file| (path, file.kind))) {
+            Some((path, quench_runtime::SourceKind::Module)) => {
+                let url = url::Url::from_file_path(path).map_err(|_| "invalid ES module entry path")?;
+                let source = format!("import {};", serde_json::to_string(url.as_str()).map_err(|error| error.to_string())?);
+                compiler.compile_module(&source, NATIVE_ENTRY_NAME)
+            },
+            _ => compiler.compile_script("", NATIVE_ENTRY_NAME, Default::default()),
+        }.map_err(|errors| format!("{errors:?}"))?;
+        let mut units = Vec::new();
+        let mut syntax_errors = Vec::new();
+        for key in self.units {
+            let compiled = if key.is_function_constructor() {
+                compiler.compile_function_source(&key)
+            } else {
+                compiler.compile_source(&key).map(NativeSourceCompilation::Program)
+            }.map_err(|error| format!("{}: {error}", key.name()))?;
+            match compiled {
+                NativeSourceCompilation::Program(program) => units.push(CompiledSource { key, program }),
+                NativeSourceCompilation::SyntaxError(message) => syntax_errors.push(DeferredSourceSyntaxError { key, message }),
+            }
+        }
+        Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+
+    #[test]
+    fn local_names_and_typescript_assertions_do_not_create_host_global_demands() {
+        let directory = std::env::temp_dir().join(format!("quench-shadowed-global-exports-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        fs::write(&entry, "function read(performance: unknown, console: unknown, Blob: unknown) { return [performance as Performance, console as Console, Blob as typeof globalThis.Blob]; }").unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.host_globals.is_empty(), "{:?}", graph.host_globals);
+        assert!(!graph.builtins.contains("node:console"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn type_queries_and_asserted_local_global_objects_do_not_request_sdk_sources() {
+        let directory = std::env::temp_dir().join(format!("quench-type-only-sdk-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        fs::write(&entry, r#"
+            function typed(clock: typeof performance, encoder: typeof TextEncoder, loader: typeof require): typeof EventTarget { throw 1; }
+            function local(globalThis: unknown) { return (globalThis as typeof globalThis).TextEncoder; }
+        "#).unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.host_globals.is_empty(), "{:?}", graph.host_globals);
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn graph_tracks_global_eval_references_without_trusting_types_or_shadowed_names() {
+        let directory = std::env::temp_dir().join(format!("quench-eval-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        let dependency = directory.join("dependency.cjs");
+        fs::write(&entry, "require('./dependency.cjs'); function local(eval: (x: string) => string) { return eval('x'); } type T = typeof eval;").unwrap();
+        fs::write(&dependency, "const indirect = eval; globalThis.eval; globalThis['eval'];").unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        assert_eq!(graph.dynamic_eval_sites.len(), 3);
+        let dependency = dependency.canonicalize().unwrap();
+        assert!(graph.dynamic_eval_sites.iter().all(|(path, _)| path == &dependency), "{:?}", graph.dynamic_eval_sites);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn graph_uses_constructor_flow_for_dynamic_source_demands() {
+        let directory = std::env::temp_dir().join(format!("quench-constructor-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let entry = directory.join("entry.cts");
+        fs::write(&entry, r#"
+            const source = process.argv[2] as unknown as number;
+            const ordinary = Function;
+            const Async = (async function() {}).constructor;
+            ordinary(source); new Function(source); Async(source);
+            Function('return 42');
+        "#).unwrap();
+        let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+        assert!(graph.requirements.is_empty(), "{:?}", graph.requirements);
+        assert_eq!(graph.dynamic_function_sites.len(), 3, "{:?}", graph.dynamic_function_sites);
+        assert!(graph.dynamic_eval_sites.is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+}

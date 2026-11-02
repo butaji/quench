@@ -2394,3 +2394,764 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
         .copied()
         .filter(|&position| names[usize::from(position)] == name)
         .unwrap_or_else(|| panic!("unregistered Node operation: {name}"));
+    HostFunctionId(u32::from(position))
+}
+
+/// The host operations that run beside a lane's frameless activations
+/// (`host_function_runs_beside_activations`).
+const BESIDE_ACTIVATIONS: &[&str] = &[
+    "emitterListenerCount",
+    "emitterEmitListeners",
+    "bufferBindingByteLengthUtf8",
+    "bufferBindingAsciiSlice",
+    "bufferBindingBase64Slice",
+    "bufferBindingBase64urlSlice",
+    "bufferBindingHexSlice",
+    "bufferBindingLatin1Slice",
+    "bufferBindingUcs2Slice",
+    "bufferBindingUtf8Slice",
+    "bufferBindingUtf8Write",
+    "utilTypeCheck",
+    "nextTick",
+    "asyncResourceInit",
+    "asyncResourceEnterScope",
+    "asyncResourceExitScope",
+    "stringDecoderDecode",
+    "markAsUncloneable",
+    "byteStringEnd",
+    "headerFields",
+    // Socket, timer, decoder and listener bookkeeping a request or message makes several
+    // times (ws, undici, esbuild and Fastify package censuses): none reads the frame stack
+    // itself, and the guest code or errors any of them reaches take frames first
+    // (`Vm::materialize_deferred_lane`).
+    "netSocketAccountWrite",
+    "netSocketRead",
+    "netSocketWrite",
+    "netSocketReference",
+    "setImmediate",
+    "clearTimeout",
+    "textDecoderDecode",
+    "encodingUtf8",
+    "emitterOnce",
+    "emitterAddListener",
+    "emitterRemoveListener",
+    "primordialsCopy",
+    "childProcessReference",
+];
+
+impl quench_runtime::Host for NodeHost {
+    fn observes_promise_lifecycle(&self) -> bool {
+        self.shared_state.borrow().async_hooks.tracks_promises()
+    }
+
+    /// A job boundary prunes tracked Promise resources and runs before/after hooks; with
+    /// no Promise tracked and no hook tracking them, it does neither
+    /// (`async_hooks_shared_vm::promise_job_boundary`).
+    fn observes_promise_job_boundaries(&self) -> bool {
+        self.shared_state.borrow().async_hooks.observes_job_boundaries()
+    }
+
+    /// The code a run touched since the last collection leaves the resident set after each
+    /// collection, and before a full one; what still runs comes back from the page cache. The
+    /// collector's code and the program's are then resident one at a time, and the program's
+    /// only as much of it as ran since the last collection (V8-v7 RegExp max RSS, static
+    /// x86_64 unbolted, 2026-10-18: 7244-7500 -> 7136-7328 KiB at every collection's end;
+    /// Splay 39800 -> 38988 KiB with the release before full collections).
+    /// The allocator's free pages, which the collection's sweep just freed, leave with them
+    /// (V8-v7 max RSS, static x86_64 unbolted, 2026-10-19: RegExp 6772-7044 -> 6664-6772 KiB,
+    /// EarleyBoyer 9048-9088 -> 8536-8576, the rest unchanged). Under every policy the
+    /// small-object allocator's empty pages leave too, past what its recent intervals took
+    /// (`quench_alloc::release_empty_pages`): a server's collections empty pages of every
+    /// phase's short-lived objects, which otherwise stayed resident beside the heap's next
+    /// peak (board load, glibc production, same host, 3 runs each, 2026-10-27, final peak
+    /// RSS: fastify 41.7-45.3 -> 39.4-40.8 MB, hono 43.0-49.4 -> 38.4-41.1 MB, throughput
+    /// within noise). A policy that returns pages at collections (memory-first) releases at
+    /// every boundary; the default paces it (`resident_pages::release_at_collection`). Every
+    /// policy counts the collection for the release before output
+    /// (`resident_pages::note_collection`).
+    fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
+        crate::host::resident_pages::release_at_collection(policy.returns_pages_at_collections());
+        quench_alloc::release_empty_pages();
+        crate::host::resident_pages::note_collection();
+    }
+
+    fn after_collection(context: &mut quench_runtime::CollectionContext<'_, Self>) {
+        #[cfg(quench_openssl_provider)]
+        crate::modules::crypto_hash_shared_vm::prune(context);
+        #[cfg(not(quench_openssl_provider))]
+        let _ = context;
+    }
+
+    /// The pages the program touched leave the resident set before the code generator's join
+    /// it, as compiling a module's bytecode does (`compile_wasm`): loading, linking and
+    /// instantiating a WebAssembly module, or the interpreter and the builtins a JavaScript
+    /// program ran. A JavaScript compile is the peak of a short numeric program (V8-v7
+    /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
+    /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
+    fn before_native_compilation(&mut self) {
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::Before);
+    }
+
+    /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
+    /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
+    /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
+    fn after_native_compilation(&mut self) {
+        crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::After);
+    }
+
+    /// Snapshots and compile-cache entries are tracked read-only mappings
+    /// (`startup_snapshot::load_or_schedule`, `CacheEntry::load`).
+    fn kept_bytes_read(bytes: &[u8]) {
+        crate::host::resident_pages::release_tracked_bytes(bytes);
+    }
+
+    #[cfg(feature = "native-execution")]
+    fn kept_native_program(&mut self, name: &str, parts: &[&str]) -> Result<Option<quench_runtime::NativeJsProgram<Self>>, quench_runtime::NativeSourceError> {
+        match self.native_program_resolver.as_mut() {
+            Some(resolve) => resolve(name, parts),
+            None => Ok(None),
+        }
+    }
+
+    fn kept_compiled_program(&mut self, name: &str, parts: &[&str]) -> Option<quench_runtime::KeptBytes> {
+        crate::host::resident_pages::release_at_module_load();
+        self.compile_cache.entry(name, parts)?.load()
+    }
+    fn keeps_compiled_programs(&self) -> bool {
+        self.compile_cache.directory().is_some()
+    }
+    fn keep_compiled_program(&mut self, name: &str, parts: &[&str], bytes: &[u8]) {
+        if let Some(entry) = self.compile_cache.entry(name, parts) {
+            entry.store(bytes);
+        }
+        crate::host::resident_pages::after_program_kept();
+    }
+    /// A decoded program after bootstrap (the entry and its modules, a builtin or library
+    /// module loaded on first use) releases what loading it touched, as its compilation would
+    /// have at its phase boundary: with the compile cache warm, a run otherwise reaches no
+    /// release between bootstrap and its first collection (CoreMark as a Wasm ES module,
+    /// static x86_64 unbolted, 2026-10-21: max RSS 4404 -> 3412 KiB; through
+    /// `WebAssembly.instantiate`, 4920 -> 4016). Bootstrap's own programs decode back to back,
+    /// where a release after each only refaulted the same loader code (an empty script's run
+    /// 11 -> 18 ms). Decodes after bootstrap release at most once per interval, as code
+    /// generation does (`resident_pages::at_compile_phase`): an npm package decodes hundreds
+    /// of modules back to back, and a release after each paged out every mapping again
+    /// (lodash scenario, x86_64 VM, 2026-10-22: 45,700 madvise calls, 87 -> 372 ms).
+    fn cached_program_decoded(&mut self) {
+        if self.bootstrapped {
+            crate::host::resident_pages::at_compile_phase(quench_runtime::CompilePhase::CodeGeneration);
+        }
+    }
+
+    fn proper_tail_calls(&self) -> bool {
+        false
+    }
+
+    fn allows_natives_syntax(&self) -> bool {
+        self.shared_state.borrow().exec_argv.iter().any(|flag| matches!(flag.as_str(), "--allow-natives-syntax" | "--allow_natives_syntax"))
+    }
+
+    fn nonextensible_applies_to_private(&self) -> bool {
+        false
+    }
+
+    /// Node agents (the main thread and workers) may block in `Atomics.wait`.
+    fn can_block(&self) -> bool {
+        true
+    }
+
+    fn write_line(&mut self, text: &str) {
+        let output = self.shared_state().borrow().output.clone();
+        match output {
+            Some(output) => output(&format!("{text}\n")),
+            None => quench_runtime::Host::write_line(&mut SystemHost, text),
+        }
+    }
+
+    fn clock_millis(&mut self) -> f64 {
+        quench_runtime::Host::clock_millis(&mut SystemHost)
+    }
+
+    fn validate_wasm(&mut self, bytes: &[u8], _mode: quench_runtime::ExecutionMode) -> bool {
+        quench_wasm::validate_binary(bytes)
+    }
+
+    fn compile_wasm(
+        &mut self,
+        bytes: &[u8],
+        mode: quench_runtime::ExecutionMode,
+    ) -> Result<quench_runtime::WasmModule, String> {
+        // Decoding with validation, and lowering, each run once per module and touch code
+        // the other does not, nor what ran before them: each phase's pages leave the
+        // resident set before the next phase, and the module runs.
+        crate::host::resident_pages::release_read_only_pages();
+        let module = quench_wasm::Engine::new().compile(bytes);
+        crate::host::resident_pages::release_read_only_pages();
+        let module = module
+            .and_then(|module| module.lower_shared_module_for(mode))
+            .map_err(|error| error.to_string());
+        crate::host::resident_pages::release_read_only_pages();
+        module
+    }
+
+    fn resolve_dynamic_import(
+        &mut self, referrer: &str, specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        #[cfg(feature = "native-execution")]
+        if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
+        let module = self.resolve_filesystem_import(referrer, specifier)?;
+        #[cfg(feature = "aot")]
+        if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
+        Ok(module)
+    }
+
+    fn validate_module_type(
+        &mut self,
+        module: &quench_runtime::ModuleSource,
+        module_type: &str,
+    ) -> Result<(), quench_runtime::ModuleLoadError> {
+        let url = self.import_meta_url(&module.name);
+        esm_errors::validate_type(&url, module_type)
+    }
+
+    fn import_meta_url(&mut self, source_name: &str) -> String {
+        if source_name.starts_with("node:")
+            || source_name.starts_with("file:")
+            || source_name.starts_with("<")
+        {
+            return source_name.to_owned();
+        }
+        let path = std::path::Path::new(source_name);
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        url::Url::from_file_path(absolute)
+            .map(|url| url.to_string())
+            .unwrap_or_else(|_| source_name.to_owned())
+    }
+
+    fn import_meta_filename(&mut self, source_name: &str) -> Option<String> {
+        let path = if source_name.starts_with("file:") {
+            url::Url::parse(source_name).ok()?.to_file_path().ok()?
+        } else if source_name.starts_with("node:") || source_name.starts_with('<') {
+            return None;
+        } else {
+            std::path::PathBuf::from(source_name)
+        };
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+        let canonical = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+        Some(canonical.to_string_lossy().into_owned())
+    }
+
+    fn stack_source_name(&mut self, source_name: &str, is_module: bool) -> String {
+        if is_module {
+            self.import_meta_url(source_name)
+        } else if self.eval_builtin_globals && source_name == self.inline_source.compilation_name()
+        {
+            self.inline_source.label().to_owned()
+        } else {
+            source_name.to_owned()
+        }
+    }
+
+    fn create_promise_context(
+        &mut self,
+        parent: Option<quench_runtime::HostExecutionContext>,
+    ) -> Option<quench_runtime::HostExecutionContext> {
+        crate::modules::async_hooks_shared_vm::create_promise_context(&self.shared_state, parent)
+    }
+
+    fn initialize_promise(
+        context: &mut NativeContext<'_, Self>,
+        promise: quench_runtime::RootId,
+        resource: quench_runtime::HostExecutionContext,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::initialize_promise(context, promise, resource)
+    }
+
+    fn promise_job_boundary(
+        context: &mut NativeContext<'_, Self>,
+        resource: quench_runtime::HostExecutionContext,
+        before: bool,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::promise_job_boundary(context, resource, before)
+    }
+
+    fn promise_settled(
+        context: &mut NativeContext<'_, Self>,
+        resource: quench_runtime::HostExecutionContext,
+    ) -> Result<(), RootedError> {
+        crate::modules::async_hooks_shared_vm::promise_settled(context, resource)
+    }
+
+    fn capture_job_context(
+        &mut self,
+        resource: Option<quench_runtime::HostExecutionContext>,
+    ) -> Option<quench_runtime::HostExecutionContext> {
+        crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state, resource)
+            .map(quench_runtime::HostExecutionContext)
+    }
+
+    fn enter_job_context(
+        &mut self,
+        context: quench_runtime::HostExecutionContext,
+    ) -> Option<quench_runtime::HostExecutionContext> {
+        let previous =
+            crate::modules::async_hooks_shared_vm::enter_job_context(&self.shared_state, context.0);
+        Some(quench_runtime::HostExecutionContext(previous))
+    }
+
+    fn restore_job_context(&mut self, previous: Option<quench_runtime::HostExecutionContext>) {
+        if let Some(previous) = previous {
+            crate::modules::async_hooks_shared_vm::restore_job_context(
+                &self.shared_state,
+                previous.0,
+            );
+        }
+    }
+
+    fn release_job_context(
+        &mut self,
+        context: quench_runtime::HostExecutionContext,
+    ) -> Vec<quench_runtime::RootId> {
+        crate::modules::async_hooks_shared_vm::release_job_context(&self.shared_state, context.0)
+    }
+
+    fn release_promise_contexts(&mut self, contexts: &[quench_runtime::HostExecutionContext]) {
+        crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
+    }
+
+    fn functions(&self) -> &[HostFunction<Self>] {
+        bindings()
+    }
+
+    /// The host operations a lane calls beside its frameless activations: each reads no
+    /// frame, only argument values and host state, and enters guest code, if at all, through
+    /// the runtime's calls (`Host::host_function_runs_beside_activations`).
+    fn host_function_runs_beside_activations(&self, index: usize) -> bool {
+        OPERATION_NAMES.get(index).is_some_and(|name| BESIDE_ACTIVATIONS.contains(name))
+    }
+
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
+        // Each step stores what it builds in the heap or retains it, so its own handles are
+        // released as it ends (`scoped`) instead of piling up for the whole bootstrap.
+        context.scoped(crate::modules::text_decoder_shared_vm::install_global)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_text_decoder");
+        context
+            .host_mut()
+            .shared_state()
+            .borrow_mut()
+            .reset_cached_vm_roots();
+        context.scoped(crate::modules::process_shared_vm::initialize)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_process");
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(|context| {
+            crate::modules::events_shared_vm::initialize_targets(context)?;
+            crate::modules::async_hook_registry_shared_vm::initialize(context).map(|_| ())
+        })?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_event_target_polyfill");
+        context.scoped(install_event_emitter)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_event_emitter_polyfill");
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(install_gc_global)?;
+        context.scoped(crate::modules::timers_shared_vm::install_promisify_globals)?;
+        commonjs::initialize(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_commonjs");
+        context.host_mut().bootstrapped = true;
+        Ok(())
+    }
+
+    fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
+        context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
+        context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
+        commonjs::finish_initialize(context)?;
+        context.host_mut().bootstrapped = true;
+        Ok(())
+    }
+}
+
+/// The shared EventEmitter, and the process streams that take part in its protocol.
+fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let event_data = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
+    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let capture_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let _ = (shape_key, capture_key);
+    crate::modules::event_emitter_shared_vm::install_class(context, event_data)?;
+    crate::modules::event_constructor_shared_vm::install(context)?;
+    crate::modules::event_emitter_shared_vm::initialize(context)?;
+    crate::modules::event_limits_shared_vm::initialize(context)?;
+    // Native stdio writes still participate in the shared EventEmitter
+    // protocol; consumers such as util.styleText validate that protocol.
+    let global = context.global_root()?;
+    let key = context.string_rooted("__nodeEventEmitter");
+    let emitter = context.get_property_rooted(global, key)?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(emitter, key)?;
+    let key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, key)?;
+    for name in ["stdout", "stderr"] {
+        let key = context.string_rooted(name);
+        let stream = context.get_property_rooted(process, key)?;
+        context.set_prototype_rooted(stream, prototype)?;
+    }
+    context.set_prototype_rooted(process, prototype)?;
+    context.call_rooted(emitter, process, &[])?;
+    let key = context.string_rooted("on");
+    let on = context.get_property_rooted(process, key)?;
+    for (event, operation_name, name) in [
+        (
+            "newListener",
+            "processStartListeningSignal",
+            "startListeningIfSignal",
+        ),
+        (
+            "removeListener",
+            "processStopListeningSignal",
+            "stopListeningIfSignal",
+        ),
+    ] {
+        let event = context.string_rooted(event);
+        let function = context.host_constructor_named(operation(operation_name), name)?;
+        context.call_rooted(on, process, &[event, function])?;
+    }
+    Ok(())
+}
+
+/// `globalThis.gc` under `--expose-gc`.
+fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let shared = context.host_mut().shared_state();
+    let shared = shared.borrow();
+    let expose_gc = shared
+        .exec_argv
+        .iter()
+        .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
+    drop(shared);
+    if expose_gc {
+        // `gc()` collects at once; Node's `{ execution: 'async' }` form is not implemented.
+        let gc = context.host_function(operation("gc"))?;
+        let key = context.string_rooted("gc");
+        let global = context.global_root()?;
+        context.define_data_property_rooted(global, key, gc, true, true, false)?;
+    }
+    Ok(())
+}
+
+/// One export-name authority for Node's ESM facade generation and AOT SDK staging.
+pub(crate) fn builtin_export_names(name: &str) -> &'static [String] {
+    static EXPORTS: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    EXPORTS.get_or_init(|| serde_json::from_str(include_str!("builtin_esm_exports.json"))
+        .expect("generated Node builtin export names are valid JSON"))
+        .get(name).map(Vec::as_slice).unwrap_or(&[])
+}
+
+impl NodeHost {
+    /// Node's source/interop policy for a resolved import; frozen images use its
+    /// compiler-captured result through the same host contract.
+    fn resolve_filesystem_import(
+        &mut self, referrer: &str, specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+            return Err("native guest code required: module source resolution is unavailable".into());
+        }
+        let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
+        let builtin = crate::host::shared_vm::commonjs::is_builtin_specifier(specifier);
+        if !builtin && specifier.starts_with("node:") {
+            return Err(esm_errors::unknown_builtin(specifier));
+        }
+        if let Some(error) = esm_errors::unsupported_scheme(specifier) {
+            return Err(error);
+        }
+        if builtin {
+            let exports = builtin_export_names(builtin_name);
+            let require_specifier = format!("node:{builtin_name}");
+            let mut source = format!(
+                "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
+                serde_json::to_string(&require_specifier).map_err(|error| error.to_string())?
+            );
+            // lib/internal/bootstrap/realm.js `syncExports`: each name is read with `getOwn`,
+            // in the order the module lists its own keys (`builtin_export_values`). A member
+            // still a pending lazy data property is bound to its pending value instead, and
+            // the listener gives the binding the member's value when its group materializes.
+            let assignments: String = exports
+                .iter()
+                .enumerate()
+                .map(|(index, name)| format!("case {index}: {name} = value; break; "))
+                .collect();
+            source.push_str(&format!(
+                "const __quenchExports = globalThis[{}](__quenchModule, {}, (index, value) => {{ switch (index) {{ {assignments}}} }});\n",
+                serde_json::to_string(crate::host::shared_vm::commonjs::BUILTIN_EXPORT_VALUES)
+                    .map_err(|error| error.to_string())?,
+                serde_json::to_string(exports).map_err(|error| error.to_string())?
+            ));
+            for (index, name) in exports.iter().enumerate() {
+                source.push_str(&format!("export let {name} = __quenchExports[{index}];\n"));
+            }
+            return Ok(Some(quench_runtime::ModuleSource::text(
+                format!("node:quench-builtin/{builtin_name}"),
+                source,
+            )));
+        }
+
+        // Each (referrer, specifier) resolves to one location, as Node's loader caches a
+        // resolution (`ModuleLoader#resolveCache`); module linking asks for each request in
+        // several of its phases.
+        let location = match self
+            .resolved_imports
+            .get(referrer)
+            .and_then(|imports| imports.get(specifier))
+        {
+            Some(location) => std::rc::Rc::clone(location),
+            None => {
+                let Some(location) = self.import_location(referrer, specifier)? else {
+                    return Ok(None);
+                };
+                let location = std::rc::Rc::new(location);
+                self.resolved_imports
+                    .entry(referrer.into())
+                    .or_default()
+                    .insert(specifier.into(), std::rc::Rc::clone(&location));
+                location
+            }
+        };
+        let (path, name) = (location.path.clone(), location.name.clone());
+        let bytes = std::fs::read(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => match referrer_location(referrer) {
+                Ok((_, referrer_path)) => esm_errors::module_not_found(&path, &referrer_path),
+                Err(error) => error,
+            },
+            _ => format!("module {}: {error}", path.display()).into(),
+        })?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if extension == "wasm" {
+            #[cfg(feature = "aot")]
+            self.record_module_bytes(&path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
+            // Node's `wasm` format: the module record is a facade over the instance.
+            let source = esm_wasm::facade(&name, &path, &bytes)?;
+            return Ok(Some(quench_runtime::ModuleSource::text(name, source)));
+        }
+        let kind = if extension == "json" { quench_runtime::SourceKind::Script }
+            else { commonjs::source_kind_of_real_bytes(&path, &bytes)? };
+        #[cfg(feature = "aot")]
+        self.record_module_bytes(&path, kind, &bytes).map_err(|error| error.to_string())?;
+        let source = if extension == "json" {
+            commonjs::source_text(&bytes).into_owned()
+        } else if kind == quench_runtime::SourceKind::Module {
+            String::from_utf8(bytes)
+                .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
+        } else {
+            #[cfg(feature = "aot")]
+            self.record_module_resolution(&path, &path.to_string_lossy(), &path)?;
+            let filename = serde_json::to_string(&path.to_string_lossy())
+                .map_err(|error| error.to_string())?;
+            let mut source = format!(
+                "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+            );
+            source.push_str("export { __quenchModule as 'module.exports' };\n");
+            for (index, export) in
+                commonjs_exports::names(&path, &commonjs::source_text(&bytes))
+                    .into_iter()
+                    .enumerate()
+            {
+                let local = format!("__quenchExport{index}");
+                source.push_str("const ");
+                source.push_str(&local);
+                source.push_str(" = __quenchModule[");
+                source.push_str(
+                    &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                );
+                source.push_str("];\n");
+                source.push_str("export { ");
+                source.push_str(&local);
+                source.push_str(" as ");
+                source.push_str(
+                    &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                );
+                source.push_str(" };\n");
+            }
+            source
+        };
+        // Node exposes no module's bytes: it rejects `type: "bytes"` and has source-phase
+        // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
+        // text it compiles, never the file it wraps.
+        Ok(Some(quench_runtime::ModuleSource::text(name, source).with_typescript(
+            kind == quench_runtime::SourceKind::Module && matches!(extension, "ts" | "mts"),
+        )))
+    }
+}
+
+/// Where an import loads from (`NodeHost::import_location`).
+pub(crate) struct ImportLocation {
+    path: std::path::PathBuf,
+    name: String,
+}
+
+/// An import referrer's file URL, when it is one, and its path: Node resolves filesystem
+/// specifiers as URLs before accessing a file.
+pub(crate) fn referrer_location(
+    referrer: &str,
+) -> Result<(Option<url::Url>, std::path::PathBuf), quench_runtime::ModuleLoadError> {
+    let Some(url) = referrer
+        .starts_with("file:")
+        .then(|| url::Url::parse(referrer))
+        .transpose()
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok((None, std::path::PathBuf::from(referrer)));
+    };
+    let path = url
+        .to_file_path()
+        .map_err(|_| "invalid file URL referrer".to_owned())?;
+    Ok((Some(url), path))
+}
+
+impl NodeHost {
+    /// Where an import of `specifier` from `referrer` loads from: the file and the module's
+    /// name, which keeps a file URL's query and fragment.
+    fn import_location(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ImportLocation>, quench_runtime::ModuleLoadError> {
+        use std::path::Path;
+
+        // Node resolves filesystem specifiers as URLs before accessing a file.
+        // The URL suffix belongs to module identity, never to the disk path.
+        let (referrer_url, referrer_path) = referrer_location(referrer)?;
+        // Eval and stdin scripts have synthetic names (`[eval1]`, `<stdin>`); Node resolves
+        // their imports from the guest `process.cwd()`.
+        let referrer_path = if referrer_url.is_none() && (referrer.starts_with('<') || referrer.starts_with('[')) {
+            let cwd = self.shared_state.borrow().cwd.clone();
+            cwd.query_path().map_err(|error| error.to_string())?.join(referrer)
+        } else {
+            referrer_path
+        };
+        let base = referrer_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let file_url = if specifier
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        {
+            Some(url::Url::parse(specifier).map_err(|error| error.to_string())?)
+        } else if specifier.starts_with("./")
+            || specifier.starts_with("../")
+            || Path::new(specifier).is_absolute()
+        {
+            let base_url = match referrer_url {
+                Some(url) => url,
+                None => {
+                    let absolute = if referrer_path.is_absolute() {
+                        referrer_path.clone()
+                    } else {
+                        std::env::current_dir()
+                            .map_err(|error| error.to_string())?
+                            .join(&referrer_path)
+                    };
+                    url::Url::from_file_path(absolute)
+                        .map_err(|_| "invalid file module referrer".to_owned())?
+                }
+            };
+            Some(
+                base_url
+                    .join(specifier)
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        let path = if let Some(url) = &file_url {
+            let encoded = url.path().to_ascii_lowercase();
+            if encoded.contains("%2f") || (cfg!(windows) && encoded.contains("%5c")) {
+                return Err("File URL path must not include encoded path separators".into());
+            }
+            Some(
+                url.to_file_path()
+                    .map_err(|_| "invalid file module URL".to_owned())?,
+            )
+        } else {
+            commonjs::exact_file_path(&base, specifier)
+        };
+        let path = match path {
+            Some(path) => path,
+            None => {
+                let resolved = with_import_resolver(|resolver| {
+                    match commonjs::resolve_kept(resolver, |resolver| resolver.resolve(&base, specifier)) {
+                        Ok(resolution) => Ok(Some(resolution.full_path())),
+                        Err(oxc_resolver::ResolveError::Specifier(_)) => Ok(None),
+                        Err(error) => Err(esm_errors::unresolved(resolver, error, specifier, &base, &referrer_path)),
+                    }
+                })?;
+                let Some(path) = resolved else {
+                    return Ok(None);
+                };
+                path
+            }
+        };
+        let path = self.real_path(path);
+        if path.is_dir() {
+            let mut message = format!(
+                "Directory import '{}' is not supported resolving ES modules imported from {referrer}",
+                path.display()
+            );
+            if let Some(suggestion) = esm_directory_import_suggestion(&path) {
+                message.push_str(&format!("\nDid you mean to import \"{suggestion}\"?"));
+            }
+            return Err(quench_runtime::ModuleLoadError::new(
+                quench_runtime::ModuleLoadErrorKind::Error,
+                "ERR_UNSUPPORTED_DIR_IMPORT",
+                message,
+            ));
+        }
+        if let Some(error) = esm_errors::unloadable(&path) {
+            return Err(error);
+        }
+        let name = if let Some(original) = file_url.as_ref().filter(|url| {
+            url.query().is_some_and(|value| !value.is_empty())
+                || url.fragment().is_some_and(|value| !value.is_empty())
+        }) {
+            let mut canonical = url::Url::from_file_path(&path)
+                .map_err(|_| "invalid canonical module path".to_owned())?;
+            canonical.set_query(original.query().filter(|value| !value.is_empty()));
+            canonical.set_fragment(original.fragment().filter(|value| !value.is_empty()));
+            canonical.to_string()
+        } else {
+            path.to_string_lossy().into_owned()
+        };
+        Ok(Some(ImportLocation { path, name }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operation_names_are_unique() {
+        let mut names = std::collections::HashSet::new();
+        assert_eq!(super::OPERATION_NAMES.len(), super::bindings().len());
+        for (index, binding) in super::bindings().iter().enumerate() {
+            assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
+            assert_eq!(super::OPERATION_NAMES[index], binding.name);
+        }
+    }
+}
