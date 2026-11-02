@@ -762,17 +762,20 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
-        let found = self.plain_own_enumerability(p, receiver, key)?;
-        let holds = found.is_some_and(|enumerable| {
-            native == Native::ObjectPrototypeHasOwnProperty || enumerable
-        });
+        let found = if native == Native::ObjectPrototypeHasOwnProperty {
+            self.plain_own_query::<false>(p, receiver, key)?
+        } else {
+            self.plain_own_query::<true>(p, receiver, key)?
+        };
+        let holds = found == Some(true);
         Some(if holds { Value::TRUE } else { Value::FALSE })
     }
 
-    /// Whether a string-keyed own property is enumerable, or absent (`Some(None)`).
-    /// Ordinary objects answer from their shape, without reading a value or accessor.
+    /// A present string-keyed own property's query answer, or absent (`Some(None)`).
+    /// Presence needs only the slot; enumerability also reads its attributes. The query
+    /// kind is bound by the caller, so presence reads no descriptor metadata.
     /// Exotics keep their shared descriptor operation; effectful lookups decline.
-    fn plain_own_enumerability(
+    fn plain_own_query<const ENUMERABLE: bool>(
         &mut self,
         p: &ResidualProgram,
         object: Value,
@@ -786,9 +789,13 @@ impl<H: Host> Vm<H> {
                 if !data.is_arguments_object() {
                     let shape = data.shape();
                     let atom = self.string_key_atom(key)?;
-                    let found = self.shape_slot(shape, atom)
-                        .and_then(|slot| self.shape_slot_attributes(shape, slot));
-                    return Some(found.map(|attributes| attributes.enumerable));
+                    let slot = self.shape_slot(shape, atom);
+                    return Some(if ENUMERABLE {
+                        slot.and_then(|slot| self.shape_slot_attributes(shape, slot))
+                            .map(|attributes| attributes.enumerable)
+                    } else {
+                        slot.map(|_| true)
+                    });
                 }
             }
             None => {
@@ -803,11 +810,11 @@ impl<H: Host> Vm<H> {
         let text = self.heap.string(key)?.clone();
         let atom = self.string_key_atom(key)?;
         let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
-        Some(found.map(|(_, attributes)| attributes.enumerable))
+        Some(found.map(|(_, attributes)| !ENUMERABLE || attributes.enumerable))
     }
 
     /// `object_for_in_key_is_enumerable` of a string key along a chain whose own lookups run
-    /// no guest code (`plain_own_enumerability`): the nearest own property's enumerability, or
+    /// no guest code (`plain_own_query`): the nearest own property's enumerability, or
     /// false past the chain's end. `None` leaves the walk, a Proxy's or primitive's
     /// included, to the general path.
     pub(super) fn plain_for_in_key_is_enumerable(
@@ -818,7 +825,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Value> {
         let mut current = source;
         loop {
-            if let Some(enumerable) = self.plain_own_enumerability(p, current, key)? {
+            if let Some(enumerable) = self.plain_own_query::<true>(p, current, key)? {
                 return Some(if enumerable { Value::TRUE } else { Value::FALSE });
             }
             current = self.object_data(current)?.proto();
