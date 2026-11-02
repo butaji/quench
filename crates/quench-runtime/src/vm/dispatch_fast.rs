@@ -266,7 +266,7 @@ pub(super) struct LaneView {
     tier_lane: std::cell::UnsafeCell<LaneBody>,
     /// What its lane bodies did, under `QUENCH_JS_JIT_STATS` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
-    /// Bodies it specialized again past (`LaneView::note_lane_body_exit`), whose code the
+    /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
     retired: std::cell::RefCell<Vec<super::compiled::LaneMethod>>,
@@ -533,7 +533,7 @@ struct ActivationShape {
 /// back to `Unspecialized`.
 enum LaneBody {
     /// Counting its entries toward specialization; `recompiles` bodies before it left too
-    /// often for their feedback (`LaneView::note_lane_body_exit`), the last of them, where
+    /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
     /// `stuck`, at that one leave only.
     Unspecialized { entries: u16, recompiles: u8, stuck: Option<super::compiled::LaneExit> },
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
@@ -550,6 +550,8 @@ enum LaneBody {
         /// they went (`LaneLeaves`).
         exits: std::cell::Cell<u16>,
         leaves_at: std::cell::Cell<LaneLeaves>,
+        /// Whether any run of it completed, natively called ones included.
+        completed: std::cell::Cell<bool>,
         recompiles: u8,
         /// Its predecessor's one leave, where it left only there.
         stuck: Option<super::compiled::LaneExit>,
@@ -698,6 +700,7 @@ impl LaneView {
                             leaves: std::cell::Cell::new(0),
                             exits: std::cell::Cell::new(0),
                             leaves_at: std::cell::Cell::new(LaneLeaves::None),
+                            completed: std::cell::Cell::new(false),
                             recompiles,
                             stuck,
                         }
@@ -741,22 +744,28 @@ impl LaneView {
         self.release_from_tier();
     }
 
-    /// Counts a leave of the specialized body at `exit`; at `LANE_BODY_REOPTIMIZE_EXITS` it
+    /// Counts how a run of the specialized body ended, at `exit`: a leave counts; at
+    /// `LANE_BODY_REOPTIMIZE_EXITS` it
     /// specializes again, from the feedback its sites hold now (`lane_specialize`), at most
     /// `LANE_BODY_MAX_RECOMPILES` times, its code kept for the direct callers that name it. A
     /// body that left only where its predecessor did gained nothing from the feedback: it
-    /// retires, as the next would leave there too.
-    fn note_lane_body_exit(&self, exit: super::compiled::LaneExit) {
-        // SAFETY: as `lane_body`; the run that left has finished, and nothing reads its body.
+    /// retires, as the next would leave there too, and so does one no run of which completed:
+    /// its feedback did not reach the code it runs (DeltaBlue: 85 of 92 compiles).
+    fn note_lane_body_end(&self, exit: super::compiled::LaneExit) {
+        // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, recompiles, tier_prologue, stuck, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, recompiles, tier_prologue, stuck, .. } = body else { return };
+        if matches!(exit, super::compiled::LaneExit::Returned { .. }) {
+            completed.set(true);
+            return;
+        }
         exits.set(exits.get().saturating_add(1));
         leaves_at.set(leaves_at.get().with(exit));
         if exits.get() < LANE_BODY_REOPTIMIZE_EXITS << *recompiles || *recompiles >= LANE_BODY_MAX_RECOMPILES {
             return;
         }
         let one = match leaves_at.get() { LaneLeaves::One(at) => Some(at), LaneLeaves::None | LaneLeaves::Scattered => None };
-        let unmoved = one.is_some() && one == *stuck;
+        let unmoved = (one.is_some() && one == *stuck) || !completed.get();
         let recompiles = *recompiles + 1;
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
@@ -7328,9 +7337,7 @@ script_handler! {
         let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
         let resumed = lane_body_left(cx, r, own, method, exit);
         // Counted once nothing reads the body: a reoptimization moves it.
-        if left {
-            own.note_lane_body_exit(exit);
-        }
+        own.note_lane_body_end(exit);
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
@@ -14134,9 +14141,7 @@ script_handler! {
         let resumed = lane_body_left(cx, r, own, method, exit);
         // Counted once nothing reads the body: a retirement or reoptimization moves it.
         own.note_lane_body_run(left);
-        if left {
-            own.note_lane_body_exit(exit);
-        }
+        own.note_lane_body_end(exit);
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
             LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
@@ -14492,11 +14497,8 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_nested_lane_method(method, program, code, registers.0, receiver, captures, cx.cast());
-    let left = !matches!(exit, super::compiled::LaneExit::Returned { .. });
     let resumed = lane_body_left(cx, registers, own, method, exit);
-    if left {
-        own.note_lane_body_exit(exit);
-    }
+    own.note_lane_body_end(exit);
     match resumed {
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
         LaneBodyLeft::Completed(_, value) => {
