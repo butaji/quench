@@ -380,6 +380,8 @@ impl Context {
         // Branch optimizations can invalidate these; recompute them.
         self.compute_cfg();
         self.compute_domtree();
+        self.compute_loop_analysis();
+        crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis);
 
         self.verify_if(fisa)?;
 

@@ -16900,6 +16900,179 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn countdown_dependent_loops_keep_semantic_bounds_and_unchecked_entries() {
+        let source = r#"
+            function coupled(n){n=n|0;let i=0;for(;i<n;i=(i+1)|0){}let j=0;for(;j<i;j=(j+1)|0){}return(i+j)|0;}
+            function unchecked(n){n=n|0;let i=0;do{i=(i+1)|0;}while(i<n);return i;}
+            function reconverged(n){n=n|0;let i=0;if(!(i<n))globalThis.seen++;do{i=(i+1)|0;}while(i<n);return i;}
+            globalThis.seen=0;
+            for(const n of [-3,0,1,2,17,257]){
+                if(coupled(n)!==(n>0?n*2:0))throw 'dependent bound';
+                if(unchecked(n)!==(n>0?n:1))throw 'unchecked entry';
+                if(reconverged(n)!==(n>0?n:1))throw 'reconverged entry';
+            }
+            if(seen!==2)throw 'entry effects';
+            throw 42;
+        "#;
+        let program = crate::Engine::specialize(source, "countdown-dependencies.cjs").unwrap();
+        let module = crate::lower_native_js_module(&program, "countdown_dependencies").unwrap();
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let coupled = module.functions.into_iter().find_map(|function| match function {
+            super::super::native_object::NativeFunction::Definition { name, function }
+                if name == "countdown_dependencies_function_1" => Some(function), _ => None,
+        }).unwrap();
+        let mut context = cranelift_codegen::Context::for_function(coupled);
+        context.optimize(&*isa, &mut Default::default()).unwrap();
+        context.compute_loop_analysis();
+        assert!(context.func.layout.blocks().filter(|block| context.loop_analysis.innermost_loop(*block).is_some())
+            .flat_map(|block| context.func.layout.block_insts(block))
+            .any(|inst| context.func.dfg.insts[inst].opcode() == ir::Opcode::Isub),
+            "at least one independent counter must use the countdown path\n{}", context.func);
+        let native = linked_optimized_test_program(program);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn countdown_induction_preserves_words_checkpoints_and_labels() {
+        use cranelift_codegen::settings::Configurable;
+        use std::sync::atomic::AtomicU8;
+        const MAX_EXECUTED_TRIPS: u128 = 257;
+        const PREVIOUS_LABEL: u32 = 0;
+        const NEXT_LABEL: u32 = 1;
+        const PREVIOUS_USE: u32 = 101;
+        const NEXT_USE: u32 = 102;
+        let mut flags = cranelift_codegen::settings::builder();
+        flags.set("opt_level", "speed").unwrap();
+        flags.set("enable_verifier", "true").unwrap();
+        flags.set("machine_code_cfg_info", "true").unwrap();
+        let isa = cranelift_native::builder().unwrap().finish(cranelift_codegen::settings::Flags::new(flags)).unwrap();
+        let mut executions = 0;
+        let mut optimized = 0;
+        for ty in [types::I8, types::I16, types::I32, types::I64] {
+            let width = ty.bits();
+            let mask = u64::MAX >> (u64::BITS - width);
+            let min = if width == i64::BITS { i64::MIN } else { -(1_i64 << (width - 1)) };
+            let max = if width == i64::BITS { i64::MAX } else { (1_i64 << (width - 1)) - 1 };
+            let starts: Vec<_> = if ty == types::I8 { (min..=max).collect() }
+                else { vec![min, min + 1, -7, -1, 0, 1, max - 17, max - 1] };
+            for start in starts {
+                let mut signature = Signature::new(isa.default_call_conv());
+                signature.params.extend([AbiParam::new(types::I64); 3]);
+                signature.returns.push(AbiParam::new(types::I64));
+                let mut function = ir::Function::with_name_signature(UserFuncName::testcase("countdown_words"), signature);
+                function.collect_debug_info();
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                let entry = builder.create_block();
+                let header = builder.create_block();
+                let comparison = builder.create_block();
+                let backedge = builder.create_block();
+                let empty = builder.create_block();
+                let done = builder.create_block();
+                let interrupted = builder.create_block();
+                builder.append_block_params_for_function_params(entry);
+                builder.append_block_param(header, ty);
+                builder.switch_to_block(entry);
+                builder.set_srcloc(ir::SourceLoc::new(0));
+                let args = builder.block_params(entry).to_vec();
+                let bound = if ty == types::I64 { args[0] } else { builder.ins().ireduce(ty, args[0]) };
+                let initial = builder.ins().iconst(ty, start);
+                let enters = builder.ins().icmp(IntCC::SignedLessThan, initial, bound);
+                builder.ins().brif(enters, header, &[initial.into()], empty, &[]);
+                builder.switch_to_block(header);
+                let previous = builder.block_params(header)[0];
+                builder.set_val_label(previous, ir::ValueLabel::from_u32(PREVIOUS_LABEL));
+                let next = builder.ins().iadd_imm_u(previous, 1);
+                builder.set_val_label(next, ir::ValueLabel::from_u32(NEXT_LABEL));
+                let requested = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), args[1]);
+                builder.ins().brif(requested, interrupted, &[], comparison, &[]);
+                builder.switch_to_block(comparison);
+                let continues = builder.ins().icmp(IntCC::SignedLessThan, next, bound);
+                builder.ins().brif(continues, backedge, &[], done, &[]);
+                builder.switch_to_block(backedge);
+                builder.ins().jump(header, &[next.into()]);
+                let widen = |builder: &mut FunctionBuilder<'_>, value| if ty == types::I64 { value }
+                    else { builder.ins().uextend(types::I64, value) };
+                for block in [interrupted, done] {
+                    builder.switch_to_block(block);
+                    builder.set_srcloc(ir::SourceLoc::new(PREVIOUS_USE));
+                    let old = widen(&mut builder, previous);
+                    builder.ins().store(MemFlagsData::trusted(), old, args[2], 0);
+                    builder.set_srcloc(ir::SourceLoc::new(NEXT_USE));
+                    let new = widen(&mut builder, next);
+                    builder.ins().store(MemFlagsData::trusted(), new, args[2], std::mem::size_of::<u64>() as i32);
+                    builder.set_srcloc(ir::SourceLoc::new(0));
+                    builder.ins().return_(&[new]);
+                }
+                builder.switch_to_block(empty);
+                let initial = widen(&mut builder, initial);
+                builder.ins().store(MemFlagsData::trusted(), initial, args[2], 0);
+                builder.ins().store(MemFlagsData::trusted(), initial, args[2], std::mem::size_of::<u64>() as i32);
+                builder.ins().return_(&[initial]);
+                builder.seal_all_blocks(); builder.finalize(isa.frontend_config());
+                let mut compiler = cranelift_codegen::Context::for_function(function);
+                compiler.compile(&*isa, &mut Default::default()).unwrap();
+                let code = compiler.compiled_code().unwrap();
+                let memory = CodeMemory::new(code.buffer.data()).unwrap();
+                for (label, location) in [(PREVIOUS_LABEL, PREVIOUS_USE), (NEXT_LABEL, NEXT_USE)] {
+                    let uses: Vec<_> = code.buffer.get_srclocs_sorted().iter().filter(|source|
+                        source.loc == ir::SourceLoc::new(location) && source.start < source.end).collect();
+                    if uses.is_empty() { continue; }
+                    let ranges = code.value_labels_ranges.get(&ir::ValueLabel::from_u32(label)).unwrap_or_else(||
+                        panic!("{ty} start{start} missing label{label}: {:?}\n{}", compiler.func.dfg.values_labels, compiler.func));
+                    for source in uses {
+                        assert!(ranges.iter().any(|range| range.start <= source.start && source.start < range.end),
+                            "{ty} start{start} label{label} at{}: {ranges:?}", source.start);
+                    }
+                }
+                let native = &compiler.func;
+                let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+                let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+                let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+                loops.compute(native, &cfg, &dom);
+                let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
+                    .flat_map(|block| native.layout.block_insts(block)).collect();
+                let countdown = hot.iter().filter(|inst| native.dfg.insts[**inst].opcode() == ir::Opcode::Isub).count();
+                if start == 0 || start == min { assert_eq!(countdown, 1, "{native}"); }
+                if countdown != 0 {
+                    assert_eq!(countdown, 1, "{native}");
+                    assert!(!hot.iter().any(|inst| matches!(native.dfg.insts[*inst], ir::InstructionData::IntCompare {
+                        cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual, .. })), "{native}");
+                    optimized += 1;
+                }
+                // SAFETY: the verified ABI takes a word, a live atomic byte,
+                // and two writable word cells, returning one word.
+                let run = unsafe { std::mem::transmute::<*mut u8,
+                    unsafe extern "C" fn(u64, *const AtomicU8, *mut u64) -> u64>(memory.pointer()) };
+                let bounds: Vec<_> = if ty == types::I8 { (min..=max).collect() } else {
+                    [min, start.saturating_sub(1), start, start.saturating_add(1), start.saturating_add(2),
+                        start.saturating_add(17), max].into_iter().filter(|bound| *bound >= min && *bound <= max).collect()
+                };
+                for bound in bounds { for requested in [0_u8, 1] {
+                    let enters = start < bound;
+                    let distance = (i128::from(bound) - i128::from(start)).max(0) as u128;
+                    if requested == 0 && distance > MAX_EXECUTED_TRIPS { continue; }
+                    let expected = if !enters { start } else if requested != 0 { start + 1 } else { bound };
+                    let previous = if !enters || requested != 0 { start } else { bound - 1 };
+                    let flag = AtomicU8::new(requested);
+                    let mut cells = [0_u64; 2];
+                    assert_eq!(unsafe { run(bound as u64 & mask, &flag, cells.as_mut_ptr()) }, expected as u64 & mask,
+                        "{ty} start{start} bound{bound} request{requested}");
+                    assert_eq!(cells, [previous as u64 & mask, expected as u64 & mask]);
+                    executions += 1;
+                }}
+            }
+        }
+        assert!(executions >= (1_usize << u8::BITS) * (1_usize << u8::BITS) * 2);
+        assert!(optimized >= 2 * 4, "each width must optimize zero and signed-minimum starts");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn loop_carried_updates_reuse_the_comparison_value() {
         use std::sync::atomic::AtomicU8;
         use cranelift_codegen::settings::Configurable;

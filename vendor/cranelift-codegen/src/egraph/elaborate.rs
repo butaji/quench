@@ -85,6 +85,17 @@ pub(crate) struct Elaborator<'a> {
 /// disturb; a recurrence such as SHA-256's round function leads by more.
 const CRITICAL_LEAD: u32 = 4;
 
+/// A pure clone keeps its source origin and aliases the original label names.
+fn clone_pure_debug_info(func: &mut Function, original: Inst, cloned: Inst) {
+    let source = func.srclocs[original];
+    func.srclocs[cloned] = source;
+    let value = func.dfg.first_result(original);
+    if func.dfg.values_labels.as_ref().is_some_and(|labels| labels.contains_key(&value)) {
+        let result = func.dfg.first_result(cloned);
+        func.dfg.add_value_label_alias(result, source, value);
+    }
+}
+
 /// Quench: whether `value` is rematerialized where it is used: a value the
 /// remat rules chose, or a clone of one (placed for another dominator
 /// subtree), which shares its best value.
@@ -474,6 +485,7 @@ impl<'a> Elaborator<'a> {
                     let inst = func.dfg.value_def(arg.value).inst().unwrap();
                     debug_assert_eq!(func.dfg.inst_results(inst).len(), 1);
                     let new_inst = func.dfg.clone_inst(inst);
+                    clone_pure_debug_info(func, inst, new_inst);
                     func.layout.insert_inst(new_inst, before);
                     let new_result = func.dfg.inst_results(new_inst)[0];
                     *v.insert(new_result)
@@ -787,6 +799,7 @@ impl<'a> Elaborator<'a> {
                                 new_result, result
                             );
                         }
+                        clone_pure_debug_info(self.func, inst, new_inst);
                         new_inst
                     } else {
                         trace!(" -> no location; using original inst");
