@@ -1440,6 +1440,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsCall" (0) => crate::modules::fs_shared_vm::api::call,
         method "fsHandleCall" (0) => crate::modules::fs_shared_vm::file_handle::call,
         method "fsSettle" (2) => crate::modules::fs_shared_vm::api::settle,
+        method "fsTemporaryRemove" (0) => crate::modules::fs_shared_vm::ops::remove_temporary,
         method "fsPromisesGlob" (2) => crate::modules::fs_shared_vm::glob::promise_glob,
         method "fsAbortGuard" (0) => crate::modules::fs_shared_vm::api::abort_guard,
         method "fsPromisesGet" (0) => crate::modules::fs_shared_vm::promises_get,

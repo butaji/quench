@@ -44,9 +44,11 @@ pub(crate) struct State {
     roots: Option<Roots>,
     /// The deprecation codes `fs` has warned about: each warns once per process.
     pub(crate) deprecations: Vec<String>,
+    /// Whether `mkdtemp` has warned about a template ending in `X`, which it does once.
+    pub(crate) template_warned: bool,
 }
 
-crate::host::startup_snapshot::host_snap_state!(State { roots, deprecations });
+crate::host::startup_snapshot::host_snap_state!(State { roots, deprecations, template_warned });
 
 fn roots(c: &mut Context<'_>) -> Result<Roots, RootedError> {
     if let Some(roots) = c.host_mut().shared_state().borrow().fs_classes.roots {

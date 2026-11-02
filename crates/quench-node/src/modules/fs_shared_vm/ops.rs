@@ -32,6 +32,8 @@ const CURRENT_POSITION: f64 = -1.0;
 const MAX_PARAMETERS: usize = 5;
 /// The random suffix `mkdtemp(3)` replaces.
 const TEMPORARY_SUFFIX: &str = "XXXXXX";
+/// The prefix ending whose treatment differs between platforms' `mkdtemp`.
+const PLATFORM_DEPENDENT_TEMPLATE: char = 'X';
 
 /// Every operation `fs` exposes through its sync, callback and promise APIs.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,7 @@ pub(crate) enum Op {
     Rmdir,
     Rm,
     Mkdtemp,
+    MkdtempDisposable,
     CopyFile,
     Cp,
     Symlink,
@@ -83,11 +86,11 @@ pub(crate) enum Op {
 }
 
 impl Op {
-    pub(crate) const ALL: [Self; 44] = [
+    pub(crate) const ALL: [Self; 45] = [
         Self::Access, Self::Exists, Self::Chmod, Self::Fchmod, Self::Lchmod, Self::Chown,
         Self::Fchown, Self::Lchown, Self::Utimes, Self::Futimes, Self::Lutimes, Self::Stat,
         Self::Fstat, Self::Lstat, Self::Statfs, Self::Readdir, Self::Mkdir, Self::Rmdir, Self::Rm,
-        Self::Mkdtemp, Self::CopyFile, Self::Cp, Self::Symlink, Self::Link, Self::Rename,
+        Self::Mkdtemp, Self::MkdtempDisposable, Self::CopyFile, Self::Cp, Self::Symlink, Self::Link, Self::Rename,
         Self::Unlink, Self::Readlink, Self::Realpath, Self::RealpathNative, Self::Truncate,
         Self::Ftruncate, Self::Open, Self::Close, Self::Read, Self::Write, Self::Readv,
         Self::Writev, Self::Fsync, Self::Fdatasync, Self::ReadFile, Self::WriteFile,
@@ -136,6 +139,7 @@ impl Op {
             Self::Rmdir => rmdir(c, args),
             Self::Rm => rm(c, args),
             Self::Mkdtemp => mkdtemp(c, args),
+            Self::MkdtempDisposable => mkdtemp_disposable(c, args, flavor),
             Self::CopyFile => copy_file(c, args),
             Self::Cp => super::copy::cp(c, args, flavor == Flavor::Sync),
             Self::Symlink => symlink(c, args),
@@ -369,6 +373,7 @@ fn statfs(c: &mut Context<'_>, args: &[RootId]) -> Call {
             let values = [
                 fields.f_type as i128,
                 fields.f_bsize as i128,
+                fields.f_frsize as i128,
                 fields.f_blocks as i128,
                 fields.f_bfree as i128,
                 fields.f_bavail as i128,
@@ -552,9 +557,34 @@ fn rm(c: &mut Context<'_>, args: &[RootId]) -> Call {
 }
 
 fn mkdtemp(c: &mut Context<'_>, args: &[RootId]) -> Call {
+    Ok(match make_temporary(c, args)? {
+        Ok((encoding, created)) => encoding.project(c, created).map(Reply::Value),
+        Err(error) => Err(error),
+    })
+}
+
+
+/// `warnOnNonPortableTemplate`: once per process, since platforms disagree on whether a
+/// trailing `X` of the prefix joins the random suffix.
+fn warn_platform_dependent_template(c: &mut Context<'_>) -> Result<(), RootedError> {
+    let shared = c.host_mut().shared_state();
+    if std::mem::replace(&mut shared.borrow_mut().fs_classes.template_warned, true) {
+        return Ok(());
+    }
+    let global = c.global_root()?;
+    let process = get(c, global, "process")?;
+    let message = c.string_rooted("mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html");
+    crate::modules::stream_shared_vm::call_method(c, process, "emitWarning", &[message]).map(drop)
+}
+
+/// `mkdtemp(3)` over the prefix: the created directory as the caller spelled the prefix.
+fn make_temporary(c: &mut Context<'_>, args: &[RootId]) -> Result<Result<(Encoding, Vec<u8>), RootedError>, RootedError> {
     let prefix = args::path(c, args[0], "prefix")?;
     let options = args::options(c, args[1])?;
     let encoding = args::encoding(c, options, UTF8)?;
+    if prefix.shown.ends_with(PLATFORM_DEPENDENT_TEMPLATE) {
+        warn_platform_dependent_template(c)?;
+    }
     let mut template = prefix.io.into_os_string();
     template.push(TEMPORARY_SUFFIX);
     let shown = format!("{}{TEMPORARY_SUFFIX}", prefix.shown);
@@ -569,9 +599,49 @@ fn mkdtemp(c: &mut Context<'_>, args: &[RootId]) -> Call {
     bytes.pop();
     // The directory keeps the prefix as given: only the suffix is new.
     let suffix = bytes.split_off(bytes.len() - TEMPORARY_SUFFIX.len());
-    let mut result = prefix.shown.into_bytes();
-    result.extend(suffix);
-    Ok(encoding.project(c, result).map(Reply::Value))
+    let mut shown = prefix.shown.into_bytes();
+    shown.extend(suffix);
+    Ok(Ok((encoding, shown)))
+}
+
+/// `mkdtempDisposableSync` and `fsPromises.mkdtempDisposable`: `{ path, remove }` and the
+/// matching dispose method. Removal is `rm` recursive and forced, in the creating API's
+/// flavor, over the absolute path so a later `process.chdir` does not move its target.
+fn mkdtemp_disposable(c: &mut Context<'_>, args: &[RootId], flavor: Flavor) -> Call {
+    let (encoding, created) = match make_temporary(c, args)? {
+        Ok(created) => created,
+        Err(error) => return Ok(Err(error)),
+    };
+    // `path.resolve(process.cwd(), path)`: the host's descriptor-relative path would follow
+    // the descriptor of the directory current now, which a `chdir` replaces.
+    let cwd = c.host_mut().shared_state().borrow().cwd.clone();
+    let directory = match cwd.query_path() {
+        Ok(directory) => directory,
+        Err(error) => return Ok(Err(failure::system(c, &error, Syscall::bare("uv_cwd")))),
+    };
+    let absolute = directory.join(std::ffi::OsStr::from_bytes(&created));
+    let absolute = c.string_rooted(&absolute.to_string_lossy());
+    let settles = c.boolean(flavor == Flavor::Promise);
+    let path = encoding.project(c, created)?;
+    let result = c.object_rooted()?;
+    crate::modules::stream_shared_vm::put(c, result, "path", path)?;
+    let remove = crate::modules::stream_shared_vm::closure(c, "fsTemporaryRemove", "remove", &[absolute, settles])?;
+    crate::modules::stream_shared_vm::put(c, result, "remove", remove)?;
+    let (symbol, name) = if flavor == Flavor::Promise { ("asyncDispose", "[Symbol.asyncDispose]") } else { ("dispose", "[Symbol.dispose]") };
+    let key = super::classes::well_known_symbol(c, symbol, &format!("nodejs.{symbol}"))?;
+    let dispose = crate::modules::stream_shared_vm::closure(c, "fsTemporaryRemove", name, &[absolute, settles])?;
+    c.define_data_property_rooted(result, key, dispose, true, true, true)?;
+    Ok(Ok(Reply::Value(result)))
+}
+
+/// The `remove` and dispose methods of a disposable temporary directory.
+pub(crate) fn remove_temporary(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> crate::modules::stream_shared_vm::Outcome {
+    let [path, settles] = crate::modules::stream_shared_vm::captures::<2>(c)?;
+    let flavor = if c.truthy_rooted(settles)? { Flavor::Promise } else { Flavor::Sync };
+    let options = c.object_rooted()?;
+    crate::modules::stream_shared_vm::put_bool(c, options, "recursive", true)?;
+    crate::modules::stream_shared_vm::put_bool(c, options, "force", true)?;
+    super::api::run(c, Op::Rm, flavor, &[path, options])
 }
 
 /// `uv_fs_copyfile`: the source's bytes and mode in a new or truncated destination.
