@@ -1792,7 +1792,19 @@ impl Lowering<'_, '_> {
             }
         }
         if returns {
-            return Some(self.complete(state, pc, destination));
+            // The completion names the function's terminal `Return` where it has one, whose
+            // register the lane reads it from, else the binary's own record.
+            let terminal = self.unit.instructions.len().checked_sub(1)
+                .filter(|terminal| self.unit.instructions[*terminal].op() == Op::Return)
+                .and_then(|terminal| match self.unit.origins.get(terminal) {
+                    Some(super::lane_unit::Origin::Caller(record)) => Some(*record),
+                    _ => None,
+                });
+            let Some(super::lane_unit::Origin::Caller(own)) = self.unit.origins.get(pc).copied() else { unreachable!("a returning binary is a caller record's") };
+            let bits = self.tagged(state, destination);
+            self.return_value(terminal.unwrap_or(own), bits);
+            self.native += 1;
+            return Some(false);
         }
         Some(true)
     }
