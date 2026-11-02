@@ -1,6 +1,7 @@
 //! Direct shared-primitive measurements, below the guest microbench composition layer.
 //! Scalar kernels process `BATCH_VALUES` operations per libtest iteration; allocation and
-//! COW kernels process one array. Setup is outside `Bencher::iter`. Linear TOD-9 owns the
+//! COW kernels process one array. Pair kernels process `BATCH_VALUES` two-operation pairs.
+//! Setup is outside `Bencher::iter`. Linear TOD-9 owns the
 //! suite mapping, commands, interpretation and evidence.
 
 extern crate test;
@@ -18,6 +19,8 @@ use test::Bencher;
 const BATCH_VALUES: usize = 64;
 const INPUT_SEED: i32 = 104729;
 const FRACTION_DIVISOR: f64 = 31.0;
+const PAIR_INITIAL: f64 = 17.5;
+const PAIR_FACTOR: f64 = 0.5;
 
 fn attribute_hash<const FIELDS: bool, const DEPENDENT: bool>(b: &mut Bencher) {
     const FLAG_STATES: [bool; 2] = [false, true];
@@ -77,6 +80,74 @@ fn primitive_attribute_hash_chain_batch(b: &mut Bencher) {
 #[bench]
 fn primitive_attribute_hash_fields_chain_batch(b: &mut Bencher) {
     attribute_hash::<true, true>(b);
+}
+
+/// Two shared arithmetic primitives, retaining the intermediate as a Number or a raw
+/// double as the lane's dead-intermediate pair does. Each batch is 64 arithmetic pairs.
+fn number_pairs<const ELIDE: bool, const CHAIN: bool>(b: &mut Bencher) {
+    let values = Inputs::Fractions.values();
+    let initial = Value::number(PAIR_INITIAL);
+    let factor = Value::number(PAIR_FACTOR);
+    b.iter(|| {
+        let mut result = black_box(initial);
+        for &right in &values {
+            let left = black_box(if CHAIN { result } else { initial });
+            let right = black_box(right);
+            let factor = black_box(factor);
+            result = if ELIDE {
+                let (left, right) = Value::number_pair(left, right).unwrap();
+                let first = super::operations::number_operator::<ADDITION>(left, right).unwrap();
+                Value::number(
+                    super::operations::number_operator::<MULTIPLICATION>(
+                        first,
+                        factor.as_number().unwrap(),
+                    )
+                    .unwrap(),
+                )
+            } else {
+                let first = number_value_operator::<ADDITION>(left, right).unwrap();
+                number_value_operator::<MULTIPLICATION>(first, factor).unwrap()
+            };
+            if !CHAIN {
+                black_box(result);
+            }
+        }
+        if CHAIN {
+            black_box(result);
+        }
+    });
+}
+
+#[bench]
+fn primitive_number_pair_packed_batch(b: &mut Bencher) {
+    number_pairs::<false, false>(b);
+}
+
+#[bench]
+fn primitive_number_pair_elided_batch(b: &mut Bencher) {
+    number_pairs::<true, false>(b);
+}
+
+#[bench]
+fn primitive_number_pair_packed_chain_batch(b: &mut Bencher) {
+    number_pairs::<false, true>(b);
+}
+
+#[bench]
+fn primitive_number_pair_elided_chain_batch(b: &mut Bencher) {
+    number_pairs::<true, true>(b);
+}
+
+#[bench]
+fn primitive_control_number_pair_chain_batch(b: &mut Bencher) {
+    let values = Inputs::Fractions.numbers();
+    b.iter(|| {
+        let mut result = black_box(PAIR_INITIAL);
+        for &right in &values {
+            result = (result + black_box(right)) * black_box(PAIR_FACTOR);
+        }
+        black_box(result);
+    });
 }
 
 #[derive(Clone, Copy)]
