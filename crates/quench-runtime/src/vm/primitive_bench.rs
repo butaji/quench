@@ -20,6 +20,8 @@ const FRACTION_DIVISOR: f64 = 31.0;
 #[derive(Clone, Copy)]
 enum Inputs {
     Integers,
+    WideIntegers,
+    LargeInt32,
     Fractions,
     Dyadic,
     Mixed,
@@ -46,6 +48,8 @@ impl Inputs {
             let integer = f64::from(seed * (index as i32 - BATCH_VALUES as i32 / 2));
             match self {
                 Self::Integers => integer,
+                Self::WideIntegers => integer * f64::from(u32::MAX),
+                Self::LargeInt32 => f64::from(i32::MAX - seed * index as i32),
                 Self::Fractions => integer + 1.0 / FRACTION_DIVISOR,
                 Self::Dyadic => integer + 0.5,
                 Self::Mixed if index % 2 == 0 => integer,
@@ -78,6 +82,37 @@ fn decode(b: &mut Bencher, inputs: Inputs) {
     });
 }
 
+fn length_encode<const DIRECT: bool>(b: &mut Bencher) {
+    let values: [usize; BATCH_VALUES] = std::array::from_fn(|index| {
+        let value = INPUT_SEED.unsigned_abs() as usize * index;
+        if index % 2 == 0 {
+            value
+        } else {
+            value + i32::MAX as usize
+        }
+    });
+    b.iter(|| {
+        for &value in &values {
+            let value = black_box(value);
+            black_box(if DIRECT {
+                Value::length(value)
+            } else {
+                Value::number(value as f64)
+            });
+        }
+    });
+}
+
+#[bench]
+fn primitive_length_encode_batch(b: &mut Bencher) {
+    length_encode::<true>(b);
+}
+
+#[bench]
+fn primitive_length_encode_via_number_batch(b: &mut Bencher) {
+    length_encode::<false>(b);
+}
+
 fn arithmetic<const OP: u32>(b: &mut Bencher, inputs: Inputs) {
     let values = inputs.values();
     b.iter(|| {
@@ -87,17 +122,43 @@ fn arithmetic<const OP: u32>(b: &mut Bencher, inputs: Inputs) {
     });
 }
 
+fn integer_arithmetic<const OP: u32>(b: &mut Bencher, inputs: Inputs) {
+    let values = inputs.values();
+    b.iter(|| {
+        for &value in &values {
+            black_box(integer_operator::<OP>(black_box(value), black_box(value)).unwrap());
+        }
+    });
+}
+
+fn integer_pair_decode<const COMBINED: bool>(b: &mut Bencher, inputs: Inputs) {
+    let values = inputs.values();
+    b.iter(|| {
+        for index in 0..BATCH_VALUES {
+            let left = black_box(values[index]);
+            let right = black_box(values[BATCH_VALUES - 1 - index]);
+            black_box(if COMBINED {
+                Value::int_pair(left, right)
+            } else {
+                left.as_int()
+                    .and_then(|left| right.as_int().map(|right| (left, right)))
+            });
+        }
+    });
+}
+
 macro_rules! input_benches {
-    ($($name:ident: $operation:ident $(::<$operator:ident>)? ($input:ident)),* $(,)?) => {
+    ($($name:ident: $operation:ident $(::<$parameter:tt>)? ($input:ident)),* $(,)?) => {
         $(#[bench]
         fn $name(b: &mut Bencher) {
-            $operation $(::<$operator>)? (b, Inputs::$input);
+            $operation $(::<$parameter>)? (b, Inputs::$input);
         })*
     };
 }
 
 input_benches! {
     primitive_number_encode_int32_batch: encode(Integers),
+    primitive_number_encode_wide_integer_batch: encode(WideIntegers),
     primitive_number_encode_fraction_batch: encode(Fractions),
     primitive_number_encode_dyadic_batch: encode(Dyadic),
     primitive_number_encode_mixed_batch: encode(Mixed),
@@ -109,6 +170,15 @@ input_benches! {
     primitive_number_add_fraction_batch: arithmetic::<ADDITION>(Fractions),
     primitive_number_add_mixed_batch: arithmetic::<ADDITION>(Mixed),
     primitive_number_multiply_fraction_batch: arithmetic::<MULTIPLICATION>(Fractions),
+    primitive_integer_add_batch: integer_arithmetic::<ADDITION>(Integers),
+    primitive_integer_add_overflow_batch: integer_arithmetic::<ADDITION>(LargeInt32),
+    primitive_integer_multiply_overflow_batch: integer_arithmetic::<MULTIPLICATION>(LargeInt32),
+    primitive_integer_pair_combined_batch: integer_pair_decode::<true>(Integers),
+    primitive_integer_pair_individual_batch: integer_pair_decode::<false>(Integers),
+    primitive_integer_pair_combined_float_batch: integer_pair_decode::<true>(Fractions),
+    primitive_integer_pair_individual_float_batch: integer_pair_decode::<false>(Fractions),
+    primitive_integer_pair_combined_mixed_batch: integer_pair_decode::<true>(Mixed),
+    primitive_integer_pair_individual_mixed_batch: integer_pair_decode::<false>(Mixed),
 }
 
 #[bench]
@@ -127,16 +197,6 @@ fn primitive_control_f64_add_batch(b: &mut Bencher) {
     b.iter(|| {
         for &number in &numbers {
             black_box(black_box(number) + black_box(number));
-        }
-    });
-}
-
-#[bench]
-fn primitive_integer_add_batch(b: &mut Bencher) {
-    let values = Inputs::Integers.values();
-    b.iter(|| {
-        for &value in &values {
-            black_box(integer_operator::<ADDITION>(black_box(value), black_box(value)).unwrap());
         }
     });
 }
