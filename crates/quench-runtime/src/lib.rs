@@ -76,10 +76,10 @@ pub mod owned_clone;
 pub mod shared_backing;
 
 #[cfg(feature = "native-execution")]
-pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
+pub use bytecode::{NATIVE_JS_ABI_SYMBOL, NATIVE_JS_LANE_HELPERS_SYMBOL, NATIVE_JS_IMAGE_HEADER_WORDS, NATIVE_JS_OPERATION_PREFIX, NativeProgramNamespace};
 #[cfg(feature = "native-execution")]
 pub use vm::{
-    NativeJsOperands, NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for,
+    NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
     native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeProgramResolver},
 };
 #[cfg(feature = "aot")]

@@ -1546,10 +1546,35 @@ fn emit_js_fixed_this(builder: &mut FunctionBuilder<'_>, payload: ir::Value, fal
 struct FieldSlotBinding {
     receiver: ir::Value,
     holder: ir::Value,
-    slot: ir::Value,
+    slot: FieldSlot,
     records: ir::Value,
     values: ir::Value,
     length: ir::Value,
+}
+
+/// A region binds its slot once; a single operation decodes it only after
+/// storage admission so failed packed/shape probes do no slot work.
+#[derive(Clone, Copy)]
+enum FieldSlot {
+    Row(ir::Value),
+    #[cfg(feature = "aot")]
+    Bound(ir::Value),
+}
+
+impl FieldSlot {
+    fn read(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
+        match self {
+            #[cfg(feature = "aot")]
+            Self::Bound(value) => value,
+            Self::Row(row) => {
+                use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
+                let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), row, CACHE.slot_offset as i32);
+                let slot = builder.ins().bxor_imm_u(stored, i64::from(CACHE.slot_complement));
+                let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
+                builder.ins().uextend(types::I64, slot)
+            }
+        }
+    }
 }
 
 fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
@@ -1571,10 +1596,7 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     };
     let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
     let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
-    let slot = word(builder, CACHE.slot_offset, CACHE.slot_complement);
-    let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
-    let slot = builder.ins().uextend(types::I64, slot);
-    FieldSlotBinding { receiver, holder, slot, records, values, length }
+    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records, values, length }
 }
 
 fn emit_js_cached_field_slot(
@@ -1711,6 +1733,7 @@ fn emit_js_cached_field_slot(
     } else {
         storage
     };
+    let slot = slot.read(builder);
     let position = builder.ins().iadd(storage, slot);
     let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, values_len);
     emit_js_guard(builder, in_arena, fallback);
@@ -2090,20 +2113,37 @@ lane_helper_inventory! { H;
 pub(super) enum LaneHelpers {
     Process([usize; LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
-    Activation,
+    Linked(u32),
+    #[cfg(feature = "aot")]
+    Bound(ir::Value),
 }
 impl LaneHelpers {
-    fn address(self, builder: &mut FunctionBuilder<'_>, _payload: ir::Value, helper: LaneHelper) -> ir::Value {
+    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
         match self {
             Self::Process(addresses) => builder.ins().iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
-            Self::Activation => {
-                let table = emit_js_payload_word(builder, _payload, std::mem::offset_of!(JsStepDispatch, lane_helpers));
+            Self::Bound(table) => {
                 builder.ins().load(types::I64, invariant(), table,
                     (helper as usize * std::mem::size_of::<usize>()) as i32)
             },
+            #[cfg(feature = "aot")]
+            Self::Linked(_) => unreachable!("linked helpers bind at region entry"),
         }
     }
+}
+
+/// Immutable host-specific helper addresses, resolved by the running image.
+/// The table and every code pointer have process lifetime; obtaining it has no effects.
+#[cfg(feature = "native-execution")]
+pub fn native_js_lane_helpers<H: Host>() -> *const () {
+    LaneHelper::addresses::<H>().as_ptr().cast()
+}
+
+#[cfg(feature = "aot")]
+pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.returns.push(AbiParam::new(isa.pointer_type()));
+    signature
 }
 
 #[derive(Clone, Copy)]
@@ -2190,7 +2230,7 @@ pub(super) struct StaticTypedLoop {
 
 #[cfg(feature = "aot")]
 pub(super) fn lower_static_typed_loop(program: &ResidualProgram, function_id: u32,
-    isa: &dyn cranelift_codegen::isa::TargetIsa) -> Option<StaticTypedLoop>
+    isa: &dyn cranelift_codegen::isa::TargetIsa, helper_symbol: u32) -> Option<StaticTypedLoop>
 {
     if isa.pointer_type() != types::I64 { return None; }
     let function = program.function_get(function_id as usize)?;
@@ -2202,7 +2242,7 @@ pub(super) fn lower_static_typed_loop(program: &ResidualProgram, function_id: u3
     }).min()?;
     let unit = unit.suffix(header)?;
     if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call) { return None; }
-    let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Activation,
+    let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
         &[], isa, lane_region::Coverage::Full)?;
     (count != 0).then_some(StaticTypedLoop { header, function: native })
 }
@@ -6834,9 +6874,6 @@ pub(super) struct JsNativeStep {
 }
 
 struct JsStepDispatch {
-    /// Runtime-bound no-GC semantic helpers; linked code never archives process addresses.
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
-    lane_helpers: *const [*const (); LaneHelper::COUNT],
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
@@ -7182,7 +7219,6 @@ impl LaneFrame {
         Self {
             context,
             dispatch: JsStepDispatch {
-                lane_helpers: std::ptr::null(),
                 program_id: ProgramId::MAIN,
                 frame: usize::MAX,
                 allow_inline_calls: false,
@@ -7317,7 +7353,6 @@ impl JsNativeActivation {
         let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
         let mut dispatch = JsStepDispatch {
-            lane_helpers: LaneHelper::addresses::<H>(),
             program_id, frame, allow_inline_calls, start_pc,
             #[cfg(feature = "native-execution")]
             stop_pc: JS_NO_STOP_PC,
@@ -16536,10 +16571,9 @@ mod tests {
         ).unwrap();
         let isa = super::super::jit_backend::target_isa_for("speed",
             super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let residual = lower_static_typed_loop(&program, 1, &*isa).expect("call-free typed loop");
+        let residual = lower_static_typed_loop(&program, 1, &*isa, 0).expect("call-free typed loop");
         assert!(residual.header > 0, "loop admission must skip the effectful prefix");
         let native = residual.function;
-        let context = native.dfg.block_params(native.layout.entry_block().unwrap())[0];
         let load_base = |value: ir::Value, expected_offset: i32| {
             let ir::ValueDef::Result(instruction, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
             let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return None };
@@ -16549,12 +16583,19 @@ mod tests {
             if native.dfg.insts[instruction].opcode() != ir::Opcode::CallIndirect { return false; }
             let target = native.dfg.inst_args(instruction)[0];
             let Some(table) = load_base(target, LaneHelper::FieldGet as i32 * std::mem::size_of::<usize>() as i32) else { return false };
-            let Some(payload) = load_base(table, std::mem::offset_of!(JsStepDispatch, lane_helpers) as i32) else { return false };
-            load_base(payload, std::mem::offset_of!(CallContext, adapter_payload) as i32) == Some(context)
-        }), "indirect field helper must follow context -> payload -> runtime table -> code pointer");
+            let ir::ValueDef::Result(resolver, _) = native.dfg.value_def(native.dfg.resolve_aliases(table)) else { return false };
+            let ir::InstructionData::Call { func_ref, .. } = native.dfg.insts[resolver] else { return false };
+            let ir::ExternalName::User(name) = native.dfg.ext_funcs[func_ref].name else { return false };
+            native.params.user_named_funcs()[name].index == 0
+        }), "indirect field helper must come from the linked runtime resolver");
         let module = crate::lower_native_js_module(&program, "typed_loop_test").unwrap();
         assert!(module.functions.iter().any(|function| matches!(function,
             super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_loop"))));
+        let leaf = crate::Engine::specialize("function id(x) { return x; } id(1);", "leaf.js").unwrap();
+        let leaf = crate::lower_native_js_module(&leaf, "leaf_test").unwrap();
+        assert!(!leaf.functions.iter().any(|function| matches!(function,
+            super::super::native_object::NativeFunction::Import { name, .. }
+                if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)), "units alone own helper-resolver imports");
     }
 
     #[cfg(feature = "aot")]

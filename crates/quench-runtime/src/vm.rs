@@ -3486,7 +3486,7 @@ enum StringConstantKey<'a> {
 }
 
 #[cfg(feature = "native-execution")]
-pub use compiled::{NativeJsOperationEntry, native_js_operation_entry, native_js_operation_entry_for};
+pub use compiled::{NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};
 
 /// A proof of `Vm::embedding_builtins_intact`: per `IntactBuiltin`, the prototype holding it,
 /// its slot there and the realm's own method in it, under `epoch`.

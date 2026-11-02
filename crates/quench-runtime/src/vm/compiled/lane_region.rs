@@ -465,6 +465,16 @@ pub(super) fn lower(
         context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32,
     );
+    #[cfg(feature = "aot")]
+    let helpers = if let LaneHelpers::Linked(symbol) = helpers {
+        let signature = builder.import_signature(native_lane_helpers_signature(isa));
+        let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+            super::native_object::NATIVE_FUNCTION_NAMESPACE, symbol));
+        let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
+            signature, colocated: false, patchable: false });
+        let call = builder.ins().call(target, &[]);
+        LaneHelpers::Bound(builder.inst_results(call)[0])
+    } else { helpers };
     let count = usize::from(unit.registers);
     let masks = unit.register_masks(program, function_id);
     let live = masks.as_deref();
@@ -629,7 +639,7 @@ impl Lowering<'_, '_> {
         let this_bits = match self.helpers {
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
             #[cfg(feature = "aot")]
-            LaneHelpers::Activation => {
+            LaneHelpers::Bound(_) => {
                 let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
                 let present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
                 let bound = self.builder.create_block();
@@ -646,6 +656,8 @@ impl Lowering<'_, '_> {
                 self.builder.switch_to_block(join);
                 bits
             }
+            #[cfg(feature = "aot")]
+            LaneHelpers::Linked(_) => unreachable!("helper table bound before entry facts"),
         };
         let receiver = emit_lane_receiver(&mut self.builder, self.payload, this_bits);
         let this = self.builder.declare_var(types::I64);
@@ -695,7 +707,7 @@ impl Lowering<'_, '_> {
                 signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
                 signature.returns.push(AbiParam::new(types::I64));
                 let signature = self.builder.import_signature(signature);
-                let helper = self.helpers.address(&mut self.builder, self.payload, helper);
+                let helper = self.helpers.address(&mut self.builder, helper);
                 let call = self.builder.ins().call_indirect(signature, helper, &arguments);
                 let value = self.builder.inst_results(call)[0];
                 let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
@@ -711,7 +723,7 @@ impl Lowering<'_, '_> {
         #[cfg(feature = "aot")]
         let fields = {
             let mut fields = smallvec::SmallVec::new();
-            if self.helpers == LaneHelpers::Activation {
+            if matches!(self.helpers, LaneHelpers::Bound(_)) {
                 for instruction in instructions {
                     let site = match instruction.op() {
                         Op::GetField => instruction.field_lookup().and_then(|lookup| match lookup {
@@ -722,7 +734,8 @@ impl Lowering<'_, '_> {
                     let Some(site) = site else { continue };
                     if fields.iter().any(|(known, _)| *known == site) { continue; }
                     let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
-                    let binding = emit_js_field_binding(&mut self.builder, self.payload, site, miss);
+                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, miss);
+                    binding.slot = FieldSlot::Bound(binding.slot.read(&mut self.builder));
                     fields.push((site, binding));
                 }
             }
@@ -1168,7 +1181,7 @@ impl Lowering<'_, '_> {
 
     fn field_probe_unbound(&mut self, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
         let site = self.ins().iconst(types::I64, i64::from(site));
-        let helper = self.helpers.address(&mut self.builder, self.payload, LaneHelper::FieldGet);
+        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldGet);
         let value = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[object, site]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);
@@ -1274,7 +1287,7 @@ impl Lowering<'_, '_> {
     fn store_helper_unbound(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         let atom = self.ins().iconst(types::I64, i64::from(atom));
         let site = self.ins().iconst(types::I64, i64::from(site));
-        let helper = self.helpers.address(&mut self.builder, self.payload, LaneHelper::FieldSet);
+        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldSet);
         let stored = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[object, atom, site, value]);
         let ok = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
         emit_js_guard(&mut self.builder, ok, exit);

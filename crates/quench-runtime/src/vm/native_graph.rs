@@ -138,6 +138,17 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             name: crate::NATIVE_JS_ABI_SYMBOL.into(),
             signature: ir::Signature::new(isa.default_call_conv()),
         });
+        let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
+        let mut typed_units: Vec<_> = (0..program.function_count()).map(|id|
+            if options.regions(program.function(id).code.len()).is_none() {
+                super::compiled::lower_static_typed_loop(program, id as u32, &*isa, lane_helpers)
+            } else { None }).collect();
+        if typed_units.iter().any(Option::is_some) {
+            functions.push(NativeFunction::Import {
+                name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.into(),
+                signature: super::compiled::native_lane_helpers_signature(&*isa),
+            });
+        }
         let mut operations = vec![None; Op::COUNT];
         for sites in &bodies {
             // Fallback tables name an entry for every PC, so every op is collected.
@@ -218,10 +229,6 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let boolean_base = scalar_base.checked_add(scalar_count)
             .ok_or("native boolean symbol count overflow")?;
         u32::try_from(boolean_base).map_err(|_| "native scalar symbol count exceeds u32")?;
-        let mut typed_units: Vec<_> = (0..program.function_count()).map(|id|
-            if options.regions(program.function(id).code.len()).is_none() {
-                super::compiled::lower_static_typed_loop(program, id as u32, &*isa)
-            } else { None }).collect();
         let unit_base = boolean_base.checked_add(boolean_regions.len())
             .ok_or("native typed unit symbol count overflow")?;
         let fallback_base = unit_base.checked_add(typed_units.iter().flatten().count())
