@@ -2237,16 +2237,18 @@ pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: 
     let function = program.function_get(function_id as usize)?;
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
     let unit = lane_unit::unit(function, &[], &|_| None)?;
-    let has_guarded_calls = unit.instructions.iter().copied().any(guarded_call_instruction);
-    let header = if has_guarded_calls { 0 } else {
+    // A call-bearing unit starts at entry. Full lowering admits shared no-frame
+    // calls and exits before a terminal call; any other unsupported call rejects
+    // the unit through that same instruction/effect authority.
+    let has_calls = unit.instructions.iter().any(|instruction|
+        instruction.op().control_flow_layout() == ControlFlowLayout::Call);
+    let header = if has_calls { 0 } else {
         unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
             matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
         }).min()?
     };
     let unit = unit.suffix(header)?;
-    if unit.instructions.iter().any(|instruction| instruction.op().control_flow_layout() == ControlFlowLayout::Call
-            && !guarded_call_instruction(*instruction)) { return None; }
     let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
         &[], isa, lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
     (count != 0).then_some(StaticTypedRegion { header, function: native })
@@ -16722,6 +16724,25 @@ mod tests {
         assert!(!leaf.functions.iter().any(|function| matches!(function,
             super::super::native_object::NativeFunction::Import { name, .. }
                 if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)), "units alone own helper-resolver imports");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn typed_region_exits_before_terminal_calls_with_arguments() {
+        let program = crate::Engine::specialize(
+            "function pipe(object){object.seen=object.seen+1;return object.finish(3);}",
+            "terminal-call.js").unwrap();
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let body = program.function_get(1).unwrap();
+        assert!(body.instructions().any(|instruction| instruction.op() == Op::Call
+            && instruction.returns_from_frame() && instruction.call_window().count == 1));
+        let region = lower_static_typed_region(&program, 1, &*isa, 0).expect("typed prefix before terminal call");
+        assert_eq!(region.header, 0);
+        let nonterminal = crate::Engine::specialize(
+            "function pipe(object){object.finish(3);return object.seen;}", "nonterminal-call.js").unwrap();
+        assert!(lower_static_typed_region(&nonterminal, 1, &*isa, 0).is_none(),
+            "unsupported nonterminal calls still require a full effect/recovery boundary");
     }
 
     #[cfg(feature = "aot")]

@@ -230,5 +230,20 @@ record(() => pipeRun(pipeObject));
 Object.defineProperty(pipeObject, 'state', {writable: false});
 record(() => pipeRun(pipeObject));
 output.push(JSON.stringify([pipeObject.state, pipeObject.stamp]));
+function terminalPipe(object, value) {
+  object.seen = object.seen + 1;
+  return object.finish(value);
+}
+const terminalObject = {seen: 0, finish(value) { return this.seen + value; }, a: 0, b: 0, c: 0};
+for (let i = 0; i < 200; i++) {
+  if (terminalPipe(terminalObject, 3) !== i + 4) throw Error('terminal pipe state');
+}
+terminalObject.finish = function (value) { events.push('terminal-call'); return value + this.seen; };
+record(() => terminalPipe(terminalObject, 7));
+Object.defineProperty(terminalObject, 'finish', {
+  get() { events.push('terminal-get'); return function () { throw Error('terminal-error:' + this.seen); }; }
+});
+record(() => terminalPipe(terminalObject, 9));
+output.push(String(terminalObject.seen));
 output.push(events.join(','));
 console.log(JSON.stringify(output));
