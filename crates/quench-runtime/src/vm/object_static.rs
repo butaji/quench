@@ -382,7 +382,7 @@ impl<H: Host> Vm<H> {
     /// Other receivers use the rooted generic enumeration path.
     pub(super) fn plain_for_in_keys(&mut self, source: Value) -> Option<Value> {
         let keys = if source.is_null() || source.is_undefined() {
-            Vec::new()
+            crate::heap::ArrayElements::new()
         } else {
             self.shape_for_in_keys(source)?
         };
@@ -396,7 +396,7 @@ impl<H: Host> Vm<H> {
     /// keys and their order are those of the generic walk; prototypes after
     /// the last one with an enumerable key are skipped, since they can neither
     /// add a key nor shadow one. `None` sends other chains to the generic walk.
-    fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
+    fn shape_for_in_keys(&mut self, receiver: Value) -> Option<crate::heap::ArrayElements> {
         // The common chain: the receiver's memoized enumerable keys, and no prototype with an
         // enumerable key, so no key shadows another and the order is the receiver's own.
         if let Some(keys) = self.own_for_in_keys(receiver) {
@@ -430,7 +430,7 @@ impl<H: Host> Vm<H> {
             .iter()
             .rposition(|keys| keys.iter().any(|(_, enumerable)| *enumerable))
         else {
-            return Some(Vec::new());
+            return Some(crate::heap::ArrayElements::new());
         };
         let mut visited = FxHashSet::default();
         let mut result = Vec::new();
@@ -445,7 +445,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Some(result)
+        Some(result.into())
     }
 
     /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
@@ -453,7 +453,7 @@ impl<H: Host> Vm<H> {
     /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
     /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`). `None`
     /// leaves any other chain to the walk.
-    fn own_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
+    fn own_for_in_keys(&mut self, receiver: Value) -> Option<crate::heap::ArrayElements> {
         let slots = self.shape_enumerable_slots(receiver)?;
         let mut prototype = self.object_data(receiver)?.proto();
         while !prototype.is_null() {
@@ -462,7 +462,9 @@ impl<H: Host> Vm<H> {
             }
             prototype = self.object_data(prototype)?.proto();
         }
-        Some(slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect())
+        Some(crate::heap::ArrayElements::from_fn(slots.len(), |index| {
+            self.atom_string(slots[index].0)
+        }))
     }
 
     pub(super) fn object_for_in_key_is_enumerable(
