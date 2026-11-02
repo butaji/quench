@@ -569,7 +569,7 @@ pub(super) fn compile_js_numeric_region(
         code,
         params,
         requires_signed_int32_arguments: int32_bitwise,
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Leaf),
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Leaf, NativeNumberResult::Float64),
         field_argument,
         numeric_field_inputs: numeric_field_inputs.map_or_else(Vec::new, |inputs| inputs.to_vec()),
         capture_arguments: captures.to_vec(),
@@ -595,7 +595,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     }
     Some(super::js_compiled::JsJitArtifact {
         code, params: usize::from(function.params), requires_signed_int32_arguments: false,
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable),
+        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable, region.number_result?),
         field_argument: None, numeric_field_inputs: Vec::new(), capture_arguments: Vec::new(),
         general_dispatch_native_pcs: Vec::new(),
     })
@@ -5773,6 +5773,10 @@ pub(super) enum NativeEntryMode {
     Leaf,
 }
 
+/// The verified Number result's machine view in the common native result word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NativeNumberResult { Int32, Float64 }
+
 enum CompiledArgs<'a> {
     Values(&'a [Value]),
     RegisterWindow {
@@ -6969,7 +6973,7 @@ pub(super) struct CompiledJsFunction {
 
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
-    SharedNumber { entry: Entry, mode: NativeEntryMode },
+    SharedNumber { entry: Entry, mode: NativeEntryMode, result: NativeNumberResult },
     GeneralDispatch(Entry),
     Int32Identity {
         entry: unsafe extern "C" fn(*const f64) -> f64,
@@ -7003,7 +7007,7 @@ enum CompiledJsEntry {
 }
 
 pub(super) enum CompiledJsResult {
-    Number(f64),
+    Number(Value),
     Int32Identity {
         value: f64,
         return_pc: u32,
@@ -8704,10 +8708,10 @@ impl CompiledJsFunction {
         let capture_arguments = artifact.capture_arguments;
         let general_dispatch_native_pcs = artifact.general_dispatch_native_pcs;
         let (entry, return_constants, capture_argument) = match artifact.result {
-            super::js_compiled::JsJitResultKind::SharedNumberEntry(mode) => {
+            super::js_compiled::JsJitResultKind::SharedNumberEntry(mode, result) => {
                 // SAFETY: the bytecode numeric-region compiler uses `native_entry_signature`.
                 let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer) };
-                (CompiledJsEntry::SharedNumber { entry, mode }, Vec::new(), None)
+                (CompiledJsEntry::SharedNumber { entry, mode, result }, Vec::new(), None)
             }
             super::js_compiled::JsJitResultKind::GeneralDispatch => {
                 // SAFETY: the general JS dispatcher emits the shared native-entry ABI.
@@ -8952,7 +8956,7 @@ impl CompiledJsFunction {
         let required = self.params + self.capture_arguments.len() + self.numeric_field_inputs.len()
             + usize::from(self.uses_numeric_field_argument() && self.numeric_field_inputs.is_empty());
         if arguments.len() < required { return None; }
-        if let CompiledJsEntry::SharedNumber { entry, .. } = self.entry {
+        if let CompiledJsEntry::SharedNumber { entry, result: format, .. } = self.entry {
             let (status, result) = run_native_entry(
                 entry,
                 arguments,
@@ -8964,7 +8968,10 @@ impl CompiledJsFunction {
             self.native_entries
                 .set(self.native_entries.get().saturating_add(1));
             (status == 0).then_some(())?;
-            return Some(CompiledJsResult::Number(f64::from_bits(result)));
+            return Some(CompiledJsResult::Number(match format {
+                NativeNumberResult::Int32 => Value::integer(result as u32 as i32),
+                NativeNumberResult::Float64 => Value::number(f64::from_bits(result)),
+            }));
         }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
@@ -9148,7 +9155,7 @@ impl CompiledJsFunction {
                 JsNativeCallInput::CaptureNumber(value),
             ) => {
                 // SAFETY: this artifact emits `fn(f64) -> f64`.
-                Some(CompiledJsResult::Number(unsafe { entry(value) }))
+                Some(CompiledJsResult::Number(Value::number(unsafe { entry(value) })))
             }
             (
                 CompiledJsEntry::NumberInterruptible(entry),
@@ -9161,7 +9168,7 @@ impl CompiledJsFunction {
                 );
                 // SAFETY: the result kind emits the matching polled Number ABI.
                 let result = unsafe { entry(values.as_ptr(), interrupt, &mut completed) };
-                (completed != 0).then_some(CompiledJsResult::Number(result))
+                (completed != 0).then(|| CompiledJsResult::Number(Value::number(result)))
             }
             (
                 CompiledJsEntry::StringHashLoop(entry),
@@ -9180,7 +9187,7 @@ impl CompiledJsFunction {
                     |(start, _)| start as *const std::sync::atomic::AtomicBool,
                 );
                 let result = unsafe { entry(units_ptr, &length, ascii, interrupt, &mut completed) };
-                (completed != 0).then_some(CompiledJsResult::Number(result))
+                (completed != 0).then(|| CompiledJsResult::Number(Value::number(result)))
             }
             (
                 CompiledJsEntry::StringTransform { entry, transform },
@@ -15455,7 +15462,7 @@ impl<H: Host> Vm<H> {
                 if terminal.op() != Op::Return {
                     return None;
                 }
-                Some((last_pc, terminal.register_a(), Value::number(value)))
+                Some((last_pc, terminal.register_a(), value))
             }
             CompiledJsResult::Int32Identity { value, return_pc } => {
                 let return_pc = usize::try_from(return_pc).ok()?;
@@ -17067,9 +17074,8 @@ fn direct_call(
         .then(|| native_poll_page(interrupt))
         .flatten();
     match compiled.call(&numeric_arguments, interrupt.atomic_flag(), poll_page)? {
-        CompiledJsResult::Number(value) | CompiledJsResult::Int32Identity { value, .. } => {
-            Some(CompiledJsCallResult::Value(Value::number(value)))
-        }
+        CompiledJsResult::Number(value) => Some(CompiledJsCallResult::Value(value)),
+        CompiledJsResult::Int32Identity { value, .. } => Some(CompiledJsCallResult::Value(Value::number(value))),
         CompiledJsResult::Boolean(value) => {
             Some(CompiledJsCallResult::Value(if value { Value::TRUE } else { Value::FALSE }))
         }
@@ -18245,6 +18251,41 @@ mod tests {
             Some(CompiledJsCallResult::Value(Value::TRUE))));
         assert!(direct_call(&compiled, &[Value::number(1.5)], &interrupt).is_none());
         assert!(direct_call(&compiled, &[Value::number(4_294_967_297.0)], &interrupt).is_none());
+    }
+
+    #[test]
+    fn numeric_result_signature_joins_typed_returns_and_preserves_float_values() {
+        let integer = "function choose(n,x){n=n|0;x=x|0;if(n<0)return x|0;for(let i=0;i<n;i=(i+1)|0)x=(x+1)|0;return x|0;}";
+        let mixed = "function choose(n,x){n=n|0;if(n<0)return x|0;return x*1;}";
+        for typescript in [false, true] {
+            for (source, format) in [(integer, NativeNumberResult::Int32), (mixed, NativeNumberResult::Float64)] {
+                let source = if typescript { source.replace("(n,x)", "(n:number,x:number):number") } else { source.to_owned() };
+                let program = if typescript { crate::Engine::specialize_typescript(&source, "result-signature.ts") }
+                    else { crate::Engine::specialize(&source, "result-signature.js") }.unwrap();
+                let artifact = compile_js_typed_numeric_region(&program, 1).expect("shared typed return region");
+                assert!(matches!(artifact.result, super::super::js_compiled::JsJitResultKind::SharedNumberEntry(_, actual) if actual == format));
+                let compiled = CompiledJsFunction::from_artifact(artifact).unwrap();
+                let interrupt = crate::ExecutionInterrupt::default();
+                for n in [-1, 0, 3] { for x in [i32::MIN, -1, 0, i32::MAX] {
+                    let expected = if format == NativeNumberResult::Int32 && n >= 0 { x.wrapping_add(n) } else { x };
+                    let result = direct_call(&compiled, &[Value::integer(n), Value::integer(x)], &interrupt);
+                    assert!(matches!(result, Some(CompiledJsCallResult::Value(value)) if value.to_bits() == Value::integer(expected).to_bits()),
+                        "{source}:n={n},x={x}");
+                }}
+                if format == NativeNumberResult::Float64 {
+                    for x in [-0.0, 1.5, f64::MIN_POSITIVE, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                        let result = direct_call(&compiled, &[Value::integer(1), Value::number(x)], &interrupt);
+                        assert!(matches!(result, Some(CompiledJsCallResult::Value(value)) if value.to_bits() == Value::number(x).to_bits()),
+                            "mixed result preserves {x:?}");
+                    }
+                }
+                for value in [Value::UNDEFINED, Value::TRUE, Value::NULL] {
+                    assert!(direct_call(&compiled, &[value, Value::integer(1)], &interrupt).is_none(), "TS annotations are not input proofs");
+                }
+                interrupt.request_termination();
+                assert!(direct_call(&compiled, &[Value::integer(1), Value::integer(1)], &interrupt).is_none());
+            }
+        }
     }
 
     #[test]

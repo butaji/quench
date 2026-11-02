@@ -139,7 +139,14 @@ pub(super) struct LaneRegion {
     pub(super) fault_poll: bool,
 }
 
+/// One typed numeric return edge, materialized after joining all return facts.
+struct NumberReturn {
+    block: ir::Block,
+    fact: VerifiedFact,
+}
+
 pub(super) struct LoweredRegion {
+    pub(super) number_result: Option<NativeNumberResult>,
     pub(super) function: ir::Function,
     pub(super) native: usize,
     pub(super) fault_poll: bool,
@@ -187,6 +194,8 @@ struct Lowering<'a, 'f> {
     valid: bool,
     coverage: Coverage,
     completion: Completion,
+    /// One return stays inline; additional returns spill without a region limit.
+    number_returns: smallvec::SmallVec<[NumberReturn; 1]>,
     /// The objects each loop reads fields of and never rewrites, proved at its header once per
     /// iteration (`Lowering::prove_loop_objects`), and the unit PC being lowered.
     loop_objects: Vec<LoopObject>,
@@ -713,6 +722,7 @@ pub(super) fn lower(
         valid: true,
         coverage,
         completion,
+        number_returns: smallvec::SmallVec::new(),
         loop_objects: Vec::new(),
         pc: 0,
         leave,
@@ -927,10 +937,11 @@ pub(super) fn lower(
     let status = lowering.builder.block_params(leave)[0];
     lowering.builder.ins().return_(&[status]);
     if !lowering.valid { return None; }
+    let number_result = (completion == Completion::Number).then(|| lowering.finish_number_returns());
     let native_count = lowering.native;
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
-    Some(LoweredRegion { function: native, native: native_count, fault_poll })
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result })
 }
 
 /// An object a loop reads fields of and never rewrites (`loop_objects`): whether its value
@@ -1059,11 +1070,54 @@ impl Lowering<'_, '_> {
         }
         self.interrupt_check(state, pc);
         let exit = self.guard_exit(state, pc);
-        let number = self.number(state, register, exit);
-        let result = self.result;
-        self.ins().store(MemFlagsData::trusted(), number, result, 0);
-        let success = self.ins().iconst(types::I32, 0);
-        self.ins().return_(&[success]);
+        let index = usize::from(register);
+        let fact = state.values[index].value;
+        let value = if fact.ty.is_subtype(Type::INT32) || fact.representation == Representation::Int32 {
+            self.int(state, register, exit)
+        } else {
+            self.number(state, register, exit)
+        };
+        let fact = state.values[index].value;
+        let block = self.builder.create_block();
+        let machine = match fact.representation {
+            Representation::Int32 => types::I32,
+            Representation::Float64 => types::F64,
+            Representation::Tagged => unreachable!("Number return has an unboxed view"),
+        };
+        self.builder.append_block_param(block, machine);
+        self.ins().jump(block, &[value.into()]);
+        self.number_returns.push(NumberReturn { block, fact });
+    }
+
+    /// The semantic join selects one ABI format for every successful return.
+    /// Guards and termination leave without publishing a result.
+    fn finish_number_returns(&mut self) -> NativeNumberResult {
+        let ty = self.number_returns.iter().fold(Type::NEVER, |ty, returned| ty.join(returned.fact.ty));
+        let format = if ty != Type::NEVER && ty.is_subtype(Type::INT32) {
+            NativeNumberResult::Int32
+        } else { NativeNumberResult::Float64 };
+        for returned in std::mem::take(&mut self.number_returns) {
+            self.builder.switch_to_block(returned.block);
+            let value = self.builder.block_params(returned.block)[0];
+            let value = match (format, returned.fact.representation) {
+                (NativeNumberResult::Int32, representation) => {
+                    let integer = match representation {
+                        Representation::Int32 => value,
+                        Representation::Float64 => self.ins().fcvt_to_sint_sat(types::I32, value),
+                        Representation::Tagged => unreachable!("typed numeric return"),
+                    };
+                    self.ins().uextend(types::I64, integer)
+                }
+                (NativeNumberResult::Float64, Representation::Int32) => self.ins().fcvt_from_sint(types::F64, value),
+                (NativeNumberResult::Float64, Representation::Float64) => value,
+                (_, Representation::Tagged) => unreachable!("typed numeric return"),
+            };
+            let result = self.result;
+            self.ins().store(MemFlagsData::trusted(), value, result, 0);
+            let success = self.ins().iconst(types::I32, 0);
+            self.ins().return_(&[success]);
+        }
+        format
     }
 
     /// The facts every run proves once at entry, before either start (`lower`'s loop entry).
@@ -2606,12 +2660,17 @@ mod tests {
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
             &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::Number).unwrap();
+        assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
             .flat_map(|block| region.function.layout.block_insts(block)) {
             if let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = region.function.dfg.insts[instruction] {
                 let bits = i64::from(imm) as u64;
                 assert!(![crate::value::ValueLayout::INT_TAG, crate::value::ValueLayout::CANONICAL_NAN].contains(&bits),
                     "verified Number inputs must stay unboxed:\n{}", region.function);
+            }
+            if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Store {
+                let value = region.function.dfg.inst_args(instruction)[0];
+                assert_eq!(region.function.dfg.value_type(value), types::I64, "int32 result must not round trip through f64");
             }
         }
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -2637,7 +2696,7 @@ mod tests {
             match Value::number(number).as_int() {
                 Some(integer) => {
                     assert_eq!(status, 0, "{number:?}");
-                    assert_eq!(f64::from_bits(out).to_bits(), f64::from(integer).to_bits());
+                    assert_eq!(out, u64::from(integer as u32));
                 }
                 None => {
                     assert_eq!(i64::from(status), NUMBER_ENTRY_MISS, "{number:?}");

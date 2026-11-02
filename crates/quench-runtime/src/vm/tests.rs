@@ -12079,7 +12079,7 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert!(matches!(
         artifact.result,
         super::js_compiled::JsJitResultKind::NumberInterruptible
-            | super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable)
+            | super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable, _)
     ));
     let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");

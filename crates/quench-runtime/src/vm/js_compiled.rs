@@ -24,7 +24,7 @@ pub(super) struct JsJitArtifact {
     /// Direct compiled calls must apply this same predicate before using the
     /// artifact's checked conversion instructions.
     pub(super) requires_signed_int32_arguments: bool,
-    /// Numeric results retain the original ABI; string results return the selected Return PC.
+    /// Selects the native result interpretation; strings name their Return PC.
     pub(super) result: JsJitResultKind,
     /// A cached data property on parameter zero supplies the native numeric input.
     pub(super) field_argument: Option<JsJitFieldArgument>,
@@ -106,7 +106,7 @@ pub(super) struct JsJitCaptureArgument {
 
 pub(super) enum JsJitResultKind {
     /// Numeric bytecode regions emit the common VM native-entry ABI.
-    SharedNumberEntry(super::compiled::NativeEntryMode),
+    SharedNumberEntry(super::compiled::NativeEntryMode, super::compiled::NativeNumberResult),
     /// A full function CFG whose operation blocks call the shared VM step
     /// helper and branch directly to the next validated bytecode PC.
     GeneralDispatch,
