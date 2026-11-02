@@ -146,7 +146,6 @@ impl<H: Host> Vm<H> {
             typeof_names: [Value::UNDEFINED; super::TYPEOF_NAMES],
             symbol_registry: FxHashMap::default(),
             well_known_symbols: WellKnownSymbols::default(),
-            string_concats: None,
             string_atoms: None,
             recent_atom_strings: None,
             ascii_unit_strings: None,

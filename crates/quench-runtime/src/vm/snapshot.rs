@@ -359,7 +359,6 @@ impl<H: Host> Vm<H> {
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,
-            string_concats: _,
             string_atoms: _,
             recent_atom_strings: _,
             ascii_unit_strings: _,

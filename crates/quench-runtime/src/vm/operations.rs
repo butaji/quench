@@ -1909,16 +1909,6 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        // The concatenation cache holds only string pairs, so a heap left operand probes it
-        // before the Number paths it could never take.
-        if op == BinaryOperator::Addition as u32
-            && left.is_heap()
-            && let Some(value) = self.cached_concat(left, right)
-        {
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.concat_cache(true);
-            return Ok(value);
-        }
         if let Some(value) = self.number_binary(op, left, right) {
             return Ok(value);
         }
@@ -2197,8 +2187,8 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     /// String concatenation for `+` once at least one operand is a string: an interned
-    /// result when the dynamic-string cache knows the pair, otherwise both operands' string
-    /// values joined and interned.
+    /// result of joining two string values directly, or coercing the operands and interning
+    /// their joined text when either operand is not already a string.
     fn concatenate(
         &mut self,
         p: &ResidualProgram,

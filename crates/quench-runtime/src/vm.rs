@@ -1181,7 +1181,6 @@ const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
     env: Value::UNDEFINED,
     push: InLoopPush::Body,
 };
-const STRING_CONCAT_CACHE_SIZE: usize = 64;
 /// Slots of `Vm::string_atoms`, a power of two.
 const STRING_ATOM_CACHE_SIZE: usize = 256;
 /// Slots of `Vm::recent_atom_strings`, a power of two: as many as `string_atoms` keeps the
@@ -1191,12 +1190,6 @@ const ATOM_STRING_CACHE_SIZE: usize = STRING_ATOM_CACHE_SIZE;
 const NO_RECENT_ATOM: Atom = Atom::MAX;
 /// The code units below which a unit is ASCII.
 const ASCII_UNITS: usize = 0x80;
-#[derive(Clone, Copy)]
-struct StringConcatCache {
-    left: Value,
-    right: Value,
-    result: Value,
-}
 #[derive(Clone, Copy)]
 enum ShapeTransition {
     Root,
@@ -1737,11 +1730,6 @@ impl Shape {
         }
     }
 }
-const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
-    left: Value::UNDEFINED,
-    right: Value::UNDEFINED,
-    result: Value::UNDEFINED,
-};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
     User(ProgramId, u32, Value),
@@ -2070,7 +2058,6 @@ pub(crate) struct Vm<H> {
     typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
-    string_concats: Option<Box<[StringConcatCache]>>,
     /// String values recently interned as property keys, and their atoms
     /// (`Vm::string_key_atom`); collection empties it.
     string_atoms: Option<Box<[(Value, Atom); STRING_ATOM_CACHE_SIZE]>>,
@@ -3038,7 +3025,6 @@ impl<H: Host> Vm<H> {
         self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
-        self.string_concats = None;
         self.string_atoms = None;
         self.recent_atom_strings = None;
         *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];

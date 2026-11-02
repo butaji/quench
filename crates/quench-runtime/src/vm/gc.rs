@@ -929,9 +929,6 @@ impl<H: Host> Vm<H> {
         if let Some(strings) = &mut self.dynamic_strings {
             strings.retain(|_, value| self.heap.is_live(*value));
         }
-        if let Some(concats) = &mut self.string_concats {
-            concats.fill(EMPTY_STRING_CONCAT_CACHE);
-        }
         if let Some(atoms) = &mut self.string_atoms {
             atoms.fill((Value::UNDEFINED, 0));
         }
