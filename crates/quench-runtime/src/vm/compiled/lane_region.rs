@@ -133,10 +133,6 @@ struct Lowering<'a, 'f> {
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
     frame_live: Vec<Option<&'a crate::compile::liveness::RegisterMasks>>,
     valid: bool,
-    /// The objects each loop reads fields of and never rewrites, proved at its header once per
-    /// iteration (`Lowering::prove_loop_objects`), and the unit PC being lowered.
-    loop_objects: Vec<LoopObject>,
-    pc: usize,
     /// The one epilogue every stop shares: it returns its status parameter.
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
@@ -563,8 +559,6 @@ fn lower(
         live,
         frame_live,
         valid: true,
-        loop_objects: Vec::new(),
-        pc: 0,
         leave,
         stop,
     };
@@ -641,11 +635,9 @@ fn lower(
         lowering.conform(&mut state, pc);
         lowering.builder.ins().jump(target, &[]);
     }
-    lowering.loop_objects = loop_objects(&mut lowering.builder, &instructions);
     let mut state = State::canonical(count);
     let mut reachable = false;
     for (pc, instruction) in instructions.iter().copied().enumerate() {
-        lowering.pc = pc;
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
                 lowering.conform(&mut state, pc);
@@ -653,7 +645,6 @@ fn lower(
             }
             lowering.builder.switch_to_block(block);
             state = lowering.entry_state(pc, count);
-            lowering.prove_loop_objects(&mut state, pc);
             reachable = true;
         }
         if !reachable {
@@ -716,91 +707,7 @@ fn lower(
     Some((native, native_count))
 }
 
-/// An object a loop reads fields of and never rewrites (`loop_objects`): whether its value
-/// at the header is a direct object record, and that record, shape and inline-storage word.
-#[derive(Clone, Copy)]
-struct LoopObject {
-    header: usize,
-    end: usize,
-    register: Register,
-    proved: Variable,
-    record: Variable,
-    shape: Variable,
-    inline: Variable,
-}
-
-/// The objects each loop of `instructions` (a backward jump's target through the jump) reads
-/// fields of and never writes, in a loop that makes no call: no effect there changes their
-/// records or shapes, so one proof per iteration serves every read (law 1, check once).
-fn loop_objects(builder: &mut FunctionBuilder<'_>, instructions: &[WideInstruction]) -> Vec<LoopObject> {
-    let mut objects = Vec::new();
-    for (end, jump) in instructions.iter().enumerate() {
-        if jump.op().immediate_role() != crate::bytecode::ImmediateRole::JumpTarget || jump.imm() as usize > end { continue; }
-        let header = jump.imm() as usize;
-        let body = &instructions[header..=end];
-        if body.iter().any(|instruction| instruction.op() == Op::Call) { continue; }
-        let written: BTreeSet<Register> = body.iter().flat_map(|instruction| writes(*instruction)).collect();
-        let bases: BTreeSet<Register> = body.iter().filter_map(|instruction| match instruction.op() {
-            Op::GetField => match instruction.field_lookup() {
-                Some(FieldLookup::Atom { base, .. }) => base.register_index(),
-                _ => None,
-            },
-            Op::SetField | Op::SetFieldStrict => Some(instruction.register_b()),
-            _ => None,
-        }).filter(|register| !written.contains(register)).collect();
-        for register in bases {
-            objects.push(LoopObject {
-                header, end, register,
-                proved: builder.declare_var(types::I8),
-                record: builder.declare_var(types::I64),
-                shape: builder.declare_var(types::I32),
-                inline: builder.declare_var(types::I32),
-            });
-        }
-    }
-    objects
-}
-
 impl Lowering<'_, '_> {
-    /// At a loop's header, proves once per iteration each object its body reads and never
-    /// rewrites (`loop_objects`), without leaving: a value that is no direct object record
-    /// clears the flag, and its reads take the full proof as anywhere else.
-    fn prove_loop_objects(&mut self, state: &mut State, pc: usize) {
-        let objects: Vec<LoopObject> = self.loop_objects.iter().filter(|object| object.header == pc).copied().collect();
-        for object in objects {
-            let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-            let bits = self.tagged(state, object.register);
-            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-            let family = self.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-            let direct = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-            let id = self.ins().ireduce(types::I32, bits);
-            let inside = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, id, layout.record_capacity as i64);
-            let present = self.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-            let proved = self.ins().band(direct, inside);
-            let proved = self.ins().band(proved, present);
-            let (load, join) = (self.builder.create_block(), self.builder.create_block());
-            let zero64 = self.ins().iconst(types::I64, 0);
-            let zero32 = self.ins().iconst(types::I32, 0);
-            self.builder.def_var(object.proved, proved);
-            self.builder.def_var(object.record, zero64);
-            self.builder.def_var(object.shape, zero32);
-            self.builder.def_var(object.inline, zero32);
-            self.ins().brif(proved, load, &[], join, &[]);
-            self.builder.switch_to_block(load);
-            let id = self.ins().uextend(types::I64, id);
-            let offset = self.ins().imul_imm_u(id, layout.record_size as i64);
-            let record = self.ins().iadd(records, offset);
-            let shape = self.ins().load(types::I32, MemFlagsData::trusted(), record, layout.auxiliary_offset as i32);
-            let meta = self.ins().load(types::I32, MemFlagsData::trusted(), record, layout.meta_offset as i32);
-            let inline = self.ins().band_imm_u(meta, i64::from(layout.inline_storage_mask));
-            self.builder.def_var(object.record, record);
-            self.builder.def_var(object.shape, shape);
-            self.builder.def_var(object.inline, inline);
-            self.ins().jump(join, &[]);
-            self.builder.switch_to_block(join);
-        }
-    }
-
     /// `register`'s int32 view (`Registers::int`).
     fn int_var(&mut self, register: usize) -> Variable {
         *self.registers.int[register].get_or_insert_with(|| self.builder.declare_var(types::I32))
@@ -1642,33 +1549,8 @@ impl Lowering<'_, '_> {
             None => self.builder.use_var(self.entry.as_ref().expect("entry facts").this),
         };
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
-        // Inside a loop that proved this object at its header, the proof's flag stands for
-        // the header's checks: one branch, the full proof only where the header's failed.
-        let proved = owner.and_then(|register| self.loop_objects.iter()
-            .find(|object| object.register == register && (object.header..=object.end).contains(&self.pc)).copied());
-        let projection = match proved {
-            Some(object) => {
-                let (fast, slow, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-                self.builder.set_cold_block(slow);
-                let record = self.builder.append_block_param(join, types::I64);
-                let shape = self.builder.append_block_param(join, types::I32);
-                let inline = self.builder.append_block_param(join, types::I32);
-                let flag = self.builder.use_var(object.proved);
-                self.ins().brif(flag, fast, &[], slow, &[]);
-                self.builder.switch_to_block(fast);
-                let known = [object.record, object.shape, object.inline].map(|variable| ir::BlockArg::Value(self.builder.use_var(variable)));
-                self.ins().jump(join, &known);
-                self.builder.switch_to_block(slow);
-                let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
-                self.ins().jump(join, &[header.record, header.shape, header.inline].map(ir::BlockArg::Value));
-                self.builder.switch_to_block(join);
-                (record, shape, inline)
-            }
-            None => {
-                let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
-                (header.record, header.shape, header.inline)
-            }
-        };
+        let header = ObjectHeader::prove(&mut self.builder, bits, records, exit);
+        let projection = (header.record, header.shape, header.inline);
         state.shapes.insert(owner, projection);
         if let Some(register) = owner {
             state.values[usize::from(register)] = RegisterFact::definition(
