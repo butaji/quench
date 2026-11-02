@@ -9,7 +9,12 @@ pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
 pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
-const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
+/// An object whose property access is not the ordinary one its shape describes (a module
+/// namespace, an arguments object): set once when it becomes so, and never cleared, it keeps
+/// the object's exact auxiliary (`exact_auxiliary`) from every shape a cache records, so a
+/// shape match proves the object ordinary with no further test.
+pub(crate) const EXOTIC_ACCESS: u32 = 1 << 30;
+const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS);
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -92,9 +97,9 @@ impl ValueVec {
         self.auxiliary & SHAPE_MASK
     }
 
-    /// The auxiliary word with its dictionary bit: equal to `auxiliary` exactly when the
-    /// vector is not in dictionary storage, so one comparison with a recorded shape, which
-    /// is never a dictionary's, proves both.
+    /// The auxiliary word with its dictionary and exotic bits: equal to `auxiliary` exactly
+    /// when the vector is neither in dictionary storage nor an exotic object's, so one
+    /// comparison with a recorded shape proves all three.
     pub(crate) const fn exact_auxiliary(self) -> u32 {
         self.auxiliary
     }
@@ -113,7 +118,7 @@ impl ValueVec {
         // The last shape stays unused, so a dictionary vector's exact auxiliary
         // (`exact_auxiliary`) never equals the all-ones sentinel caches record as "none".
         assert!(value < SHAPE_MASK, "object shape table exhausted");
-        self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
+        self.auxiliary = (self.auxiliary & !SHAPE_MASK) | value;
     }
 
     pub(crate) fn is_dictionary(self) -> bool {
