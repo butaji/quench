@@ -533,6 +533,10 @@ fn report_error(c: &mut Context<'_>, server: RootId, shown: RootId, source: Opti
 /// Node's `decorateErrorStack` arrow for a syntax error in REPL input: the offending
 /// source line and a caret under the column the compiler reports.
 fn source_arrow(source: &str) -> String {
+    // Source diagnostics cannot retain a compiler in an execution-only image.
+    if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
+        return String::new();
+    }
     let request = quench_runtime::ExecutionRequest { source, name: RESOURCE_PREFIX, kind: quench_runtime::SourceKind::Script };
     let Err(diagnostics) = quench_runtime::Engine::compile(request) else {
         return String::new();
