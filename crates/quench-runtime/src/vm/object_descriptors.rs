@@ -762,37 +762,52 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
-        let found = self.plain_own_attributes(p, receiver, key)?;
-        let holds = found.is_some_and(|attributes| {
-            native == Native::ObjectPrototypeHasOwnProperty || attributes.enumerable
+        let found = self.plain_own_enumerability(p, receiver, key)?;
+        let holds = found.is_some_and(|enumerable| {
+            native == Native::ObjectPrototypeHasOwnProperty || enumerable
         });
         Some(if holds { Value::TRUE } else { Value::FALSE })
     }
 
-    /// The attributes of `object`'s own property of the string `key`, `Some(None)` when it
-    /// has none, read without guest code: `object` is neither a Proxy nor a module namespace
-    /// (`ordinary_own_string_property`). `None` for any other object or key.
-    fn plain_own_attributes(
+    /// Whether a string-keyed own property is enumerable, or absent (`Some(None)`).
+    /// Ordinary objects answer from their shape, without reading a value or accessor.
+    /// Exotics keep their shared descriptor operation; effectful lookups decline.
+    fn plain_own_enumerability(
         &mut self,
         p: &ResidualProgram,
         object: Value,
         key: Value,
-    ) -> Option<Option<PropertyAttributes>> {
-        if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
-            || !self
-                .object_data(object)
-                .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
-        {
-            return None;
+    ) -> Option<Option<bool>> {
+        match self.heap.ordinary_object(object) {
+            Some(data) => {
+                if data.is_module_namespace() || data.deferred_module().is_some() {
+                    return None;
+                }
+                if !data.is_arguments_object() {
+                    let shape = data.shape();
+                    let atom = self.string_key_atom(key)?;
+                    let found = self.shape_slot(shape, atom)
+                        .and_then(|slot| self.shape_slot_attributes(shape, slot));
+                    return Some(found.map(|attributes| attributes.enumerable));
+                }
+            }
+            None => {
+                if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
+                    || !self.object_data(object)
+                        .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
+                {
+                    return None;
+                }
+            }
         }
         let text = self.heap.string(key)?.clone();
         let atom = self.string_key_atom(key)?;
         let found = self.ordinary_own_string_property(p, object, &text, atom).ok()?;
-        Some(found.map(|(_, attributes)| attributes))
+        Some(found.map(|(_, attributes)| attributes.enumerable))
     }
 
     /// `object_for_in_key_is_enumerable` of a string key along a chain whose own lookups run
-    /// no guest code (`plain_own_attributes`): the nearest own property's enumerability, or
+    /// no guest code (`plain_own_enumerability`): the nearest own property's enumerability, or
     /// false past the chain's end. `None` leaves the walk, a Proxy's or primitive's
     /// included, to the general path.
     pub(super) fn plain_for_in_key_is_enumerable(
@@ -806,8 +821,8 @@ impl<H: Host> Vm<H> {
         }
         let mut current = source;
         loop {
-            if let Some(attributes) = self.plain_own_attributes(p, current, key)? {
-                return Some(if attributes.enumerable { Value::TRUE } else { Value::FALSE });
+            if let Some(enumerable) = self.plain_own_enumerability(p, current, key)? {
+                return Some(if enumerable { Value::TRUE } else { Value::FALSE });
             }
             current = self.object_data(current)?.proto();
             if current.is_null() {
