@@ -2151,7 +2151,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         #[cfg(not(quench_openssl_provider))]
         BuiltinModule::Crypto => Err(RootedError::host("node:crypto requires OpenSSL 3")),
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
-        BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
+        BuiltinModule::Tls => crate::modules::tls_shared_vm::build_module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
         BuiltinModule::Module => crate::modules::module_shared_vm::module(context),
         BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(

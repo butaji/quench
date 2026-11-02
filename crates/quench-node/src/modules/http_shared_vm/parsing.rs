@@ -10,6 +10,8 @@ use quench_runtime::{RootId, RootedError};
 
 /// Node's default `parser.maxHeaderPairs`.
 const DEFAULT_MAX_HEADER_PAIRS: f64 = 2000.0;
+/// The CLI switch that makes every parser lenient unless its owner chooses.
+pub(crate) const INSECURE_PARSER_FLAG: &str = "--insecure-http-parser";
 
 /// How a chunk's execution ended.
 pub(crate) enum Executed {
@@ -20,10 +22,19 @@ pub(crate) enum Executed {
     Upgraded(Vec<u8>),
 }
 
-/// `parsers.alloc()` then `parser.initialize(kind, …, maxHeaderSize)`.
-pub(crate) fn create(c: &mut Context<'_>, kind: Kind, socket: RootId, max_header_size: f64) -> Outcome {
+/// `parsers.alloc()` then `parser.initialize(kind, …, maxHeaderSize, lenient)`: `owner` (the
+/// request or the server) chooses the size limit and `insecureHTTPParser`, whose absence
+/// defers to `--insecure-http-parser`.
+pub(crate) fn create(c: &mut Context<'_>, kind: Kind, socket: RootId, owner: RootId) -> Outcome {
+    let max_header_size = get(c, owner, "maxHeaderSize")?;
+    let max_header_size = if is_nullish(c, max_header_size) { 0.0 } else { c.to_number(max_header_size)? };
     let limit = if max_header_size > 0.0 { max_header_size } else { super::max_header_size(c) };
-    let id = c.host_mut().shared_state().borrow_mut().http.add_parser(Parser::new(kind, limit as usize));
+    let insecure = get(c, owner, "insecureHTTPParser")?;
+    let lenient = match c.rooted_value(insecure).and_then(|value| value.as_bool()) {
+        Some(lenient) => lenient,
+        None => c.host_mut().shared_state().borrow().cli_options.enabled(INSECURE_PARSER_FLAG),
+    };
+    let id = c.host_mut().shared_state().borrow_mut().http.add_parser(Parser::new(kind, limit as usize, lenient));
     let parser = c.object_rooted()?;
     let id = c.number(id as f64);
     put_slot(c, parser, Slot::ParserId, id)?;

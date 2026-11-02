@@ -49,7 +49,9 @@ crate::modules::host_members::members!(Member, "httpClient", [
     ListenSocketTimeout,
     /// `setSocketTimeout(sock, msecs)`, once a socket is assigned or connects.
     SocketSetTimeout,
-    /// A deferred socket call (`_deferToConnect`).
+    /// `_deferToConnect`'s `onSocket` and `callSocketMethod`, each over the request, the
+    /// method name and its arguments.
+    DeferredOnSocket,
     DeferredCall,
     /// The `createConnection` callback, called at most once.
     ConnectionCreated,
@@ -267,8 +269,14 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             set_socket_timeout(c, socket, msecs)?;
             Ok(c.undefined())
         }
+        Member::DeferredOnSocket => {
+            let [request, method, values] = captured(c)?;
+            on_socket_deferred(c, request, method, values)?;
+            Ok(c.undefined())
+        }
         Member::DeferredCall => {
-            let [socket, method, values] = captured(c)?;
+            let [request, method, values] = captured(c)?;
+            let socket = outgoing::socket(c, request)?;
             call_socket_method(c, socket, method, values)?;
             Ok(c.undefined())
         }
@@ -675,9 +683,7 @@ fn on_socket_tick(c: &mut Context<'_>, request: RootId, socket: RootId, error: R
 
 /// `tickOnSocket(req, socket)`: the response parser and the socket listeners.
 fn tick_on_socket(c: &mut Context<'_>, request: RootId, socket: RootId) -> Result<(), RootedError> {
-    let max_header_size = get(c, request, "maxHeaderSize")?;
-    let max_header_size = if is_nullish(c, max_header_size) { 0.0 } else { c.to_number(max_header_size)? };
-    let parser = parsing::create(c, Kind::Response, socket, max_header_size)?;
+    let parser = parsing::create(c, Kind::Response, socket, request)?;
     let method = get(c, request, "method")?;
     let head_request = c.string_text(method)?.as_deref() == Some("HEAD");
     parsing::set_head_request(c, parser, head_request)?;
@@ -775,14 +781,20 @@ fn call_socket_method(c: &mut Context<'_>, socket: RootId, method: RootId, value
 fn defer_to_connect(c: &mut Context<'_>, this: RootId, method: RootId, values: RootId) -> Result<(), RootedError> {
     let socket = outgoing::socket(c, this)?;
     if !c.truthy_rooted(socket)? {
-        let undefined = c.undefined();
-        let later = function(c, Member::DeferredCall, "", &[undefined, method, values])?;
+        let later = function(c, Member::DeferredOnSocket, "onSocket", &[this, method, values])?;
         return once(c, this, "socket", later);
     }
+    on_socket_deferred(c, this, method, values)
+}
+
+/// `_deferToConnect`'s `onSocket`: the call now if the request's socket is writable, else
+/// once it connects.
+fn on_socket_deferred(c: &mut Context<'_>, request: RootId, method: RootId, values: RootId) -> Result<(), RootedError> {
+    let socket = outgoing::socket(c, request)?;
     if truthy_member(c, socket, "writable")? {
         call_socket_method(c, socket, method, values)
     } else {
-        let later = function(c, Member::DeferredCall, "", &[socket, method, values])?;
+        let later = function(c, Member::DeferredCall, "callSocketMethod", &[request, method, values])?;
         once(c, socket, "connect", later)
     }
 }

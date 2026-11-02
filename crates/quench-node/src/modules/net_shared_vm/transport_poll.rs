@@ -211,6 +211,12 @@ pub(crate) fn poll(
                     progressed = true;
                 }
             }
+            net_shared_vm::TransportEvent::Session { socket, session } => {
+                progressed |= queue_tls_announcement(runtime, shared_state, socket, "session", &session)?;
+            }
+            net_shared_vm::TransportEvent::Keylog { socket, line } => {
+                progressed |= queue_tls_announcement(runtime, shared_state, socket, "keylog", &line)?;
+            }
             net_shared_vm::TransportEvent::NativeConnectComplete { request, status } => {
                 progressed |=
                     complete_native_request(runtime, program, shared_state, request, status)?;
@@ -657,6 +663,25 @@ fn emit_net_server_events(
         runtime.release_root(*root);
     }
     Ok(!listening.is_empty() || !closed.is_empty())
+}
+
+/// Queue `socket.emit(name, Buffer)` for bytes its TLS session reported; whether the socket
+/// was still live to hear it.
+fn queue_tls_announcement(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    socket: u64,
+    name: &str,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let root = shared_state.borrow().net_sockets.get(&socket).map(|socket| socket.root);
+    let Some(root) = root else {
+        return Ok(false);
+    };
+    let chunk = buffer_from_bytes(runtime, bytes)?;
+    let queued = queue_net_event(runtime, shared_state, root, name, &[chunk]);
+    runtime.release_root(chunk);
+    queued.map(|()| true)
 }
 
 fn queue_net_event(

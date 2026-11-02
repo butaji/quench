@@ -39,6 +39,17 @@ fn bundled_roots() -> Result<&'static [openssl::x509::X509], openssl::error::Err
     }
 }
 
+/// The `NODE_EXTRA_CA_CERTS` certificates, read once as Node reads them at startup; an
+/// unreadable file adds none.
+fn extra_roots() -> &'static [openssl::x509::X509] {
+    static ROOTS: std::sync::OnceLock<Vec<openssl::x509::X509>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        super::discovery::extra_certificates_pem()
+            .and_then(|pem| super::trusted_certificates_from_pem(pem.as_bytes()).ok())
+            .unwrap_or_default()
+    })
+}
+
 fn get(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
@@ -105,13 +116,12 @@ fn configure_secure_context(
     inner: RootId,
     options: RootId,
 ) -> Result<(), RootedError> {
-    let name = "options";
     let option = |context: &mut NativeContext<'_, NodeHost>, key: &str| get(context, options, key);
     let passphrase = option(context, "passphrase")?;
     let ca = option(context, "ca")?;
     if context.truthy_rooted(ca)? {
         for certificate in list(context, ca)? {
-            validate_material(context, name, certificate)?;
+            validate_material(context, "options.ca", certificate)?;
             method_call(context, inner, "addCACert", &[certificate])?;
         }
     } else {
@@ -120,7 +130,7 @@ fn configure_secure_context(
     let cert = option(context, "cert")?;
     if context.truthy_rooted(cert)? {
         for certificate in list(context, cert)? {
-            validate_material(context, name, certificate)?;
+            validate_material(context, "options.cert", certificate)?;
             method_call(context, inner, "setCert", &[certificate])?;
         }
     }
@@ -245,8 +255,17 @@ fn configure_secure_context(
         }
     }
     let engine = option(context, "clientCertEngine")?;
-    if context.string_text(engine)?.is_some() && super::super::crypto_engine_shared_vm::SUPPORTED {
-        method_call(context, inner, "setClientCertEngine", &[engine])?;
+    if context.string_text(engine)?.is_some() {
+        if super::super::crypto_engine_shared_vm::SUPPORTED {
+            method_call(context, inner, "setClientCertEngine", &[engine])?;
+        }
+    } else if !absent(context, engine) {
+        return Err(super::super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            engine,
+            "options.clientCertEngine",
+            "of type string or one of null or undefined",
+        )?);
     }
     let ticket_keys = option(context, "ticketKeys")?;
     if !absent(context, ticket_keys) {
@@ -631,7 +650,7 @@ pub(crate) fn method(
         }
         "addCACert" => {
             let bytes = super::material_bytes(context, value, "options.ca")?;
-            let certs = openssl::x509::X509::stack_from_pem(&bytes)
+            let certs = super::trusted_certificates_from_pem(&bytes)
                 .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
             for cert in certs {
                 let result = shared
@@ -662,6 +681,7 @@ pub(crate) fn method(
                         super::super::crypto_error_shared_vm::decorated(context, error)
                     })?
                     .iter()
+                    .chain(extra_roots())
                     .map(|root| root.to_owned())
                     .collect()
             };

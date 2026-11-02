@@ -11,11 +11,22 @@ type Outcome = Result<RootId, RootedError>;
 
 /// Node's `IANA_DNS_PORT`: a server on it is listed without its port.
 const IANA_DNS_PORT: f64 = 53.0;
-/// `validateInt32` bounds of the Resolver options.
-const MIN_TIMEOUT: f64 = -1.0;
-const MIN_TRIES: f64 = 1.0;
-const DEFAULT_TRIES: f64 = 4.0;
+/// A Resolver option, as `new ChannelWrap(timeout, tries, maxTimeout)` takes it in order:
+/// its default and the integer bounds its validator (`validateInt32`/`validateUint32`)
+/// checks.
+struct ChannelOption {
+    name: &'static str,
+    default: f64,
+    minimum: f64,
+    maximum: f64,
+}
+
 const MAX_INT32: f64 = i32::MAX as f64;
+const CHANNEL_OPTIONS: [ChannelOption; 3] = [
+    ChannelOption { name: "timeout", default: -1.0, minimum: -1.0, maximum: MAX_INT32 },
+    ChannelOption { name: "tries", default: 4.0, minimum: 1.0, maximum: MAX_INT32 },
+    ChannelOption { name: "maxTimeout", default: 0.0, minimum: 0.0, maximum: u32::MAX as f64 },
+];
 /// The address families `lookup` accepts.
 const FAMILIES: [f64; 3] = [0.0, 4.0, 6.0];
 const IPV6: f64 = 6.0;
@@ -304,13 +315,13 @@ fn dns_exception(c: &mut Context<'_>, code: RootId, syscall: &str, hostname: Opt
 
 /// The resolver channel options `new Resolver(options)` accepts.
 fn channel(c: &mut Context<'_>, options: RootId) -> Outcome {
-    let mut settings = [MIN_TIMEOUT, DEFAULT_TRIES];
+    let mut settings = CHANNEL_OPTIONS.map(|option| option.default);
     if c.is_object_rooted(options)? {
-        for (slot, (name, minimum)) in [("timeout", MIN_TIMEOUT), ("tries", MIN_TRIES)].into_iter().enumerate() {
-            let value = get(c, options, name)?;
+        for (setting, option) in settings.iter_mut().zip(CHANNEL_OPTIONS) {
+            let value = get(c, options, option.name)?;
             if !is_undefined(c, value) {
-                let maximum = c.number(MAX_INT32);
-                settings[slot] = super::util_shared_vm::validate_integer(c, value, &format!("options.{name}"), minimum, maximum)?;
+                let maximum = c.number(option.maximum);
+                *setting = super::util_shared_vm::validate_integer(c, value, &format!("options.{}", option.name), option.minimum, maximum)?;
             }
         }
     } else if !is_undefined(c, options) {
@@ -318,9 +329,8 @@ fn channel(c: &mut Context<'_>, options: RootId) -> Outcome {
     }
     let binding = crate::host::shared_vm::commonjs::cares_binding(c)?;
     let channel = get(c, binding, "ChannelWrap")?;
-    let timeout = c.number(settings[0]);
-    let tries = c.number(settings[1]);
-    c.construct_rooted(channel, channel, &[timeout, tries])
+    let arguments = settings.map(|setting| c.number(setting));
+    c.construct_rooted(channel, channel, &arguments)
 }
 
 pub(crate) fn resolver_base(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
