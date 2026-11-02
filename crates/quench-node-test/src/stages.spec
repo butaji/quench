@@ -1,10 +1,3 @@
-# Node compatibility stages
-
-The Node test runner parses the `### N. Name` headings below. Keep IDs and
-names stable: this is runner input, not a completion claim or skip policy.
-Compare observable values, errors, ordering, exit status and host effects with
-the local Node oracle. See [repository rules](AGENTS.md).
-
 ### 0. Measurement and runner truth
 ### 1. Runtime and value semantics
 ### 2. Core data APIs
