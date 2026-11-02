@@ -48,7 +48,14 @@ pub(crate) const DEFAULT_CIPHER_LIST: &str = concat!(
 );
 
 
+/// The `tls` builtin the module cache keeps, so every class shares its `TLSSocket` and
+/// `Server`.
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    crate::host::shared_vm::commonjs::tls_module(context)
+}
+
+/// Builds the `tls` builtin (`module`).
+pub(crate) fn build_module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let api = facade::install(context)?;
     handle::registry(context)?;
     let net = crate::host::shared_vm::commonjs::net_module(context)?;
@@ -205,9 +212,46 @@ fn parser_error(
     }
 }
 
+/// The certificates of a PEM trust list, as Node's `addCACert` reads them
+/// (`PEM_read_bio_X509_AUX`): `CERTIFICATE`, `X509 CERTIFICATE` and `TRUSTED CERTIFICATE`
+/// blocks alike.
+pub(crate) fn trusted_certificates_from_pem(pem: &[u8]) -> Result<Vec<openssl::x509::X509>, openssl::error::ErrorStack> {
+    use foreign_types::ForeignType;
+    openssl::init();
+    let length = i32::try_from(pem.len()).map_err(|_| openssl::error::ErrorStack::get())?;
+    let mut certificates = Vec::new();
+    // The BIO borrows `pem` for this call only and is freed on every exit; each
+    // certificate's ownership transfers once to its Rust wrapper.
+    unsafe {
+        let input = openssl_sys::BIO_new_mem_buf(pem.as_ptr().cast(), length);
+        if input.is_null() {
+            return Err(openssl::error::ErrorStack::get());
+        }
+        let outcome = loop {
+            let certificate = PEM_read_bio_X509_AUX(input, std::ptr::null_mut(), None, std::ptr::null_mut());
+            if certificate.is_null() {
+                let errors = openssl::error::ErrorStack::get();
+                let exhausted = errors.errors().last().is_some_and(|error| {
+                    error.library_code() == openssl_sys::ERR_LIB_PEM && error.reason_code() == openssl_sys::PEM_R_NO_START_LINE
+                });
+                break if exhausted { Ok(()) } else { Err(errors) };
+            }
+            certificates.push(openssl::x509::X509::from_ptr(certificate));
+        };
+        openssl_sys::BIO_free_all(input);
+        outcome.map(|()| certificates)
+    }
+}
+
 // Node uses the BIO decoder, whose bounded-input errors differ from d2i's
 // slice decoder. Keep the same parser entry point rather than rewriting errors.
 unsafe extern "C" {
+    fn PEM_read_bio_X509_AUX(
+        input: *mut openssl_sys::BIO,
+        output: *mut *mut openssl_sys::X509,
+        callback: Option<unsafe extern "C" fn(*mut std::ffi::c_char, std::ffi::c_int, std::ffi::c_int, *mut std::ffi::c_void) -> std::ffi::c_int>,
+        data: *mut std::ffi::c_void,
+    ) -> *mut openssl_sys::X509;
     #[cfg(quench_openssl_provider)]
     fn BIO_s_secmem() -> *const openssl_sys::BIO_METHOD;
     fn d2i_PKCS12_bio(

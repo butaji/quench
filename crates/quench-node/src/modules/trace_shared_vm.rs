@@ -115,7 +115,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Node disables trace_events inside Worker isolates because the tracing
     // provider is owned by the process main thread. Keep the module unavailable
     // in the same way instead of exposing an isolated per-worker trace facade.
-    if crate::modules::worker_threads_shared_vm::is_child(context) {
+    if context.host_mut().shared_state().borrow().messaging.is_worker() {
         let error = context.error_rooted("Trace events are unavailable")?;
         let code = context.string_rooted("ERR_TRACE_EVENTS_UNAVAILABLE");
         put(context, error, "code", code)?;

@@ -442,35 +442,67 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .and_then(|fd| fd.parse::<i32>().ok())
         .filter(|fd| *fd >= 0)
     {
-        use std::os::fd::FromRawFd;
-        // Only claim a socket. A malformed external bootstrap variable must
-        // never transfer ownership of an unrelated inherited descriptor.
-        let mut kind: libc::c_int = 0;
-        let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
-        let valid = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_TYPE,
-                (&mut kind as *mut libc::c_int).cast(),
-                &mut length,
-            )
-        } == 0;
-        if valid {
-            let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
-            socket
-                .set_nonblocking(true)
-                .map_err(|error| RootedError::host(error.to_string()))?;
-            let serialization = std::env::var(SERIALIZATION_MODE_VARIABLE)
-                .ok()
-                .and_then(|mode| Serialization::from_mode(&mode))
-                .unwrap_or_default();
-            let mut channel = IpcChannel::new(socket, serialization);
-            channel.counted_references = CountedReferences::Process { count: 0.0 };
-            state.borrow_mut().process_ipc.channel = Some(channel);
-        }
+        let serialization = std::env::var(SERIALIZATION_MODE_VARIABLE)
+            .ok()
+            .and_then(|mode| Serialization::from_mode(&mode))
+            .unwrap_or_default();
+        open_process_channel(context, fd, serialization)?;
     }
     Ok(())
+}
+
+/// Makes the socket at `fd` the process's IPC channel. Only a socket is claimed: a
+/// malformed bootstrap variable must never take ownership of an unrelated descriptor.
+#[cfg(unix)]
+fn open_process_channel(
+    context: &mut NativeContext<'_, NodeHost>,
+    fd: i32,
+    serialization: Serialization,
+) -> Result<(), RootedError> {
+    use std::os::fd::FromRawFd;
+    let mut kind: libc::c_int = 0;
+    let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
+    let valid = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut kind as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    } == 0;
+    if !valid {
+        return Ok(());
+    }
+    let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    socket
+        .set_nonblocking(true)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let mut channel = IpcChannel::new(socket, serialization);
+    channel.counted_references = CountedReferences::Process { count: 0.0 };
+    context.host_mut().shared_state().borrow_mut().process_ipc.channel = Some(channel);
+    Ok(())
+}
+
+/// `child_process._forkChild(fd, serializationMode)`: the IPC channel a forked child's
+/// `process` sends and receives on.
+#[cfg(unix)]
+pub(crate) fn fork_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let fd = args.first().copied().unwrap_or(undefined);
+    let fd = context.to_number(fd)? as i32;
+    let mode = args.get(1).copied().unwrap_or(undefined);
+    let serialization = match context.string_text(mode)? {
+        Some(mode) => Serialization::from_mode(&mode).unwrap_or_default(),
+        None => Serialization::default(),
+    };
+    open_process_channel(context, fd, serialization)?;
+    activate_process(context)?;
+    Ok(context.undefined())
 }
 
 /// Give `target` (a ChildProcess, or `process` in a forked child) the channel's surface:
@@ -1149,12 +1181,7 @@ pub(crate) fn destroy_transferred_public_socket(
     // which owned it. Drop the HTTP bookkeeping alongside the native handle so
     // the source Socket does not retain a parser, response, or timeout after
     // the transfer has completed.
-    let key = context.string_rooted("setTimeout");
-    let set_timeout = context.get_property_rooted(socket, key)?;
-    if context.is_callable_rooted(set_timeout)? {
-        let disabled = context.number(0.0);
-        context.call_rooted(set_timeout, socket, &[disabled])?;
-    }
+    super::net_class_shared_vm::clear_timeout_timer(context, socket)?;
     let null = context.null();
     for name in ["parser", "_httpMessage"] {
         let key = context.string_rooted(name);

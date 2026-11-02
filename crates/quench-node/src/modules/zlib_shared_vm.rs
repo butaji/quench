@@ -366,7 +366,7 @@ fn empty_buffer(c: &mut Context<'_>) -> Outcome {
 
 /// `Buffer.from(arrayBuffer, offset, length)`: a Buffer over the same memory.
 fn buffer_over(c: &mut Context<'_>, memory: &[RootId]) -> Outcome {
-    let class = buffer_class(c)?;
+    let class = super::buffer_shared_vm::fast_buffer_constructor(c)?;
     c.construct_rooted(class, class, memory)
 }
 

@@ -197,15 +197,7 @@ fn compile(options: Options) -> Result<(), String> {
         ));
     }
     let work = BuildDirectory::new(output.parent().ok_or("output has no parent")?)?;
-    let library_root = match std::env::var_os(crate::shared_run::NODE_LIBRARY_ROOT_ENV) {
-        Some(path) => PathBuf::from(path),
-        None => {
-            let path = work.0.join("sdk");
-            fs::create_dir(&path).map_err(|error| error.to_string())?;
-            path
-        }
-    };
-    manifest.extend(SourceManifest::capture_for_graph(&library_root, &graph)?)?;
+    manifest.extend(SourceManifest::capture_for_graph(&graph)?)?;
     report["source_units"] = json!(manifest.units().len());
     report["archived_module_sources"] = json!(manifest.assets().modules.len());
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());

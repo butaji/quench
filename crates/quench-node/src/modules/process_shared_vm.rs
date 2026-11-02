@@ -892,43 +892,23 @@ pub(crate) fn really_exit(
     Ok(context.undefined())
 }
 
-fn exit_code_error(
-    context: &mut NativeContext<'_, NodeHost>,
-    name: &str,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let codes = crate::host::shared_vm::commonjs::node_library_export(
-        context,
-        "internal/process/per_thread.js",
-        "internal/errors.js",
-        "codes",
-    )?;
-    let key = context.string_rooted(name);
-    let constructor = context.get_property_rooted(codes, key)?;
-    let error = context.construct_rooted(constructor, constructor, args)?;
-    Err(context.throw(error))
-}
 fn invalid_exit_code_type(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<RootId, RootedError> {
-    let code = context.string_rooted("code");
-    let number = context.string_rooted("number");
-    exit_code_error(context, "ERR_INVALID_ARG_TYPE", &[code, number, value])
+    Err(super::util_shared_vm::argument_type_error(context, value, "code", "number")?)
 }
 fn exit_code_range_error(
     context: &mut NativeContext<'_, NodeHost>,
     number: f64,
 ) -> Result<RootId, RootedError> {
-    let code = context.string_rooted("code");
     let range = if number.is_finite() && number.fract() == 0.0 {
         format!(">= -{MAX_SAFE_EXIT_CODE:.0} && <= {MAX_SAFE_EXIT_CODE:.0}")
     } else {
         "an integer".to_owned()
     };
-    let range = context.string_rooted(&range);
     let value = context.number(number);
-    exit_code_error(context, "ERR_OUT_OF_RANGE", &[code, range, value])
+    Err(super::util_shared_vm::out_of_range_error(context, "code", &range, value)?)
 }
 
 fn throw_with_code(
@@ -1759,6 +1739,16 @@ fn chdir_type_error(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedE
     Ok(context.throw(error))
 }
 
+/// The process binding's raw `umask(mask)`: an explicit undefined mask reads it, as none does.
+pub(crate) fn raw_umask(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let read = args.first().is_none_or(|mask| context.rooted_value(*mask).is_some_and(|value| value.is_undefined()));
+    umask(context, receiver, if read { &[] } else { args })
+}
+
 pub(crate) fn umask(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2096,32 +2086,6 @@ pub(crate) fn delete_env(
         unsafe { tzset() };
     }
     Ok(context.undefined())
-}
-
-pub(crate) fn get_shared_env(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let Some(key) = args.first().copied() else {
-        return Ok(context.undefined());
-    };
-    let key = context.string_text(key)?.unwrap_or_default();
-    let shared = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .process_env_shared;
-    if !shared {
-        return Ok(context.undefined());
-    }
-    match std::env::var_os(key) {
-        Some(value) => {
-            let value = value.to_string_lossy();
-            Ok(context.string_rooted(&value))
-        }
-        None => Ok(context.undefined()),
-    }
 }
 
 pub(crate) fn load_env_file(
@@ -2462,10 +2426,6 @@ pub(crate) fn finish_after_uncaught_error(
     let routed = emit_uncaught_exception(runtime, program, error);
     if control.requested_exit_code().is_some() {
         let exit = finish_requested_exit(runtime, program);
-        if super::worker_threads_shared_vm::runtime_is_child(runtime) {
-            exit?;
-            return Ok(true);
-        }
         if control.fatal_uncaught_requested() {
             return routed.and(exit.map(|_| false));
         }
@@ -2562,6 +2522,10 @@ pub(crate) fn route_uncaught_exception_value(
     Ok(handled)
 }
 
+/// Node's event loop (libuv's phases): each turn runs the timers due when it starts, then
+/// polls every I/O source once, then the check phase's immediates queued before it began;
+/// with nothing ready and no immediate pending it sleeps until a timer or I/O. Ticks and
+/// microtasks run after every callback.
 fn drain_checkpoint(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
@@ -2570,251 +2534,207 @@ fn drain_checkpoint(
     super::performance_binding_shared_vm::mark_loop_start(runtime)?;
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
-        if crate::modules::worker_threads_shared_vm::poll(runtime, program)? {
-            continue;
-        }
-        if crate::modules::process_stdin_shared_vm::poll(runtime)? {
-            continue;
-        }
-        if poll_process_signals(runtime, program, &shared_state)? {
-            continue;
-        }
-
-        if crate::modules::pipe_binding::poll(runtime, program)? {
-            continue;
-        }
-        if crate::modules::child_process_ipc_shared_vm::poll(runtime, program)? {
-            continue;
-        }
-        if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
-            continue;
-        }
-        if crate::modules::cares_binding::poll(runtime, program)? {
-            continue;
-        }
-        let udp_progress=crate::modules::udp_binding::poll(runtime,&shared_state)?;
-        let transport_progress = crate::modules::net_shared_vm::transport_poll::poll(runtime, program, &shared_state)?;
-        // Each turn of the loop is a collection safepoint, once its network writes have gone
-        // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
-        // due collection would otherwise wait for guest code that loops. Nothing runs here,
-        // and every value is a root.
-        runtime.collect_if_due(program).map_err(|error| error.to_string())?;
-        if transport_progress || udp_progress {
-            continue;
-        }
-        if crate::modules::napi::poll(runtime, program)? {
-            continue;
-        }
-        if crate::modules::worker_shared_vm::poll(runtime, program, &shared_state)? {
-            continue;
-        }
-        if crate::modules::dns_shared_vm::poll(runtime, program, &shared_state)? {
-            continue;
-        }
-
-        if has_referenced_shared_work(&shared_state)
-            && super::fs_watch_shared_vm::poll(runtime, program)?
-        {
-            continue;
-        }
-        let can_run_timers = has_referenced_shared_work(&shared_state);
-        if can_run_timers && super::fs_stat_watch_shared_vm::poll(runtime, program)? {
-            continue;
-        }
-        let due = if can_run_timers {
-            shared_state
-                .borrow_mut()
-                .scheduler
-                .take_due_shared_timer(std::time::Instant::now())
-        } else {
-            None
-        };
-        if let Some(mut timer) = due {
-            let _span =
-                crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "RunTimers");
-            let api = shared_state
-                .borrow()
-                .timer_handle_api
-                .expect("queued timer handle API");
-            let (primitive_id, mut callback_result) =
-                match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
-                    Ok(id) => (
-                        Some(id),
-                        invoke_timer_callback(runtime, program, &timer.callback),
-                    ),
-                    Err(error) => (None, route_callback_failure(runtime, program, error)),
-                };
-
-            let repeated = runtime.call_rooted(api.repeat_delay, timer.callback.receiver, &[]);
-            match repeated {
-                Ok(repeated) => {
-                    timer.interval = runtime
-                        .rooted_value(repeated)
-                        .and_then(|value| value.as_number())
-                        .map(|value| {
-                            std::time::Duration::from_millis(value.max(0.0).trunc() as u64)
-                        });
-                    runtime.release_root(repeated);
-                }
-                Err(error) => {
-                    callback_result = route_callback_failure(runtime, program, error);
-                    shared_state
-                        .borrow_mut()
-                        .scheduler
-                        .cancel_shared_timer(timer.id);
-                }
-            }
-            if callback_result.is_err() {
-                shared_state
-                    .borrow_mut()
-                    .scheduler
-                    .cancel_shared_timer(timer.id);
-            }
-            let released = shared_state
-                .borrow_mut()
-                .scheduler
-                .complete_shared_timer(timer, std::time::Instant::now());
-            if let Some(callback) = released {
-                let settled = mark_timer_destroyed(runtime, callback.receiver).and_then(|()| {
-                    let undefined = runtime.root(Value::UNDEFINED);
-                    let args = [callback.receiver, primitive_id.unwrap_or(undefined)];
-                    let args = if primitive_id.is_some() {
-                        &args[..]
-                    } else {
-                        &args[..1]
-                    };
-                    let result = runtime.call_rooted(api.primitive_cleanup, undefined, args);
-                    runtime.release_root(undefined);
-                    result.map(|result| {
-                        runtime.release_root(result);
-                    })
-                });
-                release_callback(runtime, callback);
-                if let Err(error) = settled {
-                    if let Some(id) = primitive_id {
-                        runtime.release_root(id);
-                    }
-                    route_callback_failure(runtime, program, error)?;
-                    callback_result?;
-                    continue;
-                }
-            }
-            if let Some(id) = primitive_id {
-                runtime.release_root(id);
-            }
-            callback_result?;
-            continue;
-        }
-
+        let ran_timer = run_due_timers(runtime, program, &shared_state)?;
+        let polled = poll_io(runtime, program, &shared_state)?;
         if !has_referenced_shared_work(&shared_state) {
             release_unreferenced_shared_callbacks(runtime, &shared_state);
             break;
         }
-        let immediate_cutoff = shared_state.borrow().scheduler.shared_immediate_cutoff();
-        let Some(cutoff) = immediate_cutoff else {
-            let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
-            if has_referenced_shared_work(&shared_state) {
-                let poll_interval = crate::modules::net_shared_vm::poll_interval()
-                    .min(crate::modules::child_process_shared_vm::poll_interval());
-                let until_timer =
-                    next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
-                let wait = match until_timer {
-                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
-                    Some(delay) => delay.min(poll_interval),
-                    None => poll_interval,
-                };
-                if !wait.is_zero() {
-                    #[cfg(unix)]
-                    let extra = shared_state.borrow().child_output_descriptors();
-                    #[cfg(not(unix))]
-                    let extra = Vec::new();
-                    let control = shared_state.borrow().process_control.clone();
-                    let started = std::time::Instant::now();
-                    crate::modules::net_shared_vm::wait_ready(
-                        &shared_state.borrow().tcp,
-                        &extra,
-                        wait,
-                    );
-                    control.record_event_loop_idle(started.elapsed());
-                }
-                continue;
-            }
-            release_unreferenced_shared_callbacks(runtime, &shared_state);
-            break;
-        };
-        let _check_span =
-            crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "CheckImmediate");
-        let mut ran_immediate = run_and_clear_native_immediates(runtime, program, &shared_state)?;
-        let cutoff = shared_state
-            .borrow()
-            .scheduler
-            .shared_immediate_cutoff()
-            .unwrap_or(cutoff);
-
-        loop {
-            let immediate = {
-                shared_state
-                    .borrow_mut()
-                    .scheduler
-                    .take_shared_immediate_through(cutoff)
-            };
-            let Some(immediate) = immediate else {
-                break;
-            };
-            ran_immediate = true;
-            if let Err(error) = settle_immediate_reference(
-                runtime,
-                program,
-                &shared_state,
-                immediate.owner,
-                immediate.callback.receiver,
-            ) {
-                release_callback(runtime, immediate.callback);
-                release_pending_shared_immediates(runtime, &shared_state);
-                return Err(error);
-            }
-            if let Err(error) = invoke_async_callback(runtime, program, immediate.callback) {
-                release_pending_shared_immediates(runtime, &shared_state);
-                return Err(error);
-            }
-            if let Err(error) = drain_shared_jobs(runtime, program, &shared_state) {
-                release_pending_shared_immediates(runtime, &shared_state);
-                return Err(error);
-            }
+        let ran_immediate = run_check_phase(runtime, program, &shared_state)?;
+        if ran_timer || polled || ran_immediate {
+            continue;
         }
-        if !ran_immediate {
-            let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
-            if has_referenced_shared_work(&shared_state) {
-                let poll_interval = crate::modules::net_shared_vm::poll_interval()
-                    .min(crate::modules::child_process_shared_vm::poll_interval());
-                let until_timer =
-                    next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
-                let wait = match until_timer {
-                    Some(delay) if !has_polled_shared_work(&shared_state) => delay,
-                    Some(delay) => delay.min(poll_interval),
-                    None => poll_interval,
-                };
-                if !wait.is_zero() {
-                    #[cfg(unix)]
-                    let extra = shared_state.borrow().child_output_descriptors();
-                    #[cfg(not(unix))]
-                    let extra = Vec::new();
-                    let control = shared_state.borrow().process_control.clone();
-                    let started = std::time::Instant::now();
-                    crate::modules::net_shared_vm::wait_ready(
-                        &shared_state.borrow().tcp,
-                        &extra,
-                        wait,
-                    );
-                    control.record_event_loop_idle(started.elapsed());
-                }
-                continue;
-            }
+        if !has_referenced_shared_work(&shared_state) {
             release_unreferenced_shared_callbacks(runtime, &shared_state);
             break;
         }
+        wait_for_work(&shared_state);
     }
     Ok(())
+}
+
+/// The poll phase: every I/O source once, each followed by its ticks and microtasks; whether
+/// any made progress.
+fn poll_io(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+) -> Result<bool, String> {
+    let mut progressed = false;
+    let mut settle = |runtime: &mut quench_runtime::Runtime<NodeHost>, ran: bool| -> Result<(), String> {
+        if ran {
+            progressed = true;
+            drain_shared_jobs(runtime, program, shared_state)?;
+        }
+        Ok(())
+    };
+    let ran = crate::modules::process_stdin_shared_vm::poll(runtime)?;
+    settle(runtime, ran)?;
+    let ran = poll_process_signals(runtime, program, shared_state)?;
+    settle(runtime, ran)?;
+    let ran = crate::modules::pipe_binding::poll(runtime, program)?;
+    settle(runtime, ran)?;
+    let ran = crate::modules::child_process_ipc_shared_vm::poll(runtime, program)?;
+    settle(runtime, ran)?;
+    let ran = crate::modules::child_process_shared_vm::poll(runtime, program, shared_state)?;
+    settle(runtime, ran)?;
+    let ran = crate::modules::cares_binding::poll(runtime, program)?;
+    settle(runtime, ran)?;
+    let udp_progress = crate::modules::udp_binding::poll(runtime, shared_state)?;
+    let transport_progress = crate::modules::net_shared_vm::transport_poll::poll(runtime, program, shared_state)?;
+    // Each turn of the loop is a collection safepoint, once its network writes have gone
+    // out: its callbacks and jobs may reach no back edge (a promise-driven stream), so a
+    // due collection would otherwise wait for guest code that loops. Nothing runs here,
+    // and every value is a root.
+    runtime.collect_if_due(program).map_err(|error| error.to_string())?;
+    settle(runtime, transport_progress || udp_progress)?;
+    let ran = crate::modules::napi::poll(runtime, program)?;
+    settle(runtime, ran)?;
+    let ran = crate::modules::worker_shared_vm::poll(runtime, program, shared_state)?;
+    settle(runtime, ran)?;
+    let ran = crate::modules::dns_shared_vm::poll(runtime, program, shared_state)?;
+    settle(runtime, ran)?;
+    if has_referenced_shared_work(shared_state) {
+        let ran = super::fs_watch_shared_vm::poll(runtime, program)?;
+        settle(runtime, ran)?;
+    }
+    if has_referenced_shared_work(shared_state) {
+        let ran = super::fs_stat_watch_shared_vm::poll(runtime, program)?;
+        settle(runtime, ran)?;
+    }
+    Ok(progressed)
+}
+
+/// The timers phase: every timer due when it begins, in due order; whether any ran.
+fn run_due_timers(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+) -> Result<bool, String> {
+    let now = std::time::Instant::now();
+    let mut ran = false;
+    while has_referenced_shared_work(shared_state) {
+        let due = shared_state.borrow_mut().scheduler.take_due_shared_timer(now);
+        let Some(timer) = due else { break };
+        ran = true;
+        run_timer(runtime, program, shared_state, timer)?;
+        drain_shared_jobs(runtime, program, shared_state)?;
+    }
+    Ok(ran)
+}
+
+/// One due timer: its callback, then its rescheduling or release.
+fn run_timer(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    mut timer: crate::modules::shared_event_loop::SharedTimer,
+) -> Result<(), String> {
+    let _span = crate::modules::trace_state::EnvironmentSpan::enter(shared_state, "RunTimers");
+    let api = shared_state.borrow().timer_handle_api.expect("queued timer handle API");
+    let (primitive_id, mut callback_result) = match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
+        Ok(id) => (Some(id), invoke_timer_callback(runtime, program, &timer.callback)),
+        Err(error) => (None, route_callback_failure(runtime, program, error)),
+    };
+    let repeated = runtime.call_rooted(api.repeat_delay, timer.callback.receiver, &[]);
+    match repeated {
+        Ok(repeated) => {
+            timer.interval = runtime
+                .rooted_value(repeated)
+                .and_then(|value| value.as_number())
+                .map(|value| std::time::Duration::from_millis(value.max(0.0).trunc() as u64));
+            runtime.release_root(repeated);
+        }
+        Err(error) => {
+            callback_result = route_callback_failure(runtime, program, error);
+            shared_state.borrow_mut().scheduler.cancel_shared_timer(timer.id);
+        }
+    }
+    if callback_result.is_err() {
+        shared_state.borrow_mut().scheduler.cancel_shared_timer(timer.id);
+    }
+    let released = shared_state.borrow_mut().scheduler.complete_shared_timer(timer, std::time::Instant::now());
+    if let Some(callback) = released {
+        let settled = mark_timer_destroyed(runtime, callback.receiver).and_then(|()| {
+            let undefined = runtime.root(Value::UNDEFINED);
+            let args = [callback.receiver, primitive_id.unwrap_or(undefined)];
+            let args = if primitive_id.is_some() { &args[..] } else { &args[..1] };
+            let result = runtime.call_rooted(api.primitive_cleanup, undefined, args);
+            runtime.release_root(undefined);
+            result.map(|result| {
+                runtime.release_root(result);
+            })
+        });
+        release_callback(runtime, callback);
+        if let Err(error) = settled {
+            if let Some(id) = primitive_id {
+                runtime.release_root(id);
+            }
+            route_callback_failure(runtime, program, error)?;
+            return callback_result;
+        }
+    }
+    if let Some(id) = primitive_id {
+        runtime.release_root(id);
+    }
+    callback_result
+}
+
+/// The check phase: the immediates queued before it began; whether any ran.
+fn run_check_phase(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+) -> Result<bool, String> {
+    let Some(cutoff) = shared_state.borrow().scheduler.shared_immediate_cutoff() else {
+        return Ok(false);
+    };
+    let _check_span = crate::modules::trace_state::EnvironmentSpan::enter(shared_state, "CheckImmediate");
+    let mut ran_immediate = run_and_clear_native_immediates(runtime, program, shared_state)?;
+    let cutoff = shared_state.borrow().scheduler.shared_immediate_cutoff().unwrap_or(cutoff);
+    loop {
+        let immediate = shared_state.borrow_mut().scheduler.take_shared_immediate_through(cutoff);
+        let Some(immediate) = immediate else { break };
+        ran_immediate = true;
+        if let Err(error) = settle_immediate_reference(runtime, program, shared_state, immediate.owner, immediate.callback.receiver) {
+            release_callback(runtime, immediate.callback);
+            release_pending_shared_immediates(runtime, shared_state);
+            return Err(error);
+        }
+        if let Err(error) = invoke_async_callback(runtime, program, immediate.callback) {
+            release_pending_shared_immediates(runtime, shared_state);
+            return Err(error);
+        }
+        if let Err(error) = drain_shared_jobs(runtime, program, shared_state) {
+            release_pending_shared_immediates(runtime, shared_state);
+            return Err(error);
+        }
+    }
+    Ok(ran_immediate)
+}
+
+/// The poll phase's wait with nothing ready: until the next timer, or for polled I/O at the
+/// subsystems' poll interval.
+fn wait_for_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) {
+    let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
+    let poll_interval = crate::modules::net_shared_vm::poll_interval().min(crate::modules::child_process_shared_vm::poll_interval());
+    let until_timer = next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+    let wait = match until_timer {
+        Some(delay) if !has_polled_shared_work(shared_state) => delay,
+        Some(delay) => delay.min(poll_interval),
+        None => poll_interval,
+    };
+    if wait.is_zero() {
+        return;
+    }
+    #[cfg(unix)]
+    let extra = shared_state.borrow().child_output_descriptors();
+    #[cfg(not(unix))]
+    let extra = Vec::new();
+    let control = shared_state.borrow().process_control.clone();
+    let started = std::time::Instant::now();
+    crate::modules::net_shared_vm::wait_ready(&shared_state.borrow().tcp, &extra, wait);
+    control.record_event_loop_idle(started.elapsed());
 }
 
 fn run_and_clear_native_immediates(
@@ -2852,7 +2772,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
 /// Whether referenced work other than timers and immediates is pending: work the loop polls
 /// for at the subsystems' poll interval. Without it the loop sleeps until the next timer.
 fn has_polled_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    if crate::modules::worker_threads_shared_vm::has_work(&shared_state.borrow().workers) { return true; }
     if crate::modules::dns_shared_vm::has_work(shared_state) { return true; }
     crate::modules::pipe_binding::has_work(&shared_state.borrow())
         || shared_state.borrow().udp.has_work()
@@ -3104,7 +3023,6 @@ pub(super) fn route_callback_failure(
     let result = match routed {
         Ok(true) => Ok(()),
         Ok(false) => {
-            super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
             Err(format_uncaught_error(runtime, program, &mut failure))
         }
         Err(handler_error) => Err(handler_error),
@@ -3344,7 +3262,6 @@ pub(crate) fn run_host_jobs_with_uncaught(
         let result = match routed {
             Ok(true) => Ok(()),
             Ok(false) => {
-                super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
                 Err(format_uncaught_error(runtime, program, &mut failure))
             }
             Err(handler_error) => Err(handler_error),
@@ -3647,9 +3564,6 @@ fn rooted_error_message(
     program: &quench_runtime::ResidualProgram,
     error: RootedError,
 ) -> String {
-    if let Some(exception) = error.exception {
-        super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
-    }
     let message = runtime.format_error(program, &error.error);
     if let Some(exception) = error.exception {
         runtime.release_root(exception);
@@ -3977,9 +3891,6 @@ fn set_shared_property(
         Ok(true) => Ok(()),
         Ok(false) => Err(format!("cannot update process.{name}")),
         Err(error) => {
-            if let Some(exception) = error.exception {
-                super::worker_threads_shared_vm::record_callback_exception(runtime, exception);
-            }
             let message = runtime.format_error(program, &error.error);
             if let Some(exception) = error.exception {
                 runtime.release_root(exception);
@@ -4378,17 +4289,11 @@ pub(crate) fn initialize_warning_policy(
     }
     if options.enabled("--pending-deprecation") {
         let binding = get(context, process, "binding")?;
-        let deprecate = crate::host::shared_vm::commonjs::node_library_export(
+        let binding = super::util_module_shared_vm::deprecated_export(
             context,
-            "internal/process/pre_execution.js",
-            "internal/util.js",
-            "deprecate",
+            binding,
+            ("DEP0111", "process.binding() is deprecated. Please use public APIs instead."),
         )?;
-        let message = context
-            .string_rooted("process.binding() is deprecated. Please use public APIs instead.");
-        let code = context.string_rooted("DEP0111");
-        let undefined = context.undefined();
-        let binding = context.call_rooted(deprecate, undefined, &[binding, message, code])?;
         install(context, process, "binding", binding)?;
     }
     Ok(())

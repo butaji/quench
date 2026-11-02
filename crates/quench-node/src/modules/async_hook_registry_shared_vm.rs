@@ -111,16 +111,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     let assign_key = context.string_rooted("assign");
     context.define_data_property_rooted(api, assign_key, assign, true, false, true)?;
     let global = context.global_root()?;
-    let primordials = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .primordials_module;
-    let constructor = if let Some(primordials) = primordials {
-        get(context, primordials, "SafeSet")?
-    } else {
-        get(context, global, "Set")?
-    };
+    let constructor = get(context, global, "Set")?;
     let prototype = get(context, constructor, "prototype")?;
     let hooks = context.construct_rooted(constructor, constructor, &[])?;
     context.assign_named_property_rooted(api, "hooks", hooks)?;
@@ -335,34 +326,6 @@ pub(super) fn has_hooks(context: &mut NativeContext<'_, NodeHost>, kind: HookKin
         .registry
         .visible_counts()[kind.index()]
         != 0
-}
-
-pub(crate) fn enabled(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let (api, snapshot) = {
-        let state = context.host_mut().shared_state();
-        let state = state.borrow();
-        let registry = &state.async_hooks.registry;
-        (registry.api, registry.snapshot)
-    };
-    let count = if let Some((snapshot, _)) = snapshot {
-        let length = get(context, snapshot, "length")?;
-        context
-            .rooted_value(length)
-            .and_then(|v| v.as_number())
-            .unwrap_or_default() as u32
-    } else {
-        let api = api.ok_or_else(|| RootedError::host("async hook registry missing"))?;
-        let hooks = get(context, api, "hooks")?;
-        let Some(BuiltinData::Set(hooks)) = context.builtin_data_rooted(hooks)? else {
-            return Err(RootedError::host("async hook subscriptions are not a Set"));
-        };
-        hooks.len() as u32
-    };
-    Ok(context.boolean(count != 0))
 }
 
 pub(super) fn emit(

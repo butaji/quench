@@ -256,43 +256,6 @@ fn util_type_predicates_match_node_internal_brands() {
 }
 
 #[test]
-fn configured_node_library_survives_guest_cwd_changes() {
-    let directory = tempfile::tempdir().unwrap();
-    let library = directory.path().join("installation");
-    std::fs::create_dir_all(library.join("lib/internal")).unwrap();
-    std::fs::write(library.join("package.json"), r#"{"type":"module"}"#).unwrap();
-    std::fs::write(
-        library.join("lib/internal/probe.js"),
-        "module.exports = 'library-probe';",
-    )
-    .unwrap();
-    let cwd = directory.path().join("guest");
-    std::fs::create_dir(&cwd).unwrap();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
-    command.current_dir(directory.path())
-        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
-        .env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, "installation")
-        .args(["-e", "process.chdir('guest');console.log(require('internal/probe'));console.log(require.resolve('internal/probe'))"]);
-    let observation =
-        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap();
-    assert!(!observation.timed_out);
-    assert_eq!(
-        observation.exit_code,
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&observation.stderr)
-    );
-    assert_eq!(
-        String::from_utf8(observation.stdout).unwrap(),
-        format!(
-            "library-probe\n{}\n",
-            library.join("lib/internal/probe.js").display()
-        )
-    );
-    assert!(observation.stderr.is_empty());
-}
-
-#[test]
 fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
     let source = r#"
       const assert = require('assert'), util = require('util');
@@ -6483,8 +6446,7 @@ fn native_tls_client_exchanges_encrypted_bytes_with_independent_node_peer() {
             let _ = self.0.wait();
         }
     }
-    let fixtures = std::env::var("QUENCH_NODE_LIBRARY_ROOT")
-        .unwrap_or_else(|_| format!("{}/../../tests/node", env!("CARGO_MANIFEST_DIR")));
+    let fixtures = format!("{}/../../tests/node", env!("CARGO_MANIFEST_DIR"));
     let mut peer=Peer(Command::new("node").args(["-e",r#"
 const tls=require('tls'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
 const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{socket.on('error',()=>{});socket.on('data',chunk=>socket.write(chunk));socket.on('end',()=>socket.end());});
@@ -6545,9 +6507,7 @@ socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.
                 .args(["-e", &source])
                 .env("QUENCH_TLS_PEER_ROOT", &fixtures);
             if executable != "node" {
-                command
-                    .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
-                    .env("QUENCH_NODE_LIBRARY_ROOT", &fixtures);
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
             }
             quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
                 .unwrap()
@@ -6589,8 +6549,7 @@ fn native_tls_server_accepts_encrypted_bytes_from_independent_node_client() {
             let _ = self.0.wait();
         }
     }
-    let fixtures = std::env::var("QUENCH_NODE_LIBRARY_ROOT")
-        .unwrap_or_else(|_| format!("{}/../../tests/node", env!("CARGO_MANIFEST_DIR")));
+    let fixtures = format!("{}/../../tests/node", env!("CARGO_MANIFEST_DIR"));
     let server_source = r#"
 const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
 const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.end(chunk));socket.on('close',()=>server.close());socket.on('error',()=>{});});
@@ -6618,7 +6577,7 @@ server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
     ] {
         let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
         let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
         let port:u16=line.trim().parse().expect("TLS server did not start");
         let send=if half_close {"end"} else {"write"};

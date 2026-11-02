@@ -85,6 +85,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     name_function(context, module, "Module")?;
     crate::host::shared_vm::commonjs::attach_module_cache(context, module)?;
     set(context, module, "Module", module)?;
+    let module_extensions = extensions(context)?;
+    set(context, module, "_extensions", module_extensions)?;
     let prototype = get(context, module, "prototype")?;
     let constructor = context.host_function_with_data(
         crate::host::shared_vm::operation("moduleConstructorGet"),
@@ -191,6 +193,79 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "findPackageJSON", find_package_json)?;
     super::source_map_shared_vm::install(context, module, true)?;
     Ok(module)
+}
+
+/// `Module._extensions`' key in the builtin cache; each default handler is cached under the
+/// key with its extension appended.
+const EXTENSIONS_KEY: &str = "\0builtin:module/_extensions";
+/// The extensions Node's loader registers, each with its own default handler.
+const DEFAULT_EXTENSIONS: [&str; 3] = [".js", ".json", ".node"];
+/// The handler `findLongestRegisteredExtension` falls back to.
+const FALLBACK_EXTENSION: &str = ".js";
+
+fn cached(context: &mut NativeContext<'_, NodeHost>, key: &str) -> Option<RootId> {
+    context.host_mut().shared_state().borrow().builtin_cache.get(key).copied()
+}
+
+fn cache(context: &mut NativeContext<'_, NodeHost>, key: String, value: RootId) -> Result<(), RootedError> {
+    let value = context.retain(value)?;
+    context.host_mut().shared_state().borrow_mut().builtin_cache.insert(key, value);
+    Ok(())
+}
+
+/// `Module._extensions` (also `require.extensions`): a null-prototype object of loaders by
+/// extension, holding Node's defaults until script replaces or adds one.
+pub(crate) fn extensions(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    if let Some(extensions) = cached(context, EXTENSIONS_KEY) {
+        return Ok(extensions);
+    }
+    let extensions = context.null_object_rooted()?;
+    for extension in DEFAULT_EXTENSIONS {
+        let handler = context.host_function_named(crate::host::shared_vm::operation("moduleExtensionDefault"), "")?;
+        set(context, extensions, extension, handler)?;
+        cache(context, format!("{EXTENSIONS_KEY}{extension}"), handler)?;
+    }
+    cache(context, EXTENSIONS_KEY.to_owned(), extensions)?;
+    Ok(extensions)
+}
+
+/// `findLongestRegisteredExtension(filename)`: the longest registered suffix of the base
+/// name starting at a dot other than its first character, else `.js`.
+fn registered_extension(context: &mut NativeContext<'_, NodeHost>, extensions: RootId, filename: &Path) -> Result<String, RootedError> {
+    let name = filename.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    for (index, _) in name.match_indices('.').filter(|&(index, _)| index > 0) {
+        let handler = get(context, extensions, &name[index..])?;
+        if context.truthy_rooted(handler)? {
+            return Ok(name[index..].to_owned());
+        }
+    }
+    Ok(FALLBACK_EXTENSION.to_owned())
+}
+
+/// `Module.prototype.load`'s dispatch: the handler script registered for `filename`'s
+/// extension, or `None` while it is still Node's own, which the loader runs in place.
+pub(crate) fn replaced_extension_handler(
+    context: &mut NativeContext<'_, NodeHost>,
+    filename: &Path,
+) -> Result<Option<RootId>, RootedError> {
+    let extensions = extensions(context)?;
+    let extension = registered_extension(context, extensions, filename)?;
+    let handler = get(context, extensions, &extension)?;
+    let default = cached(context, &format!("{EXTENSIONS_KEY}{extension}"));
+    match default {
+        Some(default) if context.strict_equal_rooted(default, handler)? => Ok(None),
+        _ => Ok(Some(handler)),
+    }
+}
+
+/// Node's own `Module._extensions[ext](module, filename)`, called by script.
+pub(crate) fn extension_default(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let module = args.first().copied().unwrap_or(undefined);
+    let filename = args.get(1).copied().unwrap_or(undefined);
+    let filename = context.to_string(filename)?;
+    crate::host::shared_vm::commonjs::execute_user_module(context, module, Path::new(&filename))?;
+    Ok(undefined)
 }
 
 fn name_function(

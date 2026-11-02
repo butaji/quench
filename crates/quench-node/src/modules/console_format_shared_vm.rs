@@ -28,8 +28,6 @@ pub(crate) struct Options {
     pub(crate) show_hidden: bool,
     /// Writes a container's entries sorted.
     pub(crate) sorted: bool,
-    /// Writes an error as its stack; otherwise as `[Name: message]`.
-    pub(crate) error_stacks: bool,
 }
 
 /// How containers break over lines.
@@ -52,7 +50,6 @@ impl Default for Options {
             custom_inspect: true,
             show_hidden: false,
             sorted: false,
-            error_stacks: true,
         }
     }
 }
@@ -87,10 +84,6 @@ impl Options {
     }
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
-
 /// `util.inspect(value, options)`, through the one inspector (`util_inspect_shared_vm`).
 pub(crate) fn inspect(c: &mut Context<'_>, value: RootId, options: Options) -> Result<String, RootedError> {
     let object = options.object(c)?;
@@ -103,28 +96,6 @@ pub(crate) fn inspect(c: &mut Context<'_>, value: RootId, options: Options) -> R
 
 
 
-
-/// `inspect(value, options)` handed to custom inspectors.
-pub(crate) fn inspect_operation(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let value = args.first().copied().unwrap_or_else(|| c.undefined());
-    let mut options = Options::default();
-    if let Some(&object) = args.get(1) {
-        if c.is_object_rooted(object)? {
-            let depth = get(c, object, "depth")?;
-            match c.rooted_value(depth) {
-                Some(depth) if depth.is_null() => options.depth = None,
-                Some(depth) => {
-                    if let Some(depth) = depth.as_number() {
-                        options.depth = Some(depth);
-                    }
-                }
-                None => {}
-            }
-        }
-    }
-    let text = inspect(c, value, options)?;
-    Ok(c.string_rooted(&text))
-}
 
 
 

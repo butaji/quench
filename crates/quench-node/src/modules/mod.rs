@@ -14,7 +14,6 @@ pub(crate) mod async_hooks_public;
 pub(crate) mod async_hooks_state;
 pub(crate) mod blob_binding_shared_vm;
 pub(crate) mod blob_shared_vm;
-pub(crate) mod broadcast_channel_shared_vm;
 pub(crate) mod buffer_binding_shared_vm;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_module;
@@ -78,6 +77,7 @@ pub(crate) mod http_common_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod http_status_shared_vm;
+pub(crate) mod http2_shared_vm;
 pub(crate) mod https_shared_vm;
 #[cfg(quench_icu)]
 pub(crate) mod icu_binding_shared_vm;
@@ -212,7 +212,6 @@ pub(crate) mod crypto_provider_shared_vm;
 pub(crate) mod stream_binding;
 
 #[cfg(quench_openssl_provider)]
-pub(crate) mod deep_equal_shared_vm;
 pub(crate) mod dom_exception_shared_vm;
 
 
@@ -248,13 +247,6 @@ pub(crate) mod native_async_wrap;
 mod crypto_kdf;
 #[cfg(quench_openssl_provider)]
 mod crypto_pbkdf2;
-
-// `v2-cloud-node`'s Worker, unrouted since `worker_threads` is `worker_shared_vm` (decision 31);
-// the Node lane ports its additions onto that module or removes this one.
-#[allow(dead_code)]
-pub(crate) mod worker_threads_shared_vm;
-pub(crate) mod worker_error_packet;
-pub(crate) mod worker_owned_clone;
 
 pub(crate) mod ipc_pipe;
 pub(crate) mod pipe_binding;

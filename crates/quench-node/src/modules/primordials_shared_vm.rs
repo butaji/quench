@@ -14,12 +14,6 @@ use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-/// `require(COPY_REQUEST)` from the projected `primordials.js`: the native copy.
-pub(crate) const COPY_REQUEST: &str = "internal/quench/primordials_copy";
-
-/// The binding the projection gives the native copy.
-const COPY_BINDING: &str = "copyIntrinsicProperties";
-
 /// How each of `primordials.js`'s copy functions wraps a copied data property's function value.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyKind {
@@ -42,11 +36,6 @@ const COPIES: [(&str, CopyKind); 3] = [
 /// drops: it upper-cases the code unit after it.
 const WELL_KNOWN_SYMBOL_PREFIX: usize = "Symbol.".len();
 
-
-/// `require(COPY_REQUEST)`: the native copy function.
-pub(crate) fn copy_request(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_function_named(crate::host::shared_vm::operation("primordialsCopy"), COPY_BINDING)
-}
 
 /// `copyIntrinsicProperties(kind, src, dest, prefix, varargsMethods, uncurryThis, applyBind)`:
 /// the body of the copy declaration named `kind`.

@@ -5,11 +5,18 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 const FAST_BUFFER_CACHE: &str = "\0builtin:buffer/FastBuffer";
+/// The cache key of `FastBuffer` itself, which shares `Buffer.prototype` and constructs
+/// without `Buffer()`'s deprecation.
+pub(crate) const FAST_BUFFER_CONSTRUCTOR: &str = "\0builtin:buffer/FastBufferConstructor";
 
-/// Internal requests the projected library files make for host-held state; only Node's
-/// library code can make them.
-pub(crate) const FAST_BUFFER_REQUEST: &str = "internal/quench/fast_buffer";
-pub(crate) const BUFFER_POOL_REQUEST: &str = "internal/quench/buffer_pool";
+/// `FastBuffer`: the class Node's own code constructs Buffers with.
+pub(crate) fn fast_buffer_constructor(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    fast_buffer_class(c)?;
+    let shared = c.host_mut().shared_state();
+    let constructor = shared.borrow().builtin_cache.get(FAST_BUFFER_CONSTRUCTOR).copied();
+    constructor.ok_or_else(|| RootedError::host("FastBuffer is not initialized"))
+}
+
 
 /// `buffer.js`'s `Buffer.poolSize = 64 * 1024` and `kPoolAlignment = 64`, which the host's
 /// pool follows until `buffer.js` loads (no script can change them before).
@@ -131,31 +138,6 @@ fn fast_buffer_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 }
 
 
-/// Loads `buffer.js`, which defines a pending prototype's members (`define_pending_prototype`).
-/// Its load may be what first wrote to the prototype; the library cache then returns it as
-/// it stands.
-pub(crate) fn initialize_prototype(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    fast_buffer_class(c)?;
-    Ok(c.undefined())
-}
-
-/// `require('internal/quench/fast_buffer')` from the projected `internal/buffer.js`.
-pub(crate) fn fast_buffer_request(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    fast_buffer_class(c)
-}
-
-/// `require('internal/quench/buffer_pool')` from the projected `buffer.js`: the host's pool
-/// state for the library to adopt, or `undefined` for the library to make its own. Either
-/// way the library owns the pool from then on.
-pub(crate) fn buffer_pool_request(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let shared = c.host_mut().shared_state();
-    let owner = std::mem::replace(&mut shared.borrow_mut().buffer_pool, PoolOwner::Library);
-    match owner {
-        PoolOwner::Host(state) => Ok(state),
-        PoolOwner::Unborn | PoolOwner::Library => Ok(c.undefined()),
-    }
-}
-
 
 
 
@@ -171,7 +153,7 @@ pub(crate) fn allocate_before_library(c: &mut Context<'_>, size: usize) -> Resul
     if matches!(c.host_mut().shared_state().borrow().buffer_pool, PoolOwner::Library) {
         return Ok(None);
     }
-    let fast = fast_buffer_class(c)?;
+    let fast = fast_buffer_constructor(c)?;
     c.with_startup_intrinsics(|c| {
         if is_pooled(size) {
             let state = match c.host_mut().shared_state().borrow().buffer_pool {

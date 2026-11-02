@@ -32,6 +32,10 @@ crate::modules::host_members::members!(Member, "httpAgent", [
     SocketClose,
     SocketTimeout,
     SocketRemove,
+    /// `maybeEnableKeylog`, the agent's `newListener` listener, which acts on the first
+    /// `keylog` listener, and the `onkeylog` forwarder it then gives each socket.
+    MaybeEnableKeylog,
+    OnKeylog,
 ]);
 
 /// Node's `Agent` option defaults.
@@ -200,6 +204,15 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             }
             Ok(c.undefined())
         }
+        Member::MaybeEnableKeylog => {
+            maybe_enable_keylog(c, this, at(0))?;
+            Ok(c.undefined())
+        }
+        Member::OnKeylog => {
+            let [agent] = captured(c)?;
+            emit(c, agent, "keylog", &[at(0), this])?;
+            Ok(c.undefined())
+        }
         Member::SocketRemove => {
             let [agent, socket, options] = captured(c)?;
             let total = number(c, agent, "totalSocketCount")?;
@@ -271,6 +284,8 @@ fn construct(c: &mut Context<'_>, this: RootId, options: RootId) -> Outcome {
     let max_total = get(c, own, "maxTotalSockets")?;
     put(c, this, "maxTotalSockets", max_total)?;
     put_number(c, this, "totalSocketCount", 0.0)?;
+    let keylog = function(c, Member::MaybeEnableKeylog, "maybeEnableKeylog", &[])?;
+    on(c, this, "newListener", keylog)?;
     let buffer = get(c, own, "agentKeepAliveTimeoutBuffer")?;
     let buffer = match c.rooted_value(buffer).and_then(|value| value.as_number()) {
         Some(value) if value >= 0.0 && value.is_finite() => value,
@@ -514,7 +529,31 @@ fn install_listeners(c: &mut Context<'_>, agent: RootId, socket: RootId, options
         listeners.push(listener);
     }
     let listeners = c.array_rooted(&listeners)?;
-    put_slot(c, socket, Slot::AgentListeners, listeners)
+    put_slot(c, socket, Slot::AgentListeners, listeners)?;
+    let forward = get_slot(c, agent, Slot::OnKeylog)?;
+    if c.truthy_rooted(forward)? {
+        on(c, socket, "keylog", forward)?;
+    }
+    Ok(())
+}
+
+/// `maybeEnableKeylog(eventName)`: from the first `keylog` listener on, every socket of
+/// the agent forwards its key log lines as `agent.emit('keylog', line, socket)`.
+fn maybe_enable_keylog(c: &mut Context<'_>, agent: RootId, event: RootId) -> Result<(), RootedError> {
+    let enabled = get_slot(c, agent, Slot::OnKeylog)?;
+    if c.string_text(event)?.as_deref() != Some("keylog") || c.truthy_rooted(enabled)? {
+        return Ok(());
+    }
+    let forward = function(c, Member::OnKeylog, "onkeylog", &[agent])?;
+    put_slot(c, agent, Slot::OnKeylog, forward)?;
+    let sockets = get(c, agent, "sockets")?;
+    for name in c.enumerable_own_keys_rooted(sockets, true, false)? {
+        let list = c.get_property_rooted(sockets, name)?;
+        for socket in c.array_like_values_rooted(list)? {
+            on(c, socket, "keylog", forward)?;
+        }
+    }
+    Ok(())
 }
 
 fn remove_from(c: &mut Context<'_>, pools: RootId, name: &str, socket: RootId) -> Result<(), RootedError> {

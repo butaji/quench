@@ -20,14 +20,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     super::child_process_class_shared_vm::module(context)
 }
 
-pub(crate) fn spawn_child(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    spawn_child_with_stdio(context, args, None)
-}
-
 fn spawn_child_with_stdio(
     context: &mut NativeContext<'_, NodeHost>,
     args: &[RootId],
@@ -2551,22 +2543,5 @@ pub(crate) fn spawn_succeeded_run(
 ) -> Result<RootId, RootedError> {
     let child = context.host_function_data()?;
     emit_failure_event(context, child, "spawn", &[])?;
-    Ok(context.undefined())
-}
-
-pub(crate) fn fork_child_projection(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let owner = context.host_function_data()?;
-    let policy = crate::host::shared_vm::commonjs::node_library_module(
-        context,
-        "child_process.js",
-        "child_process.js",
-    )?;
-    let function = property(context, policy, "_forkChild")?;
-    let key = context.string_rooted("_forkChild");
-    context.define_data_property_rooted(owner, key, function, true, true, true)?;
     Ok(context.undefined())
 }

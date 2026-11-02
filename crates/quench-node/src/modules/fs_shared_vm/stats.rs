@@ -25,7 +25,7 @@ const TIME_NS_FIELDS: &[&str] = BIGINT_FIELDS.split_at(NUMBER_COUNT).1;
 /// The time fields, each with `<name>Ms` (and `<name>Ns` for BigInt) members.
 pub(crate) const TIME_FIELDS: [&str; 4] = ["atime", "mtime", "ctime", "birthtime"];
 /// `StatFs`'s fields, in Node's order.
-pub(crate) const STATFS_FIELDS: [&str; 7] = ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"];
+pub(crate) const STATFS_FIELDS: [&str; 8] = ["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"];
 
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
@@ -243,7 +243,7 @@ pub(crate) fn time_set(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Ou
     Ok(c.undefined())
 }
 
-/// `class StatFs { constructor(type, bsize, blocks, bfree, bavail, files, ffree) }`.
+/// `class StatFs { constructor(type, bsize, frsize, blocks, bfree, bavail, files, ffree) }`.
 pub(crate) fn construct_statfs(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     classes::require_new(c, "StatFs")?;
     assign(c, this, &STATFS_FIELDS, args)?;

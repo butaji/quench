@@ -200,7 +200,7 @@ impl Legacy {
         }
         let query = match &self.query {
             Some((Query::Object(object), _)) => {
-                let querystring = crate::host::shared_vm::commonjs::library_require(c, "querystring")?;
+                let querystring = crate::host::shared_vm::commonjs::builtin_require(c, "querystring")?;
                 let stringify = get(c, querystring, "stringify")?;
                 let text = c.call_rooted(stringify, querystring, &[*object])?;
                 c.to_string(text)?
@@ -432,7 +432,7 @@ fn query(c: &mut Context<'_>, text: &str, parse_query: bool) -> Result<(Query, S
     if !parse_query {
         return Ok((Query::Text, text.to_owned()));
     }
-    let querystring = crate::host::shared_vm::commonjs::library_require(c, "querystring")?;
+    let querystring = crate::host::shared_vm::commonjs::builtin_require(c, "querystring")?;
     let parse = get(c, querystring, "parse")?;
     let text = c.string_rooted(text);
     let object = c.call_rooted(parse, querystring, &[text])?;

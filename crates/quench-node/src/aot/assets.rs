@@ -22,7 +22,6 @@ pub struct ModuleFile {
 pub struct ModuleAssets {
     pub files: BTreeMap<PathBuf, ModuleFile>,
     pub resolutions: BTreeMap<(PathBuf, String), PathBuf>,
-    pub node_root: Option<PathBuf>,
     pub entry: Option<PathBuf>,
     pub views: BTreeMap<(PathBuf, String), Rc<str>>,
     pub imports: BTreeMap<(String, String), String>,
@@ -57,9 +56,6 @@ impl ModuleAssets {
                 return Err(format!("conflicting module source: {name}"));
             }
         }
-        if self.node_root.is_some() && other.node_root.is_some() && self.node_root != other.node_root {
-            return Err("conflicting Node SDK roots".into());
-        }
         if self.entry.is_some() && other.entry.is_some() && self.entry != other.entry {
             return Err("conflicting application entries".into());
         }
@@ -73,7 +69,6 @@ impl ModuleAssets {
         self.views.extend(other.views);
         self.imports.extend(other.imports);
         self.modules.extend(other.modules);
-        if other.node_root.is_some() { self.node_root = other.node_root; }
         if other.entry.is_some() { self.entry = other.entry; }
         Ok(())
     }
@@ -112,7 +107,6 @@ pub struct EmbeddedModuleSource {
 
 /// Compiler-generated, sorted original module bytes and resolved edges.
 pub struct EmbeddedModules {
-    pub node_root: Option<&'static str>,
     pub entry: Option<&'static str>,
     pub files: &'static [EmbeddedModuleFile],
     pub resolutions: &'static [EmbeddedModuleResolution],
@@ -156,7 +150,6 @@ impl crate::NodeHost {
     /// Use frozen compiler inputs for bundled modules; ordinary data-file APIs
     /// retain their existing filesystem behavior.
     pub fn with_embedded_modules(mut self, modules: &'static EmbeddedModules) -> Self {
-        if let Some(root) = modules.node_root { self.node_library_root = root.into(); }
         if let Some(entry) = modules.entry.filter(|entry| modules.file(Path::new(entry)).is_none_or(|file| file.kind != SourceKind::Module)) {
             self = self.with_commonjs_entry(entry.into());
         }

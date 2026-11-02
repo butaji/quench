@@ -140,8 +140,8 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     c.define_data_property_rooted(prototype, dispose_key, dispose, true, false, true)?;
 
     let module = c.object_rooted()?;
-    let initializer = c.host_function_with_data(crate::host::shared_vm::operation("childProcessForkChildProjection"), module)?;
-    c.define_lazy_data_properties_rooted(module, &["_forkChild"], true, initializer)?;
+    let fork_child = c.host_function_named(crate::host::shared_vm::operation("childProcessForkChild"), "_forkChild")?;
+    put(c, module, "_forkChild", fork_child)?;
     put(c, module, "ChildProcess", child_process)?;
     let spawn_data = c.object_rooted()?;
     put(c, spawn_data, "constructor", child_process)?;
@@ -188,7 +188,7 @@ pub(crate) fn construct(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outc
 
 /// A signal's number, as `convertToValidSignal` accepts it.
 fn signal_number(c: &mut Context<'_>, signal: RootId) -> Result<RootId, RootedError> {
-    let os = crate::host::shared_vm::commonjs::library_require(c, "os")?;
+    let os = crate::host::shared_vm::commonjs::builtin_require(c, "os")?;
     let constants = get(c, os, "constants")?;
     let signals = get(c, constants, "signals")?;
     if let Some(number) = c.rooted_value(signal).and_then(|value| value.as_number()) {

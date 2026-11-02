@@ -103,9 +103,8 @@ impl CompiledSources {
                 .map_err(|error| error.to_string())?;
         }
         writeln!(catalog, "}}\n}}").map_err(|error| error.to_string())?;
-        let node_root = self.assets.node_root.as_deref().map(|path| path.to_str().ok_or("module root is not UTF-8")).transpose()?;
         let entry_path = self.assets.entry.as_deref().map(|path| path.to_str().ok_or("module entry is not UTF-8")).transpose()?;
-        writeln!(catalog, "quench_node::linked_module_assets! {{ values embedded_modules; root {node_root:?}; entry {entry_path:?}; files {{")
+        writeln!(catalog, "quench_node::linked_module_assets! {{ values embedded_modules; entry {entry_path:?}; files {{")
             .map_err(|error| error.to_string())?;
         for (index, (path, file)) in self.assets.files.iter().enumerate() {
             let bytes = match std::str::from_utf8(&file.bytes) {
@@ -199,7 +198,6 @@ pub(crate) fn stage_host_sources(
     for name in &builtins {
         context.scoped(|context| {
             let (module, member) = match name.strip_prefix("node:").unwrap_or(name) {
-                "console" => return crate::modules::console_shared_vm::stage_formatting(context),
                 // Namespace copies can observe every public lazy export: buffer
                 // Blob/File, util codecs, and crypto's WebCrypto policy.
                 "buffer" | "util" | "crypto" => return crate::host::shared_vm::commonjs::stage_builtin_exports(context, name),
@@ -207,11 +205,6 @@ pub(crate) fn stage_host_sources(
                 // createRequire tests URL-like inputs through the SDK URL policy,
                 // including the static CommonJS facade used by ESM imports.
                 "module" => return crate::host::shared_vm::commonjs::internal_url_module(context).map(drop),
-                // Object-shaped throws/rejects matchers and guarded deep-equality
-                // fallbacks load the SDK comparison policy lazily.
-                "assert" | "assert/strict" => return crate::host::shared_vm::commonjs::node_library_module(
-                    context, "assert.js", "internal/util/comparisons.js",
-                ).map(drop),
                 "fs" | "fs/promises" => {
                     // Namespace readers can observe directory/glob policy as well
                     // as streams, including fs.promises reached through fs.
@@ -252,17 +245,17 @@ impl SourceManifest {
     /// Stage only Node's existing pre-entry bootstrap lifecycle. The snapshot
     /// boundary forbids process-state capture and stops before user preloads,
     /// entry loading, IPC activation and event-loop execution.
-    pub fn capture_bootstrap(library_root: &Path) -> Result<Self, String> {
-        Self::capture(library_root, CaptureStage::Snapshot(crate::host::startup_snapshot::SnapshotKind::Bootstrap))
+    pub fn capture_bootstrap() -> Result<Self, String> {
+        Self::capture(CaptureStage::Snapshot(crate::host::startup_snapshot::SnapshotKind::Bootstrap))
     }
 
     /// The existing Node snapshot preload set, staged before any application.
-    pub fn capture_preloaded(library_root: &Path) -> Result<Self, String> {
-        Self::capture(library_root, CaptureStage::Snapshot(crate::host::startup_snapshot::SnapshotKind::Preloaded))
+    pub fn capture_preloaded() -> Result<Self, String> {
+        Self::capture(CaptureStage::Snapshot(crate::host::startup_snapshot::SnapshotKind::Preloaded))
     }
 
-    pub fn capture_for_graph(library_root: &Path, graph: &DependencyGraph) -> Result<Self, String> {
-        Self::capture(library_root, CaptureStage::Modules(graph))
+    pub fn capture_for_graph(graph: &DependencyGraph) -> Result<Self, String> {
+        Self::capture(CaptureStage::Modules(graph))
     }
 
     pub fn extend(&mut self, other: Self) -> Result<(), String> {
@@ -271,7 +264,7 @@ impl SourceManifest {
         Ok(())
     }
 
-    fn capture(library_root: &Path, stage: CaptureStage<'_>) -> Result<Self, String> {
+    fn capture(stage: CaptureStage<'_>) -> Result<Self, String> {
         let inputs = Rc::new(RefCell::new(Self::default()));
         let captured = inputs.clone();
         let mut host = NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?
@@ -279,7 +272,6 @@ impl SourceManifest {
                 captured.borrow_mut().insert(name, parts)?;
                 Ok(None)
             });
-        host.node_library_root = library_root.canonicalize().map_err(|error| error.to_string())?;
         match stage {
             CaptureStage::Snapshot(kind) => host.building_snapshot = Some(kind),
             CaptureStage::Modules(graph) => host.native_source_staging = Some(HostSourceDemands {
@@ -287,7 +279,7 @@ impl SourceManifest {
                 globals: graph.host_globals.clone(), esm_builtins: graph.esm_builtins.clone(),
             }),
         }
-        let assets = Rc::new(RefCell::new(ModuleAssets { node_root: Some(host.node_library_root.clone()), ..Default::default() }));
+        let assets = Rc::new(RefCell::new(ModuleAssets::default()));
         host.module_assets = ModuleAssetState::Capture(assets.clone());
         let mut runtime = Runtime::new(host);
         let entry = Engine::specialize("", NATIVE_ENTRY_NAME).map_err(|errors| format!("{errors:?}"))?;
