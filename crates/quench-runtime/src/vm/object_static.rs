@@ -314,23 +314,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
-        if source.is_null() || source.is_undefined() {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    Vec::new(),
-                ),
-            }));
+        if let Some(keys) = self.plain_for_in_keys(source) {
+            return Ok(keys);
         }
         let mut current = self.box_object(source)?;
-        if let Some(keys) = self.shape_for_in_keys(current) {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    keys,
-                ),
-            }));
-        }
         let mut visited_objects = FxHashMap::default();
         // `JsString` caches its flattened units in a `OnceCell`; `Hash` and `Eq` read only the units.
         #[allow(clippy::mutable_key_type)]
@@ -389,6 +376,19 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    /// Prepare the internal key array without invoking guest code or collecting.
+    /// Other receivers use the rooted generic enumeration path.
+    pub(super) fn plain_for_in_keys(&mut self, source: Value) -> Option<Value> {
+        let keys = if source.is_null() || source.is_undefined() {
+            Vec::new()
+        } else {
+            self.shape_for_in_keys(source)?
+        };
+        Some(self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), keys),
+        }))
     }
 
     /// for-in keys of an object whose prototype chain holds only objects with

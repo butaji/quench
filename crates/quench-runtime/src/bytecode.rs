@@ -1170,6 +1170,7 @@ opcodes!($;
 
     // An engine-private enumeration operation, not a guest function call.
     ForInKeyIsEnumerable => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    ForInKeys => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 );
 
 const _: () = {
@@ -4342,7 +4343,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 114;
+    pub const FORMAT_VERSION: u8 = 115;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

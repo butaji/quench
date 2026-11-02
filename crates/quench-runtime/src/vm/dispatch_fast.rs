@@ -6173,6 +6173,20 @@ script_handler! {
 }
 
 script_handler! {
+    /// Prepare ordinary for-in snapshots beside activations, using the same
+    /// semantic operation as the general loop. Exotic chains take its rooted walk.
+    fn lane_for_in_keys<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(keys) = vm.plain_for_in_keys(r.get(i.b)) else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, keys);
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
     /// The private for-in key check has no guest callee or argument window. Ordinary
     /// lookups use the shared query; an exotic lookup runs through the general step.
     fn lane_for_in_key_is_enumerable<>(cx, r, ip, i, view) {
@@ -16750,6 +16764,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CheckPrivate => Some(lane_check_private::<H>),
         Op::PrivateIn => Some(lane_private_in::<H>),
         Op::CopyDataProperties => Some(lane_copy_data_properties::<H>),
+        Op::ForInKeys => Some(lane_for_in_keys::<H>),
         Op::ForInKeyIsEnumerable => Some(lane_for_in_key_is_enumerable::<H>),
         op if lane_steps_in_place(op) => Some(lane_general_step::<H>),
         Op::IncDec => Some(lane_inc_dec::<H, false>),

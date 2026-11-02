@@ -101,19 +101,8 @@ impl FunctionCompiler<'_, '_> {
         let object_atom = self.hidden_local("\0quench:for-in:source");
         self.store_atom(object_atom, object);
         let object = self.load_atom(object_atom);
-        let keys = self.load_name(crate::bytecode::FOR_IN_KEYS_BINDING);
-        let this = self.literal(Constant::Undefined);
-        let base = self.next_reg;
-        let argument = self.reg();
-        self.emit(Op::Move, argument, object, 0, 0);
         let source = self.reg();
-        self.emit(
-            Op::Call,
-            source,
-            keys,
-            this,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 1, false, false),
-        );
+        self.emit(Op::ForInKeys, source, object, 0, 0);
         let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
         self.for_in_snapshot(
             &item.left,

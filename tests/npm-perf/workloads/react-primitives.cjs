@@ -13,6 +13,32 @@ const textMask = texts.length - 1;
 const state = { a: 0, b: 0, retained: null };
 function four(a, b, c, d) { return a + b + c + d; }
 const operations = {
+  "keys-prepare": function () {
+    let sum = 0;
+    for (let index = 0; index < width; index++) sum += Object.keys(props).length;
+    return sum;
+  },
+  "keys-walk": function () {
+    let sum = 0;
+    for (let index = 0; index < width; index++) {
+      for (const key in props) sum += key.length;
+    }
+    return sum;
+  },
+  "keys-index": function () {
+    let sum = 0;
+    for (let index = 0; index < width; index++) {
+      for (let position = 0; position < propKeys.length; position++) sum += propKeys[position].length;
+    }
+    return sum;
+  },
+  "keyed-read": function () {
+    let sum = 0;
+    for (let index = 0; index < width; index++) {
+      for (let position = 0; position < propKeys.length; position++) sum += props[propKeys[position]].length;
+    }
+    return sum;
+  },
   "own-check": function () {
     let sum = 0;
     for (let index = 0; index < width; index++) sum += hasOwn.call(props, propKeys[index & propKeyMask]) ? 1 : 0;
