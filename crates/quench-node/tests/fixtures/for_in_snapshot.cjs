@@ -122,3 +122,27 @@ const queryLog = [];
 const queryProxy = new Proxy({a: 1}, {getOwnPropertyDescriptor(target, key) { queryLog.push(key); return Reflect.getOwnPropertyDescriptor(target, key); }});
 show(query(queryProxy, {toString() { queryLog.push('key'); return 'a'; }}));
 show(queryLog);
+
+// Key projections must survive ordinary GC and retire when dead shape IDs are reused.
+const projectionPrototype = { inherited: 7 };
+const projectionLive = Object.assign(Object.create(projectionPrototype), { 2: 2, a: 1, b: 3 });
+function churnEnumerationShapes(prefix) {
+  for (let index = 0; index < 4096; index++) {
+    const object = {};
+    for (let field = 0; field < 4; field++) object[prefix + index + ':' + field] = field;
+    if (Object.keys(object).length !== 4) throw new Error('shape projection churn');
+  }
+}
+for (let phase = 0; phase < 3; phase++) {
+  const before = keys(projectionLive);
+  gc();
+  if (keys(projectionLive).join() !== before.join()) throw new Error('projection ordinary GC');
+  churnEnumerationShapes('discarded:' + phase + ':');
+  gc();
+  if (keys(projectionLive).join() !== before.join()) throw new Error('projection shape reuse');
+  projectionPrototype['later' + phase] = phase;
+  Object.defineProperty(projectionLive, 'a', { enumerable: phase % 2 === 0, configurable: true });
+  delete projectionLive.b;
+  projectionLive.b = phase;
+}
+show(keys(projectionLive));
