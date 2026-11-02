@@ -93,19 +93,10 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
     let key = get(context, data, "captureKey")?;
     let no = context.boolean(false);
     context.define_data_property_rooted(prototype, key, no, true, false, false)?;
-    let get_native = context.host_constructor_named_with_data(
-        crate::host::shared_vm::operation("emitterCaptureDefaultGet"),
-        "get",
-        data,
-    )?;
-    let set_native = context.host_constructor_named_with_data(
-        crate::host::shared_vm::operation("emitterCaptureDefaultSet"),
-        "set",
-        data,
-    )?;
     let descriptor = context.null_object_rooted()?;
-    for (name, value) in [("get", get_native), ("set", set_native)] {
-        context.assign_named_property_rooted(descriptor, name, value)?;
+    for (name, operation) in [("get", "emitterCaptureDefaultGet"), ("set", "emitterCaptureDefaultSet")] {
+        let accessor = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, data)?;
+        context.assign_named_property_rooted(descriptor, name, accessor)?;
     }
     let yes = context.boolean(true);
     context.assign_named_property_rooted(descriptor, "enumerable", yes)?;

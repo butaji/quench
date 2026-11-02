@@ -625,11 +625,11 @@ pub(super) fn lower(
         lowering.builder.switch_to_block(block);
         for register in lowering.written.iter().map(|register| register as Register)
             .take_while(|register| *register < unit.caller_registers) {
-            if !lowering.is_live(unit_pc as usize, register) { continue; }
+            if !lowering.is_live(unit_pc, register) { continue; }
             let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
             lowering.builder.ins().store(MemFlagsData::trusted(), bits, lowering.registers_base, register_offset(register));
         }
-        let word = match unit.origins.get(unit_pc as usize).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
+        let word = match unit.origins.get(unit_pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
             super::lane_unit::Origin::Caller(pc) => u64::from(pc),
             super::lane_unit::Origin::Inlined { frame, pc: source_pc } => {
                 let inlined = unit.frames[frame];
@@ -646,7 +646,7 @@ pub(super) fn lower(
                     emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined))
                 };
                 for register in 0..inlined.registers {
-                    let bits = if lowering.is_live(unit_pc as usize, inlined.base + register) {
+                    let bits = if lowering.is_live(unit_pc, inlined.base + register) {
                         lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)])
                     } else {
                         lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
@@ -796,9 +796,8 @@ impl Lowering<'_, '_> {
                                 let site = self.program.field_sites[site];
                                 sites.push(site.first.1);
                                 if let Some((_, cache)) = site.second { sites.push(cache); }
-                                if instruction.writes_current_this() {
-                                    if let Some((_, cache)) = site.sink { sites.push(cache); }
-                                }
+                                if instruction.writes_current_this()
+                                    && let Some((_, cache)) = site.sink { sites.push(cache); }
                             }
                             _ => {},
                         },
@@ -1483,7 +1482,7 @@ impl Lowering<'_, '_> {
                         properties_len, plan, PackedAccess::Reload, general)?
                 }
             };
-            let Some(address) = projection.arena_address(&mut self.builder, field.slot, general) else { return None; };
+            let address = projection.arena_address(&mut self.builder, field.slot, general)?;
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(general);

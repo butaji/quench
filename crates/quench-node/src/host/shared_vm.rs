@@ -2272,7 +2272,6 @@ node_bindings! {
         method "navigatorGlobalGet" (0) => crate::host::shared_vm::commonjs::navigator_global_get,
         method "moduleParentDeprecated" (0) => crate::modules::module_shared_vm::deprecated_parent::<NodeHost>,
         method "moduleParentDeprecatedSet" (1) => crate::modules::module_shared_vm::deprecated_parent::<NodeHost>,
-        method "moduleCompileCacheInitialize" (0) => crate::modules::module_shared_vm::initialize_compile_cache_exports,
         method "moduleInitPaths" (0) => crate::modules::module_paths_shared_vm::initialize,
         method "moduleLookupPaths" (2) => crate::modules::module_paths_shared_vm::lookup,
         method "moduleLoadFacade" (2) => crate::modules::module_paths_shared_vm::load,

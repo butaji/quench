@@ -7095,11 +7095,11 @@ fn lane_loop_run<H: Host>(
             .iter()
             .enumerate()
             .map(|(index, field)| {
-                (native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index))
-                    .then(|| {
-                        machine.native_field_load_descriptors(field.cache_site)
-                    })
-                    .unwrap_or_default()
+                if native_heap_available && region.inlining.is_none() && region.is_dynamic_field(index) {
+                    machine.native_field_load_descriptors(field.cache_site)
+                } else {
+                    Default::default()
+                }
             })
             .collect::<Vec<_>>();
         let heap = &machine.heap;
@@ -19130,30 +19130,6 @@ fn jump_targets(instructions: &[WideInstruction]) -> InstructionSet {
     targets
 }
 
-#[cfg(test)]
-mod instruction_set_tests {
-    use super::*;
-
-    #[test]
-    fn instruction_membership_crosses_word_and_inline_boundaries() {
-        for count in [0, 1, INSTRUCTION_WORD_BITS, INSTRUCTION_WORD_BITS + 1,
-            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS,
-            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS + 1]
-        {
-            let mut set = InstructionSet::new(count);
-            assert_eq!(set.0.len(), count.div_ceil(INSTRUCTION_WORD_BITS));
-            assert_eq!(set.0.spilled(), count > INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS);
-            for pc in 0..count {
-                assert!(!set.contains(pc));
-                set.insert(pc);
-                assert!(set.contains(pc));
-                if pc + 1 < count { assert!(!set.contains(pc + 1)); }
-            }
-            for pc in 0..count { assert!(set.contains(pc)); }
-        }
-    }
-}
-
 pub(super) fn decoded_instruction(
     function: &Function,
     packed: crate::bytecode::Instr,
@@ -19638,5 +19614,29 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             return ip_next;
         }
         ip = ip_next;
+    }
+}
+
+#[cfg(test)]
+mod instruction_set_tests {
+    use super::*;
+
+    #[test]
+    fn instruction_membership_crosses_word_and_inline_boundaries() {
+        for count in [0, 1, INSTRUCTION_WORD_BITS, INSTRUCTION_WORD_BITS + 1,
+            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS,
+            INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS + 1]
+        {
+            let mut set = InstructionSet::new(count);
+            assert_eq!(set.0.len(), count.div_ceil(INSTRUCTION_WORD_BITS));
+            assert_eq!(set.0.spilled(), count > INLINE_INSTRUCTION_WORDS * INSTRUCTION_WORD_BITS);
+            for pc in 0..count {
+                assert!(!set.contains(pc));
+                set.insert(pc);
+                assert!(set.contains(pc));
+                if pc + 1 < count { assert!(!set.contains(pc + 1)); }
+            }
+            for pc in 0..count { assert!(set.contains(pc)); }
+        }
     }
 }

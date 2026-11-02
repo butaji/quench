@@ -238,8 +238,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let process = get(context, global, "process")?;
     let path_module = crate::modules::path_shared_vm::module(context)?;
     let path_delimiter = get(context, path_module, "delimiter")?;
-    let initialize = context.host_function_with_data(crate::host::shared_vm::operation("moduleCompileCacheInitialize"), module)?;
-    context.define_lazy_data_properties_rooted(module, &["constants", "enableCompileCache", "flushCompileCache", "getCompileCacheDir"], true, initialize)?;
+    install_compile_cache_exports(context, module)?;
     super::module_paths_shared_vm::install(context, module, process, path_module, path_delimiter)?;
     let resolve_filename =
         context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
@@ -999,23 +998,93 @@ pub(crate) fn get_compile_cache_dir(context: &mut NativeContext<'_, NodeHost>, _
     Ok(context.undefined())
 }
 
-pub(crate) fn initialize_compile_cache_exports(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let module = context.host_function_data()?;
-    let constants = context.object_rooted()?;
-    let status = context.object_rooted()?;
+fn install_compile_cache_exports(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
+    let constants = context.null_object_rooted()?;
+    let status = context.null_object_rooted()?;
     for (name, value) in COMPILE_CACHE_STATUS {
         let value = context.number(*value);
-        set(context, status, name, value)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(status, key, value, false, true, false)?;
     }
-    set(context, constants, "compileCacheStatus", status)?;
+    context.prevent_extensions_rooted(status)?;
+    let key = context.string_rooted("compileCacheStatus");
+    context.define_data_property_rooted(constants, key, status, false, true, false)?;
+    context.prevent_extensions_rooted(constants)?;
     set(context, module, "constants", constants)?;
-    for (name, operation) in [
-        ("enableCompileCache", "moduleEnableCompileCache"),
-        ("flushCompileCache", "moduleFlushCompileCache"),
-        ("getCompileCacheDir", "moduleGetCompileCacheDir"),
+    for (name, operation, constructable) in [
+        ("enableCompileCache", "moduleEnableCompileCache", true),
+        ("flushCompileCache", "moduleFlushCompileCache", false),
+        ("getCompileCacheDir", "moduleGetCompileCacheDir", true),
     ] {
-        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        let operation = crate::host::shared_vm::operation(operation);
+        let function = if constructable { context.host_constructor_named(operation, name)? }
+            else { context.host_function_named(operation, name)? };
         set(context, module, name, function)?;
     }
-    Ok(context.undefined())
+    Ok(())
+}
+
+#[cfg(test)]
+mod compile_cache_tests {
+    #[test]
+    fn native_exports_preserve_mutations_before_sibling_reads_and_node_metadata() {
+        const CHECK: &str = r#"
+          const M = require('node:module'), token = {};
+          const keys = Object.getOwnPropertyNames(M);
+          const exportNames = ['constants','enableCompileCache','flushCompileCache','getCompileCacheDir'];
+          if (keys.filter(key => exportNames.includes(key)).join() !== exportNames.join()) throw Error('export key positions');
+          const changed = 'enableCompileCache';
+          if (mode === 'write') M[changed] = token;
+          if (mode === 'delete') delete M[changed];
+          if (mode === 'redefine') Object.defineProperty(M, changed,
+            {value:token, writable:false, enumerable:false, configurable:false});
+          const sibling = M.getCompileCacheDir;
+          if (typeof sibling !== 'function' || sibling !== M.getCompileCacheDir)
+            throw Error('sibling identity');
+          const after = Object.getOwnPropertyNames(M);
+          const expected = mode === 'delete' ? keys.filter(key => key !== changed) : keys;
+          if (JSON.stringify(after) !== JSON.stringify(expected)) throw Error('own-key order');
+          const descriptor = Object.getOwnPropertyDescriptor(M, changed);
+          if (mode === 'delete') {
+            if (descriptor !== undefined) throw Error('deleted export resurrected');
+          } else if (mode !== 'metadata') {
+            const writable = mode === 'write';
+            if (descriptor.value !== token || descriptor.writable !== writable ||
+                descriptor.enumerable !== writable || descriptor.configurable !== writable ||
+                'get' in descriptor || 'set' in descriptor) throw Error('replacement descriptor');
+          }
+          for (const [name, length, constructable] of [
+            ['enableCompileCache',1,true], ['flushCompileCache',0,false], ['getCompileCacheDir',0,true],
+          ]) {
+            if (name === changed && mode !== 'metadata') continue;
+            const descriptor = Object.getOwnPropertyDescriptor(M, name), fn = M[name];
+            if (fn !== descriptor.value || fn !== M[name] || fn.name !== name || fn.length !== length ||
+                Object.hasOwn(fn,'prototype') !== constructable || !descriptor.writable ||
+                !descriptor.enumerable || !descriptor.configurable || 'get' in descriptor || 'set' in descriptor)
+              throw Error('function metadata '+name);
+          }
+          const constants = M.constants, status = constants.compileCacheStatus;
+          const constantsDescriptor = Object.getOwnPropertyDescriptor(M,'constants');
+          if (constants !== M.constants || status !== M.constants.compileCacheStatus ||
+              constantsDescriptor.value !== constants || !constantsDescriptor.writable ||
+              !constantsDescriptor.enumerable || !constantsDescriptor.configurable)
+            throw Error('constants identity');
+          if (Object.getPrototypeOf(constants) !== null || Object.getPrototypeOf(status) !== null ||
+              !Object.isFrozen(constants) || !Object.isFrozen(status)) throw Error('constants integrity');
+          if (Object.keys(constants).join() !== 'compileCacheStatus' ||
+              Object.keys(status).join() !== 'FAILED,ENABLED,ALREADY_ENABLED,DISABLED') throw Error('constant key order');
+          for (const [holder, name, value] of [[constants,'compileCacheStatus',status],
+              [status,'FAILED',0], [status,'ENABLED',1], [status,'ALREADY_ENABLED',2], [status,'DISABLED',3]]) {
+            const descriptor = Object.getOwnPropertyDescriptor(holder,name);
+            if (descriptor.value !== value || descriptor.writable || !descriptor.enumerable || descriptor.configurable)
+              throw Error('constant descriptor');
+          }
+        "#;
+        for mode in ["write", "delete", "redefine", "metadata"] {
+            let source = format!("const mode = '{mode}';{CHECK}");
+            let program = quench_runtime::Engine::specialize(&source, "native-module-compile-cache.js").unwrap();
+            let host = crate::NodeHost::new(vec!["quench-node".into()]);
+            quench_runtime::Runtime::new(host).execute(&program).unwrap();
+        }
+    }
 }

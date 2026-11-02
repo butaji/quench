@@ -3878,7 +3878,7 @@ impl SourceText {
 
 impl ProgramSource {
     /// Project admitted facts with a retained wrapper body, without reparsing it.
-    #[cfg(any(feature = "aot", test))]
+    #[cfg(feature = "aot")]
     pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
         self.text = text;
         self.base = base;

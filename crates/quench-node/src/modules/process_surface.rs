@@ -53,17 +53,20 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 pub(crate) fn configure(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
-    let features = get(context, process, "features")?;
-    let inspector = get(context, features, "inspector")?;
-    let env = get(context, process, "env")?;
-    let coverage = get(context, env, "NODE_V8_COVERAGE")?;
-    if context.truthy_rooted(coverage)? && !context.truthy_rooted(inspector)? {
-        let warning = get(context, process, "emitWarning")?;
-        let message = context.string_rooted("The inspector is disabled, coverage could not be collected");
-        let kind = context.string_rooted("Warning");
-        context.call_rooted(warning, process, &[message, kind])?;
-        let empty = context.string_rooted("");
-        context.assign_named_property_rooted(env, "NODE_V8_COVERAGE", empty)?;
+    // Avoid observing the lazy process.env view when coverage was not requested.
+    if super::process_shared_vm::environment_names(context, "NODE_V8_COVERAGE") {
+        let features = get(context, process, "features")?;
+        let inspector = get(context, features, "inspector")?;
+        let env = get(context, process, "env")?;
+        let coverage = get(context, env, "NODE_V8_COVERAGE")?;
+        if context.truthy_rooted(coverage)? && !context.truthy_rooted(inspector)? {
+            let warning = get(context, process, "emitWarning")?;
+            let message = context.string_rooted("The inspector is disabled, coverage could not be collected");
+            let kind = context.string_rooted("Warning");
+            context.call_rooted(warning, process, &[message, kind])?;
+            let empty = context.string_rooted("");
+            context.assign_named_property_rooted(env, "NODE_V8_COVERAGE", empty)?;
+        }
     }
     let requested = get(context, global, "__quench_cli_title")?;
     let title = if context.truthy_rooted(requested)? { requested } else {
