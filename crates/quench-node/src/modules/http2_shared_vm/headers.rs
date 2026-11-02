@@ -110,7 +110,7 @@ fn text(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {
 
 /// `buildNgHeaderString(arrayOrMap, assertValuePseudoHeader)`: the fields of an object or
 /// flat `[name, value, ...]` array, pseudo-headers first.
-pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Result<Vec<Field>, RootedError> {
+pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo, strict: bool) -> Result<Vec<Field>, RootedError> {
     let sensitive_key = class(c, Class::SensitiveHeaders)?;
     let sensitive = c.get_property_rooted(headers, sensitive_key)?;
     let mut never_index = Vec::new();
@@ -146,14 +146,15 @@ pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Resu
         }
         let name = lower(&key_units);
         let single = single_value(&name);
+        let strictly_single = strict && single;
         let values = if c.is_array_rooted(value)? { c.array_like_values_rooted(value)? } else { vec![value] };
         let listed = match values.len() {
             0 => continue,
             1 => false,
-            _ if single => return Err(super::throw(c, Fault::HeaderSingleValue, &[&name])),
+            _ if strictly_single => return Err(super::throw(c, Fault::HeaderSingleValue, &[&name])),
             _ => true,
         };
-        if single {
+        if strictly_single {
             if singles.contains(&name) {
                 return Err(super::throw(c, Fault::HeaderSingleValue, &[&name]));
             }
@@ -173,13 +174,16 @@ pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Resu
             pseudo.push(Field { name: name.into_bytes(), value, sensitive });
             continue;
         }
-        let name_root = c.string_rooted(&name);
-        let label = c.undefined();
-        crate::modules::http_shared_vm::outgoing::validate_header_name(c, name_root, label)?;
-        let illegal = CONNECTION_SPECIFIC.contains(&name.as_str())
-            || (name == TE && (listed || text(c, values[0])? != TE_TRAILERS));
-        if illegal {
-            return Err(super::throw(c, Fault::InvalidConnectionHeaders, &[&name]));
+        // The single-value fields are all tokens and none is connection-specific.
+        if !single {
+            let name_root = c.string_rooted(&name);
+            let label = c.undefined();
+            crate::modules::http_shared_vm::outgoing::validate_header_name(c, name_root, label)?;
+            let illegal = CONNECTION_SPECIFIC.contains(&name.as_str())
+                || (name == TE && (listed || text(c, values[0])? != TE_TRAILERS));
+            if illegal {
+                return Err(super::throw(c, Fault::InvalidConnectionHeaders, &[&name]));
+            }
         }
         for value in values {
             let value = latin1(c, value)?;
@@ -269,12 +273,13 @@ pub(super) struct RequestHead {
 /// `prepareRequestHeadersObject` or `prepareRequestHeadersArray`, with the session's
 /// authority and protocol as the defaults.
 pub(super) fn request(c: &mut Context<'_>, headers: RootId, session: RootId) -> Result<RequestHead, RootedError> {
+    let strict = super::strict_single_values(c, session)?;
     let session_authority = get_slot(c, session, Slot::Authority)?;
     let protocol = get_slot(c, session, Slot::Protocol)?;
     let protocol = text(c, protocol)?;
     let default_scheme = protocol.strip_suffix(':').unwrap_or(&protocol).to_owned();
     if c.is_array_rooted(headers)? {
-        return request_array(c, headers, session_authority, &default_scheme);
+        return request_array(c, headers, session_authority, &default_scheme, strict);
     }
     let object = null_copy(c, headers)?;
     let method = get(c, object, METHOD)?;
@@ -303,7 +308,7 @@ pub(super) fn request(c: &mut Context<'_>, headers: RootId, session: RootId) -> 
     } else {
         check_connect(c, object)?;
     }
-    let fields = fields(c, object, Pseudo::Request)?;
+    let fields = fields(c, object, Pseudo::Request, strict)?;
     let scheme = get(c, object, SCHEME)?;
     let authority = authority(c, object)?;
     Ok(RequestHead { object: Some(object), raw: None, fields, scheme, authority, method })
@@ -325,7 +330,13 @@ fn check_connect(c: &mut Context<'_>, object: RootId) -> Result<(), RootedError>
     Ok(())
 }
 
-fn request_array(c: &mut Context<'_>, headers: RootId, session_authority: RootId, default_scheme: &str) -> Result<RequestHead, RootedError> {
+fn request_array(
+    c: &mut Context<'_>,
+    headers: RootId,
+    session_authority: RootId,
+    default_scheme: &str,
+    strict: bool,
+) -> Result<RequestHead, RootedError> {
     let values = c.array_like_values_rooted(headers)?;
     let undefined = c.undefined();
     let (mut method, mut scheme, mut authority, mut path, mut protocol) = (undefined, undefined, undefined, undefined, undefined);
@@ -390,7 +401,7 @@ fn request_array(c: &mut Context<'_>, headers: RootId, session_authority: RootId
         }
         raw
     };
-    let fields = fields(c, raw, Pseudo::Request)?;
+    let fields = fields(c, raw, Pseudo::Request, strict)?;
     let authority = if is_undefined(c, authority) { host } else { authority };
     Ok(RequestHead { object: None, raw: Some(raw), fields, scheme, authority, method })
 }
@@ -479,12 +490,12 @@ fn validate_response(c: &mut Context<'_>, headers: RootId, status: f64) -> Resul
 }
 
 /// `prepareResponseHeaders(stream, headers, options)`.
-pub(super) fn response(c: &mut Context<'_>, given: RootId, options: RootId) -> Result<ResponseHead, RootedError> {
+pub(super) fn response(c: &mut Context<'_>, given: RootId, options: RootId, strict: bool) -> Result<ResponseHead, RootedError> {
     let (headers, status) = if c.is_array_rooted(given)? {
         (given, response_array(c, given, options)?)
     } else {
         response_object(c, given, options)?
     };
-    let fields = fields(c, headers, Pseudo::Response)?;
+    let fields = fields(c, headers, Pseudo::Response, strict)?;
     Ok(ResponseHead { headers, fields, status })
 }

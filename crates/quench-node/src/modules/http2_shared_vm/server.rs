@@ -5,16 +5,16 @@
 use super::{class, closure, get_slot, put_slot, Class, Slot};
 use crate::modules::host_members::{captured, constructor, current, members};
 use crate::modules::stream_shared_vm::{
-    call_method, emit, get, is_undefined, on, once, put, put_number, remove_listener, truthy_member, Context, Outcome,
+    call_method, emit, get, is_undefined, on, once, put, put_bool, put_number, remove_listener, truthy_member, Context,
+    Outcome,
 };
 use quench_runtime::{RootId, RootedError};
 
 /// Node's default `unknownProtocolTimeout`, in milliseconds.
 const DEFAULT_UNKNOWN_PROTOCOL_TIMEOUT: f64 = 10_000.0;
-/// The HTTP/1 server timeouts an `allowHTTP1` secure server sets, in milliseconds.
-const HTTP1_HEADERS_TIMEOUT: f64 = 60_000.0;
-const HTTP1_REQUEST_TIMEOUT: f64 = 300_000.0;
-const HTTP1_CONNECTIONS_CHECKING_INTERVAL: f64 = 30_000.0;
+/// The smallest `connectionWindowSize`, and the largest flow-control window.
+const MIN_CONNECTION_WINDOW_SIZE: f64 = 1.0;
+const MAX_WINDOW: f64 = super::frame::MAX_WINDOW as f64;
 /// The ALPN identifiers the secure server offers.
 const ALPN_H2: &str = "h2";
 const ALPN_HTTP1: &str = "http/1.1";
@@ -29,6 +29,7 @@ members!(Member, "http2Server", [
     SetTimeout,
     UpdateSettings,
     SecureClose,
+    Close,
     CloseIdleConnections,
     AsyncDispose,
     /// The `close` callback settling `[Symbol.asyncDispose]()`'s promise.
@@ -58,7 +59,11 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let server = constructor(c, Member::Construct, "Http2Server")?;
     crate::modules::http_shared_vm::inherit(c, server, net_server)?;
     let prototype = get(c, server, "prototype")?;
-    super::class_methods(c, prototype, &[("setTimeout", Member::SetTimeout), ("updateSettings", Member::UpdateSettings)])?;
+    super::class_methods(c, prototype, &[
+        ("setTimeout", Member::SetTimeout),
+        ("updateSettings", Member::UpdateSettings),
+        ("close", Member::Close),
+    ])?;
     let dispose = crate::modules::stream_shared_vm::utils::registered_symbol(c, "nodejs.asyncDispose")?;
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
@@ -108,15 +113,10 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             c.call_rooted(tls_server, this, &[options, connection])?;
             initialize(c, this, options, at(1))?;
             if allow_http1(c, this)? {
-                let http_options = c.object_rooted()?;
-                let incoming = get(c, options, "Http1IncomingMessage")?;
-                put(c, http_options, "IncomingMessage", incoming)?;
-                let response = get(c, options, "Http1ServerResponse")?;
-                put(c, http_options, "ServerResponse", response)?;
+                let http_options = super::spread(c, options)?;
+                let http1 = get(c, options, "http1Options")?;
+                super::assign(c, http_options, http1)?;
                 crate::modules::http_shared_vm::server::store_options(c, this, http_options)?;
-                put_number(c, this, "headersTimeout", HTTP1_HEADERS_TIMEOUT)?;
-                put_number(c, this, "requestTimeout", HTTP1_REQUEST_TIMEOUT)?;
-                put_number(c, this, "connectionsCheckingInterval", HTTP1_CONNECTIONS_CHECKING_INTERVAL)?;
                 let should_upgrade = closure(c, Member::ShouldUpgrade, &[])?;
                 put(c, this, "shouldUpgradeCallback", should_upgrade)?;
             }
@@ -152,7 +152,18 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let tls_server = get(c, tls, "Server")?;
             let prototype = get(c, tls_server, "prototype")?;
             let close = get(c, prototype, "close")?;
-            c.call_rooted(close, this, args)
+            let result = c.call_rooted(close, this, args)?;
+            close_all_sessions(c, this)?;
+            Ok(result)
+        }
+        Member::Close => {
+            let net = crate::host::shared_vm::commonjs::net_module(c)?;
+            let net_server = get(c, net, "Server")?;
+            let prototype = get(c, net_server, "prototype")?;
+            let close = get(c, prototype, "close")?;
+            let result = c.call_rooted(close, this, args)?;
+            close_all_sessions(c, this)?;
+            Ok(result)
         }
         Member::CloseIdleConnections => {
             if allow_http1(c, this)? {
@@ -262,6 +273,18 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
     }
 }
 
+/// `closeAllSessions(server)`: close every live session gracefully.
+fn close_all_sessions(c: &mut Context<'_>, server: RootId) -> Result<(), RootedError> {
+    let sessions = get_slot(c, server, Slot::Sessions)?;
+    let global = c.global_root()?;
+    let array = get(c, global, "Array")?;
+    let live = call_method(c, array, "from", &[sessions])?;
+    for session in c.array_like_values_rooted(live)? {
+        call_method(c, session, "close", &[])?;
+    }
+    Ok(())
+}
+
 fn allow_http1(c: &mut Context<'_>, server: RootId) -> Result<bool, RootedError> {
     let options = get_slot(c, server, Slot::Options)?;
     if !c.is_object_rooted(options)? {
@@ -274,6 +297,10 @@ fn allow_http1(c: &mut Context<'_>, server: RootId) -> Result<bool, RootedError>
 /// The construction both server classes share after their base class.
 fn initialize(c: &mut Context<'_>, server: RootId, options: RootId, listener: RootId) -> Result<(), RootedError> {
     put_slot(c, server, Slot::Options, options)?;
+    let global = c.global_root()?;
+    let set = get(c, global, "Set")?;
+    let sessions = c.construct_rooted(set, set, &[])?;
+    put_slot(c, server, Slot::Sessions, sessions)?;
     put_number(c, server, "timeout", 0.0)?;
     let setup = class(c, Class::SetupCompat)?;
     on(c, server, "newListener", setup)?;
@@ -283,6 +310,38 @@ fn initialize(c: &mut Context<'_>, server: RootId, options: RootId, listener: Ro
     Ok(())
 }
 
+/// `validateSessionOptions(options)`, shared by servers and `connect`.
+pub(super) fn validate_session_options(c: &mut Context<'_>, options: RootId) -> Result<(), RootedError> {
+    let remote = get(c, options, "remoteCustomSettings")?;
+    if !is_undefined(c, remote) {
+        if !c.is_array_rooted(remote)? {
+            return Err(crate::modules::util_shared_vm::argument_type_error(c, remote, "options.remoteCustomSettings", "Array")?);
+        }
+        let copy = call_method(c, remote, "slice", &[])?;
+        put(c, options, "remoteCustomSettings", copy)?;
+        if c.array_like_values_rooted(copy)?.len() > super::settings::MAX_ADDITIONAL_SETTINGS {
+            return Err(super::throw(c, super::faults::Fault::TooManyCustomSettings, &[]));
+        }
+    }
+    let strict = get(c, options, "strictSingleValueFields")?;
+    if is_undefined(c, strict) {
+        put_bool(c, options, "strictSingleValueFields", true)?;
+    } else {
+        super::validate_boolean(c, strict, "options.strictSingleValueFields")?;
+    }
+    let window = get(c, options, "connectionWindowSize")?;
+    if !is_undefined(c, window) {
+        super::validate_integer(c, window, "options.connectionWindowSize", MIN_CONNECTION_WINDOW_SIZE, MAX_WINDOW)?;
+    }
+    Ok(())
+}
+
+/// The 32-bit option counts `initializeOptions` validates.
+const UINT32_OPTIONS: [(&str, &str); 2] = [
+    ("maxSessionInvalidFrames", "options.maxSessionInvalidFrames"),
+    ("maxSessionRejectedStreams", "options.maxSessionRejectedStreams"),
+];
+
 /// `initializeOptions(options)`.
 pub(super) fn initialize_options(c: &mut Context<'_>, given: RootId) -> Outcome {
     super::assert_is_object(c, given, "options", "Object")?;
@@ -291,38 +350,34 @@ pub(super) fn initialize_options(c: &mut Context<'_>, given: RootId) -> Outcome 
     super::assert_is_object(c, settings, "options.settings", "Object")?;
     let settings = super::spread(c, settings)?;
     put(c, options, "settings", settings)?;
-    let remote = get(c, options, "remoteCustomSettings")?;
-    if !is_undefined(c, remote) && !c.is_array_rooted(remote)? {
-        return Err(crate::modules::util_shared_vm::argument_type_error(c, remote, "options.remoteCustomSettings", "Array")?);
-    }
-    for name in ["maxSessionInvalidFrames", "maxSessionRejectedStreams"] {
-        let value = get(c, options, name)?;
+    validate_session_options(c, options)?;
+    for (field, label) in UINT32_OPTIONS {
+        let value = get(c, options, field)?;
         if !is_undefined(c, value) {
-            super::validate_integer(c, value, name, 0.0, super::MAX_INT)?;
+            super::validate_integer(c, value, label, 0.0, super::MAX_INT)?;
         }
     }
     let timeout = get(c, options, "unknownProtocolTimeout")?;
     if is_undefined(c, timeout) {
         put_number(c, options, "unknownProtocolTimeout", DEFAULT_UNKNOWN_PROTOCOL_TIMEOUT)?;
     } else {
-        super::validate_integer(c, timeout, "unknownProtocolTimeout", 0.0, super::MAX_INT)?;
+        super::validate_integer(c, timeout, "options.unknownProtocolTimeout", 0.0, super::MAX_INT)?;
     }
-    let http = crate::modules::http_shared_vm::module(c)?;
-    for (name, source, export) in [
-        ("Http1IncomingMessage", Some(http), "IncomingMessage"),
-        ("Http1ServerResponse", Some(http), "ServerResponse"),
-        ("Http2ServerRequest", None, "Http2ServerRequest"),
-        ("Http2ServerResponse", None, "Http2ServerResponse"),
-    ] {
-        let value = get(c, options, name)?;
-        if c.truthy_rooted(value)? {
-            continue;
+    let given_http1 = get(c, options, "http1Options")?;
+    let http1 = super::spread(c, given_http1)?;
+    put(c, options, "http1Options", http1)?;
+    for (legacy, name) in [("Http1IncomingMessage", "IncomingMessage"), ("Http1ServerResponse", "ServerResponse")] {
+        let value = get(c, options, legacy)?;
+        let current = get(c, http1, name)?;
+        if !is_undefined(c, value) && crate::modules::stream_shared_vm::is_nullish(c, current) {
+            put(c, http1, name, value)?;
         }
-        let default = match source {
-            Some(module) => get(c, module, export)?,
-            None => class(c, if export == "Http2ServerRequest" { Class::Http2ServerRequest } else { Class::Http2ServerResponse })?,
-        };
-        put(c, options, name, default)?;
+    }
+    for (name, which) in [("Http2ServerRequest", Class::Http2ServerRequest), ("Http2ServerResponse", Class::Http2ServerResponse)] {
+        if !truthy_member(c, options, name)? {
+            let default = class(c, which)?;
+            put(c, options, name, default)?;
+        }
     }
     Ok(options)
 }

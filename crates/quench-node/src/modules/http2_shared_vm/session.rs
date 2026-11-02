@@ -108,6 +108,8 @@ members!(Member, "http2Session", [
     /// `requestOnConnect`, and the pending requests' shared `connect` listener.
     RequestOnConnect,
     RunPendingRequests,
+    /// `requestOnError(error)`: the stream of a request its session refused.
+    RequestFailed,
     /// `emitClose(session, error)`.
     EmitClose,
     /// `finishSessionClose`'s `socket.end` callback and its deferred `socket.destroy`.
@@ -125,7 +127,18 @@ members!(Member, "http2Session", [
     TimerFired,
     /// A request's abort signal listener.
     RequestAborted,
+    Inspect,
+    /// The `get`, `set` and `getPrototypeOf` traps of `session.socket` (`proxySocketHandler`).
+    ProxyGet,
+    ProxySet,
+    ProxyPrototype,
 ]);
+
+/// The socket members `session.socket` answers with the session's own.
+const SESSION_OWNED: [&str; 4] = ["setTimeout", "ref", "unref", "destroy"];
+/// The socket members `session.socket` refuses: the session alone reads and writes it.
+const SOCKET_MANIPULATION: [&str; 9] =
+    ["emit", "end", "pause", "read", "resume", "write", "setEncoding", "setKeepAlive", "setNoDelay"];
 
 /// Install the session classes.
 pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
@@ -165,7 +178,14 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let capture = crate::modules::stream_shared_vm::utils::registered_symbol(c, "nodejs.rejection")?;
     let rejection = closure(c, Member::CaptureRejection, &[])?;
     c.define_data_property_rooted(prototype, capture, rejection, true, false, true)?;
+    super::install_inspect(c, prototype, Member::Inspect)?;
     super::set_class(c, Class::Http2Session, session)?;
+    let handler = super::proxy_handler(c, &[
+        ("get", Member::ProxyGet),
+        ("set", Member::ProxySet),
+        ("getPrototypeOf", Member::ProxyPrototype),
+    ])?;
+    super::set_class(c, Class::SessionSocketHandler, handler)?;
 
     let server = constructor(c, Member::ServerConstruct, "ServerHttp2Session")?;
     crate::modules::http_shared_vm::inherit(c, server, session)?;
@@ -197,7 +217,12 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         }
         Member::ServerConstruct => {
             initialize(c, this, SessionType::Server, at(0), at(1))?;
-            put_slot(c, this, Slot::Server, at(2))?;
+            let server = at(2);
+            put_slot(c, this, Slot::Server, server)?;
+            if c.is_object_rooted(server)? {
+                let sessions = get_slot(c, server, Slot::Sessions)?;
+                call_method(c, sessions, "add", &[this])?;
+            }
             Ok(undefined)
         }
         Member::ClientConstruct => {
@@ -221,7 +246,59 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let destroyed = destroyed(c, this)?;
             Ok(c.boolean(destroyed))
         }
-        Member::Socket => get_slot(c, this, Slot::Socket),
+        Member::Socket => {
+            let cached = get_slot(c, this, Slot::ProxySocket)?;
+            if c.is_object_rooted(cached)? {
+                return Ok(cached);
+            }
+            let handler = class(c, Class::SessionSocketHandler)?;
+            let proxy = super::proxy(c, this, handler)?;
+            put_slot(c, this, Slot::ProxySocket, proxy)?;
+            Ok(proxy)
+        }
+        Member::Inspect => {
+            let fields = c.object_rooted()?;
+            let session_type = get_slot(c, this, Slot::Type)?;
+            put(c, fields, "type", session_type)?;
+            for name in ["closed", "destroyed", "state", "localSettings", "remoteSettings"] {
+                let value = get(c, this, name)?;
+                put(c, fields, name, value)?;
+            }
+            super::inspect_as(c, this, at(0), "Http2Session", fields)
+        }
+        Member::ProxyGet => {
+            let (session, property) = (at(0), at(1));
+            let name = c.string_text(property)?;
+            match name.as_deref() {
+                Some(name) if SESSION_OWNED.contains(&name) => {
+                    let value = get(c, session, name)?;
+                    super::bound(c, value, session)
+                }
+                Some(name) if SOCKET_MANIPULATION.contains(&name) => Err(super::throw(c, Fault::NoSocketManipulation, &[])),
+                _ => {
+                    let socket = bound_socket(c, session)?;
+                    let value = c.get_property_rooted(socket, property)?;
+                    super::bound(c, value, socket)
+                }
+            }
+        }
+        Member::ProxySet => {
+            let (session, property, value) = (at(0), at(1), at(2));
+            let name = c.string_text(property)?;
+            match name.as_deref() {
+                Some(name) if SESSION_OWNED.contains(&name) => put(c, session, name, value)?,
+                Some(name) if SOCKET_MANIPULATION.contains(&name) => return Err(super::throw(c, Fault::NoSocketManipulation, &[])),
+                _ => {
+                    let socket = bound_socket(c, session)?;
+                    c.set_property_rooted(socket, property, value, socket)?;
+                }
+            }
+            Ok(c.boolean(true))
+        }
+        Member::ProxyPrototype => {
+            let socket = bound_socket(c, at(0))?;
+            c.prototype_rooted(socket)
+        }
         Member::Type => get_slot(c, this, Slot::Type),
         Member::GoawayCode => {
             let code = get_slot(c, this, Slot::GoawayCode)?;
@@ -346,6 +423,11 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             request_on_connect(c, stream)?;
             Ok(undefined)
         }
+        Member::RequestFailed => {
+            let [stream, error] = captured(c)?;
+            call_method(c, stream, "destroy", &[error])?;
+            Ok(undefined)
+        }
         Member::RunPendingRequests => {
             let [session] = captured(c)?;
             let pending = get_slot(c, session, Slot::PendingRequestCalls)?;
@@ -422,6 +504,15 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             Ok(undefined)
         }
     }
+}
+
+/// The socket a session is bound to, else `ERR_HTTP2_SOCKET_UNBOUND`.
+fn bound_socket(c: &mut Context<'_>, session: RootId) -> Outcome {
+    let socket = get_slot(c, session, Slot::Socket)?;
+    if is_undefined(c, socket) {
+        return Err(super::throw(c, Fault::SocketUnbound, &[]));
+    }
+    Ok(socket)
 }
 
 fn out_of_range(c: &mut Context<'_>, name: &str, range: &str, value: RootId) -> Result<RootedError, RootedError> {
@@ -515,6 +606,8 @@ fn initialize(c: &mut Context<'_>, this: RootId, session_type: SessionType, opti
     put_slot_number(c, this, Slot::Type, f64::from(session_type as u8))?;
     put_slot(c, this, Slot::Socket, socket)?;
     put_slot(c, this, Slot::Timeout, null)?;
+    let strict = get(c, options, "strictSingleValueFields")?;
+    put_slot(c, this, Slot::StrictSingleValueFields, strict)?;
     let object = c.retain(this)?;
     let retained_socket = c.retain(socket)?;
     let key = with_state(c, |state| {
@@ -581,6 +674,10 @@ fn setup_handle(c: &mut Context<'_>, session: RootId, socket: RootId, session_ty
     let given = get(c, options, "settings")?;
     let settings = if c.is_object_rooted(given)? { given } else { c.object_rooted()? };
     call_method(c, session, "settings", &[settings])?;
+    let window = get(c, options, "connectionWindowSize")?;
+    if let Some(window) = c.rooted_value(window).and_then(|value| value.as_number()) {
+        with_connection(c, session, |connection| connection.set_local_window_size(window as i64))?;
+    }
     if session_type == SessionType::Server {
         let origins = get(c, options, "origins")?;
         if c.is_array_rooted(origins)? {
@@ -738,8 +835,8 @@ fn dispatch(c: &mut Context<'_>, session: RootId, event: Event) -> Result<(), Ro
             }
             Ok(())
         }
-        Event::StreamClosed { stream, code } => match stream_object(c, session, stream)? {
-            Some(object) => stream::on_close(c, object, code),
+        Event::StreamClosed { stream, code, peer_reset } => match stream_object(c, session, stream)? {
+            Some(object) => stream::on_close(c, object, code, peer_reset),
             None => Ok(()),
         },
         Event::WriteDone { stream } => match stream_object(c, session, stream)? {
@@ -1295,6 +1392,11 @@ fn cleanup(c: &mut Context<'_>, session: RootId, socket: RootId) -> Result<(), R
         put_slot(c, socket, Slot::BoundSession, undefined)?;
         put_slot(c, socket, Slot::Server, undefined)?;
     }
+    let server = get_slot(c, session, Slot::Server)?;
+    if c.is_object_rooted(server)? {
+        let sessions = get_slot(c, server, Slot::Sessions)?;
+        call_method(c, sessions, "delete", &[session])?;
+    }
     let Some(key) = key else { return Ok(()) };
     let released = with_state(c, |state| state.sessions.remove(&key));
     if let Some(handle) = released {
@@ -1462,10 +1564,14 @@ fn origin(c: &mut Context<'_>, session: RootId, origins: &[RootId]) -> Result<()
 
 /// `clientSession.request(headers, options)`.
 fn request(c: &mut Context<'_>, session: RootId, headers: RootId, options: RootId) -> Outcome {
-    ensure_live(c, session)?;
-    if closed(c, session)? {
-        return Err(super::throw(c, Fault::GoawaySession, &[]));
-    }
+    // A request a destroyed or closing session cannot carry fails on its stream.
+    let refusal = if destroyed(c, session)? {
+        Some(Fault::InvalidSession)
+    } else if closed(c, session)? {
+        Some(Fault::GoawaySession)
+    } else {
+        None
+    };
     update_timer(c, session)?;
     let headers = if is_undefined(c, headers) {
         c.object_rooted()?
@@ -1525,6 +1631,12 @@ fn request(c: &mut Context<'_>, session: RootId, headers: RootId, options: RootI
                 once(c, stream, "close", bound)?;
             }
         }
+    }
+    if let Some(fault) = refusal {
+        let error = fault.error(c, &[])?;
+        let fail = closure(c, Member::RequestFailed, &[stream, error])?;
+        next_tick(c, fail, &[])?;
+        return Ok(stream);
     }
     stream::set_pending_request(c, stream, PendingRequest { fields: head.fields, end_stream, want_trailers })?;
     let on_connect = closure(c, Member::RequestOnConnect, &[stream])?;
@@ -1605,10 +1717,7 @@ pub(super) fn connect(c: &mut Context<'_>, authority: RootId, options: RootId, l
     {
         return Err(out_of_range(c, "options.maxOriginSetSize", ">= 0", max_origin_set_size)?);
     }
-    let remote_custom = get(c, options, "remoteCustomSettings")?;
-    if !is_undefined(c, remote_custom) && !c.is_array_rooted(remote_custom)? {
-        return Err(crate::modules::util_shared_vm::argument_type_error(c, remote_custom, "options.remoteCustomSettings", "Array")?);
-    }
+    super::server::validate_session_options(c, options)?;
     let authority = if c.string_text(authority)?.is_some() { super::url(c, authority)? } else { authority };
     super::assert_is_object(c, authority, "authority", "string,Object,URL")?;
     let own_protocol = get(c, authority, "protocol")?;

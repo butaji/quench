@@ -9,7 +9,7 @@ use crate::modules::stream_shared_vm::{get, is_undefined, put, put_bool, put_num
 use quench_runtime::{RootId, RootedError};
 
 /// Node's `MAX_ADDITIONAL_SETTINGS`.
-const MAX_ADDITIONAL_SETTINGS: usize = 10;
+pub(super) const MAX_ADDITIONAL_SETTINGS: usize = 10;
 /// The largest settings identifier.
 const MAX_SETTING_ID: f64 = u16::MAX as f64;
 

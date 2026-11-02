@@ -19,6 +19,7 @@ const HTTP_VERSION: &str = "2.0";
 const STATUS_OK: f64 = 200.0;
 const STATUS_CONTINUE: f64 = 100.0;
 const STATUS_EARLY_HINTS: f64 = 103.0;
+const STATUS_SWITCHING_PROTOCOLS: f64 = 101.0;
 const STATUS_EXPECTATION_FAILED: f64 = 417.0;
 const STATUS_METHOD_NOT_ALLOWED: f64 = 405.0;
 const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
@@ -68,6 +69,8 @@ members!(Member, "http2Compat", [
     WritableHighWaterMark,
     WritableFinished,
     WritableLength,
+    WritableObjectMode,
+    WritableNeedDrain,
     StatusMessage,
     SetStatusMessage,
     SetTrailer,
@@ -89,6 +92,7 @@ members!(Member, "http2Compat", [
     ResponseSetTimeout,
     CreatePushResponse,
     WriteContinue,
+    WriteInformation,
     WriteEarlyHints,
     /// The stream listeners of a request and of a response.
     StreamData,
@@ -106,6 +110,11 @@ members!(Member, "http2Compat", [
     StreamTrailersReady,
     /// `createPushResponse`'s `pushStream` callback.
     PushResponse,
+    /// The traps of `req.socket` and `res.socket`.
+    SocketHas,
+    SocketGet,
+    SocketSet,
+    SocketPrototype,
 ]);
 
 pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
@@ -153,6 +162,8 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
         ("writableHighWaterMark", Member::WritableHighWaterMark, None),
         ("writableFinished", Member::WritableFinished, None),
         ("writableLength", Member::WritableLength, None),
+        ("writableObjectMode", Member::WritableObjectMode, None),
+        ("writableNeedDrain", Member::WritableNeedDrain, None),
         ("statusMessage", Member::StatusMessage, Some(Member::SetStatusMessage)),
     ])?;
     super::class_methods(c, prototype, &[
@@ -174,10 +185,18 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
         ("destroy", Member::Destroy),
         ("setTimeout", Member::ResponseSetTimeout),
         ("createPushResponse", Member::CreatePushResponse),
+        ("writeInformation", Member::WriteInformation),
         ("writeContinue", Member::WriteContinue),
         ("writeEarlyHints", Member::WriteEarlyHints),
     ])?;
     super::set_class(c, Class::Http2ServerResponse, response)?;
+    let handler = super::proxy_handler(c, &[
+        ("has", Member::SocketHas),
+        ("get", Member::SocketGet),
+        ("set", Member::SocketSet),
+        ("getPrototypeOf", Member::SocketPrototype),
+    ])?;
+    super::set_class(c, Class::StreamSocketHandler, handler)?;
     Ok((request, response))
 }
 
@@ -199,14 +218,35 @@ fn stream(c: &mut Context<'_>, object: RootId) -> Outcome {
     get_slot(c, object, Slot::Stream)
 }
 
-/// The socket of the stream's session, as the compatibility objects expose it.
+/// `req.socket` and `res.socket`: a `Proxy` of the stream, reaching its session's socket
+/// for what the stream does not answer itself (compat.js's `proxySocketHandler`).
 fn socket_of(c: &mut Context<'_>, stream: RootId) -> Outcome {
+    let cached = get_slot(c, stream, Slot::ProxySocket)?;
+    if c.is_object_rooted(cached)? {
+        return Ok(cached);
+    }
+    let handler = class(c, Class::StreamSocketHandler)?;
+    let proxy = super::proxy(c, stream, handler)?;
+    put_slot(c, stream, Slot::ProxySocket, proxy)?;
+    Ok(proxy)
+}
+
+/// What the proxy reaches for the members the stream does not own: the session's socket
+/// while the stream has a session, else the stream.
+fn socket_target(c: &mut Context<'_>, stream: RootId) -> Outcome {
     let session = get(c, stream, "session")?;
     if !c.is_object_rooted(session)? {
         return Ok(stream);
     }
     get_slot(c, session, Slot::Socket)
 }
+
+/// The socket members the stream answers itself, bound to it.
+const STREAM_BOUND: [&str; 5] = ["on", "once", "end", "emit", "destroy"];
+/// The socket members read from and written to the stream as they are.
+const STREAM_FIELDS: [&str; 2] = ["writable", "destroyed"];
+/// The socket members the compatibility socket refuses.
+const SOCKET_MANIPULATION: [&str; 4] = ["write", "read", "pause", "resume"];
 
 fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<String, RootedError> {
     match c.string_text(value)? {
@@ -344,6 +384,8 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
         Member::WritableHighWaterMark => forward(c, this, "writableHighWaterMark"),
         Member::WritableFinished => forward(c, this, "writableFinished"),
         Member::WritableLength => forward(c, this, "writableLength"),
+        Member::WritableObjectMode => forward(c, this, "writableObjectMode"),
+        Member::WritableNeedDrain => forward(c, this, "writableNeedDrain"),
         Member::StatusMessage => {
             warn_once(c, STATUS_MESSAGE_WARNING, |state| &mut state.status_message_warned)?;
             Ok(c.string_rooted(""))
@@ -463,15 +505,10 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             Ok(undefined)
         }
         Member::WriteContinue => {
-            let stream = stream(c, this)?;
-            if truthy_member(c, stream, "headersSent")? || state_flag(c, this, "closed")? {
-                return Ok(c.boolean(false));
-            }
-            let headers = c.object_rooted()?;
-            put_number(c, headers, headers::STATUS, STATUS_CONTINUE)?;
-            call_method(c, stream, "additionalHeaders", &[headers])?;
-            Ok(c.boolean(true))
+            let status = c.number(STATUS_CONTINUE);
+            call_method(c, this, "writeInformation", &[status])
         }
+        Member::WriteInformation => write_information(c, this, at(0), at(1)),
         Member::WriteEarlyHints => write_early_hints(c, this, at(0)),
         Member::StreamData => {
             let request = get_slot(c, this, Slot::Request)?;
@@ -555,6 +592,67 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let trailers = get_slot(c, response, Slot::Trailers)?;
             call_method(c, this, "sendTrailers", &[trailers])?;
             Ok(undefined)
+        }
+        Member::SocketHas => {
+            let (stream, property) = (at(0), at(1));
+            let target = socket_target(c, stream)?;
+            let has = c.has_property_rooted(stream, property)? || c.has_property_rooted(target, property)?;
+            Ok(c.boolean(has))
+        }
+        Member::SocketGet => {
+            let (stream, property) = (at(0), at(1));
+            let name = c.string_text(property)?;
+            match name.as_deref() {
+                Some(name) if STREAM_BOUND.contains(&name) => {
+                    let value = get(c, stream, name)?;
+                    super::bound(c, value, stream)
+                }
+                Some(name) if STREAM_FIELDS.contains(&name) => get(c, stream, name),
+                Some("readable") => {
+                    if truthy_member(c, stream, "destroyed")? {
+                        return Ok(c.boolean(false));
+                    }
+                    let request = get_slot(c, stream, Slot::Request)?;
+                    let source = if c.is_object_rooted(request)? { request } else { stream };
+                    get(c, source, "readable")
+                }
+                Some("setTimeout") => {
+                    let session = get(c, stream, "session")?;
+                    let owner = if c.is_object_rooted(session)? { session } else { stream };
+                    let value = get(c, owner, "setTimeout")?;
+                    super::bound(c, value, owner)
+                }
+                Some(name) if SOCKET_MANIPULATION.contains(&name) => Err(super::throw(c, Fault::NoSocketManipulation, &[])),
+                _ => {
+                    let target = socket_target(c, stream)?;
+                    let value = c.get_property_rooted(target, property)?;
+                    super::bound(c, value, target)
+                }
+            }
+        }
+        Member::SocketSet => {
+            let (stream, property, value) = (at(0), at(1), at(2));
+            let name = c.string_text(property)?;
+            match name.as_deref() {
+                Some(name) if STREAM_BOUND.contains(&name) || STREAM_FIELDS.contains(&name) || name == "readable" => {
+                    put(c, stream, name, value)?;
+                }
+                Some("setTimeout") => {
+                    let session = get(c, stream, "session")?;
+                    let owner = if c.is_object_rooted(session)? { session } else { stream };
+                    put(c, owner, "setTimeout", value)?;
+                }
+                Some(name) if SOCKET_MANIPULATION.contains(&name) => return Err(super::throw(c, Fault::NoSocketManipulation, &[])),
+                _ => {
+                    let target = socket_target(c, stream)?;
+                    c.set_property_rooted(target, property, value, target)?;
+                }
+            }
+            Ok(c.boolean(true))
+        }
+        Member::SocketPrototype => {
+            let target = socket_target(c, at(0))?;
+            c.prototype_rooted(target)
         }
         Member::PushResponse => {
             let [callback] = captured(c)?;
@@ -936,21 +1034,49 @@ fn write_early_hints(c: &mut Context<'_>, response: RootId, hints: RootId) -> Ou
     let link = link_header_value(c, link)?;
     let headers = c.null_object_rooted()?;
     for key in c.enumerable_own_keys_rooted(hints, false, true)? {
-        if c.string_text(key)?.as_deref() != Some("link") {
-            let value = c.get_property_rooted(hints, key)?;
-            c.set_property_rooted(headers, key, value, headers)?;
+        if c.string_text(key)?.as_deref() == Some("link") {
+            continue;
         }
+        let value = c.get_property_rooted(hints, key)?;
+        let name = normalized_name(c, key)?;
+        assert_valid_header(c, &name, value)?;
+        let root = c.string_rooted(&name);
+        let label = c.undefined();
+        crate::modules::http_shared_vm::outgoing::validate_header_name(c, root, label)?;
+        put(c, headers, &name, value)?;
     }
     if link.is_empty() {
         return Ok(c.boolean(false));
+    }
+    let link = c.string_rooted(&link);
+    put(c, headers, "Link", link)?;
+    let status = c.number(STATUS_EARLY_HINTS);
+    call_method(c, response, "writeInformation", &[status, headers])
+}
+
+/// `res.writeInformation(statusCode, headers)`: an informational head, unless the final
+/// head was sent or the response closed.
+fn write_information(c: &mut Context<'_>, response: RootId, status: RootId, given: RootId) -> Outcome {
+    let code = c.rooted_value(status).and_then(|value| value.as_number());
+    if !code.is_some_and(|code| INFORMATIONAL.contains(&code) && code != STATUS_SWITCHING_PROTOCOLS) {
+        let shown = c.to_string(status)?;
+        return Err(super::throw(c, Fault::StatusInvalid, &[&shown]));
     }
     let stream = stream(c, response)?;
     if truthy_member(c, stream, "headersSent")? || state_flag(c, response, "closed")? {
         return Ok(c.boolean(false));
     }
-    put_number(c, headers, headers::STATUS, STATUS_EARLY_HINTS)?;
-    let link = c.string_rooted(&link);
-    put(c, headers, "Link", link)?;
+    let headers = c.null_object_rooted()?;
+    if !is_nullish(c, given) {
+        if !c.is_object_rooted(given)? || c.is_array_rooted(given)? {
+            return Err(crate::modules::util_shared_vm::argument_type_error(c, given, "headers", "Object")?);
+        }
+        for key in c.enumerable_own_keys_rooted(given, false, true)? {
+            let value = c.get_property_rooted(given, key)?;
+            c.set_property_rooted(headers, key, value, headers)?;
+        }
+    }
+    put(c, headers, headers::STATUS, status)?;
     call_method(c, stream, "additionalHeaders", &[headers])?;
     Ok(c.boolean(true))
 }

@@ -29,6 +29,7 @@ pub(super) enum Fault {
     InvalidStream,
     MaxPendingSettingsAck,
     NestedPush,
+    NoSocketManipulation,
     OriginLength,
     OutOfStreams,
     PayloadForbidden,
@@ -41,6 +42,7 @@ pub(super) enum Fault {
     SessionError,
     SettingsCancel,
     SocketBound,
+    SocketUnbound,
     Status101,
     StatusInvalid,
     StreamCancel,
@@ -111,6 +113,11 @@ impl Fault {
                 ("ERR_HTTP2_MAX_PENDING_SETTINGS_ACK", Error, "Maximum number of pending settings acknowledgements")
             }
             Self::NestedPush => ("ERR_HTTP2_NESTED_PUSH", Error, "A push stream cannot initiate another push stream."),
+            Self::NoSocketManipulation => (
+                "ERR_HTTP2_NO_SOCKET_MANIPULATION",
+                Error,
+                "HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
+            ),
             Self::OriginLength => ("ERR_HTTP2_ORIGIN_LENGTH", TypeError, "HTTP/2 ORIGIN frames are limited to 16382 bytes"),
             Self::OutOfStreams => (
                 "ERR_HTTP2_OUT_OF_STREAMS",
@@ -129,6 +136,9 @@ impl Fault {
             Self::SessionError => ("ERR_HTTP2_SESSION_ERROR", Error, "Session closed with error code %s"),
             Self::SettingsCancel => ("ERR_HTTP2_SETTINGS_CANCEL", Error, "HTTP2 session settings canceled"),
             Self::SocketBound => ("ERR_HTTP2_SOCKET_BOUND", Error, "The socket is already bound to an Http2Session"),
+            Self::SocketUnbound => {
+                ("ERR_HTTP2_SOCKET_UNBOUND", Error, "The socket has been disconnected from the Http2Session")
+            }
             Self::Status101 => {
                 ("ERR_HTTP2_STATUS_101", Error, "HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2")
             }

@@ -81,10 +81,16 @@ enum Slot {
     Trailers,
     RawTrailers,
     Aborted,
+    /// The `Proxy` a session's or stream's `socket` is (`kProxySocket`).
+    ProxySocket,
+    /// A session's `kStrictSingleValueFields`.
+    StrictSingleValueFields,
+    /// A server's live sessions (`kSessions`).
+    Sessions,
 }
 
 impl Slot {
-    const ALL: [Slot; 40] = [
+    const ALL: [Slot; 43] = [
         Self::Handle,
         Self::Type,
         Self::Flags,
@@ -125,6 +131,9 @@ impl Slot {
         Self::Trailers,
         Self::RawTrailers,
         Self::Aborted,
+        Self::ProxySocket,
+        Self::StrictSingleValueFields,
+        Self::Sessions,
     ];
 }
 
@@ -159,10 +168,13 @@ enum Class {
     SocketError,
     SocketClose,
     StreamMaybeDestroy,
+    /// The `Proxy` handlers of a session's socket and of a compatibility object's socket.
+    SessionSocketHandler,
+    StreamSocketHandler,
 }
 
 impl Class {
-    const COUNT: usize = Class::StreamMaybeDestroy as usize + 1;
+    const COUNT: usize = Class::StreamSocketHandler as usize + 1;
 }
 
 #[derive(Clone, Copy)]
@@ -305,6 +317,15 @@ fn set_flag(c: &mut Context<'_>, object: RootId, flag: u32, on: bool) -> Result<
     put_slot_number(c, object, Slot::Flags, f64::from(flags))
 }
 
+/// Whether `session` enforces single-value fields: unless its options turned that off.
+fn strict_single_values(c: &mut Context<'_>, session: RootId) -> Result<bool, RootedError> {
+    if !c.is_object_rooted(session)? {
+        return Ok(true);
+    }
+    let strict = get_slot(c, session, Slot::StrictSingleValueFields)?;
+    Ok(c.rooted_value(strict).and_then(|value| value.as_bool()) != Some(false))
+}
+
 /// The host handle id an object's `kHandle` slot names, while it is live.
 fn handle_of(c: &mut Context<'_>, object: RootId) -> Result<Option<u64>, RootedError> {
     let value = get_slot(c, object, Slot::Handle)?;
@@ -336,6 +357,48 @@ fn class_methods<M: crate::modules::host_members::Members>(c: &mut Context<'_>, 
         c.define_data_property_rooted(target, key, value, true, false, true)?;
     }
     Ok(())
+}
+
+/// `new Proxy(target, handler)`.
+fn proxy(c: &mut Context<'_>, target: RootId, handler: RootId) -> Outcome {
+    let global = c.global_root()?;
+    let class = get(c, global, "Proxy")?;
+    c.construct_rooted(class, class, &[target, handler])
+}
+
+/// A `Proxy` handler of the given traps.
+fn proxy_handler<M: crate::modules::host_members::Members>(c: &mut Context<'_>, traps: &[(&str, M)]) -> Outcome {
+    let handler = c.null_object_rooted()?;
+    for &(name, member) in traps {
+        let trap = function(c, member, name, &[])?;
+        put(c, handler, name, trap)?;
+    }
+    Ok(handler)
+}
+
+/// `value` bound to `receiver` when it is a function (`value.bind(receiver)`), else itself.
+fn bound(c: &mut Context<'_>, value: RootId, receiver: RootId) -> Outcome {
+    if c.is_callable_rooted(value)? { call_method(c, value, "bind", &[receiver]) } else { Ok(value) }
+}
+
+/// `[util.inspect.custom](depth)`: `${name} ${format(fields)}`, or the object itself when
+/// `depth` is negative.
+fn inspect_as(c: &mut Context<'_>, this: RootId, depth: RootId, name: &str, fields: RootId) -> Outcome {
+    if c.rooted_value(depth).and_then(|value| value.as_number()).is_some_and(|depth| depth < 0.0) {
+        return Ok(this);
+    }
+    let inspect = crate::modules::util_shared_vm::internal_inspect(c)?;
+    let undefined = c.undefined();
+    let shown = c.call_rooted(inspect, undefined, &[fields])?;
+    let shown = c.to_string(shown)?;
+    Ok(c.string_rooted(&format!("{name} {shown}")))
+}
+
+/// Install `[util.inspect.custom]` as member `member`.
+fn install_inspect<M: crate::modules::host_members::Members>(c: &mut Context<'_>, prototype: RootId, member: M) -> Result<(), RootedError> {
+    let key = crate::modules::stream_shared_vm::utils::registered_symbol(c, "nodejs.util.inspect.custom")?;
+    let inspect = function(c, member, "[nodejs.util.inspect.custom]", &[])?;
+    c.define_data_property_rooted(prototype, key, inspect, true, false, true).map(drop)
 }
 
 /// A host closure of member `member` over `captures`.

@@ -76,7 +76,8 @@ pub(super) enum Category {
 pub(super) enum Event {
     Headers { stream: u32, category: Category, flags: u8, fields: Vec<Field> },
     Data { stream: u32, bytes: Vec<u8>, end: bool },
-    StreamClosed { stream: u32, code: u32 },
+    /// A stream closed; `peer_reset` when by the peer's RST_STREAM.
+    StreamClosed { stream: u32, code: u32, peer_reset: bool },
     /// A chunk passed to `write` was framed.
     WriteDone { stream: u32 },
     /// A stream that awaits trailers drained its data.
@@ -104,6 +105,8 @@ pub(super) enum Refusal {
     TooManyPending,
 }
 
+/// The concurrency nghttp2 assumes of a peer until its first SETTINGS arrives.
+const ASSUMED_PEER_MAX_CONCURRENT_STREAMS: u32 = 100;
 /// Node's default `maxOutstandingPings` and `maxOutstandingSettings`.
 const MAX_OUTSTANDING: usize = 10;
 /// Peer-initiated stream identifiers: odd from clients, even from servers.
@@ -177,6 +180,8 @@ pub(super) struct Connection {
     pub(super) local: Settings,
     sent_settings: VecDeque<(Vec<(u16, u32)>, Instant)>,
     pub(super) remote: Settings,
+    /// Whether the peer's first SETTINGS arrived, replacing what was assumed of it.
+    remote_settings_received: bool,
     encoder: Encoder,
     decoder: Decoder,
     input: Vec<u8>,
@@ -240,7 +245,8 @@ impl Connection {
             role,
             local: Settings::INITIAL,
             sent_settings: VecDeque::new(),
-            remote: Settings::INITIAL,
+            remote: Settings { max_concurrent_streams: ASSUMED_PEER_MAX_CONCURRENT_STREAMS, ..Settings::INITIAL },
+            remote_settings_received: false,
             encoder: Encoder::new(),
             decoder: Decoder::new(),
             input: Vec::new(),
@@ -480,7 +486,7 @@ impl Connection {
     fn reset(&mut self, id: u32, code: u32) {
         if self.remove_stream(id).is_some() {
             frame::write(&mut self.output, Kind::RstStream, 0, id, &code.to_be_bytes());
-            self.events.push(Event::StreamClosed { stream: id, code });
+            self.events.push(Event::StreamClosed { stream: id, code, peer_reset: false });
         }
     }
 
@@ -510,7 +516,7 @@ impl Connection {
     fn close_if_done(&mut self, id: u32) {
         if self.streams.get(&id).is_some_and(|stream| stream.local_closed && stream.remote_closed) {
             self.remove_stream(id);
-            self.events.push(Event::StreamClosed { stream: id, code: ErrorCode::NoError as u32 });
+            self.events.push(Event::StreamClosed { stream: id, code: ErrorCode::NoError as u32, peer_reset: false });
         }
     }
 
@@ -658,7 +664,7 @@ impl Connection {
                     return;
                 }
                 if self.remove_stream(header.stream).is_some() {
-                    self.events.push(Event::StreamClosed { stream: header.stream, code: frame::read_u32(payload) });
+                    self.events.push(Event::StreamClosed { stream: header.stream, code: frame::read_u32(payload), peer_reset: true });
                 }
             }
             Some(Kind::Settings) => self.settings(header, payload),
@@ -867,6 +873,9 @@ impl Connection {
                 return;
             }
         }
+        if !std::mem::replace(&mut self.remote_settings_received, true) {
+            self.remote.max_concurrent_streams = Settings::INITIAL.max_concurrent_streams;
+        }
         let previous_window = i64::from(self.remote.initial_window_size);
         self.remote.apply(&entries);
         let delta = i64::from(self.remote.initial_window_size) - previous_window;
@@ -903,7 +912,7 @@ impl Connection {
             self.opened.iter().copied().filter(|&id| id > last_stream && initiator(id) == self.role).collect();
         for id in refused {
             self.remove_stream(id);
-            self.events.push(Event::StreamClosed { stream: id, code: ErrorCode::RefusedStream as u32 });
+            self.events.push(Event::StreamClosed { stream: id, code: ErrorCode::RefusedStream as u32, peer_reset: false });
         }
     }
 

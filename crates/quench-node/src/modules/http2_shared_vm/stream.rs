@@ -104,6 +104,7 @@ members!(Member, "http2Stream", [
     /// `respondWithFile`'s `fs.open` and both responses' `fs.fstat` callbacks.
     FileOpened,
     FileStat,
+    Inspect,
 ]);
 
 pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
@@ -144,6 +145,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let code = c.string_rooted(PRIORITY_DEPRECATION_CODE);
     let priority = call_method(c, util, "deprecate", &[priority, message, code])?;
     put(c, prototype, "priority", priority)?;
+    super::install_inspect(c, prototype, Member::Inspect)?;
     super::set_class(c, Class::Http2Stream, stream)?;
 
     let server = constructor(c, Member::ServerConstruct, "ServerHttp2Stream")?;
@@ -372,6 +374,23 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             file_opened(c, stream, options, headers, fd_owned, error, fd)?;
             Ok(undefined)
         }
+        Member::Inspect => {
+            let fields = c.object_rooted()?;
+            let id = get_slot(c, this, Slot::Id)?;
+            let id = if c.truthy_rooted(id)? { id } else { c.string_rooted("<pending>") };
+            put(c, fields, "id", id)?;
+            for (field, name) in [
+                ("closed", "closed"),
+                ("destroyed", "destroyed"),
+                ("state", "state"),
+                ("readableState", "_readableState"),
+                ("writableState", "_writableState"),
+            ] {
+                let value = get(c, this, name)?;
+                put(c, fields, field, value)?;
+            }
+            super::inspect_as(c, this, at(0), "Http2Stream", fields)
+        }
         Member::FileStat => {
             let [stream, options, fd, headers] = captured(c)?;
             file_stat(c, stream, options, fd, headers, at(0), at(1))?;
@@ -408,6 +427,12 @@ fn is_server(c: &mut Context<'_>, stream: RootId) -> Result<bool, RootedError> {
         Some(session) => Ok(session::session_type(c, session)? == SessionType::Server),
         None => Ok(false),
     }
+}
+
+/// Whether the stream's session enforces single-value fields (`strictSingleValueFields`).
+fn stream_strict(c: &mut Context<'_>, stream: RootId) -> Result<bool, RootedError> {
+    let session = get_slot(c, stream, Slot::Session)?;
+    super::strict_single_values(c, session)
 }
 
 /// The stream's protocol id and its session's handle, while both are live.
@@ -681,7 +706,8 @@ fn send_trailers(c: &mut Context<'_>, stream: RootId, given: RootId) -> Result<(
     super::assert_is_object(c, given, "headers", "Object")?;
     let headers = headers::null_copy(c, given)?;
     update_timer(c, stream)?;
-    headers::fields(c, headers, Pseudo::Trailer)?;
+    let strict = stream_strict(c, stream)?;
+    headers::fields(c, headers, Pseudo::Trailer, strict)?;
     put_slot(c, stream, Slot::SentTrailers, headers)?;
     let finish = closure(c, Member::FinishSendTrailers, &[stream, headers])?;
     set_immediate(c, finish, &[])
@@ -693,7 +719,8 @@ fn finish_send_trailers(c: &mut Context<'_>, stream: RootId, headers: RootId) ->
         return Ok(());
     }
     set_flag(c, stream, stream_flags::HAS_TRAILERS, false)?;
-    let fields = headers::fields(c, headers, Pseudo::Trailer)?;
+    let strict = stream_strict(c, stream)?;
+    let fields = headers::fields(c, headers, Pseudo::Trailer, strict)?;
     with_connection(c, stream, |connection, id| connection.submit_trailers(id, &fields))?;
     drive(c, stream)?;
     maybe_destroy(c, stream, ErrorCode::NoError as u32)
@@ -747,8 +774,8 @@ fn submit_rst(c: &mut Context<'_>, stream: RootId, code: u32) -> Result<(), Root
     session::drive(c, session)
 }
 
-/// `onStreamClose(code)`.
-pub(super) fn on_close(c: &mut Context<'_>, stream: RootId, code: u32) -> Result<(), RootedError> {
+/// `onStreamClose(code, peerReset)`.
+pub(super) fn on_close(c: &mut Context<'_>, stream: RootId, code: u32, peer_reset: bool) -> Result<(), RootedError> {
     if destroyed(c, stream)? {
         return Ok(());
     }
@@ -758,8 +785,8 @@ pub(super) fn on_close(c: &mut Context<'_>, stream: RootId, code: u32) -> Result
     if !truthy_member(c, stream, "readable")? || code != ErrorCode::NoError as u32 {
         return call_method(c, stream, "destroy", &[]).map(drop);
     }
-    let maybe_destroy = class(c, Class::StreamMaybeDestroy)?;
-    on(c, stream, "end", maybe_destroy)?;
+    let on_end = if peer_reset { get(c, stream, "destroy")? } else { class(c, Class::StreamMaybeDestroy)? };
+    on(c, stream, "end", on_end)?;
     let null = c.null();
     call_method(c, stream, "push", &[null])?;
     let flowing = get(c, stream, "readableFlowing")?;
@@ -898,7 +925,8 @@ fn respond(c: &mut Context<'_>, stream: RootId, given: RootId, options: RootId) 
     if want_trailers {
         set_flag(c, stream, stream_flags::HAS_TRAILERS, true)?;
     }
-    let head = headers::response(c, given, options)?;
+    let strict = stream_strict(c, stream)?;
+    let head = headers::response(c, given, options, strict)?;
     let slot = if c.is_array_rooted(head.headers)? { Slot::RawHeaders } else { Slot::SentHeaders };
     put_slot(c, stream, slot, head.headers)?;
     set_flag(c, stream, stream_flags::HEADERS_SENT, true)?;
@@ -941,7 +969,8 @@ fn additional_headers(c: &mut Context<'_>, stream: RootId, given: RootId) -> Res
         }
     }
     update_timer(c, stream)?;
-    let fields = headers::fields(c, headers, Pseudo::Response)?;
+    let strict = stream_strict(c, stream)?;
+    let fields = headers::fields(c, headers, Pseudo::Response, strict)?;
     let info = get_slot(c, stream, Slot::InfoHeaders)?;
     if c.truthy_rooted(info)? {
         call_method(c, info, "push", &[headers])?;
@@ -996,7 +1025,8 @@ fn push_stream(c: &mut Context<'_>, stream: RootId, given: RootId, options: Root
     if head_request {
         put_bool(c, options, "endStream", true)?;
     }
-    let fields = headers::fields(c, headers, Pseudo::Request)?;
+    let strict = stream_strict(c, stream)?;
+    let fields = headers::fields(c, headers, Pseudo::Request, strict)?;
     let promised = with_connection(c, stream, |connection, id| connection.submit_push_promise(id, &fields))?;
     let promised = match promised {
         Some(Ok(promised)) => promised,
@@ -1199,7 +1229,8 @@ fn file_stat(c: &mut Context<'_>, stream: RootId, options: RootId, fd: RootId, h
 /// send the descriptor's bytes from `offset` for `length` (all when negative).
 fn send_fd(c: &mut Context<'_>, stream: RootId, fd: RootId, headers: RootId, offset: RootId, length: RootId) -> Result<(), RootedError> {
     set_flag(c, stream, stream_flags::HEADERS_SENT, true)?;
-    let fields = match crate::modules::stream_shared_vm::attempt(headers::fields(c, headers, Pseudo::Response))? {
+    let strict = stream_strict(c, stream)?;
+    let fields = match crate::modules::stream_shared_vm::attempt(headers::fields(c, headers, Pseudo::Response, strict))? {
         Ok(fields) => fields,
         Err(error) => {
             if slot_truthy(c, stream, Slot::OwnsFd)? {
