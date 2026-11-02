@@ -18,7 +18,10 @@ pub(super) const MAX_MAX_FRAME_SIZE: u32 = (1 << 24) - 1;
 /// A PING frame's payload length.
 pub(super) const PING_LENGTH: usize = 8;
 /// A SETTINGS entry: a 16-bit identifier and a 32-bit value.
-pub(super) const SETTING_LENGTH: usize = 6;
+const SETTING_ID_LENGTH: usize = size_of::<u16>();
+pub(super) const SETTING_LENGTH: usize = SETTING_ID_LENGTH + size_of::<u32>();
+/// A GOAWAY payload opens with the last stream id, then the error code.
+pub(super) const GOAWAY_LAST_STREAM_LENGTH: usize = size_of::<u32>();
 /// The payload lengths of fixed-size frames.
 pub(super) const PRIORITY_LENGTH: usize = 5;
 pub(super) const RST_STREAM_LENGTH: usize = 4;
@@ -160,6 +163,10 @@ impl SettingId {
         Self::MaxHeaderListSize,
         Self::EnableConnectProtocol,
     ];
+
+    pub(super) fn from_wire(value: u16) -> Option<Self> {
+        Self::ALL.into_iter().find(|id| *id as u16 == value)
+    }
 }
 
 /// A frame header as read from or written to the wire.
@@ -189,6 +196,26 @@ pub(super) fn read_u32(bytes: &[u8]) -> u32 {
 
 pub(super) fn read_u16(bytes: &[u8]) -> u16 {
     u16::from_be_bytes([bytes[0], bytes[1]])
+}
+
+/// A SETTINGS payload of `(identifier, value)` entries, as frames and `HTTP2-Settings` carry it.
+pub(super) fn settings_payload(entries: &[(u16, u32)]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(entries.len() * SETTING_LENGTH);
+    for &(id, value) in entries {
+        payload.extend_from_slice(&id.to_be_bytes());
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
+    payload
+}
+
+/// The `(identifier, value)` entries of a SETTINGS payload whose length is a multiple of
+/// `SETTING_LENGTH`.
+pub(super) fn settings_entries(payload: &[u8]) -> impl Iterator<Item = (u16, u32)> + '_ {
+    payload
+        .as_chunks::<SETTING_LENGTH>()
+        .0
+        .iter()
+        .map(|entry| (read_u16(entry), read_u32(&entry[SETTING_ID_LENGTH..])))
 }
 
 /// Append a frame of `kind` with `payload` to `out`.

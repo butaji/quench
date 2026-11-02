@@ -55,7 +55,7 @@ impl Settings {
     /// Apply a SETTINGS payload's entries; unknown identifiers are ignored (RFC 9113 §6.5.2).
     fn apply(&mut self, entries: &[(u16, u32)]) {
         for &(id, value) in entries {
-            if let Some(id) = SettingId::ALL.into_iter().find(|known| *known as u16 == id) {
+            if let Some(id) = SettingId::from_wire(id) {
                 self.set(id, value);
             }
         }
@@ -218,15 +218,6 @@ pub(super) struct StreamState {
     pub(super) local_window_size: f64,
 }
 
-fn settings_payload(entries: &[(u16, u32)]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(entries.len() * frame::SETTING_LENGTH);
-    for &(id, value) in entries {
-        payload.extend_from_slice(&id.to_be_bytes());
-        payload.extend_from_slice(&value.to_be_bytes());
-    }
-    payload
-}
-
 /// The bytes a padded frame carries after its pad length and before its padding.
 fn unpadded(header: &frame::Header, payload: &[u8]) -> Option<(usize, usize)> {
     if header.flags & flags::PADDED == 0 {
@@ -289,6 +280,10 @@ impl Connection {
         std::mem::take(&mut self.events)
     }
 
+    pub(super) fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
     /// Whether frames or stream data still wait to be sent.
     pub(super) fn has_pending_data(&self) -> bool {
         !self.output.is_empty() || self.streams.values().any(|stream| !stream.queue.is_empty())
@@ -303,7 +298,7 @@ impl Connection {
         if self.sent_settings.len() >= MAX_OUTSTANDING {
             return Err(Refusal::TooManyPending);
         }
-        frame::write(&mut self.output, Kind::Settings, 0, 0, &settings_payload(&entries));
+        frame::write(&mut self.output, Kind::Settings, 0, 0, &frame::settings_payload(&entries));
         self.sent_settings.push_back((entries, Instant::now()));
         Ok(())
     }
@@ -331,11 +326,14 @@ impl Connection {
         self.goaway_sent = true;
     }
 
-    /// End the connection: a final GOAWAY unless one was sent, and nothing more after it.
+    /// End the connection with a final GOAWAY. Like nghttp2's terminating GOAWAY it is sent
+    /// ahead of the frames still queued, which are then never sent.
     pub(super) fn terminate(&mut self, code: u32) {
-        if !self.goaway_sent {
-            self.goaway(code, 0, &[]);
+        if self.terminated {
+            return;
         }
+        self.output.clear();
+        self.goaway(code, 0, &[]);
         self.terminated = true;
     }
 
@@ -677,8 +675,7 @@ impl Connection {
 
     /// Whether `id` names a stream the peer may still open or that we opened and closed.
     fn idle(&self, id: u32) -> bool {
-        let peer_initiated = (id % STREAM_ID_STEP == CLIENT_FIRST_STREAM) == (self.role == Role::Server);
-        if peer_initiated { id > self.last_peer_stream } else { id >= self.next_stream_id }
+        if initiator(id) != self.role { id > self.last_peer_stream } else { id >= self.next_stream_id }
     }
 
     fn data(&mut self, header: &frame::Header, payload: &[u8]) {
@@ -778,7 +775,7 @@ impl Connection {
         };
         let event_flags = (block.flags & (flags::END_STREAM | flags::PRIORITY)) | flags::END_HEADERS;
         if let Some(promised) = block.promised {
-            if !self.streams.contains_key(&block.stream) || promised % STREAM_ID_STEP != 0 || !self.idle(promised) {
+            if !self.streams.contains_key(&block.stream) || !server_initiated(promised) || !self.idle(promised) {
                 self.connection_error(ErrorCode::ProtocolError);
                 return;
             }
@@ -845,14 +842,11 @@ impl Connection {
             self.events.push(Event::SettingsAck { duration: milliseconds_since(sent) });
             return;
         }
-        if payload.len() % frame::SETTING_LENGTH != 0 {
+        if !payload.len().is_multiple_of(frame::SETTING_LENGTH) {
             self.connection_error(ErrorCode::FrameSizeError);
             return;
         }
-        let entries: Vec<(u16, u32)> = payload
-            .chunks_exact(frame::SETTING_LENGTH)
-            .map(|entry| (frame::read_u16(entry), frame::read_u32(&entry[2..])))
-            .collect();
+        let entries: Vec<(u16, u32)> = frame::settings_entries(payload).collect();
         for &(id, value) in &entries {
             let invalid = match id {
                 id if id == SettingId::EnablePush as u16 => value > 1 || (self.role == Role::Client && value == 1),
@@ -903,19 +897,10 @@ impl Connection {
             return;
         }
         let last_stream = frame::read_u32(payload) & MAX_STREAM_ID;
-        let code = frame::read_u32(&payload[4..]);
+        let code = frame::read_u32(&payload[frame::GOAWAY_LAST_STREAM_LENGTH..]);
         self.events.push(Event::Goaway { code, last_stream, data: payload[frame::GOAWAY_FIXED_LENGTH..].to_vec() });
-        let first = match self.role {
-            Role::Client => CLIENT_FIRST_STREAM,
-            Role::Server => SERVER_FIRST_STREAM,
-        };
-        let own_parity = first % STREAM_ID_STEP;
-        let refused: Vec<u32> = self
-            .opened
-            .iter()
-            .copied()
-            .filter(|&id| id > last_stream && id % STREAM_ID_STEP == own_parity)
-            .collect();
+        let refused: Vec<u32> =
+            self.opened.iter().copied().filter(|&id| id > last_stream && initiator(id) == self.role).collect();
         for id in refused {
             self.remove_stream(id);
             self.events.push(Event::StreamClosed { stream: id, code: ErrorCode::RefusedStream as u32 });
@@ -1007,6 +992,16 @@ impl Connection {
             local_window_size: (i64::from(self.local.initial_window_size) - stream.recv_unacked) as f64,
         }
     }
+}
+
+/// The endpoint that opens stream `id`: clients odd ids, servers even (RFC 9113 §5.1.1).
+fn initiator(id: u32) -> Role {
+    if id % STREAM_ID_STEP == SERVER_FIRST_STREAM % STREAM_ID_STEP { Role::Server } else { Role::Client }
+}
+
+/// Whether stream `id` was opened by a server: a pushed stream.
+pub(super) fn server_initiated(id: u32) -> bool {
+    initiator(id) == Role::Server
 }
 
 /// Whether a head's `:status` is informational (1xx), as a response that is not final.

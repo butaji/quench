@@ -11,7 +11,7 @@ use super::{
     buffer, class, closure, emit_next_tick, get_slot, handle_of, has_flag, headers, put_slot, put_slot_bool,
     put_slot_number, set_flag, set_immediate, slot_number, slot_truthy, with_state, Class, SessionHandle, Slot,
 };
-use crate::modules::host_members::{accessors, captured, constructor, current, members, methods};
+use crate::modules::host_members::{accessors, captured, constructor, current, members};
 use crate::modules::stream_shared_vm::{
     attempt, call_method, emit, get, is_nullish, is_undefined, next_tick, on, once, put, truthy_member, Context, Outcome,
 };
@@ -47,8 +47,6 @@ pub(crate) struct PendingRequest {
     pub(super) want_trailers: bool,
 }
 
-/// The default `maxOriginSetSize`.
-const DEFAULT_MAX_ORIGIN_SET_SIZE: f64 = 128.0;
 /// The ports `connect` defaults to by scheme.
 const HTTP_PORT: &str = "80";
 const HTTPS_PORT: &str = "443";
@@ -56,8 +54,6 @@ const HTTP_PROTOCOL: &str = "http:";
 const HTTPS_PROTOCOL: &str = "https:";
 /// The ALPN identifier of HTTP/2 over cleartext.
 const H2C: &str = "h2c";
-/// The 421 status that removes an origin from a client's origin set.
-const STATUS_MISDIRECTED_REQUEST: f64 = 421.0;
 /// The informational statuses, which a response's `headers` event carries.
 const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
 /// The largest stream id `setNextStreamID` accepts.
@@ -121,6 +117,8 @@ members!(Member, "http2Session", [
     PingCancelled,
     /// The scheduled write of the session's queued frames.
     FlushWrites,
+    /// The tick delivering the session's next event.
+    ContinueDelivery,
     /// `session[kMaybeDestroy]()`, deferred from a stream's destruction.
     MaybeDestroy,
     /// The timer of `setTimeout`, calling the target's `_onTimeout`.
@@ -151,7 +149,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
         ("localSettings", Member::LocalSettings, None),
         ("remoteSettings", Member::RemoteSettings, None),
     ])?;
-    methods(c, prototype, &[
+    super::class_methods(c, prototype, &[
         ("setNextStreamID", Member::SetNextStreamId),
         ("setLocalWindowSize", Member::SetLocalWindowSize),
         ("ping", Member::Ping),
@@ -162,8 +160,8 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
         ("_onTimeout", Member::OnTimeout),
         ("ref", Member::Ref),
         ("unref", Member::Unref),
-        ("setTimeout", Member::SetTimeout),
     ])?;
+    crate::modules::host_members::methods(c, prototype, &[("setTimeout", Member::SetTimeout)])?;
     let capture = crate::modules::stream_shared_vm::utils::registered_symbol(c, "nodejs.rejection")?;
     let rejection = closure(c, Member::CaptureRejection, &[])?;
     c.define_data_property_rooted(prototype, capture, rejection, true, false, true)?;
@@ -173,13 +171,13 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     crate::modules::http_shared_vm::inherit(c, server, session)?;
     let prototype = get(c, server, "prototype")?;
     accessors(c, prototype, &[("server", Member::Server, None)])?;
-    methods(c, prototype, &[("altsvc", Member::Altsvc), ("origin", Member::Origin)])?;
+    super::class_methods(c, prototype, &[("altsvc", Member::Altsvc), ("origin", Member::Origin)])?;
     super::set_class(c, Class::ServerHttp2Session, server)?;
 
     let client = constructor(c, Member::ClientConstruct, "ClientHttp2Session")?;
     crate::modules::http_shared_vm::inherit(c, client, session)?;
     let prototype = get(c, client, "prototype")?;
-    methods(c, prototype, &[("request", Member::Request)])?;
+    super::class_methods(c, prototype, &[("request", Member::Request)])?;
     super::set_class(c, Class::ClientHttp2Session, client)?;
 
     let socket_error = closure(c, Member::SocketError, &[])?;
@@ -387,6 +385,18 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             c.call_rooted(callback, undefined, &[error])?;
             Ok(undefined)
         }
+        Member::ContinueDelivery => {
+            let [session] = captured(c)?;
+            if let Some(key) = handle_of(c, session)? {
+                with_state(c, |state| {
+                    if let Some(handle) = state.sessions.get_mut(&key) {
+                        handle.continuation_scheduled = false;
+                    }
+                });
+                drive(c, key)?;
+            }
+            Ok(undefined)
+        }
         Member::FlushWrites => {
             let [session] = captured(c)?;
             if let Some(key) = handle_of(c, session)? {
@@ -519,6 +529,8 @@ fn initialize(c: &mut Context<'_>, this: RootId, session_type: SessionType, opti
             ping_callbacks: Default::default(),
             driving: false,
             write_scheduled: false,
+            deferred: Default::default(),
+            continuation_scheduled: false,
         });
         key
     });
@@ -628,21 +640,31 @@ pub(super) fn drive(c: &mut Context<'_>, key: u64) -> Result<(), RootedError> {
     schedule_writes(c, key)
 }
 
+/// Deliver one event, then the rest on the next tick: Node calls into JavaScript once per
+/// event, and the ticks one call queues run before the next event is delivered.
 fn deliver(c: &mut Context<'_>, key: u64) -> Result<(), RootedError> {
-    loop {
-        let step = with_state(c, |state| {
-            let handle = state.sessions.get_mut(&key)?;
-            let events = handle.connection.as_mut()?.take_events();
-            Some((events, handle.object))
-        });
-        let Some((events, session)) = step else { return Ok(()) };
-        if events.is_empty() {
-            return Ok(());
+    let step = with_state(c, |state| {
+        let handle = state.sessions.get_mut(&key)?;
+        let arrived = handle.connection.as_mut()?.take_events();
+        handle.deferred.extend(arrived);
+        if handle.continuation_scheduled {
+            return None;
         }
-        for event in events {
-            dispatch(c, session, event)?;
-        }
+        let event = handle.deferred.pop_front()?;
+        Some((event, handle.object))
+    });
+    let Some((event, session)) = step else { return Ok(()) };
+    dispatch(c, session, event)?;
+    let continuation = with_state(c, |state| {
+        let handle = state.sessions.get_mut(&key)?;
+        let more = !handle.deferred.is_empty() || handle.connection.as_ref().is_some_and(Connection::has_events);
+        (more && !std::mem::replace(&mut handle.continuation_scheduled, true)).then_some(handle.object)
+    });
+    if let Some(session) = continuation {
+        let resume = closure(c, Member::ContinueDelivery, &[session])?;
+        next_tick(c, resume, &[])?;
     }
+    Ok(())
 }
 
 /// Send the connection's queued frames on the next immediate, coalescing what one turn
@@ -845,9 +867,6 @@ fn on_headers(c: &mut Context<'_>, session: RootId, id: u32, category: Category,
                 _ if end_of_stream => "trailers",
                 _ => "headers",
             };
-            if status == Some(STATUS_MISDIRECTED_REQUEST) {
-                // The origin set is not tracked beyond the session's own origin.
-            }
             emit_next_tick(c, stream, event, &[object, flags_value, raw])?;
             stream
         }
@@ -1071,13 +1090,7 @@ fn settings(c: &mut Context<'_>, session: RootId, settings: RootId, callback: Ro
     }
     let pending = slot_number(c, session, Slot::PendingAck)?;
     put_slot_number(c, session, Slot::PendingAck, pending + 1.0)?;
-    let copy = c.object_rooted()?;
-    if c.is_object_rooted(settings)? {
-        for key in c.enumerable_own_keys_rooted(settings, true, true)? {
-            let value = c.get_property_rooted(settings, key)?;
-            c.set_property_rooted(copy, key, value, copy)?;
-        }
-    }
+    let copy = super::spread(c, settings)?;
     let submit = closure(c, Member::SubmitSettings, &[session, copy, callback])?;
     if connecting(c, session)? {
         once(c, session, "connect", submit)
@@ -1187,6 +1200,17 @@ pub(super) fn close_session(c: &mut Context<'_>, session: RootId, code: RootId, 
     call_method(c, session, "setTimeout", &[zero])?;
     let timeout = c.string_rooted("timeout");
     call_method(c, session, "removeAllListeners", &[timeout])?;
+    // What was submitted goes out before the streams' resets, which the terminating
+    // GOAWAY then supersedes.
+    if let Some(key) = handle_of(c, session)? {
+        let pending = with_state(c, |state| {
+            let handle = state.sessions.get_mut(&key)?;
+            Some((handle.connection.as_mut()?.take_output(), handle.socket))
+        });
+        if let Some((output, socket)) = pending {
+            write_socket(c, socket, output)?;
+        }
+    }
     let (open, pending) = stream_objects(c, session)?;
     if !open.is_empty() || !pending.is_empty() {
         let cancel = stream_cancel(c, error)?;
@@ -1457,14 +1481,7 @@ fn request(c: &mut Context<'_>, session: RootId, headers: RootId, options: RootI
     };
     let head = headers::request(c, headers, session)?;
     super::assert_is_object(c, options, "options", "Object")?;
-    let copy = c.object_rooted()?;
-    if c.is_object_rooted(options)? {
-        for key in c.enumerable_own_keys_rooted(options, true, true)? {
-            let value = c.get_property_rooted(options, key)?;
-            c.set_property_rooted(copy, key, value, copy)?;
-        }
-    }
-    let options = copy;
+    let options = super::spread(c, options)?;
     validate_priority(c, options)?;
     let end_stream = get(c, options, "endStream")?;
     let end_stream = if is_undefined(c, end_stream) {
@@ -1580,25 +1597,14 @@ fn request_on_connect(c: &mut Context<'_>, stream: RootId) -> Result<(), RootedE
 pub(super) fn connect(c: &mut Context<'_>, authority: RootId, options: RootId, listener: RootId) -> Outcome {
     let (options, listener) = if c.is_callable_rooted(options)? { (c.undefined(), options) } else { (options, listener) };
     super::assert_is_object(c, options, "options", "Object")?;
-    let copy = c.object_rooted()?;
-    if c.is_object_rooted(options)? {
-        for key in c.enumerable_own_keys_rooted(options, true, true)? {
-            let value = c.get_property_rooted(options, key)?;
-            c.set_property_rooted(copy, key, value, copy)?;
-        }
-    }
-    let options = copy;
+    let options = super::spread(c, options)?;
+    // The origin set holds the session's own origin only, so its bound is just validated.
     let max_origin_set_size = get(c, options, "maxOriginSetSize")?;
-    let max_origin_set_size = if is_nullish(c, max_origin_set_size) {
-        c.number(DEFAULT_MAX_ORIGIN_SET_SIZE)
-    } else {
-        let number = super::validate_number(c, max_origin_set_size, "options.maxOriginSetSize")?;
-        if number < 0.0 {
-            return Err(out_of_range(c, "options.maxOriginSetSize", ">= 0", max_origin_set_size)?);
-        }
-        max_origin_set_size
-    };
-    let _ = max_origin_set_size;
+    if !is_nullish(c, max_origin_set_size)
+        && super::validate_number(c, max_origin_set_size, "options.maxOriginSetSize")? < 0.0
+    {
+        return Err(out_of_range(c, "options.maxOriginSetSize", ">= 0", max_origin_set_size)?);
+    }
     let remote_custom = get(c, options, "remoteCustomSettings")?;
     if !is_undefined(c, remote_custom) && !c.is_array_rooted(remote_custom)? {
         return Err(crate::modules::util_shared_vm::argument_type_error(c, remote_custom, "options.remoteCustomSettings", "Array")?);
@@ -1649,10 +1655,7 @@ pub(super) fn connect(c: &mut Context<'_>, authority: RootId, options: RootId, l
                 put(c, connect_options, "port", port_root)?;
                 let host_root = c.string_rooted(&host);
                 put(c, connect_options, "host", host_root)?;
-                for key in c.enumerable_own_keys_rooted(options, true, true)? {
-                    let value = c.get_property_rooted(options, key)?;
-                    c.set_property_rooted(connect_options, key, value, connect_options)?;
-                }
+                super::assign(c, connect_options, options)?;
                 call_method(c, net, "connect", &[connect_options])?
             }
             HTTPS_PROTOCOL => {

@@ -189,6 +189,10 @@ struct SessionHandle {
     driving: bool,
     /// Whether an immediate will send the connection's queued frames.
     write_scheduled: bool,
+    /// Events taken from the connection and not yet delivered, and whether a tick will
+    /// deliver the next of them.
+    deferred: VecDeque<connection::Event>,
+    continuation_scheduled: bool,
 }
 
 /// A live stream's host side, from construction until it is destroyed.
@@ -324,9 +328,38 @@ fn set_immediate(c: &mut Context<'_>, callback: RootId, args: &[RootId]) -> Resu
     crate::modules::timers_shared_vm::set_immediate(c, undefined, &values).map(drop)
 }
 
+/// Methods as a `class` body defines them: writable, configurable and not enumerable.
+fn class_methods<M: crate::modules::host_members::Members>(c: &mut Context<'_>, target: RootId, members: &[(&str, M)]) -> Result<(), RootedError> {
+    for &(name, member) in members {
+        let value = function(c, member, name, &[])?;
+        let key = c.string_rooted(name);
+        c.define_data_property_rooted(target, key, value, true, false, true)?;
+    }
+    Ok(())
+}
+
 /// A host closure of member `member` over `captures`.
 fn closure<M: crate::modules::host_members::Members>(c: &mut Context<'_>, member: M, captures: &[RootId]) -> Outcome {
     function(c, member, "", captures)
+}
+
+/// `ObjectAssign(target, source)`: `source`'s own enumerable properties, when it is an object.
+fn assign(c: &mut Context<'_>, target: RootId, source: RootId) -> Result<(), RootedError> {
+    if !c.is_object_rooted(source)? {
+        return Ok(());
+    }
+    for key in c.enumerable_own_keys_rooted(source, true, true)? {
+        let value = c.get_property_rooted(source, key)?;
+        c.set_property_rooted(target, key, value, target)?;
+    }
+    Ok(())
+}
+
+/// `{ ...source }`.
+fn spread(c: &mut Context<'_>, source: RootId) -> Outcome {
+    let copy = c.object_rooted()?;
+    assign(c, copy, source)?;
+    Ok(copy)
 }
 
 /// Node's `assertIsObject(value, name, types)`: undefined or a non-array object.

@@ -7,6 +7,8 @@ const SYMBOLS: usize = 257;
 const END_OF_STRING: usize = 256;
 /// The longest code, in bits.
 const LONGEST: usize = 30;
+/// The shortest code, in bits.
+const SHORTEST: usize = 5;
 
 /// `(code, bit length)` by symbol.
 const CODES: [(u32, u8); SYMBOLS] = [
@@ -143,7 +145,7 @@ fn canonical() -> &'static Canonical {
 /// end-of-string, or padding longer than seven bits or not all ones (RFC 7541 §5.2).
 pub(super) fn decode(encoded: &[u8]) -> Option<Vec<u8>> {
     let table = canonical();
-    let mut out = Vec::with_capacity(encoded.len() * 2);
+    let mut out = Vec::with_capacity(encoded.len() * OCTET_BITS as usize / SHORTEST);
     let mut code: u32 = 0;
     let mut length = 0usize;
     for &byte in encoded {

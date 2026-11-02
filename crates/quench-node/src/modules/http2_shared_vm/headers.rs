@@ -8,6 +8,8 @@ use super::{class, get_slot, latin1, latin1_string, Class, Slot};
 use crate::modules::stream_shared_vm::{call_method, get, is_null, is_undefined, put, Context, Outcome};
 use quench_runtime::{RootId, RootedError};
 
+/// A flat header list holds each field as a name then a value.
+pub(super) const PAIR: usize = 2;
 pub(super) const STATUS: &str = ":status";
 pub(super) const METHOD: &str = ":method";
 pub(super) const AUTHORITY: &str = ":authority";
@@ -88,6 +90,11 @@ pub(super) enum Pseudo {
     Trailer,
 }
 
+/// `assertValidPseudoHeader`'s set.
+pub(super) fn is_valid_pseudo_header(name: &str) -> bool {
+    VALID_PSEUDO_HEADERS.contains(&name)
+}
+
 fn single_value(name: &str) -> bool {
     SINGLE_VALUE_HEADERS.contains(&name)
 }
@@ -116,7 +123,7 @@ pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Resu
     let mut pairs = Vec::new();
     if c.is_array_rooted(headers)? {
         let values = c.array_like_values_rooted(headers)?;
-        for pair in values.chunks(2) {
+        for pair in values.chunks(PAIR) {
             let missing = c.undefined();
             pairs.push((pair[0], pair.get(1).copied().unwrap_or(missing)));
         }
@@ -139,18 +146,13 @@ pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Resu
         }
         let name = lower(&key_units);
         let single = single_value(&name);
-        let mut values = if c.is_array_rooted(value)? { c.array_like_values_rooted(value)? } else { vec![value] };
-        let is_array = c.is_array_rooted(value)?;
-        match values.len() {
-            0 if is_array => continue,
-            1 => {}
+        let values = if c.is_array_rooted(value)? { c.array_like_values_rooted(value)? } else { vec![value] };
+        let listed = match values.len() {
+            0 => continue,
+            1 => false,
             _ if single => return Err(super::throw(c, Fault::HeaderSingleValue, &[&name])),
-            _ => {}
-        }
-        let listed = is_array && values.len() > 1;
-        if !listed {
-            values.truncate(1);
-        }
+            _ => true,
+        };
         if single {
             if singles.contains(&name) {
                 return Err(super::throw(c, Fault::HeaderSingleValue, &[&name]));
@@ -160,7 +162,7 @@ pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Resu
         let sensitive = never_index.contains(&name);
         if name.starts_with(':') {
             let valid = match rule {
-                Pseudo::Request => VALID_PSEUDO_HEADERS.contains(&name.as_str()),
+                Pseudo::Request => is_valid_pseudo_header(&name),
                 Pseudo::Response => name == STATUS,
                 Pseudo::Trailer => false,
             };
@@ -191,7 +193,7 @@ pub(super) fn fields(c: &mut Context<'_>, headers: RootId, rule: Pseudo) -> Resu
 /// `toHeaderObject(headers, sensitiveHeaders)` and the flat raw list it folds.
 pub(super) fn received(c: &mut Context<'_>, fields: &[Field]) -> Result<(RootId, RootId), RootedError> {
     let object = c.null_object_rooted()?;
-    let mut raw = Vec::with_capacity(fields.len() * 2);
+    let mut raw = Vec::with_capacity(fields.len() * PAIR);
     let mut sensitive = Vec::new();
     for field in fields {
         let name = latin1_string(c, &field.name);
@@ -249,12 +251,7 @@ pub(super) fn authority(c: &mut Context<'_>, headers: RootId) -> Outcome {
 /// `ObjectAssign({ __proto__: null }, headers)`.
 pub(super) fn null_copy(c: &mut Context<'_>, headers: RootId) -> Outcome {
     let copy = c.null_object_rooted()?;
-    if c.is_object_rooted(headers)? {
-        for key in c.enumerable_own_keys_rooted(headers, true, true)? {
-            let value = c.get_property_rooted(headers, key)?;
-            c.set_property_rooted(copy, key, value, copy)?;
-        }
-    }
+    super::assign(c, copy, headers)?;
     Ok(copy)
 }
 
@@ -332,7 +329,7 @@ fn request_array(c: &mut Context<'_>, headers: RootId, session_authority: RootId
     let values = c.array_like_values_rooted(headers)?;
     let undefined = c.undefined();
     let (mut method, mut scheme, mut authority, mut path, mut protocol) = (undefined, undefined, undefined, undefined, undefined);
-    for pair in values.chunks(2) {
+    for pair in values.chunks(PAIR) {
         let name = c.to_string_code_units(pair[0])?;
         if name.first() != Some(&u16::from(b':')) {
             continue;
@@ -443,7 +440,7 @@ fn response_array(c: &mut Context<'_>, headers: RootId, options: RootId) -> Resu
     let values = c.array_like_values_rooted(headers)?;
     let mut status = 0.0;
     let mut date_set = false;
-    for pair in values.chunks(2) {
+    for pair in values.chunks(PAIR) {
         let name = c.to_string_code_units(pair[0])?;
         match lower(&name).as_str() {
             STATUS => {

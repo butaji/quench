@@ -124,6 +124,8 @@ const UNINDEXED_NAMES: [&[u8]; 8] = [
 ];
 /// nghttp2 sends `authorization`, and cookies shorter than this, as never indexed.
 const SHORT_COOKIE: usize = 20;
+/// nghttp2 indexes an entry only when it fills at most this share of the table.
+const INDEXED_SHARE: (usize, usize) = (3, 4);
 
 fn entry_size(name: &[u8], value: &[u8]) -> usize {
     name.len() + value.len() + ENTRY_OVERHEAD
@@ -381,7 +383,7 @@ impl Encoder {
             return;
         }
         let indexing = !never
-            && entry_size(name, value) <= self.table.capacity * 3 / 4
+            && entry_size(name, value) * INDEXED_SHARE.1 <= self.table.capacity * INDEXED_SHARE.0
             && !UNINDEXED_NAMES.contains(&&name[..]);
         let representation = match (never, indexing) {
             (true, _) => NEVER_INDEXED,

@@ -10,7 +10,7 @@ use super::{
     class, closure, get_slot, handle_of, has_flag, put_slot, put_slot_bool, put_slot_number, set_flag, set_immediate,
     slot_number, slot_truthy, with_state, Class, Slot, StreamHandle,
 };
-use crate::modules::host_members::{accessors, captured, constructor, current, members, methods};
+use crate::modules::host_members::{accessors, captured, constructor, current, members};
 use crate::modules::stream_shared_vm::{
     call_method, emit, get, is_nullish, is_undefined, next_tick, on, once, put, put_bool, put_number, truthy_member, Context,
     Outcome,
@@ -46,6 +46,10 @@ const STATUS_SWITCHING_PROTOCOLS: f64 = 101.0;
 const INFORMATIONAL: std::ops::Range<f64> = 100.0..200.0;
 /// nghttp2's default stream weight, which `state` reports.
 const DEFAULT_WEIGHT: f64 = 16.0;
+/// `priority()`'s deprecation (RFC 9113 deprecated priority signals).
+const PRIORITY_DEPRECATION: &str =
+    "http2Stream.priority is longer supported after priority signalling was deprecated in RFC 9113";
+const PRIORITY_DEPRECATION_CODE: &str = "DEP0194";
 /// The chunk a file response reads its descriptor in.
 const FILE_CHUNK: usize = 64 * 1024;
 
@@ -123,7 +127,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
         ("state", Member::State, None),
         ("closed", Member::Closed, None),
     ])?;
-    methods(c, prototype, &[
+    super::class_methods(c, prototype, &[
         ("_onTimeout", Member::OnTimeout),
         ("_write", Member::Write),
         ("_writev", Member::Writev),
@@ -132,16 +136,21 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
         ("sendTrailers", Member::SendTrailers),
         ("close", Member::Close),
         ("_destroy", Member::Destroy),
-        ("priority", Member::Priority),
-        ("setTimeout", Member::SetTimeout),
     ])?;
+    crate::modules::host_members::methods(c, prototype, &[("setTimeout", Member::SetTimeout)])?;
+    let priority = crate::modules::host_members::function(c, Member::Priority, "priority", &[])?;
+    let util = crate::host::shared_vm::commonjs::util_module(c)?;
+    let message = c.string_rooted(PRIORITY_DEPRECATION);
+    let code = c.string_rooted(PRIORITY_DEPRECATION_CODE);
+    let priority = call_method(c, util, "deprecate", &[priority, message, code])?;
+    put(c, prototype, "priority", priority)?;
     super::set_class(c, Class::Http2Stream, stream)?;
 
     let server = constructor(c, Member::ServerConstruct, "ServerHttp2Stream")?;
     crate::modules::http_shared_vm::inherit(c, server, stream)?;
     let prototype = get(c, server, "prototype")?;
     accessors(c, prototype, &[("pushAllowed", Member::PushAllowed, None)])?;
-    methods(c, prototype, &[
+    super::class_methods(c, prototype, &[
         ("pushStream", Member::PushStream),
         ("respond", Member::Respond),
         ("respondWithFD", Member::RespondWithFd),
@@ -514,7 +523,7 @@ fn sent_headers(c: &mut Context<'_>, stream: RootId) -> Outcome {
     }
     let object = c.null_object_rooted()?;
     let values = c.array_like_values_rooted(raw)?;
-    for pair in values.chunks(2) {
+    for pair in values.chunks(headers::PAIR) {
         let (key, value) = (pair[0], pair.get(1).copied().unwrap_or_else(|| c.undefined()));
         let existing = c.get_property_rooted(object, key)?;
         if is_undefined(c, existing) {
@@ -882,7 +891,7 @@ fn respond(c: &mut Context<'_>, stream: RootId, given: RootId, options: RootId) 
         return Err(super::throw(c, Fault::HeadersSent, &[]));
     }
     super::assert_is_object(c, options, "options", "Object")?;
-    let options = copy_options(c, options)?;
+    let options = super::spread(c, options)?;
     update_timer(c, stream)?;
     let mut end_stream = truthy_member(c, options, "endStream")?;
     let want_trailers = truthy_member(c, options, "waitForTrailers")?;
@@ -907,16 +916,6 @@ fn respond(c: &mut Context<'_>, stream: RootId, given: RootId, options: RootId) 
     drive(c, stream)
 }
 
-fn copy_options(c: &mut Context<'_>, options: RootId) -> Outcome {
-    let copy = c.object_rooted()?;
-    if c.is_object_rooted(options)? {
-        for key in c.enumerable_own_keys_rooted(options, true, true)? {
-            let value = c.get_property_rooted(options, key)?;
-            c.set_property_rooted(copy, key, value, copy)?;
-        }
-    }
-    Ok(copy)
-}
 
 /// `stream.additionalHeaders(headers)`.
 fn additional_headers(c: &mut Context<'_>, stream: RootId, given: RootId) -> Result<(), RootedError> {
@@ -960,7 +959,7 @@ fn push_stream(c: &mut Context<'_>, stream: RootId, given: RootId, options: Root
         return Err(super::throw(c, Fault::PushDisabled, &[]));
     }
     let id = slot_number(c, stream, Slot::Id)?;
-    if id % 2.0 == 0.0 {
+    if super::connection::server_initiated(id as u32) {
         return Err(super::throw(c, Fault::NestedPush, &[]));
     }
     let Some(session) = session_of(c, stream)? else { return Ok(()) };
@@ -968,7 +967,7 @@ fn push_stream(c: &mut Context<'_>, stream: RootId, given: RootId, options: Root
     let (options, callback) = if c.is_callable_rooted(options)? { (c.undefined(), options) } else { (options, callback) };
     super::validate_function(c, callback, "callback")?;
     super::assert_is_object(c, options, "options", "Object")?;
-    let options = copy_options(c, options)?;
+    let options = super::spread(c, options)?;
     let end_stream = truthy_member(c, options, "endStream")?;
     put_bool(c, options, "endStream", end_stream)?;
     super::assert_is_object(c, given, "headers", "Object")?;
@@ -1038,7 +1037,7 @@ fn file_response_head(c: &mut Context<'_>, stream: RootId, given: RootId, option
         return Err(super::throw(c, Fault::HeadersSent, &[]));
     }
     super::assert_is_object(c, options, "options", "Object")?;
-    let options = copy_options(c, options)?;
+    let options = super::spread(c, options)?;
     for (name, label) in [("offset", "options.offset"), ("length", "options.length")] {
         let value = get(c, options, name)?;
         if !is_undefined(c, value) && c.rooted_value(value).and_then(|value| value.as_number()).is_none() {

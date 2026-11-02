@@ -5,7 +5,7 @@
 use super::faults::Fault;
 use super::headers;
 use super::{class, closure, get_slot, put_slot, with_state, Class, Slot};
-use crate::modules::host_members::{accessors, captured, constructor, current, members, methods};
+use crate::modules::host_members::{accessors, captured, constructor, current, members};
 use crate::modules::stream_shared_vm::{
     call_method, emit, get, is_nullish, is_undefined, next_tick, on, once, put, put_bool, put_number, truthy_member, Context,
     Outcome,
@@ -132,7 +132,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
         ("scheme", Member::Scheme, None),
         ("url", Member::Url, Some(Member::SetUrl)),
     ])?;
-    methods(c, prototype, &[("_read", Member::RequestRead), ("setTimeout", Member::RequestSetTimeout)])?;
+    super::class_methods(c, prototype, &[("_read", Member::RequestRead), ("setTimeout", Member::RequestSetTimeout)])?;
     super::set_class(c, Class::Http2ServerRequest, request)?;
 
     let base = get(c, stream_module, "Stream")?;
@@ -155,7 +155,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
         ("writableLength", Member::WritableLength, None),
         ("statusMessage", Member::StatusMessage, Some(Member::SetStatusMessage)),
     ])?;
-    methods(c, prototype, &[
+    super::class_methods(c, prototype, &[
         ("setTrailer", Member::SetTrailer),
         ("addTrailers", Member::AddTrailers),
         ("getHeader", Member::GetHeader),
@@ -577,12 +577,7 @@ fn forward(c: &mut Context<'_>, response: RootId, name: &str) -> Outcome {
 fn construct_request(c: &mut Context<'_>, this: RootId, stream: RootId, headers: RootId, options: RootId, raw: RootId) -> Result<(), RootedError> {
     let readable_options = c.object_rooted()?;
     put_bool(c, readable_options, "autoDestroy", false)?;
-    if c.is_object_rooted(options)? {
-        for key in c.enumerable_own_keys_rooted(options, true, true)? {
-            let value = c.get_property_rooted(options, key)?;
-            c.set_property_rooted(readable_options, key, value, readable_options)?;
-        }
-    }
+    super::assign(c, readable_options, options)?;
     let stream_module = crate::modules::stream_shared_vm::module(c)?;
     let readable = get(c, stream_module, "Readable")?;
     c.call_rooted(readable, this, &[readable_options])?;
@@ -737,7 +732,7 @@ fn checked_name(c: &mut Context<'_>, response: RootId, name: RootId, value: Root
         return Ok(None);
     }
     if name.starts_with(':') {
-        if !["status", "method", "authority", "scheme", "path", "protocol"].contains(&&name[1..]) {
+        if !headers::is_valid_pseudo_header(&name) {
             return Err(super::throw(c, Fault::InvalidPseudoheader, &[&name]));
         }
     } else {
@@ -823,7 +818,7 @@ fn write_head(c: &mut Context<'_>, response: RootId, status: RootId, message: Ro
             if values.len() % 2 != 0 {
                 return Err(crate::modules::util_shared_vm::argument_value_error(c, headers, "headers", "is invalid")?);
             }
-            values.chunks(2).map(|pair| (pair[0], pair[1])).collect()
+            values.chunks(headers::PAIR).map(|pair| (pair[0], pair[1])).collect()
         };
         for &(name, _) in &pairs {
             call_method(c, response, "removeHeader", &[name])?;

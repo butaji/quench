@@ -3,7 +3,7 @@
 //! TLS clients that negotiate it when `allowHTTP1` is set.
 
 use super::{class, closure, get_slot, put_slot, Class, Slot};
-use crate::modules::host_members::{captured, constructor, current, members, methods};
+use crate::modules::host_members::{captured, constructor, current, members};
 use crate::modules::stream_shared_vm::{
     call_method, emit, get, is_undefined, on, once, put, put_number, remove_listener, truthy_member, Context, Outcome,
 };
@@ -58,7 +58,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let server = constructor(c, Member::Construct, "Http2Server")?;
     crate::modules::http_shared_vm::inherit(c, server, net_server)?;
     let prototype = get(c, server, "prototype")?;
-    methods(c, prototype, &[("setTimeout", Member::SetTimeout), ("updateSettings", Member::UpdateSettings)])?;
+    super::class_methods(c, prototype, &[("setTimeout", Member::SetTimeout), ("updateSettings", Member::UpdateSettings)])?;
     let dispose = crate::modules::stream_shared_vm::utils::registered_symbol(c, "nodejs.asyncDispose")?;
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
@@ -76,7 +76,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(), RootedError> {
     let secure = constructor(c, Member::SecureConstruct, "Http2SecureServer")?;
     crate::modules::http_shared_vm::inherit(c, secure, tls_server)?;
     let prototype = get(c, secure, "prototype")?;
-    methods(c, prototype, &[
+    super::class_methods(c, prototype, &[
         ("setTimeout", Member::SetTimeout),
         ("updateSettings", Member::UpdateSettings),
         ("close", Member::SecureClose),
@@ -138,16 +138,9 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             super::assert_is_object(c, settings, "settings", "Object")?;
             super::settings::validate(c, settings)?;
             let options = get_slot(c, this, Slot::Options)?;
-            let merged = c.object_rooted()?;
             let current = get(c, options, "settings")?;
-            for source in [current, settings] {
-                if c.is_object_rooted(source)? {
-                    for key in c.enumerable_own_keys_rooted(source, true, true)? {
-                        let value = c.get_property_rooted(source, key)?;
-                        c.set_property_rooted(merged, key, value, merged)?;
-                    }
-                }
-            }
+            let merged = super::spread(c, current)?;
+            super::assign(c, merged, settings)?;
             put(c, options, "settings", merged)?;
             Ok(undefined)
         }
@@ -293,23 +286,11 @@ fn initialize(c: &mut Context<'_>, server: RootId, options: RootId, listener: Ro
 /// `initializeOptions(options)`.
 pub(super) fn initialize_options(c: &mut Context<'_>, given: RootId) -> Outcome {
     super::assert_is_object(c, given, "options", "Object")?;
-    let options = c.object_rooted()?;
-    if c.is_object_rooted(given)? {
-        for key in c.enumerable_own_keys_rooted(given, true, true)? {
-            let value = c.get_property_rooted(given, key)?;
-            c.set_property_rooted(options, key, value, options)?;
-        }
-    }
+    let options = super::spread(c, given)?;
     let settings = get(c, options, "settings")?;
     super::assert_is_object(c, settings, "options.settings", "Object")?;
-    let copy = c.object_rooted()?;
-    if c.is_object_rooted(settings)? {
-        for key in c.enumerable_own_keys_rooted(settings, true, true)? {
-            let value = c.get_property_rooted(settings, key)?;
-            c.set_property_rooted(copy, key, value, copy)?;
-        }
-    }
-    put(c, options, "settings", copy)?;
+    let settings = super::spread(c, settings)?;
+    put(c, options, "settings", settings)?;
     let remote = get(c, options, "remoteCustomSettings")?;
     if !is_undefined(c, remote) && !c.is_array_rooted(remote)? {
         return Err(crate::modules::util_shared_vm::argument_type_error(c, remote, "options.remoteCustomSettings", "Array")?);

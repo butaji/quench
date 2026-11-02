@@ -144,7 +144,7 @@ pub(super) fn entries(c: &mut Context<'_>, settings: RootId) -> Result<Vec<(u16,
                 let value = c.number(value);
                 return Err(invalid_setting(c, "Range Error", value, Some((0.0, MAX_INT))));
             }
-            match SettingId::ALL.into_iter().find(|known_id| f64::from(*known_id as u16) == id) {
+            match SettingId::from_wire(id as u16) {
                 Some(known_id) => known.push((known_id, value as u32)),
                 None => match custom.iter().position(|(existing, _)| f64::from(*existing) == id) {
                     Some(index) => custom[index].1 = value as u32,
@@ -222,15 +222,10 @@ pub(super) fn packed(c: &mut Context<'_>, settings: RootId) -> Outcome {
     validate(c, settings)?;
     let settings = if is_undefined(c, settings) { c.object_rooted()? } else { settings };
     let entries = entries(c, settings)?;
-    if entries.iter().any(|(id, _)| !SettingId::ALL.iter().any(|known| *known as u16 == *id)) {
+    if entries.iter().any(|&(id, _)| SettingId::from_wire(id).is_none()) {
         return Ok(c.undefined());
     }
-    let mut bytes = Vec::with_capacity(entries.len() * frame::SETTING_LENGTH);
-    for (id, value) in entries {
-        bytes.extend_from_slice(&id.to_be_bytes());
-        bytes.extend_from_slice(&value.to_be_bytes());
-    }
-    super::buffer(c, bytes)
+    super::buffer(c, frame::settings_payload(&entries))
 }
 
 /// `http2.getUnpackedSettings(buf, options)`.
@@ -243,15 +238,14 @@ pub(super) fn unpacked(c: &mut Context<'_>, buffer: RootId, options: RootId) -> 
             &super::types_expectation("Buffer,TypedArray"),
         )?);
     };
-    if bytes.len() % frame::SETTING_LENGTH != 0 {
+    if !bytes.len().is_multiple_of(frame::SETTING_LENGTH) {
         return Err(super::throw(c, Fault::InvalidPackedSettingsLength, &[]));
     }
     let settings = c.object_rooted()?;
     let mut custom: Option<RootId> = None;
-    for entry in bytes.chunks_exact(frame::SETTING_LENGTH) {
-        let id = frame::read_u16(entry);
-        let value = f64::from(frame::read_u32(&entry[2..]));
-        match SettingId::ALL.into_iter().find(|known| *known as u16 == id) {
+    for (id, value) in frame::settings_entries(&bytes) {
+        let value = f64::from(value);
+        match SettingId::from_wire(id) {
             Some(SettingId::EnablePush) => put_bool(c, settings, "enablePush", value != 0.0)?,
             Some(SettingId::EnableConnectProtocol) => put_bool(c, settings, "enableConnectProtocol", value != 0.0)?,
             Some(SettingId::MaxHeaderListSize) => {
