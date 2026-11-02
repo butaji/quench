@@ -309,6 +309,31 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// The language loop consumes a private read-only view. The intrinsic entry below
+    /// still returns a fresh array, so guest code cannot mutate a shared view.
+    pub(super) fn object_for_in_snapshot(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(snapshot) = self.plain_for_in_snapshot(source) {
+            return Ok(snapshot);
+        }
+        self.object_for_in_keys(p, source)
+    }
+
+    pub(super) fn plain_for_in_snapshot(&mut self, source: Value) -> Option<Value> {
+        let (shape, slots) = self.own_for_in_slots(source)?;
+        if let Some(snapshot) = self.enumerable_keys.snapshot(shape) {
+            return Some(snapshot);
+        }
+        let elements = self.enumerable_key_elements(&slots);
+        // The private view exposes no array protocol and must not retain a realm prototype.
+        let snapshot = self.alloc_for_in_key_array(elements, Value::NULL);
+        self.enumerable_keys.record_snapshot(shape, snapshot);
+        Some(snapshot)
+    }
+
     pub(super) fn object_for_in_keys(
         &mut self,
         p: &ResidualProgram,
@@ -365,12 +390,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|key| self.heap.root_value(*key).unwrap())
                 .collect::<Vec<_>>();
-            Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
-                    Self::empty_object(self.array_proto),
-                    elements,
-                ),
-            }))
+            Ok(self.alloc_for_in_key_array(elements.into(), self.array_proto))
         })();
         for root in visited_objects.into_values().chain(own_keys).chain(keys) {
             self.heap.release_root(root);
@@ -386,9 +406,17 @@ impl<H: Host> Vm<H> {
         } else {
             self.shape_for_in_keys(source)?
         };
-        Some(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), keys),
-        }))
+        Some(self.alloc_for_in_key_array(keys, self.array_proto))
+    }
+
+    fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
+        self.heap.alloc(Cell::Array {
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
+        })
+    }
+
+    fn enumerable_key_elements(&mut self, slots: &[(Atom, u32)]) -> crate::heap::ArrayElements {
+        crate::heap::ArrayElements::from_fn(slots.len(), |index| self.atom_string(slots[index].0))
     }
 
     /// for-in keys of an object whose prototype chain holds only objects with
@@ -399,8 +427,8 @@ impl<H: Host> Vm<H> {
     fn shape_for_in_keys(&mut self, receiver: Value) -> Option<crate::heap::ArrayElements> {
         // The common chain: the receiver's memoized enumerable keys, and no prototype with an
         // enumerable key, so no key shadows another and the order is the receiver's own.
-        if let Some(keys) = self.own_for_in_keys(receiver) {
-            return Some(keys);
+        if let Some((_, slots)) = self.own_for_in_slots(receiver) {
+            return Some(self.enumerable_key_elements(&slots));
         }
         let mut chain = Vec::new();
         let mut current = receiver;
@@ -453,18 +481,21 @@ impl<H: Host> Vm<H> {
     /// adds a key nor shadows one the receiver lists first, so the keys are the receiver's
     /// own enumerable ones, read from the shape memo (`shape_enumerable_slots`). `None`
     /// leaves any other chain to the walk.
-    fn own_for_in_keys(&mut self, receiver: Value) -> Option<crate::heap::ArrayElements> {
+    fn own_for_in_slots(
+        &self,
+        receiver: Value,
+    ) -> Option<(u32, super::enumerable_key_memo::EnumerableSlots)> {
+        let data = self.object_data(receiver)?;
+        let shape = data.shape();
+        let mut prototype = data.proto();
         let slots = self.shape_enumerable_slots(receiver)?;
-        let mut prototype = self.object_data(receiver)?.proto();
         while !prototype.is_null() {
             if !self.shape_enumerable_slots(prototype)?.is_empty() {
                 return None;
             }
             prototype = self.object_data(prototype)?.proto();
         }
-        Some(crate::heap::ArrayElements::from_fn(slots.len(), |index| {
-            self.atom_string(slots[index].0)
-        }))
+        Some((shape, slots))
     }
 
     pub(super) fn object_for_in_key_is_enumerable(

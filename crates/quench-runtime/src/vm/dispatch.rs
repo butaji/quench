@@ -1052,7 +1052,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::ForInKeys => {
-                let keys = self.object_for_in_keys(p, self.read(f, i.register_b()))?;
+                let keys = self.object_for_in_snapshot(p, self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), keys);
             }
             Op::ForInKeyIsEnumerable => {

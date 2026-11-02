@@ -410,8 +410,9 @@ impl<H: Host> Vm<H> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
-        // Enumerable projections contain only atom/slot IDs. Shape remapping and
-        // reset retire them; collecting heap values leaves those facts unchanged.
+        // Slot projections contain immutable atom/slot IDs and survive collection. Private
+        // heap views are weak: retire them before sweep; active loops root their snapshots.
+        self.enumerable_keys.clear_snapshots();
         // Prepared regexp subjects share their strings' text: kept across a collection, they
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();

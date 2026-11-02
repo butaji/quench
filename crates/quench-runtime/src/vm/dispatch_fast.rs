@@ -6177,7 +6177,7 @@ script_handler! {
     /// semantic operation as the general loop. Exotic chains take its rooted walk.
     fn lane_for_in_keys<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(keys) = vm.plain_for_in_keys(r.get(i.b)) else {
+        let Some(keys) = vm.plain_for_in_snapshot(r.get(i.b)) else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, keys);
