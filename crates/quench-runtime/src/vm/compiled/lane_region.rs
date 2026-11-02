@@ -727,12 +727,7 @@ impl Lowering<'_, '_> {
             return self.operand_int(state, operand, exit);
         }
         let number = self.operand_number(state, operand, exit)?;
-        let magnitude = self.ins().fabs(number);
-        let bound = self.ins().f64const(TO_INT32_EXACT_BOUND);
-        let exact = self.ins().fcmp(ir::condcodes::FloatCC::LessThan, magnitude, bound);
-        emit_js_guard(&mut self.builder, exact, exit);
-        let wide = self.ins().fcvt_to_sint_sat(types::I64, number);
-        Some(self.ins().ireduce(types::I32, wide))
+        Some(self.number_to_int32(number, exit))
     }
 
     /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its
@@ -777,19 +772,53 @@ impl Lowering<'_, '_> {
         })
     }
 
-    /// Whether the instruction after `pc` is `register | 0` and nothing else reads `register`:
-    /// it reads only the result's ToInt32.
-    fn truncated_next(&self, pc: usize, register: Register) -> bool {
+    /// Whether only the result's ToInt32 is read of `register`, written at `pc`: the next
+    /// instruction is its one reader, a bitwise operator, which applies ToInt32 to its operands.
+    /// A sum's or difference's wrapping int32 result then serves for int32 operands, and
+    /// ToInt32 of its exact double for any others. Not through a further sum: ToInt32 does not
+    /// commute with adding a non-integer (trunc(-3 + 0.5) differs from trunc(-3 + 2^32 + 0.5)
+    /// mod 2^32), so V8 truncates chains only of int32 inputs.
+    fn truncated(&self, pc: usize, register: Register) -> bool {
         let Some(next) = self.unit.instructions.get(pc + 1).copied() else { return false };
-        let zero = |operand: Operand| operand.kind() == Some(OperandKind::Constant)
-            && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)
-                .and_then(Value::as_number) == Some(0.0);
-        let this = |operand: Operand| operand.register_index() == Some(register);
-        next.op() == Op::Binary
-            && super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator())
-                == Some(super::operations::NumberBitwise::Or)
-            && ((this(next.operand_b()) && zero(next.operand_c())) || (zero(next.operand_b()) && this(next.operand_c())))
-            && (next.result_register() == register || !self.is_live(pc + 2, register))
+        if next.op() != Op::Binary || next.returns_from_frame() || next.writes_current_this() { return false; }
+        let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(register)).count();
+        if reads == 0 || !(next.result_register() == register || !self.is_live(pc + 2, register)) { return false; }
+        let operator = next.binary_operator();
+        if super::operations::NumberBitwise::from_js_instruction(next.op(), operator)
+            .is_some_and(|bitwise| bitwise != super::operations::NumberBitwise::ShiftRightUnsigned) {
+            return true;
+        }
+        false
+    }
+
+    /// `state` past a join with `incoming`: each register's facts as both paths prove them.
+    fn join_states(&mut self, state: &mut State, incoming: &State) {
+        for (index, incoming) in incoming.values.iter().copied().enumerate() {
+            let current = state.values[index];
+            if current != incoming {
+                let representation = if current.value.representation == incoming.value.representation {
+                    current.value.representation
+                } else {
+                    self.valid &= current.tagged_current && incoming.tagged_current;
+                    Representation::Tagged
+                };
+                let mut fact = RegisterFact::definition(current.value.ty.join(incoming.value.ty), representation);
+                fact.tagged_current = current.tagged_current && incoming.tagged_current;
+                self.valid &= fact.value.verify();
+                state.values[index] = fact;
+            }
+        }
+    }
+
+    /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
+    /// leave through `exit` (`TO_INT32_EXACT_BOUND`).
+    fn number_to_int32(&mut self, number: ir::Value, exit: ir::Block) -> ir::Value {
+        let magnitude = self.ins().fabs(number);
+        let bound = self.ins().f64const(TO_INT32_EXACT_BOUND);
+        let exact = self.ins().fcmp(ir::condcodes::FloatCC::LessThan, magnitude, bound);
+        emit_js_guard(&mut self.builder, exact, exit);
+        let wide = self.ins().fcvt_to_sint_sat(types::I64, number);
+        self.ins().ireduce(types::I32, wide)
     }
 
     /// `register`'s int32 view (`Registers::int`).
@@ -1805,7 +1834,7 @@ impl Lowering<'_, '_> {
                     // A sum or difference only `| 0` reads is its ToInt32: the wrapping int32
                     // result, which needs no overflow exit.
                     if !(matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
-                        && self.truncated_next(pc, destination)) {
+                        && self.truncated(pc, destination)) {
                         emit_js_guard_not(&mut self.builder, overflow, exit);
                     }
                     if arithmetic == super::operations::NumberArithmetic::Multiply {
@@ -1816,6 +1845,32 @@ impl Lowering<'_, '_> {
                         emit_js_guard_not(&mut self.builder, negative_zero, exit);
                     }
                     self.set_int(state, destination, result);
+                } else if matches!(arithmetic, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract)
+                    && self.truncated(pc, destination) {
+                    // Only its ToInt32 is read: int32 operands wrap, any other numbers take
+                    // ToInt32 of their double result, and both join as an int32.
+                    let float = self.builder.create_block();
+                    self.builder.set_cold_block(float);
+                    let mut float_state = state.clone();
+                    let left_int = self.operand_int(state, left, float).expect("supported operand");
+                    let right_int = self.operand_int(state, right, float).expect("supported operand");
+                    let wrapped = if arithmetic == super::operations::NumberArithmetic::Add {
+                        self.ins().iadd(left_int, right_int)
+                    } else {
+                        self.ins().isub(left_int, right_int)
+                    };
+                    let join = self.builder.create_block();
+                    let int = self.builder.append_block_param(join, types::I32);
+                    self.ins().jump(join, &[ir::BlockArg::Value(wrapped)]);
+                    self.builder.switch_to_block(float);
+                    let left_number = self.operand_number(&mut float_state, left, exit)?;
+                    let right_number = self.operand_number(&mut float_state, right, exit)?;
+                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
+                    let truncated = self.number_to_int32(number, exit);
+                    self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
+                    self.builder.switch_to_block(join);
+                    self.join_states(state, &float_state);
+                    self.set_int(state, destination, int);
                 } else {
                     let float = self.builder.create_block();
                     self.builder.set_cold_block(float);
@@ -1843,21 +1898,7 @@ impl Lowering<'_, '_> {
                     let result = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
                     self.ins().jump(join, &[ir::BlockArg::Value(result)]);
                     self.builder.switch_to_block(join);
-                    for (index, incoming) in float_state.values.iter().copied().enumerate() {
-                        let current = state.values[index];
-                        if current != incoming {
-                            let representation = if current.value.representation == incoming.value.representation {
-                                current.value.representation
-                            } else {
-                                self.valid &= current.tagged_current && incoming.tagged_current;
-                                Representation::Tagged
-                            };
-                            let mut fact = RegisterFact::definition(current.value.ty.join(incoming.value.ty), representation);
-                            fact.tagged_current = current.tagged_current && incoming.tagged_current;
-                            self.valid &= fact.value.verify();
-                            state.values[index] = fact;
-                        }
-                    }
+                    self.join_states(state, &float_state);
                     self.set_number(state, destination, number);
                 }
             }
