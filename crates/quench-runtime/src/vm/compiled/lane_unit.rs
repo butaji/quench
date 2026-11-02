@@ -138,7 +138,8 @@ impl Unit {
     pub(super) fn suffix(mut self, header: usize) -> Option<Self> {
         if header >= self.instructions.len() { return None; }
         if header == 0 { return Some(self); }
-        if !self.frames.is_empty() { return None; }
+        if self.markers.iter().any(|marker| *marker < header) { return None; }
+        for marker in &mut self.markers { *marker -= header; }
         self.instructions.drain(..header);
         self.origins.drain(..header);
         for instruction in &mut self.instructions {

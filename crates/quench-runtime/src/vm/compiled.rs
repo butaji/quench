@@ -2222,21 +2222,23 @@ pub(super) fn lower_static_typed_region(program: &ResidualProgram, function_id: 
     if function_id == 0 || !js_general_dispatch_candidate(program, function) { return None; }
     let unit = lane_unit::unit(program, function, &|pc| targets.get(pc).copied().flatten()
         .map(|function| CallTarget { function, callee: CalleeBinding::Function }), &|id| program.function_get(id as usize))?;
-    // A call-bearing unit starts at entry. Full lowering admits shared no-frame
-    // calls and exits before a terminal call; any other unsupported call rejects
-    // the unit through that same instruction/effect authority.
+    // A closed loop must re-enter after an opaque call returns. Its effectful
+    // initialization remains in canonical code and may not run on a backedge.
+    let loop_header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+        matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
+    }).min().filter(|header| unit.markers.iter().all(|marker| marker >= header)
+        && unit.instructions[*header..].iter().all(|instruction|
+            instruction.op().immediate_role() != crate::bytecode::ImmediateRole::JumpTarget
+                || instruction.jump_target() as usize >= *header));
     let has_calls = unit.instructions.iter().any(|instruction|
         instruction.op().control_flow_layout() == ControlFlowLayout::Call);
-    let header = if has_calls || !unit.frames.is_empty() { 0 } else {
-        unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
-            matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
-                .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)
-        }).min()?
-    };
+    let header = loop_header.or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))?;
+    let lane_unit::Origin::Caller(source_header) = unit.origins[header] else { return None; };
     let unit = unit.suffix(header)?;
     let (native, count) = lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
         &[], isa, lane_region::Coverage::Full, lane_region::Completion::SourcePc)?;
-    (count != 0).then_some(StaticTypedRegion { header, function: native })
+    (count != 0).then_some(StaticTypedRegion { header: source_header as usize, function: native })
 }
 
 #[cfg_attr(not(feature = "aot"), allow(dead_code))]
@@ -16749,6 +16751,45 @@ mod tests {
         assert_eq!(admitted(&vm), 1);
         vm.execution_interrupt.request_termination();
         assert_eq!(admitted(&vm), 0, "termination must precede the inlined store");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn typed_loop_reentry_keeps_prefix_effects_outside_inlined_frames() {
+        let program = crate::Engine::specialize(
+            "let mask=2;let proto={};proto.mark=function(){this.state=this.state|mask;};function walk(node){node.seen=node.seen+1;while(node.next!==null){node=node.next;node.mark();}return node;}",
+            "inline-loop-entry.js").unwrap();
+        let caller = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
+        let targets = static_call_targets(&program);
+        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+            &|id| program.function_get(id as usize)).unwrap();
+        assert_eq!(unit.frames.len(), 1);
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0)
+            .expect("closed loop with an inlined store");
+        assert!(region.header > 0, "prefix store cannot execute again on loop reentry");
+        assert!(program.function(caller).instructions().any(|instruction|
+            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && instruction.jump_target() as usize == region.header), "entry is an original source target");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn typed_field_chains_commit_the_sink_before_the_destination() {
+        let program = crate::Engine::specialize(
+            "function route(base){this.current=base.next.value;this.finish();return this.current;}",
+            "fused-typed.js").unwrap();
+        let function = program.function(1);
+        assert!(function.instructions().any(|instruction| instruction.op() == Op::GetField
+            && instruction.writes_current_this() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))),
+            "fixture must exercise a fused read/read/sink instruction");
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        assert!(lower_static_typed_region(&program, 1, &[], &*isa, 0).is_some(),
+            "fused field sites must use the shared typed region");
     }
 
     #[cfg(feature = "aot")]

@@ -311,5 +311,45 @@ record(() => runPure(pureSecond, 0));
 Object.defineProperty(pureFirst, 'pureBoundProbe', {value(expected) { events.push('pure-replacement'); return expected; }});
 record(() => runPure(pureFirst, 0));
 output.push(JSON.stringify([pureFirst.stamp, pureSecond.stamp]));
+function fusedRoute(base) {
+  this.stamp = this.stamp + 1;
+  this.current = (base = base.next.value);
+  this.finish();
+  return base;
+}
+const fusedTail = {value: 7, a: 0, b: 0, c: 0, d: 0, e: 0};
+const fusedBase = {next: fusedTail, a: 0, b: 0, c: 0, d: 0, e: 0};
+const fusedOwner = {current: 0, stamp: 0, route: fusedRoute, finish() {}, a: 0, b: 0, c: 0};
+for (let i = 0; i < 200; i++) {
+  if (fusedOwner.route(fusedBase) !== 7) throw Error('fused alias destination');
+}
+Object.defineProperty(fusedTail, 'value', {get() { events.push('fused-second'); return 9; }});
+record(() => fusedOwner.route(fusedBase));
+Object.defineProperty(fusedOwner, 'current', {set(value) { events.push('fused-sink:' + value); }, configurable: true});
+record(() => fusedOwner.route(fusedBase));
+Object.defineProperty(fusedBase, 'next', {get() { events.push('fused-first'); return fusedTail; }});
+record(() => fusedOwner.route(fusedBase));
+Object.defineProperty(fusedOwner, 'current', {value: 3, writable: false});
+record(() => fusedOwner.route(fusedBase));
+output.push(JSON.stringify([fusedOwner.current, fusedOwner.stamp]));
+function fusedWalk(node) {
+  this.stamp = this.stamp + 1;
+  this.current = node;
+  while (this.current !== null) {
+    this.current.uniqueBoundMark();
+    this.current = this.current.next;
+  }
+  return this.stamp;
+}
+const walkFirst = makeBound(1), walkSecond = makeBound(2);
+walkFirst.next = walkSecond;
+walkSecond.next = null;
+const walkOwner = {stamp: 0, current: null, walk: fusedWalk, a: 0, b: 0, c: 0};
+for (let i = 0; i < 200; i++) {
+  if (walkOwner.walk(walkFirst) !== 1 + i) throw Error('loop prefix replay');
+}
+walkFirst.changeMask({valueOf() { events.push('walk-coerce'); return 4; }});
+record(() => walkOwner.walk(walkFirst));
+output.push(JSON.stringify([walkOwner.stamp, walkFirst.state, walkSecond.state]));
 output.push(events.join(','));
 console.log(JSON.stringify(output));

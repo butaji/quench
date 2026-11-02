@@ -78,6 +78,10 @@ impl State {
     }
 }
 
+/// An intermediate chain value has no register lifetime to memoize.
+#[derive(Clone, Copy)]
+enum FieldOwner { This, Register(Register), Temporary }
+
 /// Region-wide facts proved at entry.
 struct Entry {
     receiver: LaneReceiver,
@@ -703,8 +707,15 @@ impl Lowering<'_, '_> {
         // nothing in a run changes either (`emit_js_own_field_set`).
         let mut store_atoms = BTreeMap::new();
         for instruction in instructions {
-            if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict) && !store_atoms.contains_key(&instruction.atom_index()) {
-                let atom = instruction.atom_index();
+            let atom = match instruction.op() {
+                Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => Some(instruction.atom_index()),
+                Op::GetField if instruction.writes_current_this() => match instruction.field_lookup() {
+                    Some(FieldLookup::Site(site)) => self.program.field_sites.get(site).and_then(|site| site.sink.map(|sink| sink.0)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(atom) = atom.filter(|atom| !store_atoms.contains_key(atom)) {
                 let admitted = self.emit_store_atom_admitted(atom);
                 let variable = self.builder.declare_var(types::I8);
                 self.builder.def_var(variable, admitted);
@@ -749,18 +760,32 @@ impl Lowering<'_, '_> {
             let mut fields = smallvec::SmallVec::new();
             if matches!(self.helpers, LaneHelpers::Bound(_)) {
                 for instruction in instructions {
-                    let site = match instruction.op() {
-                        Op::GetField => instruction.field_lookup().and_then(|lookup| match lookup {
-                            FieldLookup::Atom { cache_site, .. } => Some(cache_site), _ => None }),
-                        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => Some(instruction.cache_site_index()),
-                        _ => None,
-                    };
-                    let Some(site) = site else { continue };
-                    if fields.iter().any(|(known, _)| *known == site) { continue; }
-                    let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
-                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, miss);
-                    binding.slot = FieldSlot::Bound(binding.slot.read(&mut self.builder));
-                    fields.push((site, binding));
+                    // A field chain names sequential sites, not alternatives for
+                    // one polymorphic access. Bind each distinct column once.
+                    let mut sites = smallvec::SmallVec::<[u16; 3]>::new();
+                    match instruction.op() {
+                        Op::GetField => match instruction.field_lookup() {
+                            Some(FieldLookup::Atom { cache_site, .. }) => sites.push(cache_site),
+                            Some(FieldLookup::Site(site)) => {
+                                let site = self.program.field_sites[site];
+                                sites.push(site.first.1);
+                                if let Some((_, cache)) = site.second { sites.push(cache); }
+                                if instruction.writes_current_this() {
+                                    if let Some((_, cache)) = site.sink { sites.push(cache); }
+                                }
+                            }
+                            _ => {},
+                        },
+                        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => sites.push(instruction.cache_site_index()),
+                        _ => {},
+                    }
+                    for site in sites {
+                        if fields.iter().any(|(known, _)| *known == site) { continue; }
+                        let miss = *capture_miss.get_or_insert_with(|| self.builder.create_block());
+                        let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, miss);
+                        binding.slot = FieldSlot::Bound(binding.slot.read(&mut self.builder));
+                        fields.push((site, binding));
+                    }
                 }
             }
             fields
@@ -884,7 +909,13 @@ impl Lowering<'_, '_> {
                     })
                 }
             }
-            Op::GetField if plain && !instruction.writes_current_this() => self.get_field(state, pc, instruction),
+            Op::GetField if plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER => {
+                match instruction.field_lookup() {
+                    Some(FieldLookup::Site(site)) => self.get_field_site(state, pc, instruction, site),
+                    _ if plain => self.get_field(state, pc, instruction),
+                    _ => None,
+                }
+            },
             Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict if plain => self.set_field(state, pc, instruction),
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction, instructions)
@@ -1149,9 +1180,42 @@ impl Lowering<'_, '_> {
         } else {
             self.tagged(state, register?)
         };
-        let owner = if receiver { None } else { register };
+        let owner = if receiver { FieldOwner::This } else { FieldOwner::Register(register?) };
         let value = self.field_probe(state, owner, object_bits, cache_site, exit);
         self.set_tagged(state, destination, value);
+        Some(true)
+    }
+
+    /// The same fused read/read/sink order as `resolve_field` and the fast lane.
+    /// Intermediate reads remain SSA temporaries: any miss can safely repeat
+    /// them at the original PC, even when the destination aliases the base.
+    fn get_field_site(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, site: usize) -> Option<bool> {
+        let site = *self.program.field_sites.get(site)?;
+        let register = site.base.register_index();
+        let (base, owner) = match register {
+            Some(register) if register < self.unit.registers => {
+                let owner = if state.receivers.contains(&register) { FieldOwner::This } else { FieldOwner::Register(register) };
+                (self.tagged(state, register), owner)
+            }
+            None if site.base == crate::bytecode::FieldBase::THIS =>
+                (self.builder.use_var(self.entry.as_ref().expect("entry facts").this), FieldOwner::This),
+            _ => return None,
+        };
+        let sink = if instruction.writes_current_this() { Some(site.sink?) } else { None };
+        let exit = self.guard_exit(state, pc as u32);
+        let mut value = self.field_probe(state, owner, base, site.first.1, exit);
+        if let Some((_, cache)) = site.second {
+            value = self.field_probe(state, FieldOwner::Temporary, value, cache, exit);
+        }
+        if let Some((atom, cache)) = sink {
+            let object = self.builder.use_var(self.entry.as_ref().expect("entry facts").this);
+            let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(site, _)| *site == cache));
+            let header = bound.then(|| self.object_header(state, None, exit));
+            self.store_helper(object, atom, cache, value, exit, header);
+        }
+        // The only write succeeded; no fallible operation may follow it at
+        // this PC. Successor edge checks recover at the successor's source PC.
+        self.set_tagged(state, instruction.result_register(), value);
         Some(true)
     }
 
@@ -1226,16 +1290,20 @@ impl Lowering<'_, '_> {
 
     /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included;
     /// a miss leaves through `exit`.
-    fn field_probe(&mut self, state: &mut State, owner: Option<Register>, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
+    fn field_probe(&mut self, state: &mut State, owner: FieldOwner, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
         let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
             .find_map(|(known, binding)| (*known == site).then_some(*binding)));
         if let Some(binding) = bound {
-            let header = self.object_header(state, owner, exit);
+            let header = match owner {
+                FieldOwner::This => Some(self.object_header(state, None, exit)),
+                FieldOwner::Register(register) => Some(self.object_header(state, Some(register), exit)),
+                FieldOwner::Temporary => None,
+            };
             let slow = self.builder.create_block();
             let done = self.builder.create_block();
             let result = self.builder.append_block_param(done, types::I64);
             let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding), Some(header));
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header);
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(slow);
