@@ -1102,7 +1102,12 @@ impl CallEntry {
 /// moves of its parameters in order into a call window, and the call of that method on the
 /// first field returning its completion (`CallEntry::ForwardsRead`), as `at(i) { return
 /// this.items.at(i); }` compiles.
+#[cold]
+#[inline(never)]
 fn forwarding_read_body(body: &Function) -> bool {
+    if !body.handlers.is_empty() {
+        return false;
+    }
     let count = usize::from(body.params);
     let Some(code) = body.code.get(..count + 3) else {
         return false;
@@ -1112,19 +1117,29 @@ fn forwarding_read_body(body: &Function) -> bool {
     let (field, method, call) = (decoded[0], decoded[1], decoded[count + 2]);
     let base = crate::bytecode::FieldBase(field.b());
     let window = ImmediateLayout::call_window_base(call.imm());
+    let window_end = u32::from(window) + u32::from(body.params);
+    let survives_copies = |register: u16| {
+        u32::from(register) < u32::from(window) || u32::from(register) >= window_end
+    };
     field.op() == Op::GetField
-        && !field.returns_from_frame()
+        && field.result_flags() == 0
+        && field.result_register() >= body.params
+        && survives_copies(field.result_register())
         && base.0 != crate::bytecode::FieldBase::NESTED
         && base.local_index().is_none()
         && base.register_index().is_none_or(|register| register < body.params)
         && method.op() == Op::GetField
-        && !method.returns_from_frame()
+        && method.result_flags() == 0
+        && method.result_register() >= body.params
+        && method.result_register() != field.result_register()
+        && survives_copies(method.result_register())
         && crate::bytecode::FieldBase(method.b()).register_index() == Some(field.a())
+        && (window == 0 || window >= body.params)
         && decoded[2..count + 2].iter().zip(0..body.params).all(|(moved, parameter)| {
             moved.op() == Op::Move && moved.b() == parameter && moved.a() == window + parameter
         })
         && call.op() == Op::Call
-        && call.a() & crate::bytecode::RETURN_REGISTER != 0
+        && call.result_flags() == crate::bytecode::RETURN_REGISTER
         && call.b() == method.a()
         && call.c() == field.a()
         && ImmediateLayout::argument_count(call.imm()) == body.params
