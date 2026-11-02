@@ -546,7 +546,7 @@ pub(crate) fn deprecate(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     deprecated_wrapper(c, target, message, code)
 }
 
-fn deprecated_wrapper(c: &mut Context<'_>, target: RootId, message: RootId, code: RootId) -> Result<RootId, RootedError> {
+pub(crate) fn deprecated_wrapper(c: &mut Context<'_>, target: RootId, message: RootId, code: RootId) -> Result<RootId, RootedError> {
     let state = c.null_object_rooted()?;
     for (name, value) in [("target", target), ("message", message), ("code", code)] {
         put(c, state, name, value)?;

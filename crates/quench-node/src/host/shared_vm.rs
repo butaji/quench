@@ -460,6 +460,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferGlobalGet" (0) => crate::modules::buffer_shared_vm::global_get,
         method "bufferGlobalSet" (1) => crate::modules::buffer_shared_vm::global_set,
         method "bufferClassConstructor" (3) => crate::modules::buffer_module::constructor,
+        method "bufferFastConstructor" (3) => crate::modules::buffer_module::fast_constructor,
         method "bufferFrom" (3) => crate::modules::buffer_module::static_from,
         method "bufferOf" (0) => crate::modules::buffer_module::of,
         method "bufferAlloc" (3) => crate::modules::buffer_module::alloc,
