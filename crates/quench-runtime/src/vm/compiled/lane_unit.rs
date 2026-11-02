@@ -15,9 +15,12 @@ use crate::value::Value;
 
 /// Binding time of a callee: a published closure or a static body whose actual
 /// closure/environment is admitted at the call. Function bindings are accepted
-/// only for a pure body or one whose misses precede its sole final store.
+/// for verified plain bodies with explicit restart or exact-state recovery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CalleeBinding { Identity(Value), Function }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CallRecovery { RestartCall, Materialize }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CallTarget {
@@ -43,6 +46,7 @@ pub(crate) enum Origin {
 /// An inlined call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Frame {
+    pub(crate) recovery: CallRecovery,
     /// The caller's PC of the call.
     pub(crate) call: u32,
     pub(crate) target: CallTarget,
@@ -222,7 +226,7 @@ fn inlinable(instruction: WideInstruction) -> bool {
         Op::Nop | Op::LoadConst | Op::Move | Op::LoadThis | Op::IncDec | Op::Jump | Op::JumpFalse | Op::JumpTrue
         | Op::JumpBinaryFalse => plain,
         Op::GetField => value && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { .. })),
-        Op::SetThisField | Op::SetThisFieldStrict => plain,
+        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => plain,
         Op::LoadCapture => plain && instruction.capture_depth() == 0,
         op => value && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
@@ -233,13 +237,12 @@ fn inlinable(instruction: WideInstruction) -> bool {
 /// Captured stores additionally allow one final write with an infallible tail.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
-    function.plain_activation(program) && super::super::js_compiled::eligible(function, program)
-        && code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
-            Op::SetThisField | Op::SetThisFieldStrict => false,
-            Op::IncDec => instruction.numeric_local_target().is_none(),
-            Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => instruction.jump_target() as usize > pc,
-            _ => true, // `inlinable` above owns the supported instruction/effect set.
-        })
+    code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
+        Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => false,
+        Op::IncDec => instruction.numeric_local_target().is_none(),
+        Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => instruction.jump_target() as usize > pc,
+        _ => true, // `inlinable` above owns the supported instruction/effect set.
+    })
 }
 
 fn expanded_len(instruction: WideInstruction) -> usize {
@@ -276,7 +279,8 @@ pub(crate) fn unit<'f>(
         if callee_code.len() > MAX_INLINED_INSTRUCTIONS
             || arguments > callee.registers
             || !callee_code.iter().all(|instruction| inlinable(*instruction))
-            || (target.callee == CalleeBinding::Function && !restartable(program, callee, &callee_code))
+            || (target.callee == CalleeBinding::Function
+                && (!callee.plain_activation(program) || !super::super::js_compiled::eligible(callee, program)))
             || !callee_code.iter().any(|instruction| expanded_len(*instruction) > 1)
         {
             continue;
@@ -284,6 +288,9 @@ pub(crate) fn unit<'f>(
         let Ok(base) = Register::try_from(registers) else { break };
         registers += u32::from(callee.registers);
         let frame = Frame {
+            recovery: if target.callee == CalleeBinding::Function && restartable(program, callee, &callee_code) {
+                CallRecovery::RestartCall
+            } else { CallRecovery::Materialize },
             call: pc as u32,
             target,
             callee_register: instruction.register_b(),
@@ -379,8 +386,9 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn function_binding_rejects_effects_before_fallible_work_and_backward_branches() {
-        for body in ["this.state=1;return this.next.value;", "let x=0;while(x<4)x++;return x;"] {
+    fn function_binding_materializes_effectful_prefixes_and_backward_branches() {
+        for body in ["this.state=1;return this.next+1;", "let x=0;while(x<4)x++;return x;",
+            "this.next.value=1;return this.other+1;"] {
             let source = format!("let o={{}};o.unsafeProbe=function(){{{body}}};function run(o){{let r=o.unsafeProbe();if(r)return 11;return 12;}}");
             let program = crate::Engine::specialize(&source, "non-restartable.js").unwrap();
             let caller = program.functions.iter().position(|body|
@@ -390,7 +398,8 @@ mod tests {
             let unit = unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
                 &|id| program.function_get(id as usize)).unwrap();
-            assert!(unit.frames.is_empty(), "caller-call recovery must reject {body}");
+            assert_eq!(unit.frames.len(), 1, "exact recovery admits {body}");
+            assert_eq!(unit.frames[0].recovery, CallRecovery::Materialize);
         }
     }
 

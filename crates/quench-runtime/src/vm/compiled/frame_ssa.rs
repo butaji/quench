@@ -107,7 +107,7 @@ impl FrameFlow {
         Self { registers, count, effects: SecondaryMap::new(), footprints: Vec::new() }
     }
 
-    /// This call targets a verified scalar residual: canonical writes, no GC.
+    /// A verified canonical frame footprint, read or written without GC.
     #[cfg(feature = "aot")]
     pub(super) fn residual(&mut self, call: ir::Inst, frame: &[Register]) {
         let mut footprint = RegisterSet::new(self.count);
@@ -268,8 +268,8 @@ impl FrameFlow {
                     builder.def_var(variables[usize::from(register)], input.expect("resume input"));
                 }
                 if let Some(frame) = residual {
-                    // A scalar residual may update canonical homes on either
-                    // success or deopt, but cannot move or release the buffers.
+                    // Canonical consumers may update homes, but cannot move
+                    // or release this caller's buffers.
                     for register in frame.iter() {
                         let value = builder.ins().load(types::I64, MemFlagsData::trusted(), self.registers, offset(register));
                         builder.def_var(variables[usize::from(register)], value);

@@ -351,5 +351,86 @@ for (let i = 0; i < 200; i++) {
 walkFirst.changeMask({valueOf() { events.push('walk-coerce'); return 4; }});
 record(() => walkOwner.walk(walkFirst));
 output.push(JSON.stringify([walkOwner.stamp, walkFirst.state, walkSecond.state]));
+const exactPrototype = {};
+exactPrototype.consumeExact = function (input) {
+  this.count = this.count + 1;
+  const value = input.value;
+  return value + this.count;
+};
+function runExact(owner, input) {
+  const value = owner.consumeExact(input);
+  return value + 3;
+}
+const exactOwner = Object.create(exactPrototype);
+exactOwner.count = 0;
+const exactInput = {value: 7};
+for (let i = 0; i < 100; i++) {
+  if (runExact(exactOwner, exactInput) !== exactOwner.count + 10) throw Error('exact warm');
+}
+Object.defineProperty(exactInput, 'value', {configurable: true, get() {
+  events.push('exact-get:' + exactOwner.count);
+  return 20;
+}});
+const exactBefore = exactOwner.count;
+if (runExact(exactOwner, exactInput) !== exactBefore + 24 || exactOwner.count !== exactBefore + 1) {
+  throw Error('callee prefix repeated before getter');
+}
+Object.defineProperty(exactInput, 'value', {get() {
+  events.push('exact-throw:' + exactOwner.count);
+  throw 'exact-error';
+}});
+try { runExact(exactOwner, exactInput); throw Error('missing callee error'); }
+catch (error) { if (error !== 'exact-error') throw error; }
+if (exactOwner.count !== exactBefore + 2) throw Error('callee prefix repeated before throw');
+output.push(exactOwner.count);
+exactPrototype.linkExact = function linkExactLeaf(head) {
+  this.count = this.count + 1;
+  this.link = null;
+  while (head.link !== null) head = head.link;
+  head.link = this;
+  return head;
+};
+function runLinkExact(owner, head) {
+  const result = owner.linkExact(head);
+  owner.after = owner.after + 1;
+  return result;
+}
+const linkOwner = Object.create(exactPrototype);
+linkOwner.count = 0; linkOwner.link = null; linkOwner.after = 0;
+const linkHead = {link: null};
+for (let i = 0; i < 50; i++) {
+  linkHead.link = null;
+  if (runLinkExact(linkOwner, linkHead) !== linkHead || linkHead.link !== linkOwner) throw Error('link warm');
+}
+let storedLink;
+const linkTail = {get link() {
+  if (exactPrototype.linkExact.arguments[0] !== linkTail || exactPrototype.linkExact.caller !== runLinkExact) {
+    throw Error('materialized reflection');
+  }
+  events.push('tail-get:' + linkOwner.count); return null;
+},
+  set link(value) { events.push('tail-set:' + linkOwner.count); storedLink = value; }};
+linkHead.link = linkTail;
+if (runLinkExact(linkOwner, linkHead) !== linkTail || storedLink !== linkOwner
+    || linkOwner.count !== 51 || linkOwner.after !== 51) throw Error('link recovery');
+output.push(linkOwner.count);
+exactPrototype.strictExact = function (input) {
+  'use strict';
+  this.count = this.count + 1;
+  input.value = this.count;
+  return this.count;
+};
+function runStrictExact(owner, input) {
+  const result = owner.strictExact(input);
+  return result + 1;
+}
+const strictInput = {value: 0};
+for (let i = 0; i < 50; i++) runStrictExact(exactOwner, strictInput);
+Object.defineProperty(strictInput, 'value', {writable: false});
+const strictBefore = exactOwner.count;
+try { runStrictExact(exactOwner, strictInput); throw Error('missing strict failure'); }
+catch (error) { if (error.name !== 'TypeError') throw error; }
+if (exactOwner.count !== strictBefore + 1) throw Error('strict prefix replay');
+output.push(exactOwner.count);
 output.push(events.join(','));
 console.log(JSON.stringify(output));

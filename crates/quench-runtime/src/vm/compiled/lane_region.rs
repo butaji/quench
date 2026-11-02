@@ -609,6 +609,14 @@ pub(super) fn lower(
     }
     // The exit blocks: write back every caller register the unit writes, and an inlined
     // callee's registers to the scratch window it is made from, then leave at the origin.
+    let snapshot = (lowering.completion == Completion::SourcePc).then(||
+        unit.frames.iter().filter(|frame| frame.recovery == super::lane_unit::CallRecovery::Materialize)
+            .map(|frame| frame.registers).max()).flatten().map(|registers| {
+        let word = types::I64.bytes();
+        lowering.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot, u32::from(registers) * word,
+            word.trailing_zeros() as u8))
+    });
     for unit_pc in 0..lowering.exits.len() {
         let Some(block) = lowering.exits[unit_pc] else { continue };
         lowering.builder.switch_to_block(block);
@@ -622,13 +630,18 @@ pub(super) fn lower(
             super::lane_unit::Origin::Caller(pc) => u64::from(pc),
             super::lane_unit::Origin::Inlined { frame, pc: source_pc } => {
                 let inlined = unit.frames[frame];
-                if lowering.completion == Completion::SourcePc {
+                if lowering.completion == Completion::SourcePc
+                    && inlined.recovery == super::lane_unit::CallRecovery::RestartCall {
                     // Function-bound leaves are pure or have one final store.
                     // Every possible callee miss precedes any guest effect.
                     lowering.return_at(u64::from(inlined.call));
                     continue;
                 }
-                let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
+                let scratch = if lowering.completion == Completion::SourcePc {
+                    lowering.builder.ins().stack_addr(types::I64, snapshot.expect("materialized callee snapshot"), 0)
+                } else {
+                    emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined))
+                };
                 for register in 0..inlined.registers {
                     let bits = if lowering.is_live(unit_pc as usize, inlined.base + register) {
                         lowering.builder.use_var(lowering.registers.tagged[usize::from(inlined.base + register)])
@@ -636,6 +649,16 @@ pub(super) fn lower(
                         lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
                     };
                     lowering.builder.ins().store(MemFlagsData::trusted(), bits, scratch, register_offset(register));
+                }
+                if lowering.completion == Completion::SourcePc {
+                    let function = lowering.builder.ins().iconst(types::I64, i64::from(inlined.target.function));
+                    let call = lowering.builder.ins().iconst(types::I64, i64::from(inlined.call));
+                    let source = lowering.builder.ins().iconst(types::I64, i64::from(source_pc));
+                    let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::MaterializeInline);
+                    emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
+                        &[lowering.payload, function, call, source, scratch]);
+                    lowering.return_at(u64::from(JS_INLINE_MATERIALIZED_PC));
+                    continue;
                 }
                 LaneExit::Inlined { frame, pc: source_pc }.word()
             }

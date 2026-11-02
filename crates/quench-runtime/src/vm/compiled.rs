@@ -2098,6 +2098,59 @@ lane_helper_inventory! { H;
     FieldSet => lane_field_set::<H>,
     GuardedCall => lane_guarded_call::<H>,
     FunctionBinding => lane_function_binding::<H>,
+    MaterializeInline => lane_materialize_inline::<H>,
+}
+
+/// Recovery is the first operation allowed to allocate a full callee frame.
+/// The native prefix has published both register files before entering here;
+/// ordinary activation setup cannot collect or invoke guest code for these
+/// verified plain callees with an already admitted object receiver.
+unsafe extern "C" fn lane_materialize_inline<H: Host>(
+    vm: u64, residual: u64, payload: u64, function: u64, call_pc: u64,
+    source_pc: u64, registers: u64,
+) -> u64 {
+    #[cfg(test)]
+    INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + 1));
+    // SAFETY: the native entry owns all three bindings through this call.
+    let (vm, program, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+            &mut *(payload as *mut JsStepDispatch))
+    };
+    let caller = dispatch.frame;
+    let call_pc = call_pc as usize;
+    let function = function as u32;
+    let body = unsafe { &*dispatch.body };
+    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[call_pc]);
+    let callee = vm.read(caller, instruction.register_b());
+    let receiver = vm.read(caller, instruction.register_c());
+    let env = vm.heap.function(callee).expect("admitted inline closure").env;
+    let passed: *const [Value] = vm.register_window(caller, instruction.call_window());
+    vm.frames[caller].pc = call_pc + 1;
+    vm.frames[caller].pc_is_resume = true;
+    // SAFETY: setup only pushes a boxed frame; the caller's window is stable.
+    let result = vm.push_general_user_frame(program, function, env, receiver,
+        unsafe { &*passed }, super::CallContext::user_function(function, callee))
+        .map(|call_guard| {
+            let frame = vm.frames.last_mut().expect("recovered callee frame");
+            // SAFETY: the compiled snapshot contains this verified body's register count.
+            let snapshot = unsafe { std::slice::from_raw_parts(registers as *const Value, frame.registers.len()) };
+            frame.registers.copy_from_slice(snapshot);
+            frame.pc = source_pc as usize;
+            frame.pc_is_resume = true;
+            StepResult::PushFrame { destination: instruction.result_register(), call_guard,
+                completion: super::CallCompletion::Value }
+        });
+    dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1, result });
+    0
+}
+
+/// A typed residual has materialized its exact callee continuation in the
+/// dispatch payload rather than returning another source PC to execute.
+const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
+
+#[cfg(test)]
+thread_local! {
+    static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3555,8 +3608,8 @@ pub(super) fn lower_js_general_dispatch(
         let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
             signature, colocated: false, patchable: false });
         let call = builder.ins().call(target, &parameters);
-        // After inlining these are SSA-preserving edges, not guest recovery:
-        // no helper can collect or observe the canonical frame homes.
+        // After inlining ordinary exits preserve SSA edges. Exact callee
+        // materialization owns a canonical frame boundary below.
         let pc = builder.inst_results(call)[0];
         typed_return = Some(pc);
         let pc = builder.ins().uextend(types::I64, pc);
@@ -3573,6 +3626,10 @@ pub(super) fn lower_js_general_dispatch(
     #[cfg(feature = "aot")]
     if let Some((block, pc)) = typed_continue {
         builder.switch_to_block(block);
+        let materialized = builder.ins().icmp_imm_u(IntCC::Equal, pc, i64::from(JS_INLINE_MATERIALIZED_PC));
+        let source = builder.create_block();
+        builder.ins().brif(materialized, stopped_block, &[], source, &[]);
+        builder.switch_to_block(source);
         let targets: Vec<_> = entries.iter().copied().enumerate().map(|(pc, entry)|
             typed_entry.filter(|(unit, _)| unit.header == pc).map_or(entry, |(_, fallback)| fallback)).collect();
         emit_js_pc_dispatch(&mut builder, pc, &targets, invalid_pc);
@@ -3616,6 +3673,7 @@ pub(super) fn lower_js_general_dispatch(
                 let ir::ValueDef::Result(constant, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
                 let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
                 let pc = usize::try_from(imm.bits()).ok()?;
+                if pc == JS_INLINE_MATERIALIZED_PC as usize { return Some((instruction, stopped_block)); }
                 let target = *entries.get(pc)?;
                 let target = typed_entry.filter(|(unit, _)| unit.header == pc).map_or(target, |(_, fallback)| fallback);
                 Some((instruction, target))
@@ -3634,7 +3692,18 @@ pub(super) fn lower_js_general_dispatch(
         native = context.func;
         for instruction in native.layout.blocks().flat_map(|block| native.layout.block_insts(block)) {
             if instruction.as_u32() as usize >= first_inlined && native.dfg.insts[instruction].opcode().is_call() {
-                frame_flow.no_frame(instruction);
+                let materializes = if native.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect {
+                    let target = native.dfg.resolve_aliases(native.dfg.inst_args(instruction)[0]);
+                    match native.dfg.value_def(target) {
+                        ir::ValueDef::Result(load, _) => matches!(native.dfg.insts[load],
+                            ir::InstructionData::Load { offset, .. }
+                                if i32::from(offset) == LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32),
+                        _ => false,
+                    }
+                } else { false };
+                if materializes {
+                    frame_flow.residual(instruction, &(0..function.registers).collect::<Vec<_>>());
+                } else { frame_flow.no_frame(instruction); }
             }
         }
     }
@@ -16689,6 +16758,98 @@ impl<H: Host> Vm<H> {
 mod tests {
     use super::*;
     use crate::bytecode::Op;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn effectful_inline_recovery_materializes_exact_callee_state() {
+        let program = crate::Engine::specialize(
+            "let p={};p.consume=function(input){this.count=this.count+1;let value=input.value;return value+this.count;};function run(owner,input){let value=owner.consume(input);return value+3;}",
+            "exact-inline.js").unwrap();
+        let caller = program.functions.iter().position(|body|
+            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+        let targets = static_call_targets(&program);
+        let unit = lane_unit::unit(&program, program.function(caller), &|pc| targets[caller].get(pc).copied().flatten()
+            .map(|function| CallTarget { function, callee: CalleeBinding::Function }),
+            &|id| program.function_get(id as usize)).unwrap();
+        assert_eq!(unit.frames.len(), 1);
+        assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
+        let isa = super::super::jit_backend::target_isa_for("speed",
+            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
+        let region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0)
+            .expect("a write followed by a fallible read has exact recovery");
+        let offset = LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32;
+        assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
+            .any(|instruction| matches!(region.function.dfg.insts[instruction],
+                ir::InstructionData::Load { offset: actual, .. } if i32::from(actual) == offset)));
+        assert!(!region.function.sized_stack_slots.is_empty(), "callee snapshots have native stack homes");
+        crate::lower_native_js_module(&program, "exact_inline").expect("materialized exits link and verify");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn materialized_inline_parameter_survives_gc_reflection_and_throw() {
+        let source = r#"
+            let keep={value:42}, marker={}; let p={};
+            p.consume=function consume(input){this.count=this.count+1;input=input.next;return input.value+this.count;};
+            function run(owner,input){let result=owner.consume(input);return result+3;}
+            let owner=Object.create(p);owner.count=0;
+            let leaf={value:7},input={next:leaf};
+            for(let i=0;i<20;i++)run(owner,input);
+            Object.defineProperty(leaf,'value',{get(){
+                $262.gc();
+                if(p.consume.arguments[0]!==leaf||p.consume.caller!==run)throw 'reflection';
+                return keep.value;
+            },configurable:true});
+            if(run(owner,input)!==66||owner.count!==21)throw 'prefix';
+            Object.defineProperty(leaf,'value',{get(){$262.gc();throw marker;}});
+            try{run(owner,input);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
+            if(owner.count!==22)throw 'replay';throw keep.value;
+        "#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "exact-gc.cts") }
+                else { crate::Engine::specialize(source, "exact-gc.cjs") }.unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+            let targets = static_call_targets(&program);
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            let mut region = lower_static_typed_region(&program, caller as u32, &targets[caller], &*isa, 0).unwrap();
+            // Bind the image's pure helper-table resolver to this test host.
+            // All other lowering and recovery are the production paths.
+            let instructions: Vec<_> = region.function.layout.blocks()
+                .flat_map(|block| region.function.layout.block_insts(block)).collect();
+            for instruction in instructions {
+                if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Call {
+                    region.function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
+                        opcode: ir::Opcode::Iconst,
+                        imm: ir::immediates::Imm64::new(native_js_lane_helpers::<crate::test_host::TestHost>() as usize as i64),
+                    };
+                }
+            }
+            let mut entries = Vec::new();
+            let mut owners = Vec::new();
+            for id in 0..program.function_count() {
+                let (memory, entry, operands) = if id == caller {
+                    let (body, _) = lower_js_general_dispatch(&program, id as u32, false, &*isa,
+                        JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[],
+                        Some(StaticTypedRegionEntry { header: region.header, function: &region.function })).unwrap();
+                    let (memory, entry) = compile_and_publish_entry(body, &*isa, usize::MAX).unwrap();
+                    (memory, entry, Vec::new())
+                } else { live_native_function(&program, id as u32, None) };
+                // SAFETY: entries are lowered for this exact host/program ABI.
+                entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
+                owners.push((memory, operands));
+            }
+            // SAFETY: owner retains all code and operation operands above.
+            let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(owners)) }.unwrap();
+            let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
+            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+            assert!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get) > before,
+                "the exact callee materialization path must actually execute");
+        }
+    }
 
     #[cfg(feature = "aot")]
     #[test]
