@@ -45,3 +45,14 @@ Object.freeze(a);
 let error;
 try { a.k64 = 0; } catch (e) { error = e.name; }
 console.log(JSON.stringify([error, Object.isFrozen(a), snapshot(a)]));
+
+const getters = {};
+for (let i = 0; i < 70; i++) {
+  Object.defineProperty(getters, 'g' + i, {
+    get() { return i; }, enumerable: true, configurable: true
+  });
+}
+Object.defineProperty(getters, 'g32', { set(value) {}, configurable: true });
+Object.defineProperty(getters, 'g64', { value: 'changed', writable: false });
+gc();
+console.log(JSON.stringify(snapshot(getters)));
