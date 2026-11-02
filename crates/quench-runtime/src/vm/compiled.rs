@@ -43,6 +43,7 @@ use cranelift_codegen::ir::{
     types,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
@@ -61,6 +62,7 @@ pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 pub(super) use lane_unit::static_call_targets;
 mod object_slots;
 mod frame_ssa;
+mod numeric_flow;
 pub(super) use object_slots::NativeFieldLoad;
 #[cfg(feature = "aot")]
 mod scalar_region;
@@ -367,15 +369,12 @@ fn read_js_numeric_operand(
     program: &ResidualProgram,
     body: &mut Body<'_>,
     operand: Operand,
-    registers: &[bool],
+    registers: &numeric_flow::Bits,
 ) -> Option<ir::Value> {
     match operand.kind()? {
         OperandKind::Register => {
             let register = operand.register_index()?;
-            registers
-                .get(usize::from(register))
-                .copied()
-                .filter(|initialized| *initialized)?;
+            if !registers.contains(usize::from(register)) { return None; }
             Some(body.read(register, crate::WasmType::F64))
         }
         OperandKind::Constant => {
@@ -394,70 +393,39 @@ fn read_js_numeric_operand(
     }
 }
 
-/// An acyclic bytecode graph and its predecessors. JS numeric regions may
-/// merge register state through the shared `Body` SSA variables; local-state
-/// branches stay rejected until local slots have an equivalent SSA view.
-fn js_numeric_control_flow(function: &Function) -> Option<(Vec<bool>, Vec<Vec<usize>>)> {
-    if function.code.is_empty() {
-        return None;
-    }
+/// Validate forward numeric control flow in bytecode order. Accepted successors
+/// are later PCs, so reachability needs no work queue or predecessor table.
+fn js_numeric_control_flow(function: &Function) -> Option<numeric_flow::Bits> {
     let length = function.code.len();
-    let mut reachable = vec![false; length];
-    let mut predecessors = vec![Vec::new(); length];
-    let mut pending = vec![0_usize];
-    while let Some(pc) = pending.pop() {
-        if reachable[pc] {
-            continue;
-        }
-        reachable[pc] = true;
-        let packed = function.code[pc];
-        if packed.is_wide() {
-            return None;
-        }
+    if length == 0 { return None; }
+    let mut reachable = numeric_flow::Bits::new(length);
+    reachable.insert(0)?;
+    let mut has_branch = false;
+    let mut has_local_state = false;
+    for (pc, packed) in function.code.iter().copied().enumerate() {
+        if !reachable.contains(pc) { continue; }
+        if packed.is_wide() { return None; }
         let instruction = packed.as_wide();
         match instruction.op().control_flow_layout() {
             ControlFlowLayout::Jump if instruction.op() == crate::bytecode::Op::Jump => {}
             ControlFlowLayout::ConditionalJump
-                if matches!(
-                    instruction.op(),
-                    crate::bytecode::Op::JumpBinaryFalse
-                        | crate::bytecode::Op::JumpFalse
-                        | crate::bytecode::Op::JumpTrue
-                ) => {}
+                if matches!(instruction.op(), crate::bytecode::Op::JumpBinaryFalse
+                    | crate::bytecode::Op::JumpFalse | crate::bytecode::Op::JumpTrue) => { has_branch = true; }
             ControlFlowLayout::Terminal | ControlFlowLayout::Fallthrough => {}
-            ControlFlowLayout::Jump
-            | ControlFlowLayout::ConditionalJump
-            | ControlFlowLayout::BranchTable
-            | ControlFlowLayout::Call => return None,
+            _ => return None,
         }
-        let mut successors = Vec::with_capacity(2);
+        has_local_state |= matches!(instruction.op().js_denotation(),
+            JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore);
+        let mut valid = true;
         crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
-            successors.push(successor);
+            if successor <= pc || reachable.insert(successor).is_none() { valid = false; }
         });
-        for successor in successors {
-            if successor <= pc || successor >= length {
-                return None;
-            }
-            predecessors[successor].push(pc);
-            pending.push(successor);
-        }
+        if !valid { return None; }
     }
-    let has_join = (0..length).any(|pc| reachable[pc] && predecessors[pc].len() > 1);
-    let has_branch = function.code.iter().enumerate().any(|(pc, packed)| {
-        reachable[pc]
-            && packed.as_wide().op().control_flow_layout() == ControlFlowLayout::ConditionalJump
-    });
-    let has_local_state = function.code.iter().enumerate().any(|(pc, packed)| {
-        reachable[pc]
-            && matches!(
-                packed.as_wide().op().js_denotation(),
-                JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore
-            )
-    });
-    if (has_join || has_branch) && has_local_state {
-        return None;
-    }
-    Some((reachable, predecessors))
+    // Local slots have no SSA join view yet. Every reachable join in this
+    // single-entry, forward graph requires a conditional branch.
+    if has_branch && has_local_state { return None; }
+    Some(reachable)
 }
 
 pub(super) fn emit_number_bitwise_bits(
@@ -596,7 +564,7 @@ pub(super) fn lower_js_numeric_region(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Option<ir::Function> {
     let function = program.function_get(function_id as usize)?;
-    let (reachable, predecessors) = js_numeric_control_flow(function)?;
+    let reachable = js_numeric_control_flow(function)?;
     let params = usize::from(function.params);
 
     let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
@@ -609,19 +577,18 @@ pub(super) fn lower_js_numeric_region(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
-    let blocks: Vec<_> = reachable
-        .iter()
-        .map(|reachable| reachable.then(|| builder.create_block()))
+    let blocks: Vec<_> = (0..function.code.len())
+        .map(|pc| reachable.contains(pc).then(|| builder.create_block()))
         .collect();
     let parameters = builder.block_params(entry).to_vec();
     let context = parameters[0];
     let arguments = parameters[3];
     let result_pointer = parameters[4];
     let mut body = Body::new(builder, context, None, Int32Extension::Zero);
-    let mut registers = vec![false; usize::from(function.registers)];
+    let mut registers = numeric_flow::Bits::new(usize::from(function.registers));
     let mut locals = vec![None; usize::from(function.locals)];
 
-    for (index, initialized) in registers.iter_mut().take(params).enumerate() {
+    for index in 0..params.min(usize::from(function.registers)) {
         if numeric_field_inputs.is_some_and(|inputs| {
             inputs.iter().any(|input| {
                 input.receiver == super::js_compiled::JsJitFieldReceiver::Parameter(index as u16)
@@ -635,15 +602,14 @@ pub(super) fn lower_js_numeric_region(
             .ins()
             .load(types::F64, MemFlagsData::trusted(), arguments, offset);
         body.write(index as u16, crate::WasmType::F64, value);
-        *initialized = true;
+        registers.insert(index)?;
     }
-    let entry_registers = registers;
-    let mut initialized_after: Vec<Option<Vec<bool>>> = vec![None; function.code.len()];
+    let mut incoming = numeric_flow::Incoming::new(function.code.len(), &registers)?;
     body.builder.ins().jump(blocks[0]?, &[]);
 
     let mut returned = false;
     for (pc, packed) in function.code.iter().copied().enumerate() {
-        if !reachable[pc] {
+        if !reachable.contains(pc) {
             continue;
         }
         if packed.is_wide() {
@@ -652,29 +618,12 @@ pub(super) fn lower_js_numeric_region(
         let block = blocks[pc]?;
         body.builder.switch_to_block(block);
         body.builder.seal_block(block);
-        let mut registers = if pc == 0 {
-            entry_registers.clone()
-        } else {
-            let mut incoming: Option<Vec<bool>> = None;
-            for predecessor in &predecessors[pc] {
-                let predecessor_state = initialized_after[*predecessor].as_ref()?.clone();
-                if let Some(incoming) = &mut incoming {
-                    for (initialized, predecessor_initialized) in
-                        incoming.iter_mut().zip(predecessor_state)
-                    {
-                        *initialized &= predecessor_initialized;
-                    }
-                } else {
-                    incoming = Some(predecessor_state);
-                }
-            }
-            incoming?
-        };
+        incoming.read(pc, &mut registers);
         let instruction = packed.as_wide();
         match instruction.op().control_flow_layout() {
             ControlFlowLayout::Jump => {
                 let target = usize::try_from(instruction.jump_target()).ok()?;
-                initialized_after[pc] = Some(registers);
+                incoming.propagate(pc, instruction, &registers);
                 body.builder.ins().jump(blocks[target]?, &[]);
                 continue;
             }
@@ -707,7 +656,7 @@ pub(super) fn lower_js_numeric_region(
                     }
                     crate::bytecode::Op::JumpFalse | crate::bytecode::Op::JumpTrue => {
                         let register = usize::from(instruction.register_a());
-                        if !*registers.get(register)? {
+                        if !registers.contains(register) {
                             return None;
                         }
                         let value = body.read(register as u16, crate::WasmType::F64);
@@ -719,7 +668,7 @@ pub(super) fn lower_js_numeric_region(
                 };
                 let target = usize::try_from(instruction.jump_target()).ok()?;
                 let fallthrough = pc.checked_add(1)?;
-                initialized_after[pc] = Some(registers);
+                incoming.propagate(pc, instruction, &registers);
                 if jump_when {
                     body.builder
                         .ins()
@@ -796,7 +745,7 @@ pub(super) fn lower_js_numeric_region(
                     return None;
                 }
                 let source = usize::from(instruction.register_b());
-                if !*registers.get(source)? {
+                if !registers.contains(source) {
                     return None;
                 }
                 Some(body.read(source as u16, crate::WasmType::F64))
@@ -806,14 +755,14 @@ pub(super) fn lower_js_numeric_region(
                     return None;
                 }
                 let source = usize::from(instruction.register_a());
-                if !*registers.get(source)? {
+                if !registers.contains(source) {
                     return None;
                 }
                 let value = body.read(source as u16, crate::WasmType::F64);
                 *locals.get_mut(instruction.local_slot())? = Some(value);
                 if let Some(register) = instruction.optional_register_b() {
                     body.write(register, crate::WasmType::F64, value);
-                    *registers.get_mut(usize::from(register))? = true;
+                    registers.insert(usize::from(register))?;
                 }
                 None
             }
@@ -879,7 +828,7 @@ pub(super) fn lower_js_numeric_region(
                     instruction.unary_operator(),
                 )?;
                 let source = usize::from(instruction.register_b());
-                if !*registers.get(source)? {
+                if !registers.contains(source) {
                     return None;
                 }
                 let value = body.read(source as u16, crate::WasmType::F64);
@@ -946,7 +895,7 @@ pub(super) fn lower_js_numeric_region(
                     return None;
                 }
                 let register = instruction.register_a();
-                if !*registers.get(usize::from(register))? {
+                if !registers.contains(usize::from(register)) {
                     return None;
                 }
                 let value = body.read(register, crate::WasmType::F64);
@@ -963,14 +912,14 @@ pub(super) fn lower_js_numeric_region(
         if let Some(value) = result {
             let destination = usize::from(instruction.result_register());
             body.write(destination as u16, crate::WasmType::F64, value);
-            *registers.get_mut(destination)? = true;
+            registers.insert(destination)?;
         }
         if !terminal {
             if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough {
                 return None;
             }
             let next = pc.checked_add(1)?;
-            initialized_after[pc] = Some(registers);
+            incoming.propagate(pc, instruction, &registers);
             body.builder.ins().jump(blocks[next]?, &[]);
         }
     }
@@ -10576,7 +10525,7 @@ struct Body<'b> {
     /// How each register's i32 view extends its value to the 64 bits it is stored in.
     int32_extension: Int32Extension,
     /// Each i32 read from a register's view, by the extended value it was read from.
-    extended: std::collections::HashMap<ir::Value, ir::Value>,
+    extended: SecondaryMap<ir::Value, PackedOption<ir::Value>>,
 }
 
 /// How a register's i32 view holds its value in 64 bits (`view_ir`): as the operations
@@ -10595,7 +10544,7 @@ impl<'b> Body<'b> {
             core: RegionCore::new(builder, context, poll),
             variables: Vec::new(),
             int32_extension,
-            extended: std::collections::HashMap::new(),
+            extended: SecondaryMap::new(),
         }
     }
 
@@ -10625,15 +10574,15 @@ impl<'b> Body<'b> {
             return stored;
         }
         let value = self.builder.ins().ireduce(types::I32, stored);
-        self.extended.insert(value, stored);
+        self.extended[value] = stored.into();
         value
     }
 
     /// `value`, an i32, extended to 64 bits as `extension` does: the i32 view it was read
     /// from, if the view holds it so.
     fn extend(&mut self, value: ir::Value, extension: Int32Extension) -> ir::Value {
-        match self.extended.get(&value) {
-            Some(&wide) if extension == self.int32_extension => wide,
+        match self.extended[value].expand() {
+            Some(wide) if extension == self.int32_extension => wide,
             _ => match extension {
                 Int32Extension::Zero => self.builder.ins().uextend(types::I64, value),
                 Int32Extension::Sign => self.builder.ins().sextend(types::I64, value),

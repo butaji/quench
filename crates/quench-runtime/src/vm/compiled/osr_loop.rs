@@ -4396,7 +4396,7 @@ struct Lowering<'a, 'b> {
     bounded_reads: std::collections::BTreeMap<u32, ir::Value>,
     /// The Number each canonical encoding read from memory unboxes to, mapped to the bits as
     /// read: boxing the Number gives those bits back, so a store of it stores them.
-    encodings: std::collections::HashMap<ir::Value, ir::Value>,
+    encodings: super::SecondaryMap<ir::Value, super::PackedOption<ir::Value>>,
     /// Per region PC, whether control reaches its instruction only by falling through from
     /// the one before (`straight_pcs`), so its block continues that one's chain.
     straight: Vec<bool>,
@@ -4655,7 +4655,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             element_reads: std::collections::HashMap::new(),
             element_stores: 0,
             bounded_reads: std::collections::BTreeMap::new(),
-            encodings: std::collections::HashMap::new(),
+            encodings: super::SecondaryMap::new(),
             straight,
             registers,
             scratch: None,
@@ -5393,7 +5393,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
         self.body.builder.switch_to_block(join);
         self.body.builder.seal_block(join);
         let number = self.body.builder.block_params(join)[0];
-        self.encodings.insert(number, double);
+        self.encodings[number] = double.into();
         number
     }
 
@@ -5462,8 +5462,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     fn encoding(&mut self, value: Typed) -> ir::Value {
         match value.representation {
             Representation::Int32 => self.boxed_int32(value.value),
-            Representation::Float64 => match self.encodings.get(&value.value) {
-                Some(read) => *read,
+            Representation::Float64 => match self.encodings[value.value].expand() {
+                Some(read) => read,
                 None => self.boxed_float64(value.value),
             },
             Representation::Tagged => value.value,
@@ -6467,7 +6467,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
             NumberArithmetic::Multiply | NumberArithmetic::Divide => unreachable!("only sums and differences extend exactly"),
         };
         let narrow = self.body.builder.ins().ireduce(types::I32, wide);
-        self.body.extended.insert(narrow, wide);
+        self.body.extended[narrow] = wide.into();
         narrow
     }
 
