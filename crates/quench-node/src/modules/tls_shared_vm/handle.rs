@@ -21,7 +21,7 @@ pub(crate) fn registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         set(c, data, name, function)?;
     }
     let function = c.host_function_with_data(
-        crate::host::shared_vm::operation("tlsHandleVerifyError"),
+        crate::host::shared_vm::operation!("tlsHandleVerifyError"),
         data,
     )?;
     let key = c.string_rooted("name");

@@ -79,7 +79,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         super::stream_binding::binding(c)?;
         let b = c.object_rooted()?;
         let ctor = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativePipeConstruct"),
+            crate::host::shared_vm::operation!("nativePipeConstruct"),
             "Pipe",
         )?;
         crate::host::shared_vm::commonjs::cached_native_binding(
@@ -578,7 +578,7 @@ fn queue_write_context(
     status: i32,
 ) -> Result<(), RootedError> {
     let status = c.number(status as f64);
-    let callback = c.host_function(crate::host::shared_vm::operation("nativePipeWriteComplete"))?;
+    let callback = c.host_function(crate::host::shared_vm::operation!("nativePipeWriteComplete"))?;
     let resource = request
         .lease
         .resource()
@@ -725,7 +725,7 @@ fn deliver_read_runtime(
         return Ok(());
     };
     let prepare = runtime
-        .host_function(crate::host::shared_vm::operation("nativePipePrepareRead"))
+        .host_function(crate::host::shared_vm::operation!("nativePipePrepareRead"))
         .map_err(|e| runtime.format_error(program, &e.error))?;
     let prepared = runtime.call_rooted(prepare, handle, &[token]);
     runtime.release_root(prepare);
@@ -754,7 +754,7 @@ fn deliver_read_runtime(
         return Ok(());
     }
     let callback = runtime
-        .host_function(crate::host::shared_vm::operation("nativePipeReadComplete"))
+        .host_function(crate::host::shared_vm::operation!("nativePipeReadComplete"))
         .map_err(|e| runtime.format_error(program, &e.error))?;
     let owner_value = runtime
         .rooted_value(handle)

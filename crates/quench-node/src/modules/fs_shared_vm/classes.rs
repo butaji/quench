@@ -139,25 +139,25 @@ fn stats_classes(c: &mut Context<'_>, values: &mut [Option<(RootId, RootId)>; Ro
     let (base, base_prototype) = constructor(c, "fsStatsBase", "StatsBase", None)?;
     for (name, mode, _) in super::stats::TYPE_PREDICATES {
         let data = c.number(f64::from(mode));
-        let function = c.host_function_named_with_data(operation("fsStatsIsType"), "", data)?;
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStatsIsType"), "", data)?;
         put(c, base_prototype, name, function)?;
     }
     let stat_class = |c: &mut Context<'_>, op: &str, name: &str, bigint: bool| -> Result<(RootId, RootId), RootedError> {
         let (class, prototype) = constructor(c, op, name, Some(base))?;
         for (index, field) in super::stats::TIME_FIELDS.into_iter().enumerate() {
             let data = c.number(index as f64);
-            let getter = c.host_function_named_with_data(operation("fsStatsTimeGet"), "get", data)?;
-            let setter = c.host_function_named_with_data(operation("fsStatsTimeSet"), "set", data)?;
+            let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStatsTimeGet"), "get", data)?;
+            let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStatsTimeSet"), "set", data)?;
             accessor(c, prototype, field, getter, Some(setter), true)?;
         }
         let data = c.boolean(bigint);
-        let check = c.host_function_named_with_data(operation("fsStatsCheckMode"), "", data)?;
+        let check = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStatsCheckMode"), "", data)?;
         put(c, prototype, "_checkModeProperty", check)?;
         Ok((class, prototype))
     };
     let stats = stat_class(c, "fsStatsConstruct", "Stats", false)?;
     let bigint = stat_class(c, "fsBigIntStatsConstruct", "BigIntStats", true)?;
-    let deprecated = c.host_constructor_named(operation("fsStatsDeprecated"), "deprecated")?;
+    let deprecated = c.host_constructor_named(crate::host::shared_vm::operation!("fsStatsDeprecated"), "deprecated")?;
     let key = c.string_rooted("prototype");
     let fields = DescriptorFields { value: Some(stats.1), ..DescriptorFields::default() };
     c.define_property_fields_rooted(deprecated, key, fields)?;

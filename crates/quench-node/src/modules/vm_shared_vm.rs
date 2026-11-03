@@ -151,7 +151,7 @@ fn script_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0builtin:vm-script", |c| {
         let base = contextify::script_class(c)?;
         let base_prototype = get(c, base, "prototype")?;
-        let class = c.host_constructor_named(crate::host::shared_vm::operation("vmScript"), "Script")?;
+        let class = c.host_constructor_named(crate::host::shared_vm::operation!("vmScript"), "Script")?;
         c.set_prototype_rooted(class, base)?;
         let prototype = get(c, class, "prototype")?;
         c.set_prototype_rooted(prototype, base_prototype)?;

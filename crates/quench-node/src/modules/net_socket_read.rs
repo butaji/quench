@@ -57,7 +57,7 @@ pub(crate) fn read(
     if waiting {
         let data = context.array_rooted(args)?;
         let callback = context.host_function_with_data(
-            crate::host::shared_vm::operation("netSocketReadAfterConnect"),
+            crate::host::shared_vm::operation!("netSocketReadAfterConnect"),
             data,
         )?;
         let connect = context.string_rooted("connect");
@@ -162,11 +162,11 @@ pub(crate) fn redirect_parent_reading(
     handle: RootId,
 ) -> Result<(), RootedError> {
     let getter = context.host_function_with_data(
-        crate::host::shared_vm::operation("netParentReadingGet"),
+        crate::host::shared_vm::operation!("netParentReadingGet"),
         handle,
     )?;
     let setter = context.host_function_with_data(
-        crate::host::shared_vm::operation("netParentReadingSet"),
+        crate::host::shared_vm::operation!("netParentReadingSet"),
         handle,
     )?;
     let name = context.string_rooted("name");

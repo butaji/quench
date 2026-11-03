@@ -202,7 +202,7 @@ pub(crate) fn get_connections(
     let server = args[0];
     let count = get(context, server, "_connections")?;
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("netServerConnectionsResult"),
+        crate::host::shared_vm::operation!("netServerConnectionsResult"),
         args[1],
     )?;
     let null = context.null();

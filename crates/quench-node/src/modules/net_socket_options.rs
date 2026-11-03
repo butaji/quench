@@ -67,19 +67,19 @@ pub(crate) fn install(
         .borrow_mut()
         .net_socket_option_keys = Some(retained);
     let initialize = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketInitializeOptions"),
+        crate::host::shared_vm::operation!("netSocketInitializeOptions"),
         data,
     )?;
     let no_delay = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketSetNoDelay"),
+        crate::host::shared_vm::operation!("netSocketSetNoDelay"),
         data,
     )?;
     let keep_alive = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketSetKeepAlive"),
+        crate::host::shared_vm::operation!("netSocketSetKeepAlive"),
         data,
     )?;
     let server = context.host_function_with_data(
-        crate::host::shared_vm::operation("netServerInitializeOptions"),
+        crate::host::shared_vm::operation!("netServerInitializeOptions"),
         data,
     )?;
     Ok([

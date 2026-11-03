@@ -259,7 +259,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     define(c, holder, "rulesSlot", rules_slot)?;
     let inspect = registered_symbol(c, "nodejs.util.inspect.custom")?;
 
-    let socket_address = c.host_constructor_named(crate::host::shared_vm::operation("netSocketAddressConstruct"), "SocketAddress")?;
+    let socket_address = c.host_constructor_named(crate::host::shared_vm::operation!("netSocketAddressConstruct"), "SocketAddress")?;
     let prototype = get(c, socket_address, "prototype")?;
     getters(c, prototype, &[
         ("address", "netSocketAddressAddress"),
@@ -268,7 +268,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         ("flowlabel", "netSocketAddressFlowlabel"),
     ])?;
     methods(c, prototype, &[("toJSON", "netSocketAddressToJson")])?;
-    let custom = c.host_function_named(crate::host::shared_vm::operation("netSocketAddressInspect"), "[nodejs.util.inspect.custom]")?;
+    let custom = c.host_function_named(crate::host::shared_vm::operation!("netSocketAddressInspect"), "[nodejs.util.inspect.custom]")?;
     c.define_data_property_rooted(prototype, inspect, custom, true, false, true)?;
     methods(c, socket_address, &[
         ("isSocketAddress", "netIsSocketAddress"),
@@ -276,7 +276,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     ])?;
     define(c, holder, "SocketAddress", socket_address)?;
 
-    let block_list = c.host_constructor_named(crate::host::shared_vm::operation("netBlockListConstruct"), "BlockList")?;
+    let block_list = c.host_constructor_named(crate::host::shared_vm::operation!("netBlockListConstruct"), "BlockList")?;
     let prototype = get(c, block_list, "prototype")?;
     methods(c, prototype, &[
         ("addAddress", "netBlockListAddAddress"),
@@ -287,7 +287,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         ("fromJSON", "netBlockListFromJson"),
     ])?;
     getters(c, prototype, &[("rules", "netBlockListRules")])?;
-    let custom = c.host_function_named(crate::host::shared_vm::operation("netBlockListInspect"), "[nodejs.util.inspect.custom]")?;
+    let custom = c.host_function_named(crate::host::shared_vm::operation!("netBlockListInspect"), "[nodejs.util.inspect.custom]")?;
     c.define_data_property_rooted(prototype, inspect, custom, true, false, true)?;
     methods(c, block_list, &[("isBlockList", "netIsBlockList")])?;
     define(c, holder, "BlockList", block_list)?;

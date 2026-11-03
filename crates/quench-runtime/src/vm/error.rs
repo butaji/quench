@@ -2198,7 +2198,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(intrinsic, name)?;
             self.set_builtin_value_named(global, name, intrinsic)?;
         }
-        self.install_realm_default_bindings(global)?;
+        self.install_realm_default_bindings(program, global)?;
         self.install_json_for_realm(program, global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
         self.install_intl_for_realm(program, global, object_prototype)?;
@@ -2230,7 +2230,7 @@ impl<H: Host> Vm<H> {
         Ok(realm)
     }
 
-    fn install_realm_default_bindings(&mut self, global: Value) -> Result<(), JsError> {
+    fn install_realm_default_bindings(&mut self, program: &ResidualProgram, global: Value) -> Result<(), JsError> {
         const SHARED_BINDINGS: &[&str] = &[
             "AggregateError",
             "Array",
@@ -2290,6 +2290,8 @@ impl<H: Host> Vm<H> {
         }
         for name in ["Atomics", "Math", "Reflect", "WebAssembly"] {
             let atom = self.intern_atom(name);
+            // A namespace still lazy in the source realm is built before the new realm shares it.
+            self.materialize_lazy_data_property(program, source_global, PropertyKey::string(atom))?;
             if self.own_property(global, atom).is_none()
                 && let Some(value) = self.own_property(source_global, atom)
             {

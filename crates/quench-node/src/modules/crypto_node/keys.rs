@@ -674,7 +674,7 @@ pub(crate) fn to_crypto_key(c: &mut Context<'_>, this: RootId, args: &[RootId]) 
 }
 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
-    let key_object = c.host_constructor_named(crate::host::shared_vm::operation("cryptoKeyObjectConstructor"), "KeyObject")?;
+    let key_object = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoKeyObjectConstructor"), "KeyObject")?;
     let prototype = get(c, key_object, "prototype")?;
     define_getters(c, prototype, &[("type", "cryptoKeyObjectType")], Members::Declared)?;
     define_methods(c, prototype, &[("equals", "cryptoKeyObjectEquals")], Members::Declared)?;

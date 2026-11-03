@@ -1,5 +1,5 @@
 //! The unit a lane body specializes: one function with the callees its call sites' inline
-//! caches name spliced in, transitively, under one budget (R3, docs/v2/specialization.md).
+//! caches name spliced in, transitively, under one budget (R3, Linear TOD-1232).
 //!
 //! A call whose record links one script target (`LaneInstruction::call_link`), to a callee
 //! whose body the lane-body lowering runs entirely and every call of which is spliced in in
@@ -74,6 +74,14 @@ pub(crate) struct Frame {
 }
 
 impl Frame {
+    /// The physical parameter homes initialized by the passed arguments.
+    pub(crate) fn passed_registers(self, callee: &Function) -> impl Iterator<Item = (Register, Register)> + '_ {
+        (0..self.arguments.min(callee.params)).filter_map(move |argument|
+            callee.parameter_registers.map(|base| base + argument)
+                .or_else(|| callee.promoted_register(argument))
+                .map(|register| (self.base + register, self.window + argument)))
+    }
+
     /// The parent's register 0: the caller's, or the enclosing callee's.
     pub(crate) fn parent_base(&self, frames: &[Frame]) -> Register {
         self.parent.map_or(0, |parent| frames[parent].base)
@@ -585,8 +593,8 @@ impl Emitter {
 }
 
 /// `function` (`function_id`) with each call `targets` names (by function and PC), whose
-/// callee `body` gives and qualifies, spliced in, transitively. A unit with no inlined call
-/// is the function itself.
+/// callee `body` gives and qualifies, spliced in transitively under the default inlining
+/// budget. A unit with no inlined call is the function itself.
 pub(crate) fn unit<'f>(
     program: &crate::ResidualProgram,
     function_id: u32,
@@ -594,8 +602,20 @@ pub(crate) fn unit<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
+    with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
+}
+
+/// Plan the same unit under a smaller inlining budget after code-size rejection.
+pub(crate) fn with_budget<'f>(
+    program: &crate::ResidualProgram,
+    function_id: u32,
+    function: &Function,
+    budget: usize,
+    targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
+    body: &dyn Fn(u32) -> Option<&'f Function>,
+) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget: MAX_UNIT_INLINED_INSTRUCTIONS };
+    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

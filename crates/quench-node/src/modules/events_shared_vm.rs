@@ -89,9 +89,9 @@ pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), Rooted
     set(context, data, "defaultMaxListeners", maximum)?;
     set(context, data, "maxKey", max_key)?;
     set(context, data, "warnedKey", warned_key)?;
-    let assign = context.host_function_named(crate::host::shared_vm::operation("strictAssign"), "assign")?;
+    let assign = context.host_function_named(crate::host::shared_vm::operation!("strictAssign"), "assign")?;
     set(context, data, "assign", assign)?;
-    let delete = context.host_function_named(crate::host::shared_vm::operation("strictDelete"), "delete")?;
+    let delete = context.host_function_named(crate::host::shared_vm::operation!("strictDelete"), "delete")?;
     set(context, data, "delete", delete)?;
     let string = get(context, global, "String")?;
     set(context, data, "stringCtor", string)?;
@@ -108,15 +108,15 @@ pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), Rooted
     set(context, data, "abortListenerOptions", options)?;
     let dispose_symbol = get(context, symbol, "dispose")?;
     set(context, data, "disposeKey", dispose_symbol)?;
-    let dispose_factory = context.host_function(crate::host::shared_vm::operation("disposableFactory"))?;
+    let dispose_factory = context.host_function(crate::host::shared_vm::operation!("disposableFactory"))?;
     set(context, data, "disposeFactory", dispose_factory)?;
     set(context, data, "brandKey", brand_key)?;
     let retained = context.retain(data)?;
     context.host_mut().shared_state().borrow_mut().event_targets_api = Some(retained);
     // The DOM event family is built on first use.
-    let initialize = context.host_function(crate::host::shared_vm::operation("eventGlobalsInitialize"))?;
+    let initialize = context.host_function(crate::host::shared_vm::operation!("eventGlobalsInitialize"))?;
     context.define_lazy_data_properties_rooted(global, EVENT_GLOBALS, false, initialize)?;
-    let messaging = context.host_function(crate::host::shared_vm::operation("messagingGlobalsInitialize"))?;
+    let messaging = context.host_function(crate::host::shared_vm::operation!("messagingGlobalsInitialize"))?;
     context.define_lazy_data_properties_rooted(global, MESSAGING_GLOBALS, false, messaging)?;
     Ok(())
 }
@@ -221,7 +221,7 @@ pub(crate) fn add_abort_listener(context: &mut Context<'_>, _: RootId, args: &[R
         return Err(super::util_shared_vm::argument_type_error(context, listener, "listener", "function")?);
     }
     let registration = if super::abort_controller_shared_vm::aborted(context, signal)? {
-        let job = context.host_function_with_data(crate::host::shared_vm::operation("abortedListenerJob"), listener)?;
+        let job = context.host_function_with_data(crate::host::shared_vm::operation!("abortedListenerJob"), listener)?;
         context.queue_microtask_rooted(job, &[])?;
         context.array_rooted(&[])?
     } else {
@@ -232,7 +232,7 @@ pub(crate) fn add_abort_listener(context: &mut Context<'_>, _: RootId, args: &[R
         context.call_rooted(add, signal, &[event, listener, options])?;
         context.array_rooted(&[signal, listener])?
     };
-    let dispose = context.host_function_with_data(crate::host::shared_vm::operation("abortListenerDispose"), registration)?;
+    let dispose = context.host_function_with_data(crate::host::shared_vm::operation!("abortListenerDispose"), registration)?;
     let data = super::event_target_shared_vm::api(context)?;
     let key = get(context, data, "disposeKey")?;
     let undefined = context.undefined();
@@ -295,7 +295,7 @@ pub(crate) fn strict_delete(context: &mut Context<'_>, _: RootId, args: &[RootId
 pub(crate) fn disposable_factory(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (dispose, key) = (argument(context, args, 0), argument(context, args, 1));
     let disposable = context.null_object_rooted()?;
-    let method = context.host_function_named_with_data(crate::host::shared_vm::operation("disposableDispose"), "[Symbol.dispose]", dispose)?;
+    let method = context.host_function_named_with_data(crate::host::shared_vm::operation!("disposableDispose"), "[Symbol.dispose]", dispose)?;
     context.define_data_property_rooted(disposable, key, method, true, true, true)?;
     Ok(disposable)
 }

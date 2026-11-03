@@ -3011,8 +3011,15 @@ fn representations(
             if region.is_field_cell(index) {
                 return Representation::Float64;
             }
+            // A field read through the heap holds what every value its slots have held does
+            // (`NativeFieldLoad::representation`); the entry word observes only one.
+            let widening = Widening::Field(index as u16);
+            if let Some(loads) = observation.native_field_loads.get(index).filter(|loads| !loads.is_empty()) {
+                let int32 = loads.iter().all(|load| load.ty.is_subtype(Type::INT32));
+                return if int32 && !observation.widened.contains(&widening) { Representation::Int32 } else { Representation::Float64 };
+            }
             let value = observation.fields.get(index).copied().unwrap_or(Value::UNDEFINED);
-            of(value, Widening::Field(index as u16))
+            of(value, widening)
         })
         .collect();
     let entry = EntryRepresentations { captures, fields };
@@ -7213,7 +7220,7 @@ mod tests {
             Some(crate::heap::PlainPropertyStorage::PackedInline), None] {
             let loads: Vec<_> = region.fields.iter().enumerate().map(|(slot, _)| vec![NativeFieldLoad {
                 shape: 0, holder: None, slot: slot as u16, storage_len: region.fields.len(),
-                storage,
+                storage, ty: Type::ANY,
             }]).collect();
             let widened = Default::default();
             let observation = Observation {

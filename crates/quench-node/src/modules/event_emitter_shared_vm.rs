@@ -622,7 +622,7 @@ pub(crate) fn once(
     }
     // Named as Node's bound wrapper reads.
     let wrapper = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("emitterOnceInvoke"),
+        crate::host::shared_vm::operation!("emitterOnceInvoke"),
         "bound onceWrapper",
         state,
     )?;
@@ -896,10 +896,10 @@ pub(crate) fn init(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[Ro
 
 /// Defines the shared `EventEmitter` class as `globalThis.__nodeEventEmitter`.
 pub(crate) fn install_class(c: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<RootId, RootedError> {
-    let emitter = c.host_constructor_named_with_data(crate::host::shared_vm::operation("emitterConstructor"), "EventEmitter", data)?;
+    let emitter = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("emitterConstructor"), "EventEmitter", data)?;
     c.assign_named_property_rooted(data, "emitter", emitter)?;
     // Node assigns `init` an anonymous function.
-    let init = c.host_function_named_with_data(crate::host::shared_vm::operation("emitterInit"), "", data)?;
+    let init = c.host_function_named_with_data(crate::host::shared_vm::operation!("emitterInit"), "", data)?;
     c.assign_named_property_rooted(emitter, "init", init)?;
     let rejection = symbol_for(c, REJECTION_SYMBOL)?;
     c.assign_named_property_rooted(emitter, "captureRejectionSymbol", rejection)?;

@@ -36,7 +36,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 pub(crate) fn method(c: &mut Context<'_>, operation: RootId, name: &str) -> Result<RootId, RootedError> {
     let length = c.get_named_property_rooted(operation, "length")?;
     let data = c.array_rooted(&[operation, length])?;
-    c.host_function_named_with_data(crate::host::shared_vm::operation("netReceiverCall"), name, data)
+    c.host_function_named_with_data(crate::host::shared_vm::operation!("netReceiverCall"), name, data)
 }
 
 pub(crate) fn receiver_call(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {

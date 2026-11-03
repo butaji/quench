@@ -360,12 +360,12 @@ pub(crate) fn verify(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
 }
 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("cryptoX509Constructor"), "X509Certificate")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoX509Constructor"), "X509Certificate")?;
     let prototype = get(c, constructor, "prototype")?;
     let define_field = |c: &mut Context<'_>, index: usize| -> Result<(), RootedError> {
         let name = FIELDS[index].0;
         let data = c.number(index as f64);
-        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoX509Field"), &format!("get {name}"), data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoX509Field"), &format!("get {name}"), data)?;
         let key = c.string_rooted(name);
         let fields = quench_runtime::DescriptorFields {
             get: Some(getter),
@@ -396,7 +396,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
         ],
         Members::Declared,
     )?;
-    let certificate = c.host_constructor_named(crate::host::shared_vm::operation("cryptoCertificate"), "Certificate")?;
+    let certificate = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoCertificate"), "Certificate")?;
     let prototype = get(c, certificate, "prototype")?;
     let spkac = [
         ("verifySpkac", "cryptoSpkacVerify"),

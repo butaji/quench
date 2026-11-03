@@ -201,7 +201,7 @@ fn custom_inspect(c: &mut Context<'_>, target: RootId, operation_name: &str) -> 
 }
 
 fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let url = c.host_constructor_named(operation("urlConstruct"), "URL")?;
+    let url = c.host_constructor_named(crate::host::shared_vm::operation!("urlConstruct"), "URL")?;
     let key = c.string_rooted("length");
     let one = c.number(1.0);
     c.define_data_property_rooted(url, key, one, false, false, true)?;
@@ -209,9 +209,9 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
     named_method(c, prototype, "toString", "urlToString", 0)?;
     for (index, &(name, _, settable)) in COMPONENTS.iter().enumerate() {
         let data = c.number(index as f64);
-        let getter = c.host_function_named_with_data(operation("urlGet"), &format!("get {name}"), data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("urlGet"), &format!("get {name}"), data)?;
         let setter = if settable {
-            Some(c.host_function_named_with_data(operation("urlSet"), &format!("set {name}"), data)?)
+            Some(c.host_function_named_with_data(crate::host::shared_vm::operation!("urlSet"), &format!("set {name}"), data)?)
         } else {
             None
         };
@@ -229,12 +229,12 @@ fn build_classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
         c.define_data_property_rooted(url, key, function, true, true, true)?;
     }
     super::blob_shared_vm::install_url_statics(c, url)?;
-    let params = c.host_constructor_named(operation("urlParamsConstruct"), "URLSearchParams")?;
+    let params = c.host_constructor_named(crate::host::shared_vm::operation!("urlParamsConstruct"), "URLSearchParams")?;
     let key = c.string_rooted("length");
     let zero = c.number(0.0);
     c.define_data_property_rooted(params, key, zero, false, false, true)?;
     let params_prototype = get(c, params, "prototype")?;
-    let size = c.host_function_named(operation("urlParamsSize"), "get size")?;
+    let size = c.host_function_named(crate::host::shared_vm::operation!("urlParamsSize"), "get size")?;
     accessor(c, params_prototype, "size", size, None)?;
     let mut entries = None;
     for &(name, operation_name, length) in PARAMS_METHODS {

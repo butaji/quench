@@ -623,9 +623,9 @@ fn install_keypress_decoder(c: &mut Context<'_>, stream: RootId, interface: Root
     put_slot(c, stream, Slot::EscapeDecoder, pending)?;
     let undefined = c.undefined();
     let environment = c.array_rooted(&[stream, interface, undefined, undefined])?;
-    let data = c.host_function_named_with_data(crate::host::shared_vm::operation("readlineKeypressData"), "onData", environment)?;
+    let data = c.host_function_named_with_data(crate::host::shared_vm::operation!("readlineKeypressData"), "onData", environment)?;
     let new_listener =
-        c.host_function_named_with_data(crate::host::shared_vm::operation("readlineKeypressNewListener"), "onNewListener", environment)?;
+        c.host_function_named_with_data(crate::host::shared_vm::operation!("readlineKeypressNewListener"), "onNewListener", environment)?;
     put(c, environment, "2", data)?;
     put(c, environment, "3", new_listener)?;
     if super::stream_shared_vm::listener_count(c, stream, "keypress")? > 0.0 {
@@ -1909,7 +1909,7 @@ pub(crate) fn async_iterator(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
         let method = closure(c, operation, name, &[state])?;
         put(c, iterator, name, method)?;
     }
-    let itself = c.host_function_named(crate::host::shared_vm::operation("readlineIteratorSelf"), "[Symbol.asyncIterator]")?;
+    let itself = c.host_function_named(crate::host::shared_vm::operation!("readlineIteratorSelf"), "[Symbol.asyncIterator]")?;
     let key = super::stream_shared_vm::intrinsics(c)?.slot(super::stream_shared_vm::Slot::AsyncIterator);
     c.set_property_rooted(iterator, key, itself, iterator)?;
     put_slot(c, this, Slot::LineObjectStream, iterator)?;
@@ -2372,11 +2372,11 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
     }
     super::stream_shared_vm::module(c)?;
     let emitter = super::stream_shared_vm::intrinsics(c)?.class(Class::Emitter);
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("readlineInterfaceConstructor"), "InterfaceConstructor")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "InterfaceConstructor")?;
     subclass(c, constructor, emitter)?;
-    let class = c.host_constructor_named(crate::host::shared_vm::operation("readlineInterfaceConstructor"), "Interface")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("readlineInterfaceConstructor"), "Interface")?;
     let prototype = subclass(c, class, constructor)?;
-    let getter = c.host_function_named(crate::host::shared_vm::operation("readlineColumns"), "get columns")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("readlineColumns"), "get columns")?;
     let key = text(c, "columns");
     accessor(c, prototype, key, getter, None)?;
     named_method(c, prototype, "setPrompt", "readlineSetPrompt", false)?;
@@ -2406,13 +2406,13 @@ fn base_interface(c: &mut Context<'_>) -> Outcome {
 /// The legacy `readline.Interface`: the internal methods also as `_`-prefixed members.
 fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
     let data = c.array_rooted(&[])?;
-    let class = c.host_constructor_named_with_data(crate::host::shared_vm::operation("readlineLegacyConstructor"), "Interface", data)?;
+    let class = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("readlineLegacyConstructor"), "Interface", data)?;
     let prototype = subclass(c, class, base)?;
-    let question = c.host_function_named(crate::host::shared_vm::operation("readlineQuestion"), "question")?;
+    let question = c.host_function_named(crate::host::shared_vm::operation!("readlineQuestion"), "question")?;
     let key = text(c, "question");
     c.define_data_property_rooted(prototype, key, question, true, true, true)?;
     let custom = promisify_custom(c)?;
-    let promised = c.host_function_named(crate::host::shared_vm::operation("readlineQuestionPromise"), "question")?;
+    let promised = c.host_function_named(crate::host::shared_vm::operation!("readlineQuestionPromise"), "question")?;
     c.define_data_property_rooted(question, custom, promised, true, true, true)?;
     let base_prototype = get(c, base, "prototype")?;
     for (which, _) in METHODS.iter().chain(LATE_METHODS.iter()) {
@@ -2420,14 +2420,14 @@ fn legacy_interface(c: &mut Context<'_>, base: RootId) -> Outcome {
             continue;
         }
         let name = text(c, which.description());
-        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("readlineAliasGet"), "get", name)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("readlineAliasGet"), "get", name)?;
         let key = slot(c, *which)?;
         accessor(c, prototype, key, getter, None)?;
     }
     for which in LEGACY_FIELDS {
         let key = slot(c, which)?;
-        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("readlineFieldGet"), "get", key)?;
-        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("readlineFieldSet"), "set", key)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("readlineFieldGet"), "get", key)?;
+        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("readlineFieldSet"), "set", key)?;
         let name = text(c, which.description());
         accessor(c, prototype, name, getter, Some(setter))?;
     }
@@ -2499,10 +2499,10 @@ pub(crate) fn promises_module(c: &mut Context<'_>) -> Outcome {
         return Ok(module);
     }
     let base = base_interface(c)?;
-    let interface = c.host_constructor_named(crate::host::shared_vm::operation("readlinePromisesConstructor"), "Interface")?;
+    let interface = c.host_constructor_named(crate::host::shared_vm::operation!("readlinePromisesConstructor"), "Interface")?;
     let prototype = subclass(c, interface, base)?;
     named_method(c, prototype, "question", "readlineQuestionPromise", false)?;
-    let readline = c.host_constructor_named(crate::host::shared_vm::operation("readlineReadline"), "Readline")?;
+    let readline = c.host_constructor_named(crate::host::shared_vm::operation!("readlineReadline"), "Readline")?;
     let readline_prototype = get(c, readline, "prototype")?;
     for (name, operation) in [
         ("cursorTo", "readlineReadlineCursorTo"),

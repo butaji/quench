@@ -207,7 +207,7 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
         let key = c.string_rooted(name);
         c.define_data_property_rooted(table, key, value, false, false, false)?;
     }
-    let socket = c.host_constructor_named_with_data(crate::host::shared_vm::operation("netSocketConstruct"), "Socket", table)?;
+    let socket = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("netSocketConstruct"), "Socket", table)?;
     let prototype = get(c, socket, "prototype")?;
     let duplex_prototype = get(c, operations.duplex, "prototype")?;
     c.set_prototype_rooted(prototype, duplex_prototype)?;
@@ -252,7 +252,7 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
         define_getter(c, prototype, table, name, operation)?;
     }
 
-    let server = c.host_constructor_named_with_data(crate::host::shared_vm::operation("netServerConstruct"), "Server", table)?;
+    let server = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("netServerConstruct"), "Server", table)?;
     let prototype = get(c, server, "prototype")?;
     let emitter_prototype = get(c, operations.emitter, "prototype")?;
     c.set_prototype_rooted(prototype, emitter_prototype)?;
@@ -275,16 +275,16 @@ pub(crate) fn build(c: &mut Context<'_>, operations: &Operations) -> Result<Vec<
         let key = c.string_rooted("nodejs.rejection");
         call_method(c, symbol, "for", &[key])?
     };
-    let handler = c.host_function_named_with_data(crate::host::shared_vm::operation("netServerRejection"), "", table)?;
+    let handler = c.host_function_named_with_data(crate::host::shared_vm::operation!("netServerRejection"), "", table)?;
     c.define_data_property_rooted(prototype, rejection, handler, true, false, true)?;
-    let dispose = c.host_function_named(crate::host::shared_vm::operation("netServerAsyncDispose"), "[Symbol.asyncDispose]")?;
+    let dispose = c.host_function_named(crate::host::shared_vm::operation!("netServerAsyncDispose"), "[Symbol.asyncDispose]")?;
     let key = super::fs_shared_vm::classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
     c.define_data_property_rooted(prototype, key, dispose, true, false, true)?;
     super::net_server_listen::install(c, prototype)?;
 
-    let connect = c.host_function_named_with_data(crate::host::shared_vm::operation("netConnectFactory"), "connect", table)?;
-    let create_server = c.host_function_named_with_data(crate::host::shared_vm::operation("netCreateServer"), "createServer", table)?;
-    let normalize = c.host_function_named_with_data(crate::host::shared_vm::operation("netNormalizeArgs"), "normalizeArgs", table)?;
+    let connect = c.host_function_named_with_data(crate::host::shared_vm::operation!("netConnectFactory"), "connect", table)?;
+    let create_server = c.host_function_named_with_data(crate::host::shared_vm::operation!("netCreateServer"), "createServer", table)?;
+    let normalize = c.host_function_named_with_data(crate::host::shared_vm::operation!("netNormalizeArgs"), "normalizeArgs", table)?;
     super::net_socket_address::install(c, socket)?;
     Ok(vec![
         ("_normalizeArgs", normalize),
@@ -386,7 +386,7 @@ pub(crate) fn socket_reset_timeout(c: &mut Context<'_>, this: RootId, _: &[RootI
     let timeout = get(c, this, TIMEOUT)?;
     let active = c.rooted_value(timeout).and_then(|value| value.as_number()).is_some_and(|ms| ms > 0.0);
     if active && !truthy(c, this, "destroyed")? && !truthy(c, this, "connecting")? {
-        let fire = c.host_function_named_with_data(crate::host::shared_vm::operation("netSocketTimeoutFire"), "", this)?;
+        let fire = c.host_function_named_with_data(crate::host::shared_vm::operation!("netSocketTimeoutFire"), "", this)?;
         let global = c.global_root()?;
         let timer = call_method(c, global, "setTimeout", &[fire, timeout])?;
         invoke(c, "unrefTimeout", &[timer])?;
@@ -537,7 +537,7 @@ pub(crate) fn socket_write_chunks(c: &mut Context<'_>, this: RootId, args: &[Roo
         let chunk = get(c, entry, "chunk")?;
         let last = c.boolean(index + 1 == count);
         let data = c.array_rooted(&[barrier, last])?;
-        let completion = c.host_function_named_with_data(crate::host::shared_vm::operation("netSocketWritevPart"), "", data)?;
+        let completion = c.host_function_named_with_data(crate::host::shared_vm::operation!("netSocketWritevPart"), "", data)?;
         let failed = super::stream_shared_vm::attempt(invoke(c, "write", &[this, chunk, completion]))?;
         if let Err(error) = failed {
             let failure = get(c, barrier, "1")?;
@@ -615,7 +615,7 @@ pub(crate) fn socket_end(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> 
 fn refuse_connect(c: &mut Context<'_>, socket: RootId, error: RootId) -> Result<(), RootedError> {
     put_bool(c, socket, "connecting", false)?;
     let data = c.array_rooted(&[socket, error])?;
-    let report = c.host_function_named_with_data(crate::host::shared_vm::operation("netSocketReportError"), "", data)?;
+    let report = c.host_function_named_with_data(crate::host::shared_vm::operation!("netSocketReportError"), "", data)?;
     c.queue_microtask_rooted(report, &[])
 }
 
@@ -752,7 +752,7 @@ pub(crate) fn socket_reset_and_destroy(c: &mut Context<'_>, this: RootId, _: &[R
         call_method(c, this, "destroy", &[error])?;
     } else if truthy(c, this, "connecting")? {
         let table = c.host_function_data()?;
-        let reset = c.host_function_named_with_data(crate::host::shared_vm::operation("netSocketReset"), "", table)?;
+        let reset = c.host_function_named_with_data(crate::host::shared_vm::operation!("netSocketReset"), "", table)?;
         let event = c.string_rooted("connect");
         call_method(c, this, "once", &[event, reset])?;
     } else {
@@ -801,7 +801,7 @@ fn close_on_abort(c: &mut Context<'_>, server: RootId, signal: RootId) -> Result
     }
     let close = get(c, server, "close")?;
     let data = c.array_rooted(&[close, server])?;
-    let on_abort = c.host_function_named_with_data(crate::host::shared_vm::operation("netServerAbortClose"), "", data)?;
+    let on_abort = c.host_function_named_with_data(crate::host::shared_vm::operation!("netServerAbortClose"), "", data)?;
     if truthy(c, signal, "aborted")? {
         return super::stream_shared_vm::next_tick(c, on_abort, &[]);
     }
@@ -810,7 +810,7 @@ fn close_on_abort(c: &mut Context<'_>, server: RootId, signal: RootId) -> Result
     put_bool(c, once, "once", true)?;
     call_method(c, signal, "addEventListener", &[event, on_abort, once])?;
     let detach_data = c.array_rooted(&[signal, on_abort])?;
-    let detach = c.host_function_named_with_data(crate::host::shared_vm::operation("netServerAbortDetach"), "", detach_data)?;
+    let detach = c.host_function_named_with_data(crate::host::shared_vm::operation!("netServerAbortDetach"), "", detach_data)?;
     let close_event = c.string_rooted("close");
     call_method(c, server, "once", &[close_event, detach])?;
     Ok(())
@@ -893,7 +893,7 @@ pub(crate) fn server_emit_close_if_drained(c: &mut Context<'_>, this: RootId, _:
     }
     let yes = c.boolean(true);
     hide(c, this, CLOSE_SCHEDULED, yes)?;
-    let announce = c.host_function_named_with_data(crate::host::shared_vm::operation("netServerAnnounceClose"), "", this)?;
+    let announce = c.host_function_named_with_data(crate::host::shared_vm::operation!("netServerAnnounceClose"), "", this)?;
     super::stream_shared_vm::next_tick(c, announce, &[])?;
     Ok(this)
 }

@@ -422,7 +422,7 @@ pub(crate) fn prune(runtime: &mut quench_runtime::Runtime<NodeHost>) -> Result<(
     if shared.borrow().serdes.is_empty() {
         return Ok(());
     }
-    let prune = runtime.host_function(crate::host::shared_vm::operation("serdesPrune"))?;
+    let prune = runtime.host_function(crate::host::shared_vm::operation!("serdesPrune"))?;
     let result = runtime.call_rooted(prune, prune, &[]);
     runtime.release_root(prune);
     runtime.release_root(result?);

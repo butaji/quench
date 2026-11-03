@@ -1190,7 +1190,7 @@ pub(crate) fn slow_buffer(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
 /// its prototype.
 pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let operation = crate::host::shared_vm::operation;
-    let buffer = c.host_constructor_named(operation("bufferClassConstructor"), "Buffer")?;
+    let buffer = c.host_constructor_named(crate::host::shared_vm::operation!("bufferClassConstructor"), "Buffer")?;
     let prototype = get(c, buffer, "prototype")?;
     let global = c.global_root()?;
     let uint8 = get(c, global, "Uint8Array")?;
@@ -1265,16 +1265,16 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let registry = get(c, util, "for")?;
     let custom = c.string_rooted("nodejs.util.inspect.custom");
     let custom = c.call_rooted(registry, util, &[custom])?;
-    let inspect = c.host_function_named(operation("bufferInspect"), "inspect")?;
+    let inspect = c.host_function_named(crate::host::shared_vm::operation!("bufferInspect"), "inspect")?;
     c.define_data_property_rooted(prototype, custom, inspect, true, true, true)?;
     // `Buffer[Symbol.species]` is `FastBuffer`, which typed-array methods construct without
     // `Buffer()`'s deprecation; the two share one prototype.
-    let fast = c.host_constructor_named(operation("bufferFastConstructor"), "FastBuffer")?;
+    let fast = c.host_constructor_named(crate::host::shared_vm::operation!("bufferFastConstructor"), "FastBuffer")?;
     let retained = c.retain(fast)?;
     c.host_mut().shared_state().borrow_mut().builtin_cache.insert(super::buffer_shared_vm::FAST_BUFFER_CONSTRUCTOR.to_owned(), retained);
     c.set_prototype_rooted(fast, uint8)?;
     c.define_named_data_property_rooted(fast, "prototype", prototype, false, false, false)?;
-    let species_getter = c.host_function_named_with_data(operation("streamConstant"), "get", fast)?;
+    let species_getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamConstant"), "get", fast)?;
     let species = get(c, util, "species")?;
     let descriptor = c.null_object_rooted()?;
     c.assign_named_property_rooted(descriptor, "get", species_getter)?;
@@ -1283,7 +1283,7 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.define_property_descriptor_rooted(buffer, species, descriptor)?;
     for (name, target) in [("parent", "buffer"), ("offset", "byteOffset")] {
         let data = c.string_rooted(target);
-        let getter = c.host_function_named_with_data(operation("bufferAliasGet"), "get", data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("bufferAliasGet"), "get", data)?;
         let descriptor = c.null_object_rooted()?;
         c.assign_named_property_rooted(descriptor, "get", getter)?;
         let yes = c.boolean(true);
@@ -1297,10 +1297,9 @@ pub(crate) fn build_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// The `buffer` module's exports.
 pub(crate) fn exports(c: &mut Context<'_>, buffer: RootId) -> Result<RootId, RootedError> {
-    let operation = crate::host::shared_vm::operation;
     let module = c.object_rooted()?;
     c.assign_named_property_rooted(module, "Buffer", buffer)?;
-    let slow = c.host_function_named(operation("bufferSlowBuffer"), "SlowBuffer")?;
+    let slow = c.host_function_named(crate::host::shared_vm::operation!("bufferSlowBuffer"), "SlowBuffer")?;
     c.assign_named_property_rooted(module, "SlowBuffer", slow)?;
     let max_length = c.number(MAX_LENGTH);
     let max_string = c.number(Context::MAX_STRING_CODE_UNITS as f64);

@@ -7,7 +7,7 @@
 use super::*;
 use crate::heap::PlainPropertyStorage;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ObjectHeader {
     pub(super) record: ir::Value,
     pub(super) shape: ir::Value,
@@ -70,6 +70,9 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
+    /// The type of every value the slot has held when the code was compiled
+    /// (`Heap::slot_type`): a read speculates on it and leaves where it fails.
+    pub(crate) ty: crate::typed_ir::Type,
 }
 
 impl NativeFieldLoad {
@@ -87,7 +90,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {
@@ -100,7 +103,7 @@ mod tests {
 #[derive(Clone, Copy)]
 pub(super) enum PackedAccess { Snapshot, Reload }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum PackedValue { Snapshot(ir::Value), Record(ir::Value) }
 
 impl PackedValue {
@@ -113,7 +116,7 @@ impl PackedValue {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Slots {
     Packed(PackedValue),
     Arena(ir::Value),
@@ -122,7 +125,7 @@ enum Slots {
 
 /// A projection for a guarded receiver and exact shape. It may only be reused
 /// while no admitted effect can change its layout, arena base or object lifetime.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct CheckedObject {
     slots: Slots,
     pub(super) storage_len: usize,

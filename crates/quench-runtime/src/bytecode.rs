@@ -759,7 +759,7 @@ macro_rules! opcodes {
     ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
-        #[quench_macros::native_operation_exports(18, "quench_js_op_")]
+        #[quench_macros::native_operation_exports(19, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         #[allow(dead_code)]
@@ -4365,7 +4365,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 114;
+    pub const FORMAT_VERSION: u8 = 115;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

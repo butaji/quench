@@ -920,6 +920,15 @@ impl LaneView {
         self.start.set(prologue.cast_const());
     }
 
+    /// Whether a call's resolution claims the prologue for the lane tier: while its body warms
+    /// and nothing claimed it yet. A specialized body's prologue already enters it, and any
+    /// other body (declined, retired, or serving native callers only) runs its function in
+    /// the lane; claiming again would take the prologue back to `lane_tier_prologue`.
+    fn lane_tier_unclaimed(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) && self.start.get() != self.prologue.get().cast_const()
+    }
+
     /// Starts activations at the first record again, once the tier declines the function.
     fn release_from_tier(&self) {
         self.start.set(self.records());
@@ -7525,6 +7534,9 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = || {
+        // A function whose loop the loop tier admitted runs that loop in its region, which
+        // a body would only leave for at each of the loop's entries.
+        if own.loops.iter().any(|site| site.active_region().is_some()) { return None; }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header);
         if diagnostics && let Some(method) = &method {
@@ -11075,16 +11087,18 @@ impl<H: Host> Vm<H> {
             linked
         } else {
             let index = self.script_call_index(callee)?;
-            // A record that linked another callee is polymorphic: its earlier target joins
-            // its history (`LaneStack::call_sites`).
+            // A record that linked another callee is polymorphic: the callee it calls now joins
+            // its history (`LaneStack::call_sites`). The entry it linked may hold another
+            // site's callee since, so only the callee in hand is the site's own.
             if let Some(previous) = self.lane_stack.script_targets.entries.get(linked)
                 && previous.callee != callee
                 && previous.generation == self.lane_stack.generation
             {
+                let current = &self.lane_stack.script_targets.entries[index];
                 let mut sites = self.lane_stack.call_sites.borrow_mut();
                 let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
                 let target = super::compiled::CallTarget {
-                    callee: super::compiled::CalleeBinding::Identity(previous.callee), function: previous.function };
+                    callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function };
                 if !site.contains(&target) {
                     if site.len() == CALL_SITE_TARGETS {
                         site.remove(0);
@@ -11304,6 +11318,8 @@ impl<H: Host> Vm<H> {
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
             && self.js_tier_may_claim(code, program, function)
+            // SAFETY: as below.
+            && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.lane_tier_unclaimed())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
@@ -19205,7 +19221,7 @@ fn install_loop_sites<'live, H: Host>(
     let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
         .filter(|pc| records[*pc].handler == backward && decoded[*pc].op() == Op::Jump && !fused_into(*pc))
-        .filter_map(|pc| {
+        .map(|pc| {
             let header = decoded[pc].jump_target();
             let (region, promotion_only, analysis_failure, call_boundary_pcs) = match super::compiled::analyze_osr_region_detailed(
                 function,
@@ -19243,17 +19259,18 @@ fn install_loop_sites<'live, H: Host>(
                             rejections.push((reason, 1));
                         }
                     }
+                    // A loop the region analysis rejects keeps its site, diagnostics or not: its
+                    // function's lane body may run it (`lane_loop_body_or_retire`), and the
+                    // site retires to the plain jump where none does. A diagnostics run tiers
+                    // as any other.
                     if !general_dispatch {
-                        if !diagnostics {
-                            return None;
-                        }
                         (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                     } else {
                         (std::cell::OnceCell::new(), true, Some(failure), Vec::new())
                     }
                 }
             };
-            Some((
+            (
                 pc,
                 LoopSite {
                     function: function_id,
@@ -19281,7 +19298,7 @@ fn install_loop_sites<'live, H: Host>(
                     compile_successes: std::cell::Cell::new(0),
                     tier: std::cell::RefCell::default(),
                 },
-            ))
+            )
         })
         .collect();
     let mut sites = sites;
@@ -20736,5 +20753,24 @@ mod instruction_set_tests {
             }
             for pc in 0..count { assert!(set.contains(pc)); }
         }
+    }
+}
+
+#[cfg(test)]
+mod numeric_pair_tests {
+    use crate::test_host::TestHost;
+
+    #[test]
+    fn numeric_pair_compositions_match_general_execution() {
+        let source = include_str!("../../tests/fixtures/constant-numeric-pairs.js");
+        let run = |program| {
+            let host = TestHost::default();
+            super::super::Vm::new(host.clone()).execute(&program).unwrap();
+            let output = host.lines();
+            output.clone()
+        };
+        let specialized = crate::Engine::specialize(source, "constant-numeric-pairs.js").unwrap();
+        let general = crate::Engine::specialize_unspecialized(source, "constant-numeric-pairs.js").unwrap();
+        assert_eq!(run(specialized), run(general));
     }
 }

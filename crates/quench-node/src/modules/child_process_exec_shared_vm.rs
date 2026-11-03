@@ -12,7 +12,7 @@ pub(crate) fn function(
     buffer: RootId,
 ) -> Result<RootId, RootedError> {
     let data = context.array_rooted(&[spawn, buffer])?;
-    context.host_function_with_data(crate::host::shared_vm::operation("execFile"), data)
+    context.host_function_with_data(crate::host::shared_vm::operation!("execFile"), data)
 }
 
 pub(crate) fn install_promisified(
@@ -30,7 +30,7 @@ pub(crate) fn install_promisified(
         let name = get(context, original, "name")?;
         let name = context.to_string(name)?;
         let function = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("childProcessPromiseExec"),
+            crate::host::shared_vm::operation!("childProcessPromiseExec"),
             &name,
             data,
         )?;
@@ -56,7 +56,7 @@ pub(crate) fn promise_exec(
     let reject = get(context, capability, "reject")?;
     let callback_data = context.array_rooted(&[resolve, reject])?;
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessPromiseExecSettled"),
+        crate::host::shared_vm::operation!("childProcessPromiseExecSettled"),
         callback_data,
     )?;
     let mut arguments = args.to_vec();
@@ -248,7 +248,7 @@ pub(crate) fn exec_file(
         let kind = context.string_rooted(event);
         let data = context.array_rooted(&[state, kind])?;
         let handler = context
-            .host_function_with_data(crate::host::shared_vm::operation("execFileEvent"), data)?;
+            .host_function_with_data(crate::host::shared_vm::operation!("execFileEvent"), data)?;
         let (emitter, name) = if matches!(event, "stdout" | "stderr") {
             (get(context, child, event)?, "data")
         } else {
@@ -266,7 +266,7 @@ pub(crate) fn exec_file(
         let kind = context.string_rooted("timeout");
         let data = context.array_rooted(&[state, kind])?;
         let handler = context
-            .host_function_with_data(crate::host::shared_vm::operation("execFileEvent"), data)?;
+            .host_function_with_data(crate::host::shared_vm::operation!("execFileEvent"), data)?;
         let global = context.global_root()?;
         let timer = method(context, global, "setTimeout", &[handler, timeout])?;
         set(context, state, "timer", timer)?;
@@ -479,7 +479,7 @@ fn kill(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), 
         let close = context.string_rooted("close");
         let data = context.array_rooted(&[state, close])?;
         let finish = context
-            .host_function_with_data(crate::host::shared_vm::operation("execFileEvent"), data)?;
+            .host_function_with_data(crate::host::shared_vm::operation!("execFileEvent"), data)?;
         let undefined = context.undefined();
         context.call_rooted(finish, undefined, &[])?;
     }

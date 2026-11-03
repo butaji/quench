@@ -302,7 +302,7 @@ pub(crate) fn get_heap_snapshot(c: &mut Context<'_>, _: RootId, args: &[RootId])
     let stream = crate::host::shared_vm::commonjs::stream_module(c)?;
     let readable = get(c, stream, "Readable")?;
     let stream_options = c.object_rooted()?;
-    let read = c.host_function_named(crate::host::shared_vm::operation("streamNop"), "read")?;
+    let read = c.host_function_named(crate::host::shared_vm::operation!("streamNop"), "read")?;
     put(c, stream_options, "read", read)?;
     let snapshot = c.construct_rooted(readable, readable, &[stream_options])?;
     let chunk = super::buffer_shared_vm::from_bytes(c, EMPTY_HEAP_SNAPSHOT.as_bytes())?;
@@ -426,7 +426,7 @@ fn promise_hook_registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let hooks = c.array_rooted(&[])?;
             put(c, registry, kind, hooks)?;
         }
-        let emit = c.host_function_named_with_data(crate::host::shared_vm::operation("v8PromiseHooksEmit"), "emit", registry)?;
+        let emit = c.host_function_named_with_data(crate::host::shared_vm::operation!("v8PromiseHooksEmit"), "emit", registry)?;
         put(c, registry, "emit", emit)?;
         Ok(registry)
     })
@@ -453,7 +453,7 @@ pub(crate) fn add_promise_hook(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     super::promise_hooks_shared_vm::set_registry(c, registry, &[registry])?;
     let kind = c.number(kind as f64);
     let data = c.array_rooted(&[kind, hook])?;
-    c.host_function_named_with_data(crate::host::shared_vm::operation("v8PromiseHookStop"), "stop", data)
+    c.host_function_named_with_data(crate::host::shared_vm::operation!("v8PromiseHookStop"), "stop", data)
 }
 
 /// A hook's stop: unsubscribe it; with no hook left, promises are no longer observed.
@@ -513,12 +513,12 @@ pub(crate) fn create_promise_hook(c: &mut Context<'_>, receiver: RootId, args: &
         let hook = get(c, hooks, name)?;
         if c.truthy_rooted(hook)? {
             let kind = c.number(kind as f64);
-            let add = c.host_function_named_with_data(crate::host::shared_vm::operation("v8AddPromiseHook"), name, kind)?;
+            let add = c.host_function_named_with_data(crate::host::shared_vm::operation!("v8AddPromiseHook"), name, kind)?;
             stops.push(c.call_rooted(add, receiver, &[hook])?);
         }
     }
     let stops = c.array_rooted(&stops)?;
-    c.host_function_named_with_data(crate::host::shared_vm::operation("v8PromiseHooksStopAll"), "", stops)
+    c.host_function_named_with_data(crate::host::shared_vm::operation!("v8PromiseHooksStopAll"), "", stops)
 }
 
 pub(crate) fn stop_all_promise_hooks(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
@@ -534,7 +534,7 @@ fn promise_hooks(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let object = object_with_methods(c, &[("createHook", "v8CreatePromiseHook")])?;
     for (kind, (_, name, _)) in PROMISE_HOOKS.iter().enumerate() {
         let kind = c.number(kind as f64);
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation("v8AddPromiseHook"), name, kind)?;
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("v8AddPromiseHook"), name, kind)?;
         put(c, object, name, function)?;
     }
     Ok(object)
@@ -682,7 +682,7 @@ fn classes(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         put(c, prototype, "_getDataCloneError", error)?;
         let deserializer = serdes_class(c, "Deserializer")?;
         let prototype = get(c, deserializer, "prototype")?;
-        let read = c.host_function_named(crate::host::shared_vm::operation("v8ReadRawBytes"), "readRawBytes")?;
+        let read = c.host_function_named(crate::host::shared_vm::operation!("v8ReadRawBytes"), "readRawBytes")?;
         put(c, prototype, "readRawBytes", read)?;
         for (name, operation, base, method, method_operation) in [
             ("DefaultSerializer", "v8DefaultSerializer", serializer, "_writeHostObject", "v8WriteHostObject"),
@@ -768,7 +768,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     )?;
     put(c, module, "startupSnapshot", snapshot)?;
     function(c, module, "setHeapSnapshotNearHeapLimit", "v8SetHeapSnapshotNearHeapLimit")?;
-    let profiler = c.host_constructor_named(crate::host::shared_vm::operation("v8GcProfiler"), "GCProfiler")?;
+    let profiler = c.host_constructor_named(crate::host::shared_vm::operation!("v8GcProfiler"), "GCProfiler")?;
     let prototype = get(c, profiler, "prototype")?;
     for (name, operation) in [("start", "v8GcProfilerStart"), ("stop", "v8GcProfilerStop")] {
         let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;

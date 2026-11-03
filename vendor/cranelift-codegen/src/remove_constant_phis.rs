@@ -229,6 +229,7 @@ pub fn do_remove_constant_phis(func: &mut Function, domtree: &mut DominatorTree)
         Bump::with_capacity(domtree.cfg_postorder().len() * 4 * core::mem::size_of::<Value>());
     let mut summaries =
         SecondaryMap::<Block, BlockSummary>::with_capacity(domtree.cfg_postorder().len());
+    let mut incoming_edges = SecondaryMap::<Block, usize>::new();
 
     for b in domtree.cfg_rpo().copied() {
         let formals = func.dfg.block_params(b);
@@ -241,6 +242,7 @@ pub fn do_remove_constant_phis(func: &mut Function, domtree: &mut DominatorTree)
                 .enumerate()
             {
                 if let Some(edge) = OutEdge::new(&bump, &func.dfg, inst, ix, *dest) {
+                    incoming_edges[edge.block] += 1;
                     summary.dests.push(edge);
                 }
             }
@@ -312,6 +314,10 @@ pub fn do_remove_constant_phis(func: &mut Function, domtree: &mut DominatorTree)
                     // itself keeps what the formal held since.
                     let actual_absval = match actual {
                         BlockArg::Value(actual) if *actual == *formal => AbstractValue::None,
+                        // A single edge binds this formal to that SSA value,
+                        // even while the actual's abstract contents widen.
+                        // Preserve identity rather than transient solver state.
+                        BlockArg::Value(actual) if incoming_edges[edge.block] == 1 => AbstractValue::One(*actual),
                         BlockArg::Value(actual) => match state.maybe_get(*actual) {
                             Some(AbstractValue::Many) => AbstractValue::One(*actual),
                             Some(pt) => *pt,
@@ -426,4 +432,47 @@ pub fn do_remove_constant_phis(func: &mut Function, domtree: &mut DominatorTree)
         state.absvals.len(),
         n_consts
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cursor::{Cursor, FuncCursor};
+    use crate::flowgraph::ControlFlowGraph;
+    use crate::ir::{AbiParam, InstBuilder, Signature, UserFuncName, condcodes::IntCC, types};
+
+    #[test]
+    fn forwarded_loop_parameter_keeps_identity_while_its_contents_widen() {
+        let mut signature = Signature::new(crate::isa::CallConv::SystemV);
+        signature.params.extend([AbiParam::new(types::I32), AbiParam::new(types::I32)]);
+        signature.returns.push(AbiParam::new(types::I32));
+        let mut f = Function::with_name_signature(UserFuncName::testcase("forwarded_counter"), signature);
+        let entry = f.dfg.make_block();
+        let header = f.dfg.make_block();
+        let body = f.dfg.make_block();
+        let exit = f.dfg.make_block();
+        let start = f.dfg.append_block_param(entry, types::I32);
+        let bound = f.dfg.append_block_param(entry, types::I32);
+        let counter = f.dfg.append_block_param(header, types::I32);
+        let forwarded = f.dfg.append_block_param(body, types::I32);
+        let result = f.dfg.append_block_param(exit, types::I32);
+        let mut cursor = FuncCursor::new(&mut f);
+        cursor.insert_block(entry);
+        cursor.ins().jump(header, &[start.into()]);
+        cursor.insert_block(header);
+        let condition = cursor.ins().icmp(IntCC::SignedLessThan, counter, bound);
+        cursor.ins().brif(condition, body, &[counter.into()], exit, &[counter.into()]);
+        cursor.insert_block(body);
+        let next = cursor.ins().iadd_imm(forwarded, 1);
+        cursor.ins().jump(header, &[next.into()]);
+        cursor.insert_block(exit);
+        cursor.ins().return_(&[result]);
+        let cfg = ControlFlowGraph::with_function(&f);
+        let mut dom = DominatorTree::with_function(&f, &cfg);
+        do_remove_constant_phis(&mut f, &mut dom);
+        assert_eq!(f.dfg.block_params(header), &[counter], "the varying counter stays a phi");
+        assert!(f.dfg.block_params(body).is_empty(), "forwarding adds no value identity");
+        assert_eq!(f.dfg.resolve_aliases(forwarded), counter);
+        assert_eq!(f.dfg.resolve_aliases(result), counter);
+    }
 }

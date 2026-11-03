@@ -504,7 +504,7 @@ pub(crate) fn define_predicates(c: &mut Context<'_>, target: RootId, names: &[&s
     for name in names {
         let index = PREDICATES.iter().position(|(candidate, _)| candidate == name).expect("listed predicate");
         let data = c.number(index as f64);
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation("streamPredicate"), name, data)?;
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamPredicate"), name, data)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(target, key, function, true, true, true)?;
     }
@@ -799,9 +799,9 @@ pub(crate) const DUPLEX_ACCESSORS: &[AccessorRow] = ACCESSORS.split_at(Accessor:
 pub(crate) fn define_stream_accessors(c: &mut Context<'_>, prototype: RootId, rows: &[AccessorRow]) -> Result<(), RootedError> {
     for &(name, accessor, settable) in rows {
         let data = c.number(accessor as usize as f64);
-        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("streamAccessorGet"), "get", data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamAccessorGet"), "get", data)?;
         let setter = if settable {
-            Some(c.host_function_named_with_data(crate::host::shared_vm::operation("streamAccessorSet"), "set", data)?)
+            Some(c.host_function_named_with_data(crate::host::shared_vm::operation!("streamAccessorSet"), "set", data)?)
         } else {
             None
         };

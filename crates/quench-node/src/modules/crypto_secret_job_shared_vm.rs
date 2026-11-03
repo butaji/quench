@@ -506,7 +506,7 @@ fn install_job_class(
     // V8 gives each job class its own wrapper; the shared native operation is
     // authoritative while method identity remains constructor-specific.
     let run = c.host_function_named(
-        crate::host::shared_vm::operation("cryptoSecretJobRun"),
+        crate::host::shared_vm::operation!("cryptoSecretJobRun"),
         "run",
     )?;
     put(c, prototype, "run", run)?;
@@ -1534,7 +1534,7 @@ pub(crate) fn run(c: &mut Context<'_>, job: RootId, _: &[RootId]) -> Result<Root
         let api = api(c)?;
         let ctor = get(c, api, "Promise")?;
         let executor = c.host_function_with_data(
-            crate::host::shared_vm::operation("cryptoSecretJobExecutor"),
+            crate::host::shared_vm::operation!("cryptoSecretJobExecutor"),
             record,
         )?;
         c.construct_rooted(ctor, ctor, &[executor])?

@@ -155,7 +155,7 @@ pub(crate) fn poll(
                         handle
                     };
                     let create = runtime
-                        .host_function(crate::host::shared_vm::operation("netSocketCreateHandle"))
+                        .host_function(crate::host::shared_vm::operation!("netSocketCreateHandle"))
                         .map_err(|error| error.to_string())?;
                     let undefined = runtime.root(Value::UNDEFINED);
                     let id = runtime.root(Value::number(socket as f64));
@@ -381,7 +381,7 @@ pub(crate) fn poll(
                 let raw_callback = shared_state.borrow_mut().net_handle_close_callbacks.remove(&socket);
                 if let Some(handle) = raw_callback {
                     let callback = runtime
-                        .host_function(crate::host::shared_vm::operation("netHandleCloseComplete"))
+                        .host_function(crate::host::shared_vm::operation!("netHandleCloseComplete"))
                         .map_err(|error| error.to_string())?;
                     let execution = if let Some(resource) =
                         crate::modules::native_async_wrap::tcp_resource(shared_state, socket)
@@ -491,7 +491,7 @@ pub(crate) fn poll(
                             .transport_errors
                             .push_back((socket, stack.clone()));
                         let callback = runtime
-                            .host_function(crate::host::shared_vm::operation(
+                            .host_function(crate::host::shared_vm::operation!(
                                 "tlsSocketTransportError",
                             ))
                             .map_err(|error| error.to_string())?;
@@ -919,7 +919,7 @@ fn queue_native_read(
     };
     let payload = if let Some(bytes) = bytes {
         let operation = runtime
-            .host_function(crate::host::shared_vm::operation("nativeStreamCopyRead"))
+            .host_function(crate::host::shared_vm::operation!("nativeStreamCopyRead"))
             .map_err(|e| e.to_string())?;
         let undefined = runtime.root(Value::UNDEFINED);
         let text = runtime.string_rooted(&latin1_text(bytes));
@@ -932,7 +932,7 @@ fn queue_native_read(
         runtime.root(Value::UNDEFINED)
     };
     let callback = runtime
-        .host_function(crate::host::shared_vm::operation("nativeStreamDeliverRead"))
+        .host_function(crate::host::shared_vm::operation!("nativeStreamDeliverRead"))
         .map_err(|e| e.to_string())?;
     let receiver = runtime.root(
         runtime
@@ -1002,7 +1002,7 @@ fn complete_native_request(
     let connect = pending.kind == super::super::stream_binding::RequestKind::Connect;
     let publish_status = runtime.root(if !connect { Value::TRUE } else { Value::FALSE });
     let prepare = runtime
-        .host_function(crate::host::shared_vm::operation(
+        .host_function(crate::host::shared_vm::operation!(
             "nativeStreamPrepareCompletion",
         ))
         .expect("registered native stream completion preparation");

@@ -8,7 +8,7 @@
 use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, missing_args, put};
 use super::perf_hooks::{
     api, api_member, attach_slot, call_method, class, coded_error, define_getter, define_inspect, define_methods,
-    define_tag, illegal_constructor, inspect_as, milestone_ms, number_of, operation, plain_object, receiver_slot,
+    define_tag, illegal_constructor, inspect_as, milestone_ms, number_of, plain_object, receiver_slot,
     slot, to_text, type_error_arg, validate_function, validate_number, validate_object, Context, Getter, Method, Outcome,
 };
 use quench_runtime::{RootId, RootedError, Runtime};
@@ -240,7 +240,7 @@ fn share(c: &mut Context<'_>, name: &str, value: RootId) -> Result<(), RootedErr
 fn json_method(c: &mut Context<'_>, prototype: RootId, fields: &[&str], enumerable: bool) -> Result<(), RootedError> {
     let names = fields.iter().map(|name| c.string_rooted(name)).collect::<Vec<_>>();
     let names = c.array_rooted(&names)?;
-    let function = c.host_function_named_with_data(operation("perfEntryToJson"), "toJSON", names)?;
+    let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("perfEntryToJson"), "toJSON", names)?;
     let zero = c.number(0.0);
     c.define_named_data_property_rooted(function, "length", zero, false, false, true)?;
     c.define_named_data_property_rooted(prototype, "toJSON", function, true, enumerable, true)?;
@@ -451,7 +451,7 @@ fn buffer_resource(c: &mut Context<'_>, entry: RootId) -> Result<(), RootedError
         !std::mem::replace(&mut timeline.overflow_pending, true)
     });
     if schedule {
-        let callback = c.host_function(operation("perfResourceBufferFull"))?;
+        let callback = c.host_function(crate::host::shared_vm::operation!("perfResourceBufferFull"))?;
         let undefined = c.undefined();
         super::timers_shared_vm::set_immediate(c, undefined, &[callback])?;
     }
@@ -792,7 +792,7 @@ fn deliver_at(c: &mut Context<'_>, index: usize, entry: RootId) -> Result<(), Ro
         !std::mem::replace(&mut timeline.dispatch_queued, true)
     });
     if schedule {
-        let dispatch = c.host_function(operation("perfObserversDispatch"))?;
+        let dispatch = c.host_function(crate::host::shared_vm::operation!("perfObserversDispatch"))?;
         let undefined = c.undefined();
         super::timers_shared_vm::set_immediate(c, undefined, &[dispatch])?;
     }

@@ -218,7 +218,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         ("Sign", "sign", "cryptoNativeSignFinal"),
         ("Verify", "verify", "cryptoNativeVerifyFinal"),
     ] {
-        let constructor = c.host_constructor(crate::host::shared_vm::operation(
+        let constructor = c.host_constructor(crate::host::shared_vm::operation!(
             "cryptoNativeSignatureNew",
         ))?;
         let text = c.string_rooted(name);

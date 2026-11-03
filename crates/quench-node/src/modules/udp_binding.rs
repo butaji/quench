@@ -98,7 +98,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:udp_wrap", |c| {
         let b = c.object_rooted()?;
         let constructor =
-            c.host_constructor_named(crate::host::shared_vm::operation("udpConstruct"), "UDP")?;
+            c.host_constructor_named(crate::host::shared_vm::operation!("udpConstruct"), "UDP")?;
         crate::host::shared_vm::commonjs::cached_native_binding(
             c,
             "\0native:UDPConstructor",
@@ -136,7 +136,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let f = c.host_function_named(crate::host::shared_vm::operation(op), name)?;
             put(c, prototype, name, f)?;
         }
-        let getter = c.host_function(crate::host::shared_vm::operation("udpFd"))?;
+        let getter = c.host_function(crate::host::shared_vm::operation!("udpFd"))?;
         let d = c.null_object_rooted()?;
         put(c, d, "get", getter)?;
         let yes = c.boolean(true);
@@ -145,7 +145,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.define_property_descriptor_rooted(prototype, key, d)?;
         put(c, b, "UDP", constructor)?;
         let send =
-            c.host_constructor_named(crate::host::shared_vm::operation("udpSendWrap"), "SendWrap")?;
+            c.host_constructor_named(crate::host::shared_vm::operation!("udpSendWrap"), "SendWrap")?;
         let send_prototype = get(c, send, "prototype")?;
         let async_prototype = super::native_async_wrap::prototype(c)?;
         c.set_prototype_rooted(send_prototype, async_prototype)?;
@@ -631,7 +631,7 @@ fn queued_send(
     }
     let resource = copy_root(runtime, token.request)?;
     let callback = runtime
-        .host_function(crate::host::shared_vm::operation("udpDeliverSend"))
+        .host_function(crate::host::shared_vm::operation!("udpDeliverSend"))
         .map_err(|e| e.to_string())?;
     let args = vec![
         runtime.root(Value::number(f64::from(status))),
@@ -732,7 +732,7 @@ pub(crate) fn poll(
         let receiver = copy_root(runtime, handle)?;
         let resource = copy_root(runtime, handle)?;
         let callback = runtime
-            .host_function(crate::host::shared_vm::operation("udpDeliverMessage"))
+            .host_function(crate::host::shared_vm::operation!("udpDeliverMessage"))
             .map_err(|e| e.to_string())?;
         let args = match result {
             Ok((bytes, address)) => vec![

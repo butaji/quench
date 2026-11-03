@@ -99,7 +99,7 @@ fn queue_tcp_listen_error(
     context.define_data_property_rooted(error, key, port, true, true, true)?;
     publish_listen_event(context, "error", server, None, Some(error))?;
     publish_listen_event(context, "end", server, None, None)?;
-    let callback = context.host_function(crate::host::shared_vm::operation("netListenError"))?;
+    let callback = context.host_function(crate::host::shared_vm::operation!("netListenError"))?;
     let receiver = context.undefined();
     super::shared_event_loop::queue_next_tick(context, callback, receiver, &[server, error])?;
     Ok(server)
@@ -132,7 +132,7 @@ fn positional_backlog(context: &mut Context<'_>, args: &[RootId]) -> Result<Root
 
 pub(crate) fn install(context: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
     let getter = context.host_constructor_named(
-        crate::host::shared_vm::operation("netServerListening"),
+        crate::host::shared_vm::operation!("netServerListening"),
         "get",
     )?;
     let descriptor = context.null_object_rooted()?;
@@ -368,7 +368,7 @@ pub(crate) fn listen(
             context.define_data_property_rooted(data, key, value, true, true, true)?;
         }
         let callback = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("netServerLookupCompleted"),
+            crate::host::shared_vm::operation!("netServerLookupCompleted"),
             "",
             data,
         )?;
@@ -543,7 +543,7 @@ pub(crate) fn close(
             callback
         } else {
             context.host_constructor_named_with_data(
-                crate::host::shared_vm::operation("netServerCloseCallback"),
+                crate::host::shared_vm::operation!("netServerCloseCallback"),
                 "close",
                 callback,
             )?
@@ -568,7 +568,7 @@ pub(crate) fn close(
     };
     if !registered {
         let callback =
-            context.host_function(crate::host::shared_vm::operation("netServerClosePending"))?;
+            context.host_function(crate::host::shared_vm::operation!("netServerClosePending"))?;
         let undefined = context.undefined();
         super::shared_event_loop::queue_next_tick(context, callback, undefined, &[server])?;
     }

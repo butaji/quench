@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::typed_ir::Type;
 use rustc_hash::FxHashMap;
 
 mod buffer;
@@ -187,12 +188,53 @@ impl Default for ValueVec {
     }
 }
 
+/// The type every value a slot has held has, as the heap keeps it per slot owner: a byte code
+/// of the chain `Type::NEVER` ⊑ `Type::INT32` ⊑ `Type::NUMBER` ⊑ `Type::ANY` of the typed IR,
+/// the one authority on types, joined by `max`. Integral numbers are stored in int form
+/// (`Value::number`), so each class keeps the same encoding and a slot widens in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SlotRepresentation {
+    None,
+    Int32,
+    Number,
+    Tagged,
+}
+
+impl SlotRepresentation {
+    /// The least class whose type holds `value`'s (`Type::immediate`).
+    pub(crate) fn of(value: Value) -> Self {
+        let ty = Type::immediate(value);
+        if ty.is_subtype(Type::INT32) { Self::Int32 } else if ty.is_subtype(Type::NUMBER) { Self::Number } else { Self::Tagged }
+    }
+
+    /// The typed IR type this class codes.
+    pub(crate) fn ty(self) -> Type {
+        match self {
+            Self::None => Type::NEVER,
+            Self::Int32 => Type::INT32,
+            Self::Number => Type::NUMBER,
+            Self::Tagged => Type::ANY,
+        }
+    }
+}
+
 pub(crate) struct ValueArena {
     values: PropertyBuffer,
     free: [Vec<u32>; BUCKETS],
     /// Values held by the ranges on `free`.
     released_values: usize,
     shape_lengths: Vec<u32>,
+    /// The slot owners of every shape (`ValueArena::slot_owner`): each shape's chain starts at
+    /// its `shape_chains` index in `chain_owners`, which names, per slot, the shape that added
+    /// it. A child that appends a slot at its parent's chain end shares that chain.
+    shape_chains: Vec<u32>,
+    chain_owners: Vec<u32>,
+    /// Per owner shape, the representation every value its slot has held fits
+    /// (`SlotRepresentation`), joined on each write.
+    owner_reps: Vec<SlotRepresentation>,
+    /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
+    /// native code reads representations keeps them.
+    tracking: bool,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -205,6 +247,10 @@ impl Default for ValueArena {
             free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
             shape_lengths: vec![0],
+            shape_chains: Vec::new(),
+            chain_owners: Vec::new(),
+            owner_reps: Vec::new(),
+            tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -226,7 +272,8 @@ impl ValueArena {
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        let Self { values, free, released_values, shape_lengths, dictionaries, free_dictionaries, next_dictionary } = self;
+        // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_reps: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -269,6 +316,7 @@ impl ValueArena {
             dictionaries,
             free_dictionaries: reader.u32s()?,
             next_dictionary: reader.u32()?,
+            ..Self::default()
         })
     }
 
@@ -299,8 +347,119 @@ impl ValueArena {
     }
 
     pub(crate) fn reset_shapes(&mut self) {
+        self.tracking = false;
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
+        self.shape_chains.clear();
+        self.chain_owners.clear();
+        self.owner_reps.clear();
+    }
+
+    /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
+    /// longer extends the parent's chain, owning the new slot, sharing the chain where the
+    /// parent's is its end; as long shares it; anything else owns every slot itself.
+    pub(crate) fn register_derived_shape(&mut self, shape: u32, length: usize, parent: Option<(u32, usize)>) {
+        self.register_shape(shape, length);
+        // Owners serve only kept representations; tracking's start registers every shape.
+        if !self.tracking { return; }
+        let index = shape as usize;
+        if self.shape_chains.len() <= index {
+            self.shape_chains.resize(index + 1, 0);
+            self.owner_reps.resize(index + 1, SlotRepresentation::None);
+        }
+        self.owner_reps[index] = SlotRepresentation::None;
+        // A parent's chain covers its length once registered; one that does not (a parent the
+        // heap never registered at that length) lends no owners, and the child owns its slots.
+        let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
+            .is_some_and(|base| *base as usize + parent_length <= self.chain_owners.len()));
+        let chain = match covered {
+            Some((parent, parent_length)) if length == parent_length => self.shape_chains[parent as usize] as usize,
+            Some((parent, parent_length)) if length == parent_length + 1 => {
+                let base = self.shape_chains[parent as usize] as usize;
+                if self.chain_owners.len() != base + parent_length {
+                    let start = self.chain_owners.len();
+                    self.chain_owners.extend_from_within(base..base + parent_length);
+                    self.chain_owners.push(shape);
+                    start
+                } else {
+                    self.chain_owners.push(shape);
+                    base
+                }
+            }
+            _ => {
+                let start = self.chain_owners.len();
+                self.chain_owners.extend(std::iter::repeat_n(shape, length));
+                start
+            }
+        };
+        self.shape_chains[index] = u32::try_from(chain).expect("slot owner chains fit u32");
+    }
+
+    /// `note_slot_value` of a write of `value` to `slot` of an object of `shape`, where the
+    /// shape holds the slot (an ordinary shape's; a dictionary's holds none of its own).
+    #[inline(always)]
+    pub(crate) fn note_shape_value(&mut self, shape: u32, slot: usize, value: Value) {
+        if self.tracking && slot < self.shape_length(shape) && !value.is_deleted() {
+            self.note_slot_value(shape, slot, value);
+        }
+    }
+
+    /// `note_shape_value` of an object's initial `values`, slot by slot.
+    pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
+        if !self.tracking { return; }
+        for (slot, value) in values.iter().copied().enumerate() {
+            self.note_shape_value(shape, slot, value);
+        }
+    }
+
+    /// Starts joining writes' classes from none: the caller joins what live objects hold.
+    pub(crate) fn track(&mut self) {
+        self.tracking = true;
+        self.owner_reps.fill(SlotRepresentation::None);
+    }
+
+    /// Whether writes join their values' classes.
+    pub(crate) fn tracks(&self) -> bool {
+        self.tracking
+    }
+
+    /// The slots `shape`'s objects store.
+    pub(crate) fn shape_length(&self, shape: u32) -> usize {
+        self.shape_lengths.get(shape as usize).map_or(0, |length| *length as usize)
+    }
+
+    /// The shape that added `slot` of `shape`'s objects, whose representation it shares.
+    #[inline(always)]
+    pub(crate) fn slot_owner(&self, shape: u32, slot: usize) -> u32 {
+        self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
+    }
+
+    /// The representation `slot` of `shape` has held.
+    #[inline(always)]
+    pub(crate) fn slot_representation(&self, shape: u32, slot: usize) -> SlotRepresentation {
+        self.owner_reps[self.slot_owner(shape, slot) as usize]
+    }
+
+    /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
+    #[inline(always)]
+    pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+        if !self.tracking { return false; }
+        self.join_slot_value(shape, slot, value)
+    }
+
+    /// `note_slot_value` where representations are kept, out of line: the interpreter's
+    /// store handlers keep only the tracking test, so their own code does not change.
+    #[cold]
+    #[inline(never)]
+    fn join_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
+        let owner = self.slot_owner(shape, slot) as usize;
+        let held = self.owner_reps[owner];
+        // A slot that has held any value holds every value: the common case pays one compare.
+        if held == SlotRepresentation::Tagged { return false; }
+        let class = SlotRepresentation::of(value);
+        let widened = class > held;
+        if widened { self.owner_reps[owner] = class; }
+        widened
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {

@@ -1222,11 +1222,24 @@ struct ShapeAttributes {
 /// The attributes a data property is created with. Its `Add` transition records them, so a
 /// property created non-enumerable (as builtin methods are) costs no second, `Descriptor`
 /// shape.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct DataAttributes {
     writable: bool,
     enumerable: bool,
     configurable: bool,
+}
+impl Hash for DataAttributes {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // A fixed-width, injective projection of the three flags. One hash write avoids
+        // mixing each bool separately; the fields remain the equality/snapshot authority.
+        const WRITABLE: u8 = 1 << 0;
+        const ENUMERABLE: u8 = 1 << 1;
+        const CONFIGURABLE: u8 = 1 << 2;
+        let flags = (u8::from(self.writable) * WRITABLE)
+            | (u8::from(self.enumerable) * ENUMERABLE)
+            | (u8::from(self.configurable) * CONFIGURABLE);
+        state.write_u8(flags);
+    }
 }
 impl DataAttributes {
     /// `attributes` when they describe a data property.
@@ -1569,6 +1582,14 @@ impl ShapeFacts {
         self.0 & Self::SLOT_GETTERS != 0
     }
 }
+/// Each shape's storage length and its parent's id and length, in table order (a parent
+/// precedes its children): the table as the heap registers slot owners from it.
+fn shape_layouts(shapes: &[Shape]) -> Vec<(usize, Option<(u32, usize)>)> {
+    shapes.iter()
+        .map(|shape| (shape.storage_len(), shape.parent().map(|parent| (parent, shapes[parent as usize].storage_len()))))
+        .collect()
+}
+
 struct Shape {
     /// The shape this one extends; `NO_PARENT_SHAPE` for the root.
     parent: u32,
@@ -3058,10 +3079,22 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
+        // A host's bootstrap may run the entry itself, so its realm keeps them from here.
+        self.keep_slot_representations();
         self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())
+    }
+
+    /// Only native code reads slot representations, so only a runtime that runs lane bodies
+    /// keeps them, from its shape table and what its live objects hold: once its builtins
+    /// exist or its realm is restored.
+    pub(super) fn keep_slot_representations(&mut self) {
+        if self.programs.js_jit_lane_methods_enabled() {
+            let layouts = self.shape_layouts();
+            self.heap.track_slot_representations(&layouts);
+        }
     }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {

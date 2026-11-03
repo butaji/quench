@@ -8,6 +8,10 @@
 
 use crate::{Value, ValueType};
 
+/// Whether residual execution can export ownership or enter another guest activation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reentry { Closed, Possible }
+
 /// The Ershov division of a source fact. Location and Site fix an address or
 /// feedback index, never the contents read from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

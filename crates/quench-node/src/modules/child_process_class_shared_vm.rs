@@ -110,7 +110,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let emitter = get(c, emitter_api, "emitterCtor")?;
     let dispose_key = get(c, emitter_api, "disposeKey")?;
     let child_process = c.host_constructor_named_with_data(
-        crate::host::shared_vm::operation("childProcessClassConstruct"),
+        crate::host::shared_vm::operation!("childProcessClassConstruct"),
         "ChildProcess",
         emitter,
     )?;
@@ -118,9 +118,9 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let emitter_prototype = get(c, emitter, "prototype")?;
     c.set_prototype_rooted(prototype, emitter_prototype)?;
     c.set_prototype_rooted(child_process, emitter)?;
-    let initialize = c.host_function(crate::host::shared_vm::operation("childProcessInitialize"))?;
+    let initialize = c.host_function(crate::host::shared_vm::operation!("childProcessInitialize"))?;
     let spawn_method = c.host_function_named_with_data(
-        crate::host::shared_vm::operation("childProcessPrototypeSpawn"),
+        crate::host::shared_vm::operation!("childProcessPrototypeSpawn"),
         "spawn",
         initialize,
     )?;
@@ -136,35 +136,35 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
-    let dispose = c.host_function_named(crate::host::shared_vm::operation("childProcessDisposeMethod"), "[Symbol.dispose]")?;
+    let dispose = c.host_function_named(crate::host::shared_vm::operation!("childProcessDisposeMethod"), "[Symbol.dispose]")?;
     c.define_data_property_rooted(prototype, dispose_key, dispose, true, false, true)?;
 
     let module = c.object_rooted()?;
-    let fork_child = c.host_function_named(crate::host::shared_vm::operation("childProcessForkChild"), "_forkChild")?;
+    let fork_child = c.host_function_named(crate::host::shared_vm::operation!("childProcessForkChild"), "_forkChild")?;
     put(c, module, "_forkChild", fork_child)?;
     put(c, module, "ChildProcess", child_process)?;
     let spawn_data = c.object_rooted()?;
     put(c, spawn_data, "constructor", child_process)?;
-    let native_spawn = c.host_function_with_data(crate::host::shared_vm::operation("childProcessConstruct"), spawn_data)?;
-    let spawn = c.host_function_named_with_data(crate::host::shared_vm::operation("childProcessSpawnPublic"), "spawn", native_spawn)?;
+    let native_spawn = c.host_function_with_data(crate::host::shared_vm::operation!("childProcessConstruct"), spawn_data)?;
+    let spawn = c.host_function_named_with_data(crate::host::shared_vm::operation!("childProcessSpawnPublic"), "spawn", native_spawn)?;
     let global = c.global_root()?;
     let buffer = get(c, global, "Buffer")?;
-    let exec = c.host_function_named_with_data(crate::host::shared_vm::operation("exec"), "exec", module)?;
+    let exec = c.host_function_named_with_data(crate::host::shared_vm::operation!("exec"), "exec", module)?;
     put(c, module, "exec", exec)?;
     let exec_file = super::child_process_exec_shared_vm::function(c, spawn, buffer)?;
     put(c, module, "execFile", exec_file)?;
     let buffer_prototype = get(c, buffer, "prototype")?;
-    let native_sync = c.host_function_with_data(crate::host::shared_vm::operation("childProcessSpawnSync"), buffer_prototype)?;
-    let spawn_sync = c.host_function_named_with_data(crate::host::shared_vm::operation("childProcessSpawnSyncPublic"), "spawnSync", native_sync)?;
+    let native_sync = c.host_function_with_data(crate::host::shared_vm::operation!("childProcessSpawnSync"), buffer_prototype)?;
+    let spawn_sync = c.host_function_named_with_data(crate::host::shared_vm::operation!("childProcessSpawnSyncPublic"), "spawnSync", native_sync)?;
     let sync_data = c.array_rooted(&[spawn_sync])?;
     for (name, operation) in [("execFileSync", "childProcessExecFileSync"), ("execSync", "childProcessExecSync")] {
         let function = c.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, sync_data)?;
         put(c, module, name, function)?;
     }
     let is_buffer = get(c, buffer, "isBuffer")?;
-    let fork_plan = c.host_function_with_data(crate::host::shared_vm::operation("childProcessForkPlan"), is_buffer)?;
+    let fork_plan = c.host_function_with_data(crate::host::shared_vm::operation!("childProcessForkPlan"), is_buffer)?;
     let fork_data = c.array_rooted(&[fork_plan, spawn])?;
-    let fork = c.host_function_named_with_data(crate::host::shared_vm::operation("childProcessFork"), "fork", fork_data)?;
+    let fork = c.host_function_named_with_data(crate::host::shared_vm::operation!("childProcessFork"), "fork", fork_data)?;
     put(c, module, "fork", fork)?;
     put(c, module, "spawn", spawn)?;
     put(c, module, "spawnSync", spawn_sync)?;
@@ -338,7 +338,7 @@ fn output(c: &mut Context<'_>, id: RootId, stdout: bool) -> Outcome {
     put(c, options, "read", read)?;
     let stream = c.construct_rooted(readable, readable, &[options])?;
     let handle = c.object_rooted()?;
-    let read_start = c.host_function_named(crate::host::shared_vm::operation("streamNop"), "readStart")?;
+    let read_start = c.host_function_named(crate::host::shared_vm::operation!("streamNop"), "readStart")?;
     put(c, handle, "readStart", read_start)?;
     put(c, stream, "_handle", handle)?;
     let destroy = operation(c, "childProcessDestroyReceiver")?;

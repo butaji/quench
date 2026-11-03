@@ -100,7 +100,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             put(c, b, n, v)?;
         }
         let w = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeStreamWriteWrap"),
+            crate::host::shared_vm::operation!("nativeStreamWriteWrap"),
             "WriteWrap",
         )?;
         let prototype = get(c, w, "prototype")?;
@@ -108,7 +108,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.set_prototype_rooted(prototype, base)?;
         put(c, b, "WriteWrap", w)?;
         let shutdown = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeStreamShutdownWrap"),
+            crate::host::shared_vm::operation!("nativeStreamShutdownWrap"),
             "ShutdownWrap",
         )?;
         let prototype = get(c, shutdown, "prototype")?;

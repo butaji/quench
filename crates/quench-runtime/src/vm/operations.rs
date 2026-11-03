@@ -413,7 +413,7 @@ pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: 
     }
 }
 
-struct NumberF64Stage;
+pub(super) struct NumberF64Stage;
 
 impl NumberUnaryStage<f64> for NumberF64Stage {
     type Output = f64;
@@ -468,7 +468,7 @@ fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) 
     operation.apply(&mut NumberF64Stage, left, right)
 }
 
-struct PartialOrderStage;
+pub(super) struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     type Output = bool;
@@ -1100,10 +1100,6 @@ impl<H: Host> Vm<H> {
         if native == Native::LazyDataProperty {
             return self.lazy_data_property_access(p, this, args);
         }
-        if native == Native::TemporalInitialize {
-            self.install_temporal(p)?;
-            return Ok(Value::UNDEFINED);
-        }
         if native == Native::ProxyRevoke {
             let callee = self
                 .active_native_callable()
@@ -1125,6 +1121,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
+            Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
+            Native::TemporalInitialize => self.install_temporal(p).map(|()| Value::UNDEFINED),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
             Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),

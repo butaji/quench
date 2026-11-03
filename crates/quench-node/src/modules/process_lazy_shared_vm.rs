@@ -97,18 +97,18 @@ pub(crate) fn initialize(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result
     #[cfg(unix)]
     super::process_metrics_shared_vm::define_methods(c, process)?;
     let key = c.string_rooted("sourceMapsEnabled");
-    let getter = c.host_function_named(operation("processSourceMapsEnabled"), "get")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("processSourceMapsEnabled"), "get")?;
     accessor(c, process, key, getter, None, true)?;
     let port = c.number(DEFAULT_DEBUG_PORT);
     put(c, process, "debugPort", port)?;
     let key = c.string_rooted(ALLOWED_FLAGS);
-    let getter = c.host_function_named(operation("processAllowedFlagsGet"), "get")?;
-    let setter = c.host_function_named(operation("processAllowedFlagsSet"), "set")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("processAllowedFlagsGet"), "get")?;
+    let setter = c.host_function_named(crate::host::shared_vm::operation!("processAllowedFlagsSet"), "set")?;
     accessor(c, process, key, getter, Some(setter), true)?;
     let cell = c.array_rooted(&[])?;
     let key = c.string_rooted("finalization");
-    let getter = c.host_function_named_with_data(operation("processFinalizationGet"), "get", cell)?;
-    let setter = c.host_function_named_with_data(operation("processFinalizationSet"), "set", cell)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("processFinalizationGet"), "get", cell)?;
+    let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("processFinalizationSet"), "set", cell)?;
     accessor(c, process, key, getter, Some(setter), true)?;
     super::process_permission_shared_vm::define(c, process)?;
     Ok(c.undefined())
@@ -230,7 +230,7 @@ fn flag_set(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let flags = super::process_surface::NODE_FLAGS.iter().map(|flag| c.string_rooted(flag)).collect::<Vec<_>>();
     let flags = c.array_rooted(&flags)?;
     let inner = c.construct_rooted(set, set, &[flags])?;
-    let class = c.host_constructor_named(operation("processConstructor"), FLAG_SET_CLASS)?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("processConstructor"), FLAG_SET_CLASS)?;
     c.set_prototype_rooted(class, set)?;
     let prototype = get(c, class, "prototype")?;
     c.set_prototype_rooted(prototype, set_prototype)?;
@@ -239,10 +239,10 @@ fn flag_set(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
-    let size = c.host_function_named(operation("processFlagsSize"), "get size")?;
+    let size = c.host_function_named(crate::host::shared_vm::operation!("processFlagsSize"), "get size")?;
     let key = c.string_rooted("size");
     accessor(c, prototype, key, size, None, false)?;
-    let values = c.host_function_named_with_data(operation("processFlagsValues"), "values", inner)?;
+    let values = c.host_function_named_with_data(crate::host::shared_vm::operation!("processFlagsValues"), "values", inner)?;
     let symbol = intrinsic(c, "Symbol", None)?;
     let iterator = get(c, symbol, "iterator")?;
     for key in ["values", "keys"].map(|name| c.string_rooted(name)).into_iter().chain([iterator]) {
@@ -332,7 +332,7 @@ pub(crate) fn finalization_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> 
         put(c, state, event, entries)?;
         let name = c.string_rooted(event);
         let data = c.array_rooted(&[state, name])?;
-        let function = c.host_function_named_with_data(operation("processFinalizationRun"), listener, data)?;
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("processFinalizationRun"), listener, data)?;
         put(c, state, &format!("{event}{LISTENER_SUFFIX}"), function)?;
     }
     let api = c.object_rooted()?;

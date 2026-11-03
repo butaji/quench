@@ -777,7 +777,7 @@ pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(class) = c.host_mut().shared_state().borrow().builtin_cache.get(URL_CLASS).copied() {
         return Ok(class);
     }
-    let class = c.host_constructor_named(operation("urlLegacyConstruct"), "Url")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("urlLegacyConstruct"), "Url")?;
     let key = c.string_rooted("length");
     let zero = c.number(0.0);
     c.define_data_property_rooted(class, key, zero, false, false, true)?;

@@ -61,12 +61,12 @@ pub(crate) fn prepare(_: &mut Context<'_>) -> Result<(), RootedError> {
 
 /// `process.emitWarning`.
 pub(crate) fn emit_warning(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_function_named(crate::host::shared_vm::operation("processEmitWarning"), "emitWarning")
+    c.host_function_named(crate::host::shared_vm::operation!("processEmitWarning"), "emitWarning")
 }
 
 /// The default `warning` listener.
 pub(crate) fn on_warning(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    c.host_function_named(crate::host::shared_vm::operation("processOnWarning"), "onWarning")
+    c.host_function_named(crate::host::shared_vm::operation!("processOnWarning"), "onWarning")
 }
 
 fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
@@ -145,7 +145,7 @@ pub(crate) fn emit(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Ro
             return Err(c.throw(warning));
         }
     }
-    let dispatch = c.host_function_with_data(crate::host::shared_vm::operation("processEmitWarningEvent"), warning)?;
+    let dispatch = c.host_function_with_data(crate::host::shared_vm::operation!("processEmitWarningEvent"), warning)?;
     super::shared_event_loop::queue_next_tick(c, dispatch, undefined, &[])?;
     Ok(undefined)
 }

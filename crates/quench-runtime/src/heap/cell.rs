@@ -676,6 +676,7 @@ pub(crate) enum Native {
     HostFunction,
     CallSiteConstructor,
     CallSiteGetFunction,
+    MathInitialize,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
@@ -2311,6 +2312,7 @@ impl Object {
     /// Without extras the object was never a prototype, so the move retires no proof.
     #[inline(always)]
     pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+        properties.note_shape_value(shape, slot, value);
         debug_assert!(self.admits_plain_append(slot, value));
         match value.to_narrow().filter(|_| self.meta & OBJECT_INLINE_STORAGE != 0) {
             Some(narrow) => self.store_payload_narrow(slot, narrow),
