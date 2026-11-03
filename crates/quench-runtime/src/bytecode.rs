@@ -4269,6 +4269,7 @@ impl ResidualProgram {
         crate::compile::lower_settled(
             &mut function,
             &crate::compile::LoweringTables {
+                object_sites: &self.object_sites,
                 methods: self,
                 field_sites: &self.field_sites,
                 superinstructions: &self.superinstructions,
