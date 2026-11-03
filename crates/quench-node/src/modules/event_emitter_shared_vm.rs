@@ -674,41 +674,6 @@ pub(crate) fn emit(
     } else {
         context.get_property_rooted(events, event)?
     };
-    if undefined(context, listeners) {
-        let domain = get(context, target, "domain")?;
-        let has_domain = !context
-            .rooted_value(domain)
-            .is_some_and(|value| value.is_null() || value.is_undefined());
-        let process = context.host_mut().shared_state().borrow().process_module;
-        let is_process = if let Some(process) = process {
-            context.strict_equal_rooted(target, process)?
-        } else {
-            false
-        };
-        if has_domain && !is_process {
-            let values = listener_arguments(context, arguments)?;
-            let provided = values.first().copied().unwrap_or(missing);
-            let error = if context.truthy_rooted(provided)? {
-                provided
-            } else {
-                let error = context.error_rooted("Unhandled error.")?;
-                let code = context.string_rooted("ERR_UNHANDLED_ERROR");
-                context.assign_named_property_rooted(error, "code", code)?;
-                error
-            };
-            if context.is_object_rooted(error)? {
-                context.assign_named_property_rooted(error, "domainEmitter", target)?;
-                let domain_key = context.string_rooted("domain");
-                context
-                    .define_data_property_rooted(error, domain_key, domain, true, false, true)?;
-                let no = context.boolean(false);
-                context.assign_named_property_rooted(error, "domainThrown", no)?;
-            }
-            let domain_emit = get(context, domain, "emit")?;
-            context.call_rooted(domain_emit, domain, &[event, error])?;
-            return Ok(context.boolean(true));
-        }
-    }
     unhandled_or_dispatch(context, target, event, arguments, listeners)
 }
 
@@ -782,6 +747,8 @@ fn unhandled_or_dispatch(
 
 /// The registry symbol a stream stores its owning stream under.
 const STREAM_OWNER: &str = "quench.internal.streamOwner";
+/// `EventEmitter.captureRejectionSymbol`.
+const REJECTION_SYMBOL: &str = "nodejs.rejection";
 
 fn symbol_for(context: &mut NativeContext<'_, NodeHost>, description: &str) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
@@ -879,14 +846,62 @@ pub(crate) fn proto_emit(c: &mut NativeContext<'_, NodeHost>, this: RootId, args
     emit(c, missing, &[this, event, rest])
 }
 
+/// `EventEmitter` (callable as `EventEmitter.call(this)` and with `new`): runs
+/// `EventEmitter.init` on the receiver, whatever function that property holds (`node:domain`
+/// replaces it).
+pub(crate) fn constructor(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let emitter = get(c, data, "emitter")?;
+    let init = get(c, emitter, "init")?;
+    c.call_rooted(init, this, args)?;
+    Ok(c.undefined())
+}
+
+/// `EventEmitter.init(options)`: a fresh listener store unless the receiver inherits one it
+/// already shadows, `_maxListeners` kept or `undefined`, and the capture-rejections flag.
+pub(crate) fn init(c: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = c.host_function_data()?;
+    let shape_key = get(c, data, "shapeKey")?;
+    let capture_key = get(c, data, "captureKey")?;
+    let events = get(c, this, "_events")?;
+    let prototype = c.prototype_rooted(this)?;
+    let inherited = if c.is_object_rooted(prototype)? { get(c, prototype, "_events")? } else { c.undefined() };
+    let fresh = undefined(c, events) || c.strict_equal_rooted(events, inherited)?;
+    if fresh {
+        let store = c.null_object_rooted()?;
+        c.assign_named_property_rooted(this, "_events", store)?;
+        let zero = c.number(0.0);
+        c.assign_named_property_rooted(this, "_eventsCount", zero)?;
+    }
+    let shaped = c.boolean(!fresh);
+    let missing = c.undefined();
+    c.set_property_rooted(this, shape_key, shaped, this)?;
+    let maximum = get(c, this, "_maxListeners")?;
+    if !c.truthy_rooted(maximum)? {
+        c.assign_named_property_rooted(this, "_maxListeners", missing)?;
+    }
+    let options = argument(c, args, 0);
+    let capture = if c.is_object_rooted(options)? { get(c, options, "captureRejections")? } else { missing };
+    let value = if c.truthy_rooted(capture)? {
+        super::event_constructor_shared_vm::validate_capture_rejections(c, missing, &[capture])?;
+        c.boolean(true)
+    } else {
+        let emitter = get(c, data, "emitter")?;
+        let shared = get(c, emitter, "prototype")?;
+        c.get_property_rooted(shared, capture_key)?
+    };
+    c.set_property_rooted(this, capture_key, value, this)?;
+    Ok(missing)
+}
+
 /// Defines the shared `EventEmitter` class as `globalThis.__nodeEventEmitter`.
 pub(crate) fn install_class(c: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<RootId, RootedError> {
-    let emitter = c.host_constructor_named_with_data(crate::host::shared_vm::operation("emitterConstruct"), "EventEmitter", data)?;
-    c.assign_named_property_rooted(data, "emitterCtor", emitter)?;
+    let emitter = c.host_constructor_named_with_data(crate::host::shared_vm::operation("emitterConstructor"), "EventEmitter", data)?;
+    c.assign_named_property_rooted(data, "emitter", emitter)?;
     // Node assigns `init` an anonymous function.
-    let init = c.host_function_named_with_data(crate::host::shared_vm::operation("emitterInitialize"), "", data)?;
+    let init = c.host_function_named_with_data(crate::host::shared_vm::operation("emitterInit"), "", data)?;
     c.assign_named_property_rooted(emitter, "init", init)?;
-    let rejection = get(c, data, "rejectionKey")?;
+    let rejection = symbol_for(c, REJECTION_SYMBOL)?;
     c.assign_named_property_rooted(emitter, "captureRejectionSymbol", rejection)?;
     let no = c.boolean(false);
     c.assign_named_property_rooted(emitter, "usingDomains", no)?;

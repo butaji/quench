@@ -44,7 +44,7 @@ fn normalize(id: &str) -> Option<&str> {
 }
 
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let class = c.host_constructor_named(operation("processSurfaceConstructor"), "BuiltinModule")?;
+    let class = c.host_constructor_named(operation("processConstructor"), "BuiltinModule")?;
     for (name, operation_name) in QUERIES {
         let function = c.host_function_named(operation(operation_name), name)?;
         c.assign_named_property_rooted(class, name, function)?;

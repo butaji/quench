@@ -77,19 +77,20 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let global = context.global_root()?;
     let emitter = get(context, global, "__nodeEventEmitter")?;
     let prototype = get(context, emitter, "prototype")?;
-    for (target, name, operation, function_name) in [
-        (prototype, "getMaxListeners", "emitterProtoMaxGet", "getMaxListeners"),
-        (prototype, "setMaxListeners", "emitterProtoMaxSet", "setMaxListeners"),
-        (emitter, "getMaxListeners", "eventsMaxGet", "getMaxListeners"),
-        (emitter, "setMaxListeners", "eventsPublicMaxSet", ""),
+    // Node's `EventEmitter.setMaxListeners` is an anonymous function assignment.
+    for (target, name, function_name, operation) in [
+        (prototype, "getMaxListeners", "getMaxListeners", "emitterProtoMaxGet"),
+        (prototype, "setMaxListeners", "setMaxListeners", "emitterProtoMaxSet"),
+        (emitter, "getMaxListeners", "getMaxListeners", "eventsMaxGet"),
+        (emitter, "setMaxListeners", "", "eventsMaxSet"),
     ] {
         let key = context.string_rooted(name);
-        let value = context.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), function_name, data)?;
+        let value = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), function_name, data)?;
         context.define_data_property_rooted(target, key, value, true, true, true)?;
     }
     let descriptor = context.null_object_rooted()?;
-    let getter = context.host_constructor_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxGet"), "get", data)?;
-    let setter = context.host_constructor_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxSet"), "set", data)?;
+    let getter = context.host_function_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxGet"), "get", data)?;
+    let setter = context.host_function_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxSet"), "set", data)?;
     set(context, descriptor, "get", getter)?;
     set(context, descriptor, "set", setter)?;
     let yes = context.boolean(true);
@@ -151,16 +152,6 @@ pub(crate) fn emitter_get(
     let target = args.first().copied().unwrap_or(undefined);
     let data = context.host_function_data()?;
     emitter_max(context, data, target)
-}
-
-pub(crate) fn proto_max_get(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    emitter_get(context, undefined, &[receiver])
-}
-
-pub(crate) fn proto_max_set(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    emitter_set(context, undefined, &[receiver, args.first().copied().unwrap_or(undefined)])
 }
 pub(crate) fn emitter_set(
     context: &mut NativeContext<'_, NodeHost>,
@@ -323,4 +314,25 @@ pub(super) fn registered(
     let emit_warning = get(context, process, "emitWarning")?;
     context.call_rooted(emit_warning, process, &[warning])?;
     Ok(undefined)
+}
+
+/// `EventEmitter.prototype.getMaxListeners()`.
+pub(crate) fn proto_max_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    emitter_get(context, missing, &[this])
+}
+
+/// `EventEmitter.prototype.setMaxListeners(n)`.
+pub(crate) fn proto_max_set(
+    context: &mut NativeContext<'_, NodeHost>,
+    this: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let value = args.first().copied().unwrap_or(missing);
+    emitter_set(context, missing, &[this, value])
 }

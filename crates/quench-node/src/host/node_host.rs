@@ -365,6 +365,8 @@ impl SharedNodeState {
             trace: crate::modules::trace_state::TraceState::default(),
             process_argv,
             process_control,
+            // SignalState carries resources on Linux and is a unit state elsewhere.
+            #[allow(clippy::default_constructed_unit_structs)]
             process_signals: crate::modules::process_signals_state::SignalState::default(),
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
             process_ipc: crate::modules::child_process_ipc_shared_vm::State::default(),

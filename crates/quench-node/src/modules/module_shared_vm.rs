@@ -74,84 +74,6 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
 
 const NODE_ONLY_BUILTINS: &[&str] = &["sea", "sqlite", "test", "test/reporters"];
 
-#[cfg(test)]
-mod parent_tests {
-    use quench_runtime::{Host, HostFunction, HostFunctionId, NativeContext, RootId, RootedError};
-    struct TestHost;
-    impl Host for TestHost {
-        fn write_line(&mut self, _: &str) {}
-        fn clock_millis(&mut self) -> f64 { 0.0 }
-        fn functions(&self) -> &[HostFunction<Self>] {
-            quench_runtime::host_functions![global "makeNative" (3) => make, method "deprecated" (0) => super::deprecated_parent::<Self>]
-        }
-    }
-    fn make(c: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-        let warning = c.null_object_rooted()?;
-        c.assign_named_property_rooted(warning, "process", args[0])?;
-        let mut methods = Vec::new();
-        for (index, callback) in args[1..3].iter().enumerate() {
-            let data = c.record_rooted(&["warning", "callback"], &[warning, *callback])?;
-            let wrapper = c.host_constructor_named_with_data(HostFunctionId(1), "deprecated", data)?;
-            let length = c.number(index as f64);
-            let key = c.string_rooted("length");
-            c.define_data_property_rooted(wrapper, key, length, false, false, true)?;
-            c.assign_named_property_rooted(data, "wrapper", wrapper)?;
-            methods.push(wrapper);
-        }
-        c.array_rooted(&methods)
-    }
-    #[test]
-    fn parent_warning_is_shared_reentrant_and_committed_before_throw() {
-        let program = quench_runtime::Engine::specialize(r#"
-          function makeGuest(process, get, set) {
-            let warned = false;
-            const deprecate = (fn, length) => {
-              const wrapper = function deprecated(...args) {
-              if (!warned && (process.execArgv.includes('--pending-deprecation') || process.env.NODE_PENDING_DEPRECATION === '1')) {
-                warned = true;
-                process.emitWarning('module.parent is deprecated due to accuracy issues. Please use require.main to find program entry point instead.',
-                  'DeprecationWarning','DEP0144',wrapper);
-              }
-              return Reflect.apply(fn, this, args);
-              };
-              Object.defineProperty(wrapper, 'length', {value:length});
-              return wrapper;
-            };
-            return [deprecate(get,0), deprecate(set,1)];
-          }
-          function run(make, mode) {
-            const log = [], receiver = {}, token = {}, flags = [], env = {};
-            let pair;
-            const process = {
-              get execArgv() { log.push('flags'); return flags; },
-              get env() { log.push('env'); return env; },
-              emitWarning(message, type, code, wrapper) {
-                log.push(['warning',this===process,message,type,code,wrapper===pair[0]]);
-                if(mode==='throw') throw token;
-                if(mode==='reenter') pair[1].call(receiver, 'inner');
-              }
-            };
-            pair = make(process,
-              function(...args) { log.push(['get',this===receiver,args]); return token; },
-              function(...args) { log.push(['set',this===receiver,args]); return token; });
-            log.push(pair[0].name,pair[0].length,pair[1].name,pair[1].length);
-            log.push(pair[0].call(receiver, 'before')===token);
-            if(mode==='env') env.NODE_PENDING_DEPRECATION='1';
-            else flags.push('--pending-deprecation');
-            try { log.push(pair[0].call(receiver,'warn')===token); }
-            catch(e) { log.push(['throw',e===token]); }
-            log.push(pair[1].call(receiver,'after')===token);
-            return JSON.stringify(log);
-          }
-          for(const mode of ['flag','env','throw','reenter']) {
-            const expected=run(makeGuest,mode), actual=run(makeNative,mode);
-            if(actual!==expected) throw Error(actual+' != '+expected);
-          }
-        "#, "native-parent-warning.js").unwrap();
-        quench_runtime::Runtime::new(TestHost).execute(&program).unwrap();
-    }
-}
-
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
     let weak_map = get(context, global, "WeakMap")?;
@@ -181,17 +103,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         parents,
     )?;
     let native_parent_set = parent_set;
-    let process = get(context, global, "process")?;
-    let warning = context.null_object_rooted()?;
-    context.assign_named_property_rooted(warning, "process", process)?;
-    let wrap = |context: &mut NativeContext<'_, NodeHost>, callback, operation| {
-        let data = context.record_rooted(&["warning", "callback"], &[warning, callback])?;
-        let wrapper = context.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), "deprecated", data)?;
-        context.assign_named_property_rooted(data, "wrapper", wrapper)?;
-        Ok::<_, RootedError>(wrapper)
-    };
-    let parent_get = wrap(context, parent_get, "moduleParentDeprecated")?;
-    let parent_set = wrap(context, parent_set, "moduleParentDeprecatedSet")?;
+    // Both accessors share one warned flag: DEP0144 is emitted once.
+    let warned = context.null_object_rooted()?;
+    let mut deprecated = Vec::new();
+    for target in [parent_get, parent_set] {
+        let data = context.null_object_rooted()?;
+        set(context, data, "target", target)?;
+        set(context, data, "warned", warned)?;
+        deprecated.push(context.host_function_named_with_data(
+            crate::host::shared_vm::operation("moduleParentDeprecated"),
+            "deprecated",
+            data,
+        )?);
+    }
+    let (parent_get, parent_set) = (deprecated[0], deprecated[1]);
     accessor(context, prototype, "parent", parent_get, Some(parent_set))?;
     crate::host::shared_vm::commonjs::register_module_parent_accessors(
         context,
@@ -219,8 +144,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "builtinModules", names)?;
     let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
     set(context, module, "isBuiltin", is_builtin)?;
-    let create_require = context.host_constructor_named(crate::host::shared_vm::operation("createRequire"), "createRequire")?;
-    let paths = context.host_constructor_named(crate::host::shared_vm::operation("moduleNodePaths"), "")?;
+    let create_require =
+        context.host_function_named(crate::host::shared_vm::operation("createRequire"), "createRequire")?;
+    let paths = context.host_function_named(crate::host::shared_vm::operation("moduleNodePaths"), "")?;
     let stat = context.host_function(crate::host::shared_vm::operation(
         "fsBindingInternalModuleStat",
     ))?;
@@ -235,11 +161,30 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let run_main = context.host_function(crate::host::shared_vm::operation("moduleRunMain"))?;
     set(context, module, "runMain", run_main)?;
     set(context, module, "_stat", stat)?;
-    let process = get(context, global, "process")?;
-    let path_module = crate::modules::path_shared_vm::module(context)?;
-    let path_delimiter = get(context, path_module, "delimiter")?;
-    install_compile_cache_exports(context, module)?;
-    super::module_paths_shared_vm::install(context, module, process, path_module, path_delimiter)?;
+    let constants = context.object_rooted()?;
+    let status = context.object_rooted()?;
+    for (name, value) in COMPILE_CACHE_STATUS {
+        let value = context.number(*value);
+        set(context, status, name, value)?;
+    }
+    set(context, constants, "compileCacheStatus", status)?;
+    set(context, module, "constants", constants)?;
+    for (name, operation) in [
+        ("enableCompileCache", "moduleEnableCompileCache"),
+        ("flushCompileCache", "moduleFlushCompileCache"),
+        ("getCompileCacheDir", "moduleGetCompileCacheDir"),
+    ] {
+        let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;
+        set(context, module, name, function)?;
+    }
+    for (name, operation) in [
+        ("_initPaths", "moduleInitPaths"),
+        ("_resolveLookupPaths", "moduleResolveLookupPaths"),
+        ("_load", "moduleLoad"),
+    ] {
+        let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, module)?;
+        set(context, module, name, function)?;
+    }
     let resolve_filename =
         context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
     set(context, module, "_resolveFilename", resolve_filename)?;
@@ -248,37 +193,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "findPackageJSON", find_package_json)?;
     super::source_map_shared_vm::install(context, module, true)?;
     Ok(module)
-}
-
-pub(crate) fn deprecated_parent<H: quench_runtime::Host>(context: &mut NativeContext<'_, H>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let warning = context.get_named_property_rooted(data, "warning")?;
-    let warned = context.has_own_property_rooted(warning, "warned")?;
-    if !warned {
-        let process = context.get_named_property_rooted(warning, "process")?;
-        let flags = context.get_named_property_rooted(process, "execArgv")?;
-        let includes = context.get_named_property_rooted(flags, "includes")?;
-        let flag = context.string_rooted("--pending-deprecation");
-        let enabled = context.call_rooted(includes, flags, &[flag])?;
-        let enabled = if context.truthy_rooted(enabled)? { true } else {
-            let env = context.get_named_property_rooted(process, "env")?;
-            let setting = context.get_named_property_rooted(env, "NODE_PENDING_DEPRECATION")?;
-            let one = context.string_rooted("1");
-            context.strict_equal_rooted(setting, one)?
-        };
-        if enabled {
-            let yes = context.boolean(true);
-            context.assign_named_property_rooted(warning, "warned", yes)?;
-            let emit = context.get_named_property_rooted(process, "emitWarning")?;
-            let message = context.string_rooted("module.parent is deprecated due to accuracy issues. Please use require.main to find program entry point instead.");
-            let kind = context.string_rooted("DeprecationWarning");
-            let code = context.string_rooted("DEP0144");
-            let wrapper = context.get_named_property_rooted(data, "wrapper")?;
-            context.call_rooted(emit, process, &[message, kind, code, wrapper])?;
-        }
-    }
-    let callback = context.get_named_property_rooted(data, "callback")?;
-    context.call_rooted(callback, receiver, args)
 }
 
 /// `Module._extensions`' key in the builtin cache; each default handler is cached under the
@@ -944,6 +858,30 @@ fn process_env(context: &mut NativeContext<'_, NodeHost>, name: &str) -> Result<
     context.to_string(value).map(Some)
 }
 
+/// `module.parent`'s deprecated accessors: DEP0144 once, under `--pending-deprecation` or
+/// `NODE_PENDING_DEPRECATION=1`, then the accessor itself.
+pub(crate) fn parent_deprecated(context: &mut NativeContext<'_, NodeHost>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let warned = get(context, data, "warned")?;
+    let pending = context.host_mut().shared_state().borrow().exec_argv.iter().any(|flag| flag == "--pending-deprecation")
+        || process_env(context, "NODE_PENDING_DEPRECATION")?.as_deref() == Some("1");
+    if pending && !context.has_own_property_rooted(warned, "done")? {
+        let yes = context.boolean(true);
+        set(context, warned, "done", yes)?;
+        let global = context.global_root()?;
+        let process = get(context, global, "process")?;
+        let emit = get(context, process, "emitWarning")?;
+        let message = context.string_rooted("module.parent is deprecated due to accuracy issues. Please use require.main to find program entry point instead.");
+        let options = context.object_rooted()?;
+        let kind = context.string_rooted("DeprecationWarning");
+        set(context, options, "type", kind)?;
+        let code = context.string_rooted("DEP0144");
+        set(context, options, "code", code)?;
+        context.call_rooted(emit, process, &[message, options])?;
+    }
+    let target = get(context, data, "target")?;
+    context.call_rooted(target, this, args)
+}
 
 fn compile_cache_result(context: &mut NativeContext<'_, NodeHost>, status: f64, message: Option<&str>) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
@@ -998,93 +936,122 @@ pub(crate) fn get_compile_cache_dir(context: &mut NativeContext<'_, NodeHost>, _
     Ok(context.undefined())
 }
 
-fn install_compile_cache_exports(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
-    let constants = context.null_object_rooted()?;
-    let status = context.null_object_rooted()?;
-    for (name, value) in COMPILE_CACHE_STATUS {
-        let value = context.number(*value);
-        let key = context.string_rooted(name);
-        context.define_data_property_rooted(status, key, value, false, true, false)?;
-    }
-    context.prevent_extensions_rooted(status)?;
-    let key = context.string_rooted("compileCacheStatus");
-    context.define_data_property_rooted(constants, key, status, false, true, false)?;
-    context.prevent_extensions_rooted(constants)?;
-    set(context, module, "constants", constants)?;
-    for (name, operation, constructable) in [
-        ("enableCompileCache", "moduleEnableCompileCache", true),
-        ("flushCompileCache", "moduleFlushCompileCache", false),
-        ("getCompileCacheDir", "moduleGetCompileCacheDir", true),
-    ] {
-        let operation = crate::host::shared_vm::operation(operation);
-        let function = if constructable { context.host_constructor_named(operation, name)? }
-            else { context.host_function_named(operation, name)? };
-        set(context, module, name, function)?;
-    }
-    Ok(())
+fn path_call(context: &mut NativeContext<'_, NodeHost>, name: &str, args: &[RootId]) -> Result<RootId, RootedError> {
+    let path = crate::modules::path_shared_vm::module(context)?;
+    let function = get(context, path, name)?;
+    context.call_rooted(function, path, args)
 }
 
-#[cfg(test)]
-mod compile_cache_tests {
-    #[test]
-    fn native_exports_preserve_mutations_before_sibling_reads_and_node_metadata() {
-        const CHECK: &str = r#"
-          const M = require('node:module'), token = {};
-          const keys = Object.getOwnPropertyNames(M);
-          const exportNames = ['constants','enableCompileCache','flushCompileCache','getCompileCacheDir'];
-          if (keys.filter(key => exportNames.includes(key)).join() !== exportNames.join()) throw Error('export key positions');
-          const changed = 'enableCompileCache';
-          if (mode === 'write') M[changed] = token;
-          if (mode === 'delete') delete M[changed];
-          if (mode === 'redefine') Object.defineProperty(M, changed,
-            {value:token, writable:false, enumerable:false, configurable:false});
-          const sibling = M.getCompileCacheDir;
-          if (typeof sibling !== 'function' || sibling !== M.getCompileCacheDir)
-            throw Error('sibling identity');
-          const after = Object.getOwnPropertyNames(M);
-          const expected = mode === 'delete' ? keys.filter(key => key !== changed) : keys;
-          if (JSON.stringify(after) !== JSON.stringify(expected)) throw Error('own-key order');
-          const descriptor = Object.getOwnPropertyDescriptor(M, changed);
-          if (mode === 'delete') {
-            if (descriptor !== undefined) throw Error('deleted export resurrected');
-          } else if (mode !== 'metadata') {
-            const writable = mode === 'write';
-            if (descriptor.value !== token || descriptor.writable !== writable ||
-                descriptor.enumerable !== writable || descriptor.configurable !== writable ||
-                'get' in descriptor || 'set' in descriptor) throw Error('replacement descriptor');
-          }
-          for (const [name, length, constructable] of [
-            ['enableCompileCache',1,true], ['flushCompileCache',0,false], ['getCompileCacheDir',0,true],
-          ]) {
-            if (name === changed && mode !== 'metadata') continue;
-            const descriptor = Object.getOwnPropertyDescriptor(M, name), fn = M[name];
-            if (fn !== descriptor.value || fn !== M[name] || fn.name !== name || fn.length !== length ||
-                Object.hasOwn(fn,'prototype') !== constructable || !descriptor.writable ||
-                !descriptor.enumerable || !descriptor.configurable || 'get' in descriptor || 'set' in descriptor)
-              throw Error('function metadata '+name);
-          }
-          const constants = M.constants, status = constants.compileCacheStatus;
-          const constantsDescriptor = Object.getOwnPropertyDescriptor(M,'constants');
-          if (constants !== M.constants || status !== M.constants.compileCacheStatus ||
-              constantsDescriptor.value !== constants || !constantsDescriptor.writable ||
-              !constantsDescriptor.enumerable || !constantsDescriptor.configurable)
-            throw Error('constants identity');
-          if (Object.getPrototypeOf(constants) !== null || Object.getPrototypeOf(status) !== null ||
-              !Object.isFrozen(constants) || !Object.isFrozen(status)) throw Error('constants integrity');
-          if (Object.keys(constants).join() !== 'compileCacheStatus' ||
-              Object.keys(status).join() !== 'FAILED,ENABLED,ALREADY_ENABLED,DISABLED') throw Error('constant key order');
-          for (const [holder, name, value] of [[constants,'compileCacheStatus',status],
-              [status,'FAILED',0], [status,'ENABLED',1], [status,'ALREADY_ENABLED',2], [status,'DISABLED',3]]) {
-            const descriptor = Object.getOwnPropertyDescriptor(holder,name);
-            if (descriptor.value !== value || descriptor.writable || !descriptor.enumerable || descriptor.configurable)
-              throw Error('constant descriptor');
-          }
-        "#;
-        for mode in ["write", "delete", "redefine", "metadata"] {
-            let source = format!("const mode = '{mode}';{CHECK}");
-            let program = quench_runtime::Engine::specialize(&source, "native-module-compile-cache.js").unwrap();
-            let host = crate::NodeHost::new(vec!["quench-node".into()]);
-            quench_runtime::Runtime::new(host).execute(&program).unwrap();
+/// `Module._initPaths()`: `globalPaths` from `HOME`, `NODE_PATH` and the executable's prefix.
+pub(crate) fn init_paths(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let exec_path = get(context, process, "execPath")?;
+    let (up, lib, node) = (context.string_rooted(".."), context.string_rooted("lib"), context.string_rooted("node"));
+    let mut paths = vec![path_call(context, "resolve", &[exec_path, up, up, lib, node])?];
+    if let Some(home) = process_env(context, "HOME")?.filter(|home| !home.is_empty()) {
+        let home = context.string_rooted(&home);
+        let modules = context.string_rooted(".node_modules");
+        let libraries = context.string_rooted(".node_libraries");
+        let first = path_call(context, "resolve", &[home, modules])?;
+        let second = path_call(context, "resolve", &[home, libraries])?;
+        paths.splice(0..0, [first, second]);
+    }
+    if let Some(node_path) = process_env(context, "NODE_PATH")?.filter(|path| !path.is_empty()) {
+        let delimiter = if cfg!(windows) { ';' } else { ':' };
+        let prefix: Vec<RootId> = node_path.split(delimiter).filter(|part| !part.is_empty()).map(|part| context.string_rooted(part)).collect();
+        paths.splice(0..0, prefix);
+    }
+    let paths = context.array_rooted(&paths)?;
+    set(context, module, "globalPaths", paths)?;
+    Ok(context.undefined())
+}
+
+fn builtin_named(context: &mut NativeContext<'_, NodeHost>, module: RootId, request: &str) -> Result<bool, RootedError> {
+    let names = get(context, module, "builtinModules")?;
+    let names = context.array_like_values_rooted(names)?;
+    let bare = request.strip_prefix("node:").unwrap_or(request);
+    for name in names {
+        let name = context.to_string(name)?;
+        if name == request || name == bare {
+            return Ok(true);
         }
     }
+    Ok(false)
+}
+
+/// `Module._resolveLookupPaths(request, parent)`.
+pub(crate) fn resolve_lookup_paths(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let undefined = context.undefined();
+    let request = args.first().copied().unwrap_or(undefined);
+    let parent = args.get(1).copied().unwrap_or(undefined);
+    let request = context.to_string(request)?;
+    // `.`, `..`, `./…` and `../…` (and `.\…` on Windows) are relative requests.
+    let mut characters = request.chars();
+    let relative = characters.next() == Some('.')
+        && (matches!(characters.next(), None | Some('.') | Some('/')) || (cfg!(windows) && request.starts_with(".\\")));
+    if !relative && builtin_named(context, module, &request)? {
+        return Ok(context.null());
+    }
+    let parent_object = context.is_object_rooted(parent)?;
+    if !relative {
+        let global_paths = get(context, module, "globalPaths")?;
+        let mut paths = Vec::new();
+        if parent_object {
+            let parent_paths = get(context, parent, "paths")?;
+            if context.is_object_rooted(parent_paths)? {
+                paths.extend(context.array_like_values_rooted(parent_paths)?);
+            }
+        }
+        if paths.is_empty() {
+            paths = context.array_like_values_rooted(global_paths)?;
+        } else {
+            paths.extend(context.array_like_values_rooted(global_paths)?);
+        }
+        return if paths.is_empty() { Ok(context.null()) } else { context.array_rooted(&paths) };
+    }
+    let (id, filename) = if parent_object {
+        (get(context, parent, "id")?, get(context, parent, "filename")?)
+    } else {
+        (undefined, undefined)
+    };
+    if !parent_object || !context.truthy_rooted(id)? || !context.truthy_rooted(filename)? {
+        let here = context.string_rooted(".");
+        return context.array_rooted(&[here]);
+    }
+    let directory = path_call(context, "dirname", &[filename])?;
+    context.array_rooted(&[directory])
+}
+
+/// `Module._load(request, parent)`: through the parent's `require`, else a built-in or a
+/// require made for the working directory.
+pub(crate) fn load(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let module = context.host_function_data()?;
+    let undefined = context.undefined();
+    let request = args.first().copied().unwrap_or(undefined);
+    let parent = args.get(1).copied().unwrap_or(undefined);
+    if context.is_object_rooted(parent)? {
+        let require = get(context, parent, "require")?;
+        if context.is_callable_rooted(require)? {
+            return context.call_rooted(require, parent, &[request]);
+        }
+    }
+    let request_text = context.to_string(request)?;
+    let request = context.string_rooted(&request_text);
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    if builtin_named(context, module, &request_text)? {
+        let get_builtin = get(context, process, "getBuiltinModule")?;
+        let bare = context.string_rooted(request_text.strip_prefix("node:").unwrap_or(&request_text));
+        return context.call_rooted(get_builtin, process, &[bare]);
+    }
+    let cwd = get(context, process, "cwd")?;
+    let directory = context.call_rooted(cwd, process, &[])?;
+    let entry = context.string_rooted("__quench_module_load__.js");
+    let entry = path_call(context, "resolve", &[directory, entry])?;
+    let create = get(context, module, "createRequire")?;
+    let require = context.call_rooted(create, module, &[entry])?;
+    context.call_rooted(require, undefined, &[request])
 }

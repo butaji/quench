@@ -1,104 +1,17 @@
 //! Data for `process`'s lazily defined surface.
 
-use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
-use super::event_constructor_shared_vm::get;
-
-pub(crate) fn process_constructor(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    Ok(context.undefined())
-}
-
-pub(crate) fn throw_proto_access(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let error = context.error_rooted("Accessing Object.prototype.__proto__ has been disallowed with --disable-proto=throw")?;
-    let code = context.string_rooted("ERR_PROTO_ACCESS");
-    context.assign_named_property_rooted(error, "code", code)?;
-    Err(context.throw(error))
-}
-
-pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let process = get(context, global, "process")?;
-    let mode = context.host_mut().shared_state().borrow().cli_options.string_value("--disable-proto").map(str::to_owned);
-    if let Some(mode) = mode {
-        let object = get(context, global, "Object")?;
-        let prototype = get(context, object, "prototype")?;
-        let key = context.string_rooted("__proto__");
-        match mode.as_str() {
-            "delete" => context.delete_property_strict_rooted(prototype, key)?,
-            "throw" => {
-                let throw = context.host_function_named(crate::host::shared_vm::operation("processThrowProtoAccess"), "")?;
-                let descriptor = context.null_object_rooted()?;
-                context.assign_named_property_rooted(descriptor, "get", throw)?;
-                context.assign_named_property_rooted(descriptor, "set", throw)?;
-                let yes = context.boolean(true);
-                let no = context.boolean(false);
-                context.assign_named_property_rooted(descriptor, "configurable", yes)?;
-                context.assign_named_property_rooted(descriptor, "enumerable", no)?;
-                context.define_property_descriptor_rooted(prototype, key, descriptor)?;
-            }
-            _ => {}
-        }
-    }
-    let emitter = get(context, global, "__nodeEventEmitter")?;
-    let emitter_prototype = get(context, emitter, "prototype")?;
-    let constructor = context.host_constructor_named(crate::host::shared_vm::operation("processSurfaceConstructor"), "process")?;
-    let prototype = get(context, constructor, "prototype")?;
-    context.set_prototype_rooted(prototype, emitter_prototype)?;
-    context.set_prototype_rooted(process, prototype)?;
-    Ok(())
-}
-
-/// Process environment and invocation values belong to the running process,
-/// after the snapshot/source-capture boundary and before user preloads.
-pub(crate) fn configure(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let process = get(context, global, "process")?;
-    // Avoid observing the lazy process.env view when coverage was not requested.
-    if super::process_shared_vm::environment_names(context, "NODE_V8_COVERAGE") {
-        let features = get(context, process, "features")?;
-        let inspector = get(context, features, "inspector")?;
-        let env = get(context, process, "env")?;
-        let coverage = get(context, env, "NODE_V8_COVERAGE")?;
-        if context.truthy_rooted(coverage)? && !context.truthy_rooted(inspector)? {
-            let warning = get(context, process, "emitWarning")?;
-            let message = context.string_rooted("The inspector is disabled, coverage could not be collected");
-            let kind = context.string_rooted("Warning");
-            context.call_rooted(warning, process, &[message, kind])?;
-            let empty = context.string_rooted("");
-            context.assign_named_property_rooted(env, "NODE_V8_COVERAGE", empty)?;
-        }
-    }
-    let requested = get(context, global, "__quench_cli_title")?;
-    let title = if context.truthy_rooted(requested)? { requested } else {
-        let current = get(context, process, "title")?;
-        if context.truthy_rooted(current)? { current } else { context.string_rooted("node") }
-    };
-    context.assign_named_property_rooted(process, "title", title)?;
-    let key = context.string_rooted("__quench_cli_title");
-    context.delete_property_strict_rooted(global, key)?;
-    // Identity, tag, features, invocation arguments, kill and loadEnvFile are installed
-    // by process_shared_vm before this boundary; they have one Rust owner.
-    Ok(())
-}
-
-/// Native capability families are admitted independently. Observing one family
-/// must not load an unrelated SDK policy.
-pub(crate) const LAZY_GROUPS: &[(&[&str], &str)] = &[
-    (&["ref", "unref", "getBuiltinModule",
-        #[cfg(unix)] "availableMemory", #[cfg(unix)] "constrainedMemory"], "processCoreInitialize"),
-    (SURFACE_MEMBERS, "processSurfaceInitialize"),
-];
-
-const SURFACE_MEMBERS: &[&str] = &[
+/// The `process` members defined on first access (`processSurfaceInitialize`).
+pub(crate) const LAZY_MEMBERS: &[&str] = &[
     "getActiveResourcesInfo",
     "_getActiveRequests",
-    #[cfg(not(unix))] "availableMemory",
-    #[cfg(not(unix))] "constrainedMemory",
+    "availableMemory",
+    "constrainedMemory",
     "setSourceMapsEnabled",
     "abort",
     "sourceMapsEnabled",
     "debugPort",
     "allowedNodeEnvironmentFlags",
+    "getBuiltinModule",
     "finalization",
     "permission",
     "resourceUsage",
@@ -107,106 +20,9 @@ const SURFACE_MEMBERS: &[&str] = &[
     "threadCpuUsage",
     // Node's own wrapper over the native system call (`process_metrics_shared_vm`).
     "execve",
+    "ref",
+    "unref",
 ];
-
-pub(crate) fn initialize_core(c: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let process = c.host_mut().shared_state().borrow().process_module
-        .ok_or_else(|| RootedError::host("native process capabilities have no owner"))?;
-    #[cfg(unix)]
-    super::process_memory_shared_vm::install(c)?;
-    c.with_startup_intrinsics(|c| {
-        let global = c.global_root()?;
-        let symbol = get(c, global, "Symbol")?;
-        let intern = get(c, symbol, "for")?;
-        for (name, operation, key) in [
-            ("ref", "processRef", "nodejs.ref"), ("unref", "processUnref", "nodejs.unref"),
-        ] {
-            let key = c.string_rooted(key);
-            let key = c.call_rooted(intern, symbol, &[key])?;
-            let method = c.host_constructor_named_with_data(crate::host::shared_vm::operation(operation), name, key)?;
-            c.assign_named_property_rooted(process, name, method)?;
-        }
-        Ok(())
-    })?;
-    let method = c.host_constructor_named(crate::host::shared_vm::operation("processGetBuiltinModule"), "getBuiltinModule")?;
-    c.assign_named_property_rooted(process, "getBuiltinModule", method)?;
-    Ok(c.undefined())
-}
-
-/// Node's reference protocol: the symbol has priority when truthy, including
-/// when it holds a non-callable value. Public `.call` hooks are never consulted.
-pub(crate) fn reference<H: quench_runtime::Host, const REF: bool>(
-    c: &mut NativeContext<'_, H>, _: RootId, args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = c.undefined();
-    let target = args.first().copied().unwrap_or(undefined);
-    if c.rooted_value(target).is_some_and(|value| value.is_null() || value.is_undefined()) {
-        return Ok(undefined);
-    }
-    let key = c.host_function_data()?;
-    let mut method = c.get_property_rooted(target, key)?;
-    if !c.truthy_rooted(method)? {
-        method = c.get_named_property_rooted(target, if REF { "ref" } else { "unref" })?;
-    }
-    if c.is_callable_rooted(method)? { c.call_rooted(method, target, &[])?; }
-    Ok(undefined)
-}
-
-#[cfg(test)]
-mod native_core_tests {
-    #[test]
-    fn reference_protocol_and_builtin_lookup_keep_node_boundaries() {
-        let source = r#"
-          for (const name of ['ref', 'unref']) {
-            const fn = process[name], key = Symbol.for('nodejs.' + name);
-            if (fn.name !== name || fn.length !== 1 || !Object.hasOwn(fn, 'prototype')) throw Error('metadata');
-            for (const value of [null, undefined, 0, false, '', 'x'])
-              if (fn(value) !== undefined) throw Error('primitive completion');
-            for (const symbolValue of [0, false, null, undefined, true, {}, 'truthy']) {
-              const trace = [];
-              const target = {
-                get [key]() {trace.push('symbol');return symbolValue;},
-                get [name]() {trace.push('fallback');return function() {
-                  if (this !== target || arguments.length !== 0) throw Error('call'); trace.push('invoke');
-                };},
-              };
-              if (fn.call({}, target, 'ignored') !== undefined) throw Error('return');
-              const expected = symbolValue ? ['symbol'] : ['symbol', 'fallback', 'invoke'];
-              if (JSON.stringify(trace) !== JSON.stringify(expected)) throw Error('lookup order');
-            }
-            const error = {};
-            for (const target of [{get [key]() {throw error;}}, {[key]() {throw error;}},
-              {[key]: false, get [name]() {throw error;}}]) {
-              try {fn(target);throw Error('missing throw');} catch (caught) {if(caught!==error)throw caught;}
-            }
-            const target = {[key]: function() {if(this!==target)throw Error('receiver');}};
-            target[key].call = function() {throw Error('mutable call hook');};
-            fn(target);
-            if (Object.getPrototypeOf(new fn()) !== fn.prototype) throw Error('constructor');
-          }
-          const builtin = process.getBuiltinModule;
-          if (builtin.name !== 'getBuiltinModule' || builtin.length !== 1 || !Object.hasOwn(builtin,'prototype')) throw Error('builtin metadata');
-          if (builtin('path') !== require('path') || builtin('node:path') !== require('path') ||
-              builtin('process') !== process || builtin('not-a-builtin') !== undefined) throw Error('canonical loader');
-          const path = builtin('path'), replacement = {};
-          require.cache.path = {exports: replacement};
-          if (require('path') !== replacement || builtin('path') !== path) throw Error('builtin cache boundary');
-          delete require.cache.path;
-          for (const id of ['internal/async_hooks', 'node:internal/async_hooks',
-            'internal/timers', 'node:internal/timers', 'vfs', 'node:vfs']) {
-            if (builtin(id) !== undefined) throw Error('builtin visibility');
-          }
-          for(const value of [null,undefined,1,false]) {
-            try {builtin(value);throw Error('missing type error');} catch(e) {
-              if(e.name!=='TypeError'||e.code!=='ERR_INVALID_ARG_TYPE')throw e;
-            }
-          }
-        "#;
-        let program = quench_runtime::Engine::specialize(source, "native-process-core.js").unwrap();
-        let host = crate::NodeHost::new(vec!["quench-node".into()]);
-        quench_runtime::Runtime::new(host).execute(&program).unwrap();
-    }
-}
 
 /// Node's own CLI options (the source list of `process.allowedNodeEnvironmentFlags`).
 pub(crate) const NODE_FLAGS: &[&str] = &[
@@ -488,3 +304,206 @@ pub(crate) const NODE_FLAGS: &[&str] = &[
     "-C",
     "-r",
 ];
+
+use crate::host::NodeHost;
+use quench_runtime::{NativeContext, RootId, RootedError};
+
+/// The variable through which Node's start-up requests V8 coverage.
+const V8_COVERAGE_ENV: &str = "NODE_V8_COVERAGE";
+
+type Context<'a> = NativeContext<'a, NodeHost>;
+
+fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
+    let key = c.string_rooted(name);
+    c.get_property_rooted(object, key)
+}
+
+fn nullish(c: &mut Context<'_>, value: RootId) -> bool {
+    c.rooted_value(value).is_none_or(|value| value.is_undefined() || value.is_null())
+}
+
+/// The message and code of `--disable-proto=throw`'s accessor.
+const PROTO_ACCESS_MESSAGE: &str = "Accessing Object.prototype.__proto__ is disabled";
+const PROTO_ACCESS_CODE: &str = "ERR_PROTO_ACCESS";
+
+/// What `--disable-proto[=]mode` asks of `Object.prototype.__proto__`.
+fn disable_proto_mode(exec_argv: &[String]) -> Option<&str> {
+    exec_argv.iter().enumerate().find_map(|(index, argument)| match argument.strip_prefix("--disable-proto") {
+        Some(rest) if rest.starts_with('=') => Some(&rest[1..]),
+        Some("") => exec_argv.get(index + 1).map(String::as_str),
+        _ => None,
+    })
+}
+
+/// Completes `process` after bootstrap: `--disable-proto`, its prototype chain through
+/// `EventEmitter.prototype`, `Symbol.toStringTag`, and the defaults Node supplies.
+pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = c.global_root()?;
+    let process = get(c, global, "process")?;
+    if nullish(c, process) {
+        return Ok(());
+    }
+    let exec_argv = c.host_mut().shared_state().borrow().exec_argv.clone();
+    let object = get(c, global, "Object")?;
+    let object_prototype = get(c, object, "prototype")?;
+    let proto_key = c.string_rooted("__proto__");
+    match disable_proto_mode(&exec_argv) {
+        Some("delete") => {
+            c.delete_property_rooted(object_prototype, proto_key)?;
+        }
+        Some("throw") => {
+            let accessor = c.host_function(crate::host::shared_vm::operation("processProtoAccess"))?;
+            let descriptor = c.null_object_rooted()?;
+            for name in ["get", "set"] {
+                c.assign_named_property_rooted(descriptor, name, accessor)?;
+            }
+            let yes = c.boolean(true);
+            let no = c.boolean(false);
+            c.assign_named_property_rooted(descriptor, "configurable", yes)?;
+            c.assign_named_property_rooted(descriptor, "enumerable", no)?;
+            c.define_property_descriptor_rooted(object_prototype, proto_key, descriptor)?;
+        }
+        _ => {}
+    }
+    let symbol = get(c, global, "Symbol")?;
+    let tag_key = get(c, symbol, "toStringTag")?;
+    let tag = c.get_property_rooted(process, tag_key)?;
+    if !c.truthy_rooted(tag)? {
+        let name = c.string_rooted("process");
+        c.set_property_rooted(process, tag_key, name, process)?;
+    }
+    let emitter = get(c, global, "__nodeEventEmitter")?;
+    if c.is_object_rooted(emitter)? {
+        let emitter_prototype = get(c, emitter, "prototype")?;
+        // `process`'s constructor is a function named `process` whose prototype inherits
+        // from `EventEmitter.prototype`.
+        let constructor = c.host_constructor_named(crate::host::shared_vm::operation("processConstructor"), "process")?;
+        let prototype = get(c, constructor, "prototype")?;
+        c.set_prototype_rooted(prototype, emitter_prototype)?;
+        c.set_prototype_rooted(process, prototype)?;
+    }
+    let kill = get(c, process, "kill")?;
+    if !c.truthy_rooted(kill)? {
+        let kill = c.host_function_named(crate::host::shared_vm::operation("processKillPortable"), "kill")?;
+        c.assign_named_property_rooted(process, "kill", kill)?;
+    }
+    let argv = get(c, process, "execArgv")?;
+    if nullish(c, argv) {
+        let empty = c.array_rooted(&[])?;
+        c.assign_named_property_rooted(process, "execArgv", empty)?;
+    }
+    let argv0 = get(c, process, "argv0")?;
+    if !c.truthy_rooted(argv0)? {
+        let node = c.string_rooted("node");
+        c.assign_named_property_rooted(process, "argv0", node)?;
+    }
+    let mut features = get(c, process, "features")?;
+    if !c.truthy_rooted(features)? {
+        features = c.object_rooted()?;
+        c.assign_named_property_rooted(process, "features", features)?;
+    }
+    let inspector = get(c, features, "inspector")?;
+    if nullish(c, inspector) {
+        let no = c.boolean(false);
+        c.assign_named_property_rooted(features, "inspector", no)?;
+    }
+    // Node's start-up coverage hook warns when NODE_V8_COVERAGE is requested without the
+    // inspector profiler, then clears it so further children do not repeat the request.
+    // The host answers whether it is requested, so a run without it never reads `process.env`,
+    // whose first read copies the whole environment.
+    if super::process_shared_vm::environment_names(c, V8_COVERAGE_ENV) {
+        let env = get(c, process, "env")?;
+        let inspector = get(c, features, "inspector")?;
+        if c.is_object_rooted(env)? && !c.truthy_rooted(inspector)? {
+            let emit = get(c, process, "emitWarning")?;
+            let message = c.string_rooted("The inspector is disabled, coverage could not be collected");
+            let kind = c.string_rooted("Warning");
+            c.call_rooted(emit, process, &[message, kind])?;
+            let empty = c.string_rooted("");
+            c.assign_named_property_rooted(env, V8_COVERAGE_ENV, empty)?;
+        }
+    }
+    let cli_title_key = c.string_rooted("__quench_cli_title");
+    let cli_title = c.get_property_rooted(global, cli_title_key)?;
+    let title = if c.truthy_rooted(cli_title)? {
+        cli_title
+    } else {
+        let current = get(c, process, "title")?;
+        if c.truthy_rooted(current)? { current } else { c.string_rooted("node") }
+    };
+    c.assign_named_property_rooted(process, "title", title)?;
+    c.delete_property_rooted(global, cli_title_key)?;
+    let load_env_file = get(c, process, "loadEnvFile")?;
+    if !c.truthy_rooted(load_env_file)? {
+        let function = c.host_function_named(crate::host::shared_vm::operation("processLoadEnvFileNone"), "")?;
+        c.assign_named_property_rooted(process, "loadEnvFile", function)?;
+    }
+    Ok(())
+}
+
+/// `process`'s constructor: Node's is not meant to be called; it does nothing.
+pub(crate) fn constructor(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(c.undefined())
+}
+
+/// `--disable-proto=throw`'s `__proto__` accessor.
+pub(crate) fn proto_access(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let error = c.error_rooted(PROTO_ACCESS_MESSAGE)?;
+    let code = c.string_rooted(PROTO_ACCESS_CODE);
+    c.assign_named_property_rooted(error, "code", code)?;
+    Err(c.throw(error))
+}
+
+/// `process.loadEnvFile` where the host provides none.
+pub(crate) fn load_env_file_none(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    Ok(c.undefined())
+}
+
+/// The signals `process.kill` names where the host has no signal table.
+const PORTABLE_SIGNALS: &[(&str, f64)] = &[("SIGHUP", 1.0), ("SIGINT", 2.0), ("SIGQUIT", 3.0), ("SIGKILL", 9.0), ("SIGTERM", 15.0)];
+/// The errno names `process._kill` reports.
+const KILL_ERRORS: &[(f64, &str)] = &[(1.0, "EPERM"), (2.0, "ENOENT"), (3.0, "ESRCH"), (13.0, "EACCES"), (22.0, "EINVAL")];
+
+/// `process.kill(pid[, signal])` over `process._kill`, where the host has no signal table.
+pub(crate) fn kill_portable(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let missing = c.undefined();
+    let pid = args.first().copied().unwrap_or(missing);
+    let pid_number = match c.rooted_value(pid) {
+        Some(value) if value.as_number().is_some() => value.as_number(),
+        _ => c.string_text(pid)?.filter(|text| !text.is_empty()).map(|text| text.trim().parse::<f64>().unwrap_or(f64::NAN)),
+    }
+    .unwrap_or(f64::NAN);
+    if pid_number.fract() != 0.0 || !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&pid_number) {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(c, pid, "pid", "of type number")?);
+    }
+    let signal = args.get(1).copied().unwrap_or(missing);
+    let number = match c.rooted_value(signal).and_then(|value| value.as_number()).filter(|number| number.fract() == 0.0) {
+        Some(number) => number,
+        None => {
+            let name = if c.truthy_rooted(signal)? { c.to_string(signal)? } else { "SIGTERM".to_owned() };
+            match PORTABLE_SIGNALS.iter().find(|(signal, _)| *signal == name) {
+                Some((_, number)) => *number,
+                None => {
+                    let error = c.type_error_rooted(&format!("Unknown signal: {name}"))?;
+                    let code = c.string_rooted("ERR_UNKNOWN_SIGNAL");
+                    c.assign_named_property_rooted(error, "code", code)?;
+                    return Err(c.throw(error));
+                }
+            }
+        }
+    };
+    let global = c.global_root()?;
+    let process = get(c, global, "process")?;
+    let raw_kill = get(c, process, "_kill")?;
+    let number = c.number(number);
+    let result = c.call_rooted(raw_kill, process, &[pid, number])?;
+    if c.truthy_rooted(result)? {
+        let errno = c.rooted_value(result).and_then(|value| value.as_number()).unwrap_or(f64::NAN);
+        let name = KILL_ERRORS.iter().find(|(code, _)| *code == errno).map_or("UNKNOWN", |(_, name)| *name);
+        let error = c.error_rooted(&format!("kill {name}"))?;
+        let code = c.string_rooted(name);
+        c.assign_named_property_rooted(error, "code", code)?;
+        return Err(c.throw(error));
+    }
+    Ok(c.boolean(true))
+}

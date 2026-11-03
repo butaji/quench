@@ -553,12 +553,6 @@ pub(super) fn write_stream(context: &mut NativeContext<'_, NodeHost>, stream: St
     Ok(context.undefined())
 }
 
-/// Node captures the global console's error writer when the first warning is written.
-pub(crate) fn warning_writer(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let console = facade(context)?;
-    context.get_named_property_rooted(console, "error")
-}
-
 /// The `console` module: the global console itself.
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let console = facade(context)?;

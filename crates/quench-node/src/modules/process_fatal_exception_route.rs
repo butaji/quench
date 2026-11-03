@@ -124,3 +124,4 @@ pub(crate) fn default_handler(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
     }
     Ok(c.boolean(false))
 }
+

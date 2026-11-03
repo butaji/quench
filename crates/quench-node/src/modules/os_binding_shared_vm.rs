@@ -7,46 +7,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CStr;
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-/// Node's `os.constants.signals` inventory in declaration order. Linux shares
-/// the process-delivery table; Darwin numbers the POSIX names differently and
-/// adds `SIGINFO`, so it keeps its own inventory.
-#[cfg(target_os = "linux")]
-pub(crate) const SIGNAL_CONSTANTS: &[(&str, libc::c_int)] = super::process_signals_state::SIGNALS;
-#[cfg(target_os = "macos")]
-pub(crate) const SIGNAL_CONSTANTS: &[(&str, libc::c_int)] = &[
-    ("SIGHUP", libc::SIGHUP),
-    ("SIGINT", libc::SIGINT),
-    ("SIGQUIT", libc::SIGQUIT),
-    ("SIGILL", libc::SIGILL),
-    ("SIGTRAP", libc::SIGTRAP),
-    ("SIGABRT", libc::SIGABRT),
-    ("SIGIOT", libc::SIGIOT),
-    ("SIGBUS", libc::SIGBUS),
-    ("SIGFPE", libc::SIGFPE),
-    ("SIGKILL", libc::SIGKILL),
-    ("SIGUSR1", libc::SIGUSR1),
-    ("SIGSEGV", libc::SIGSEGV),
-    ("SIGUSR2", libc::SIGUSR2),
-    ("SIGPIPE", libc::SIGPIPE),
-    ("SIGALRM", libc::SIGALRM),
-    ("SIGTERM", libc::SIGTERM),
-    ("SIGCHLD", libc::SIGCHLD),
-    ("SIGCONT", libc::SIGCONT),
-    ("SIGSTOP", libc::SIGSTOP),
-    ("SIGTSTP", libc::SIGTSTP),
-    ("SIGTTIN", libc::SIGTTIN),
-    ("SIGTTOU", libc::SIGTTOU),
-    ("SIGURG", libc::SIGURG),
-    ("SIGXCPU", libc::SIGXCPU),
-    ("SIGXFSZ", libc::SIGXFSZ),
-    ("SIGVTALRM", libc::SIGVTALRM),
-    ("SIGPROF", libc::SIGPROF),
-    ("SIGWINCH", libc::SIGWINCH),
-    ("SIGIO", libc::SIGIO),
-    ("SIGINFO", libc::SIGINFO),
-    ("SIGSYS", libc::SIGSYS),
-];
-
 fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name);
     c.define_data_property_rooted(object, key, value, true, true, true)?;
@@ -783,7 +743,7 @@ fn build_constants(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         EXDEV,
     ];
     put(c, result, "errno", errno)?;
-    let signals = super::os_shared_vm::signal_constants(c, SIGNAL_CONSTANTS)?;
+    let signals = super::os_shared_vm::signal_constants(c, super::process_signals_state::SIGNALS)?;
     put(c, result, "signals", signals)?;
     let priority = c.null_object_rooted()?;
     const PRIORITIES: &[(&str, i32)] = &[

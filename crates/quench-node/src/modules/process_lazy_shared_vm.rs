@@ -15,12 +15,13 @@ const DEFAULT_DEBUG_PORT: f64 = 9229.0;
 const METHODS: &[(&str, &str)] = &[
     ("getActiveResourcesInfo", "processGetActiveResourcesInfo"),
     ("_getActiveRequests", "processGetActiveRequests"),
-    #[cfg(not(unix))]
     ("availableMemory", "availableMemory"),
-    #[cfg(not(unix))]
     ("constrainedMemory", "constrainedMemory"),
     ("setSourceMapsEnabled", "processSetSourceMapsEnabled"),
     ("abort", "processAbort"),
+    ("getBuiltinModule", "processGetBuiltinModule"),
+    ("ref", "processRef"),
+    ("unref", "processUnref"),
 ];
 
 /// `process.allowedNodeEnvironmentFlags`'s class prototype methods, each with its operation.
@@ -157,6 +158,52 @@ pub(crate) fn abort(_: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Root
     std::process::abort()
 }
 
+/// `process.getBuiltinModule(id)`: the built-in `id` names, as Node's
+/// `BuiltinModule.normalizeRequirableId` admits it, or `undefined`.
+pub(crate) fn get_builtin_module(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let id = argument(c, args, 0);
+    if c.string_text(id)?.is_none() {
+        return Err(super::util_shared_vm::argument_type_error(c, id, "id", "string")?);
+    }
+    let builtin = super::module_shared_vm::is_builtin(c, this, &[id])?;
+    if !c.truthy_rooted(builtin)? {
+        return Ok(c.undefined());
+    }
+    let global = c.global_root()?;
+    let require = get(c, global, crate::host::shared_vm::commonjs::BOOTSTRAP_REQUIRE)?;
+    let undefined = c.undefined();
+    c.call_rooted(require, undefined, &[id])
+}
+
+/// `process.ref(maybeRefable)` and `process.unref(maybeRefable)`: calls the value's
+/// `Symbol.for(protocol)` method, or its `fallback` method.
+fn call_ref_protocol(c: &mut Context<'_>, args: &[RootId], protocol: &str, fallback: &str) -> Result<RootId, RootedError> {
+    let target = argument(c, args, 0);
+    if c.is_object_rooted(target)? {
+        let symbol_for = intrinsic(c, "Symbol", None)?;
+        let symbol_for = get(c, symbol_for, "for")?;
+        let description = c.string_rooted(protocol);
+        let undefined = c.undefined();
+        let symbol = c.call_rooted(symbol_for, undefined, &[description])?;
+        let mut method = c.get_property_rooted(target, symbol)?;
+        if !c.truthy_rooted(method)? {
+            method = get(c, target, fallback)?;
+        }
+        if c.is_callable_rooted(method)? {
+            c.call_rooted(method, target, &[])?;
+        }
+    }
+    Ok(c.undefined())
+}
+
+pub(crate) fn ref_object(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    call_ref_protocol(c, args, "nodejs.ref", "ref")
+}
+
+pub(crate) fn unref_object(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    call_ref_protocol(c, args, "nodejs.unref", "unref")
+}
+
 /// `allowedNodeEnvironmentFlags`'s getter: the flag set, after which the property is a
 /// plain data property holding it.
 pub(crate) fn allowed_flags_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
@@ -183,7 +230,7 @@ fn flag_set(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let flags = super::process_surface::NODE_FLAGS.iter().map(|flag| c.string_rooted(flag)).collect::<Vec<_>>();
     let flags = c.array_rooted(&flags)?;
     let inner = c.construct_rooted(set, set, &[flags])?;
-    let class = c.host_constructor_named(operation("processSurfaceConstructor"), FLAG_SET_CLASS)?;
+    let class = c.host_constructor_named(operation("processConstructor"), FLAG_SET_CLASS)?;
     c.set_prototype_rooted(class, set)?;
     let prototype = get(c, class, "prototype")?;
     c.set_prototype_rooted(prototype, set_prototype)?;

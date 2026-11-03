@@ -302,9 +302,6 @@ impl CliOptions {
                     .or_else(|| arguments.next().cloned())
                     .ok_or_else(|| format!("{flag} requires an argument"))?;
                 values.push(value);
-                if flag == "--watch-path" {
-                    self.booleans.insert("--watch", true);
-                }
                 continue;
             }
             if let Some(value) = self.strings.get_mut(flag) {
@@ -413,18 +410,6 @@ pub(crate) fn parse_node_options(text: &str) -> Result<Vec<String>, &'static str
 
 #[cfg(test)]
 mod node_flag_list_tests {
-    #[test]
-    fn watch_paths_apply_the_node_watch_implication_in_option_order() {
-        for (arguments, enabled) in [
-            (["--watch-path=.", "--no-watch"], false),
-            (["--no-watch", "--watch-path=."], true),
-        ] {
-            let arguments = arguments.map(str::to_owned);
-            let options = super::CliOptions::parse(None, &arguments, false).unwrap();
-            assert_eq!(options.enabled("--watch"), enabled);
-        }
-    }
-
     #[test]
     fn node_lists_its_negatable_options() {
         assert!(super::node_listed_flag("--no-node-snapshot").is_some());

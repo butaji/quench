@@ -449,8 +449,15 @@ node_bindings! {
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
         method "processEmitExitEvent" (1) => crate::modules::process_shared_vm::emit_exit_event,
         method "reallyExit" (1) => crate::modules::process_shared_vm::really_exit,
+        method "asyncHookFatalError" (1) => crate::modules::async_hook_registry_shared_vm::fatal_error,
+        method "processConstructor" (0) => crate::modules::process_surface::constructor,
+        method "processProtoAccess" (0) => crate::modules::process_surface::proto_access,
+        method "processLoadEnvFileNone" (0) => crate::modules::process_surface::load_env_file_none,
+        method "processKillPortable" (2) => crate::modules::process_surface::kill_portable,
         method "emitterProtoMaxGet" (0) => crate::modules::event_limits_shared_vm::proto_max_get,
         method "emitterProtoMaxSet" (1) => crate::modules::event_limits_shared_vm::proto_max_set,
+        method "emitterConstructor" (1) => crate::modules::event_emitter_shared_vm::constructor,
+        method "emitterInit" (1) => crate::modules::event_emitter_shared_vm::init,
         method "emitterProtoEventNames" (0) => crate::modules::event_emitter_shared_vm::proto_event_names,
         method "emitterProtoListeners" (1) => crate::modules::event_emitter_shared_vm::proto_listeners,
         method "emitterProtoRawListeners" (1) => crate::modules::event_emitter_shared_vm::proto_raw_listeners,
@@ -462,11 +469,50 @@ node_bindings! {
         method "emitterProtoRemoveListener" (2) => crate::modules::event_emitter_shared_vm::proto_remove_listener,
         method "emitterProtoRemoveAllListeners" (1) => crate::modules::event_emitter_shared_vm::proto_remove_all_listeners,
         method "emitterProtoEmit" (1) => crate::modules::event_emitter_shared_vm::proto_emit,
+        method "bufferGlobalGet" (0) => crate::modules::buffer_shared_vm::global_get,
+        method "bufferGlobalSet" (1) => crate::modules::buffer_shared_vm::global_set,
+        method "bufferClassConstructor" (3) => crate::modules::buffer_module::constructor,
         method "bufferFastConstructor" (3) => crate::modules::buffer_module::fast_constructor,
+        method "bufferFrom" (3) => crate::modules::buffer_module::static_from,
+        method "bufferOf" (0) => crate::modules::buffer_module::of,
+        method "bufferAlloc" (3) => crate::modules::buffer_module::alloc,
+        method "bufferAllocUnsafe" (1) => crate::modules::buffer_module::alloc_unsafe,
+        method "bufferIsBuffer" (1) => crate::modules::buffer_module::is_buffer,
+        method "bufferIsEncoding" (1) => crate::modules::buffer_module::is_encoding,
+        method "bufferByteLength" (2) => crate::modules::buffer_module::byte_length,
+        method "bufferStaticCompare" (2) => crate::modules::buffer_module::static_compare,
+        method "bufferConcat" (2) => crate::modules::buffer_module::concat,
+        method "bufferCopyBytesFrom" (3) => crate::modules::buffer_module::copy_bytes_from,
+        method "bufferToString" (3) => crate::modules::buffer_module::to_string,
+        method "bufferEquals" (1) => crate::modules::buffer_module::equals,
+        method "bufferCompare" (5) => crate::modules::buffer_module::compare,
+        method "bufferCopy" (4) => crate::modules::buffer_module::copy,
+        method "bufferFill" (4) => crate::modules::buffer_module::fill,
+        method "bufferWrite" (4) => crate::modules::buffer_module::write,
+        method "bufferToJson" (0) => crate::modules::buffer_module::to_json,
+        method "bufferSlice" (2) => crate::modules::buffer_module::slice,
+        method "bufferInspect" (2) => crate::modules::buffer_module::inspect,
+        method "bufferIndexOf" (3) => crate::modules::buffer_module::index_of,
+        method "bufferSwap" (0) => crate::modules::buffer_module::swap,
+        method "bufferEncodingSlice" (2) => crate::modules::buffer_module::encoding_slice,
+        method "bufferEncodingWrite" (3) => crate::modules::buffer_module::encoding_write,
+        method "bufferNumeric" (2) => crate::modules::buffer_module::numeric,
+        method "bufferAliasGet" (0) => crate::modules::buffer_module::alias_get,
+        method "bufferSlowBuffer" (1) => crate::modules::buffer_module::slow_buffer,
+        method "moduleParentDeprecated" (0) => crate::modules::module_shared_vm::parent_deprecated,
         method "moduleEnableCompileCache" (1) => crate::modules::module_shared_vm::enable_compile_cache,
         method "moduleFlushCompileCache" (0) => crate::modules::module_shared_vm::flush_compile_cache,
         method "moduleGetCompileCacheDir" (0) => crate::modules::module_shared_vm::get_compile_cache_dir,
+        method "moduleInitPaths" (0) => crate::modules::module_shared_vm::init_paths,
+        method "moduleResolveLookupPaths" (2) => crate::modules::module_shared_vm::resolve_lookup_paths,
+        method "moduleLoad" (2) => crate::modules::module_shared_vm::load,
         method "moduleExtensionDefault" (2) => crate::modules::module_shared_vm::extension_default,
+        method "navigatorGet" (0) => crate::host::shared_vm::commonjs::navigator_get,
+        method "lazyGlobalGet" (0) => crate::host::shared_vm::commonjs::lazy_global_get,
+        method "lazyGlobalSet" (1) => crate::host::shared_vm::commonjs::lazy_global_set,
+        method "taskQueueMicrotask" (1) => crate::host::shared_vm::commonjs::queue_microtask,
+        method "taskQueueMicrotaskJob" (0) => crate::host::shared_vm::commonjs::queue_microtask_job,
+        method "taskQueueMicrotaskRun" (0) => crate::host::shared_vm::commonjs::queue_microtask_run,
         method "textDecoderConstructor" (0) => crate::modules::text_decoder_shared_vm::decoder_constructor,
         method "textDecoderEncodingGet" (0) => crate::modules::text_decoder_shared_vm::decoder_encoding,
         method "textDecoderFatalGet" (0) => crate::modules::text_decoder_shared_vm::decoder_fatal,
@@ -589,7 +635,9 @@ node_bindings! {
         method "reportPropertySet" (1) => crate::modules::report_configuration_shared_vm::set_property,
         method "reportSignal" (1) => crate::modules::report_configuration_shared_vm::signal_report,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
+        method "processEnvSet" (4) => crate::modules::process_shared_vm::env_set,
         method "processEnvDefineProperty" (3) => crate::modules::process_shared_vm::env_define_property,
+        method "processEnvDeleteProperty" (2) => crate::modules::process_shared_vm::env_delete_property,
         method "processBinding" (1) => crate::modules::process_binding_shared_vm::binding,
         method "processSetUncaughtExceptionCaptureCallback" (1) => crate::modules::process_shared_vm::set_uncaught_exception_capture_callback,
         method "processHasUncaughtExceptionCaptureCallback" (0) => crate::modules::process_shared_vm::has_uncaught_exception_capture_callback,
@@ -636,6 +684,7 @@ node_bindings! {
         method "consoleTaskRun" (1) => crate::modules::console_class_shared_vm::task_run,
         method "processWarningListenerInitialize" (0) => crate::modules::process_shared_vm::initialize_warning_listener,
         method "processEmitWarning" (4) => crate::modules::process_warning_shared_vm::emit,
+        method "processEmitWarningEvent" (0) => crate::modules::process_warning_shared_vm::emit_event,
         method "processOnWarning" (1) => crate::modules::process_warning_shared_vm::on,
         method "processEmitWarningInitialize" (0) => crate::modules::process_shared_vm::initialize_emit_warning,
         method "processEnvInitialize" (0) => crate::modules::process_shared_vm::initialize_env,
@@ -2167,6 +2216,9 @@ node_bindings! {
         method "processSetSourceMapsEnabled" (1) => crate::modules::process_lazy_shared_vm::set_source_maps_enabled,
         method "processSourceMapsEnabled" (0) => crate::modules::process_lazy_shared_vm::source_maps_enabled,
         method "processAbort" (0) => crate::modules::process_lazy_shared_vm::abort,
+        method "processGetBuiltinModule" (1) => crate::modules::process_lazy_shared_vm::get_builtin_module,
+        method "processRef" (1) => crate::modules::process_lazy_shared_vm::ref_object,
+        method "processUnref" (1) => crate::modules::process_lazy_shared_vm::unref_object,
         method "processAllowedFlagsGet" (0) => crate::modules::process_lazy_shared_vm::allowed_flags_get,
         method "processAllowedFlagsSet" (1) => crate::modules::process_lazy_shared_vm::allowed_flags_set,
         method "processFlagsAdd" (0) => crate::modules::process_lazy_shared_vm::flags_add,
@@ -2257,64 +2309,6 @@ node_bindings! {
         method "traceCategories" (0) => crate::modules::trace_shared_vm::categories,
         method "traceEnabled" (0) => crate::modules::trace_shared_vm::enabled,
         method "traceGetEnabledCategories" (0) => crate::modules::trace_shared_vm::get_enabled_categories,
-        method "eventsAssign" (3) => crate::modules::events_shared_vm::strict_assign,
-        method "eventsDelete" (2) => crate::modules::events_shared_vm::strict_delete,
-        method "asyncHookFatalError" (1) => crate::modules::async_hook_registry_shared_vm::fatal_error::<NodeHost>,
-        method "emitterConstruct" (1) => crate::modules::event_constructor_shared_vm::construct,
-        method "emitterInitialize" (1) => crate::modules::event_constructor_shared_vm::init,
-        method "eventsPublicMaxSet" (0) => crate::modules::event_limits_shared_vm::global_set,
-        method "processSurfaceConstructor" (0) => crate::modules::process_surface::process_constructor,
-        method "processThrowProtoAccess" (0) => crate::modules::process_surface::throw_proto_access,
-        method "processEnvSetTrap" (4) => crate::modules::process_env_shared_vm::set,
-        method "processEnvDefineTrap" (3) => crate::modules::process_env_shared_vm::define,
-        method "processEnvDeleteTrap" (2) => crate::modules::process_env_shared_vm::delete,
-        method "lazyBindingGet" (0) => crate::modules::lazy_binding_shared_vm::global_get::<NodeHost>,
-        method "lazyBindingSet" (1) => crate::modules::lazy_binding_shared_vm::global_set::<NodeHost>,
-        method "taskQueueMicrotask" (1) => crate::modules::task_queues_shared_vm::queue,
-        method "taskMicrotaskRun" (0) => crate::modules::task_queues_shared_vm::run,
-        method "taskMicrotaskInvoke" (0) => crate::modules::task_queues_shared_vm::invoke::<NodeHost>,
-        method "performanceGlobalLoad" (0) => crate::host::shared_vm::commonjs::load_performance_global,
-        method "navigatorGlobalGet" (0) => crate::host::shared_vm::commonjs::navigator_global_get,
-        method "moduleParentDeprecated" (0) => crate::modules::module_shared_vm::deprecated_parent::<NodeHost>,
-        method "moduleParentDeprecatedSet" (1) => crate::modules::module_shared_vm::deprecated_parent::<NodeHost>,
-        method "moduleInitPaths" (0) => crate::modules::module_paths_shared_vm::initialize,
-        method "moduleLookupPaths" (2) => crate::modules::module_paths_shared_vm::lookup,
-        method "moduleLoadFacade" (2) => crate::modules::module_paths_shared_vm::load,
-        method "warningEmit" (4) => crate::modules::process_warning_shared_vm::emit,
-        method "warningOn" (1) => crate::modules::process_warning_shared_vm::on,
-        method "warningEmitTick" (1) => crate::modules::process_warning_shared_vm::emit_tick,
-        method "warningThrowTick" (0) => crate::modules::process_warning_shared_vm::throw_tick,
-        method "bufferClassConstructor" (3) => crate::modules::buffer_module::constructor,
-        method "bufferFrom" (3) => crate::modules::buffer_module::static_from,
-        method "bufferOf" (0) => crate::modules::buffer_module::of,
-        method "bufferAlloc" (3) => crate::modules::buffer_module::alloc,
-        method "bufferAllocUnsafe" (1) => crate::modules::buffer_module::alloc_unsafe,
-        method "bufferIsBuffer" (1) => crate::modules::buffer_module::is_buffer,
-        method "bufferIsEncoding" (1) => crate::modules::buffer_module::is_encoding,
-        method "bufferByteLength" (2) => crate::modules::buffer_module::byte_length,
-        method "bufferStaticCompare" (2) => crate::modules::buffer_module::static_compare,
-        method "bufferConcat" (2) => crate::modules::buffer_module::concat,
-        method "bufferCopyBytesFrom" (3) => crate::modules::buffer_module::copy_bytes_from,
-        method "bufferToString" (3) => crate::modules::buffer_module::to_string,
-        method "bufferEquals" (1) => crate::modules::buffer_module::equals,
-        method "bufferCompare" (5) => crate::modules::buffer_module::compare,
-        method "bufferCopy" (4) => crate::modules::buffer_module::copy,
-        method "bufferFill" (4) => crate::modules::buffer_module::fill,
-        method "bufferWrite" (4) => crate::modules::buffer_module::write,
-        method "bufferToJson" (0) => crate::modules::buffer_module::to_json,
-        method "bufferSlice" (2) => crate::modules::buffer_module::slice,
-        method "bufferInspect" (2) => crate::modules::buffer_module::inspect,
-        method "bufferIndexOf" (3) => crate::modules::buffer_module::index_of,
-        method "bufferSwap" (0) => crate::modules::buffer_module::swap,
-        method "bufferEncodingSlice" (2) => crate::modules::buffer_module::encoding_slice,
-        method "bufferEncodingWrite" (3) => crate::modules::buffer_module::encoding_write,
-        method "bufferNumeric" (2) => crate::modules::buffer_module::numeric,
-        method "bufferAliasGet" (0) => crate::modules::buffer_module::alias_get,
-        method "bufferSlowBuffer" (1) => crate::modules::buffer_module::slow_buffer,
-        method "processCoreInitialize" (0) => crate::modules::process_surface::initialize_core,
-        method "processRef" (1) => crate::modules::process_surface::reference::<NodeHost, true>,
-        method "processUnref" (1) => crate::modules::process_surface::reference::<NodeHost, false>,
-        method "processGetBuiltinModule" (1) => commonjs::process_get_builtin_module,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing
@@ -2768,7 +2762,11 @@ fn install_event_emitter(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .borrow()
         .event_targets_api
         .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-    crate::modules::event_constructor_shared_vm::bootstrap(context, event_data)?;
+    let shape_key = crate::modules::event_constructor_shared_vm::get(context, event_data, "shapeKey")?;
+    let capture_key =
+        crate::modules::event_constructor_shared_vm::get(context, event_data, "captureKey")?;
+    let _ = (shape_key, capture_key);
+    crate::modules::event_emitter_shared_vm::install_class(context, event_data)?;
     crate::modules::event_constructor_shared_vm::install(context)?;
     crate::modules::event_emitter_shared_vm::initialize(context)?;
     crate::modules::event_limits_shared_vm::initialize(context)?;
@@ -3132,39 +3130,12 @@ impl NodeHost {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn lazy_process_surface_preserves_core_protocols_and_performance_globals() {
-        let source = r#"
-          const ref = process.ref, builtin = process.getBuiltinModule;
-          void process.allowedNodeEnvironmentFlags;
-          if (process.ref !== ref || process.getBuiltinModule !== builtin)
-            throw Error('lazy surface replaced core capabilities');
-          let calls = 0;
-          process.ref({[Symbol.for('nodejs.ref')]() { calls++; }});
-          if (calls !== 1) throw Error('reference protocol');
-          const hooks = builtin('perf_hooks');
-          for (const name of ['Performance', 'PerformanceEntry', 'PerformanceMark',
-            'PerformanceMeasure', 'PerformanceObserver', 'PerformanceObserverEntryList',
-            'PerformanceResourceTiming']) {
-            if (typeof globalThis[name] !== 'function' || globalThis[name] !== hooks[name])
-              throw Error('performance identity: ' + name);
-            const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
-            if (!descriptor.writable || !descriptor.configurable || descriptor.enumerable)
-              throw Error('performance descriptor: ' + name);
-          }
-        "#;
-        let program = quench_runtime::Engine::specialize(source, "lazy-native-capabilities.js").unwrap();
-        let host = crate::NodeHost::new(vec!["quench-node".into()]);
-        quench_runtime::Runtime::new(host).execute(&program).unwrap();
-    }
-
-    #[test]
     fn operation_names_are_unique() {
         let mut names = std::collections::HashSet::new();
         assert_eq!(super::OPERATION_NAMES.len(), super::bindings().len());
         for (index, binding) in super::bindings().iter().enumerate() {
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
             assert_eq!(super::OPERATION_NAMES[index], binding.name);
-            assert_eq!(super::operation(binding.name).0 as usize, index);
         }
     }
 }

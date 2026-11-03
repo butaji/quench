@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const fields = ['type', 'bsize', 'frsize', 'blocks', 'bfree', 'bavail', 'files', 'ffree'];
 const numeric = fs.statfsSync(process.cwd());
 for (const field of fields) assert.equal(typeof numeric[field], 'number');
+if (process.platform === 'darwin') assert.equal(numeric.frsize, numeric.bsize);
 
 async function main() {
   const callbackStats = await new Promise((resolve, reject) => {
@@ -13,6 +14,7 @@ async function main() {
   const promiseStats = await fs.promises.statfs(process.cwd(), { bigint: true });
   for (const stats of [callbackStats, promiseStats]) {
     for (const field of fields) assert.equal(typeof stats[field], 'bigint');
+    if (process.platform === 'darwin') assert.equal(stats.frsize, stats.bsize);
   }
 }
 

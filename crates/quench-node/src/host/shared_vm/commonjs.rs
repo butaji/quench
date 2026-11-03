@@ -402,11 +402,14 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let release = context.host_function(super::operation("processReleaseInitialize"))?;
     context.define_lazy_data_properties_rooted(process, &[PROCESS_RELEASE], true, release)?;
     context.release_root(release);
-    for (members, operation) in crate::modules::process_surface::LAZY_GROUPS {
-        let initializer = context.host_function(super::operation(operation))?;
-        context.define_lazy_data_properties_rooted(process, members, true, initializer)?;
-        context.release_root(initializer);
-    }
+    let initializer = context.host_function(super::operation("processSurfaceInitialize"))?;
+    context.define_lazy_data_properties_rooted(
+        process,
+        crate::modules::process_surface::LAZY_MEMBERS,
+        true,
+        initializer,
+    )?;
+    context.release_root(initializer);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
     context.scoped(crate::modules::buffer_shared_vm::install_global)?;
@@ -469,7 +472,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
-    context.scoped(crate::modules::process_surface::configure)?;
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
@@ -559,8 +561,7 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
 }
 
 /// The timeline classes Node exposes as globals, from `perf_hooks`.
-const PERFORMANCE_GLOBALS: [&str; 7] = [
-    "Performance",
+const PERFORMANCE_GLOBALS: [&str; 6] = [
     "PerformanceEntry",
     "PerformanceMark",
     "PerformanceMeasure",
@@ -569,66 +570,14 @@ const PERFORMANCE_GLOBALS: [&str; 7] = [
     "PerformanceResourceTiming",
 ];
 
-/// Node's replaceable `performance` global loads `perf_hooks` on first access.
-fn install_global_descriptors(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    for name in ["queueMicrotask", "clearImmediate", "clearInterval", "clearTimeout", "setImmediate", "setInterval", "setTimeout", "structuredClone", "fetch", "crypto", "performance"] {
-        let key = context.string_rooted(name);
-        let descriptor = context.own_property_descriptor_rooted(global, key)?;
-        if context.rooted_value(descriptor).is_some_and(|value| value.is_undefined()) { continue; }
-        let enumerable = get(context, descriptor, "enumerable")?;
-        if !context.truthy_rooted(enumerable)? {
-            let yes = context.boolean(true);
-            context.assign_named_property_rooted(descriptor, "enumerable", yes)?;
-            context.define_property_descriptor_rooted(global, key, descriptor)?;
-        }
-    }
-    if !context.has_own_property_rooted(global, "navigator")? {
-        let navigator = context.object_rooted()?;
-        let major = crate::modules::process_state::NODE_VERSION.split('.').next().expect("Node version has a major component");
-        let agent = context.string_rooted(&format!("Node.js/{major}"));
-        context.assign_named_property_rooted(navigator, "userAgent", agent)?;
-        let getter = context.host_function_named_with_data(super::operation("navigatorGlobalGet"), "get navigator", navigator)?;
-        let descriptor = context.null_object_rooted()?;
-        context.assign_named_property_rooted(descriptor, "get", getter)?;
-        let yes = context.boolean(true);
-        context.assign_named_property_rooted(descriptor, "configurable", yes)?;
-        context.assign_named_property_rooted(descriptor, "enumerable", yes)?;
-        let key = context.string_rooted("navigator");
-        context.define_property_descriptor_rooted(global, key, descriptor)?;
-    }
-    let symbol = get(context, global, "Symbol")?;
-    let key = get(context, symbol, "toStringTag")?;
-    let descriptor = context.own_property_descriptor_rooted(global, key)?;
-    if context.rooted_value(descriptor).is_some_and(|value| value.is_undefined()) {
-        let tag = context.string_rooted("global");
-        context.define_data_property_rooted(global, key, tag, false, false, true)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn navigator_global_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    context.host_function_data()
-}
-
+/// Node's replaceable `performance` global and the timeline classes load `perf_hooks` on
+/// first access.
 fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let load = context.host_function(super::operation("performanceGlobalLoad"))?;
-    crate::modules::lazy_binding_shared_vm::install(context, "performance", load, true, ["get performance", "set performance"])?;
-    let global = context.global_root()?;
-    let module = context.string_rooted("perf_hooks");
+    install_lazy_global(context, "performance", "perf_hooks", "performance", true)?;
     for name in PERFORMANCE_GLOBALS {
-        let key = context.string_rooted(name);
-        crate::modules::util_shared_vm::define_lazy_export(context, global, module, key, key, false)?;
+        install_lazy_global(context, name, "perf_hooks", name, false)?;
     }
     Ok(())
-}
-
-pub(crate) fn load_performance_global(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let global = context.global_root()?;
-    let require = get(context, global, BOOTSTRAP_REQUIRE)?;
-    let name = context.string_rooted("perf_hooks");
-    let module = context.call_rooted(require, global, &[name])?;
-    get(context, module, "performance")
 }
 
 /// The globals each web polyfill defines, in definition order. They are lazy data properties
@@ -921,8 +870,167 @@ fn require_for_module_inner(
     if specifier == "internal/bootstrap/realm" && internals_exposed(context) {
         return cached_native_binding(context, "\0native:internal/bootstrap/realm", crate::modules::bootstrap_realm_shared_vm::module);
     }
-    if let Some(builtin) = requested_builtin(context, &specifier) {
-        return builtin_exports(context, builtin);
+    match requested_builtin(context, &specifier) {
+        Some(BuiltinModule::Process) => {
+            return match context.host_mut().shared_state().borrow().process_module {
+                Some(root) => Ok(root),
+                _ => Err(RootedError::host(
+                    "shared process module is not initialized",
+                )),
+            };
+        }
+        Some(BuiltinModule::UtilTypes) => {
+            return cached_builtin(context, BuiltinModule::UtilTypes);
+        }
+        Some(BuiltinModule::InternalUrl) => {
+            return cached_builtin(context, BuiltinModule::InternalUrl);
+        }
+        Some(
+            module @ BuiltinModule::Internal(
+                "_http_agent" | "_http_client" | "_http_common" | "_http_incoming" | "_http_outgoing" | "_http_server",
+            ),
+        ) => {
+            return cached_builtin(context, module);
+        }
+        Some(BuiltinModule::Vm) => {
+            return cached_builtin(context, BuiltinModule::Vm);
+        }
+        Some(BuiltinModule::Dgram) => {
+            return cached_builtin(context, BuiltinModule::Dgram);
+        }
+        Some(BuiltinModule::InternalDgram) => {
+            return crate::modules::dgram_shared_vm::internal_module(context);
+        }
+        Some(BuiltinModule::InternalBlockList) => {
+            let module = context.object_rooted()?;
+            let (constructor, _) = crate::modules::net_block_list::classes(context)?;
+            set(context, module, "BlockList", constructor)?;
+            return Ok(module);
+        }
+        Some(BuiltinModule::InternalSocketAddress) => {
+            let module = context.object_rooted()?;
+            let (_, constructor) = crate::modules::net_block_list::classes(context)?;
+            set(context, module, "SocketAddress", constructor)?;
+            return Ok(module);
+        }
+        Some(BuiltinModule::Assert) => {
+            return crate::modules::assert_shared_vm::module(context);
+        }
+        Some(BuiltinModule::AssertStrict) => {
+            return crate::modules::assert_shared_vm::strict_module(context);
+        }
+        Some(BuiltinModule::Path) => {
+            return crate::modules::path_shared_vm::module(context);
+        }
+        Some(BuiltinModule::PathPosix) => {
+            return crate::modules::path_shared_vm::posix(context);
+        }
+        Some(BuiltinModule::PathWin32) => {
+            return crate::modules::path_shared_vm::win32(context);
+        }
+        Some(BuiltinModule::Url) => {
+            return cached_builtin(context, BuiltinModule::Url);
+        }
+        Some(BuiltinModule::Readline) => {
+            return cached_builtin(context, BuiltinModule::Readline);
+        }
+        Some(BuiltinModule::StreamConsumers) => {
+            return cached_builtin(context, BuiltinModule::StreamConsumers);
+        }
+        Some(BuiltinModule::Querystring) => {
+            return cached_builtin(context, BuiltinModule::Querystring);
+        }
+        Some(BuiltinModule::Events) => {
+            return cached_builtin(context, BuiltinModule::Events);
+        }
+        Some(BuiltinModule::Console) => {
+            return cached_builtin(context, BuiltinModule::Console);
+        }
+        Some(BuiltinModule::Tty) => {
+            return cached_builtin(context, BuiltinModule::Tty);
+        }
+        Some(BuiltinModule::Crypto) => {
+            return cached_builtin(context, BuiltinModule::Crypto);
+        }
+        Some(BuiltinModule::Domain) => {
+            return cached_builtin(context, BuiltinModule::Domain);
+        }
+        Some(BuiltinModule::Tls) => {
+            return cached_builtin(context, BuiltinModule::Tls);
+        }
+        Some(BuiltinModule::V8) => {
+            return cached_builtin(context, BuiltinModule::V8);
+        }
+        Some(BuiltinModule::Module) => {
+            return cached_builtin(context, BuiltinModule::Module);
+        }
+        Some(BuiltinModule::AsyncHooks) => {
+            return if specifier.strip_prefix("node:").unwrap_or(&specifier)
+                == "internal/async_hooks"
+            {
+                crate::modules::domain_trampoline::internal_hooks(context)
+            } else {
+                crate::modules::async_hooks_shared_vm::module(context)
+            };
+        }
+        Some(BuiltinModule::DiagnosticsChannel) => {
+            return crate::modules::diagnostics_channel_shared_vm::module(context);
+        }
+        Some(BuiltinModule::Dns) => {
+            return cached_builtin(context, BuiltinModule::Dns);
+        }
+        Some(BuiltinModule::PerfHooks) => {
+            return cached_builtin(context, BuiltinModule::PerfHooks);
+        }
+        Some(BuiltinModule::Zlib) => {
+            return cached_builtin(context, BuiltinModule::Zlib);
+        }
+        Some(BuiltinModule::WebStreams) => {
+            return cached_builtin(context, BuiltinModule::WebStreams);
+        }
+        Some(
+            module @ (BuiltinModule::Fs
+            | BuiltinModule::FsPromises
+            | BuiltinModule::Net
+            | BuiltinModule::Http
+            | BuiltinModule::Os
+            | BuiltinModule::Buffer
+            | BuiltinModule::Stream
+            | BuiltinModule::StreamPromises
+            | BuiltinModule::Timers
+            | BuiltinModule::InternalTimers
+            | BuiltinModule::TimersPromises
+            | BuiltinModule::NodeTest
+            | BuiltinModule::StringDecoder
+            | BuiltinModule::WorkerThreads
+            | BuiltinModule::Util
+            | BuiltinModule::Sys
+            | BuiltinModule::ChildProcess
+            | BuiltinModule::InternalChildProcess
+            | BuiltinModule::Https
+            | BuiltinModule::Http2
+            | BuiltinModule::DnsPromises
+            | BuiltinModule::CaresBinding
+            | BuiltinModule::Http2Binding
+            | BuiltinModule::Inspector
+            | BuiltinModule::Repl
+            | BuiltinModule::Sea
+            | BuiltinModule::Cluster
+            | BuiltinModule::Wasi
+            | BuiltinModule::TraceEvents),
+        ) => {
+            return cached_builtin(context, module);
+        }
+        Some(BuiltinModule::Internal("internal/histogram")) => {
+            // Node's internal/histogram class is the implementation exported by
+            // perf_hooks here. Keep both require paths on the same constructor
+            // so instanceof checks agree across the public and internal APIs.
+            return cached_builtin(context, BuiltinModule::PerfHooks);
+        }
+        Some(module @ BuiltinModule::Internal(_)) => {
+            return cached_builtin(context, module);
+        }
+        None => {}
     }
     let filename = resolve_filename(context, &specifier, parent)?;
     if context
@@ -1282,20 +1390,6 @@ fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<Built
     }
 }
 
-pub(crate) fn process_get_builtin_module(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let id = args.first().copied().unwrap_or_else(|| context.undefined());
-    let Some(id_text) = context.string_text(id)? else {
-        return Err(crate::modules::util_shared_vm::argument_type_error(context, id, "id", "string")?);
-    };
-    let normalized = id_text.strip_prefix("node:").unwrap_or(&id_text);
-    let internal = normalized.starts_with("internal/");
-    if internal && !internals_exposed(context) { return Ok(context.undefined()); }
-    match requested_builtin(context, if internal { normalized } else { &id_text }) {
-        Some(builtin) => builtin_exports(context, builtin),
-        None => Ok(context.undefined()),
-    }
-}
-
 pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
     BuiltinModule::from_specifier(specifier).is_some()
 }
@@ -1458,7 +1552,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:module", BuiltinModule::Module),
     ("async_hooks", BuiltinModule::AsyncHooks),
     ("node:async_hooks", BuiltinModule::AsyncHooks),
-    ("internal/async_hooks", BuiltinModule::Internal("internal/async_hooks")),
+    ("internal/async_hooks", BuiltinModule::AsyncHooks),
     (
         "internal/child_process",
         BuiltinModule::InternalChildProcess,
@@ -1501,34 +1595,6 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("zlib", BuiltinModule::Zlib),
     ("node:zlib", BuiltinModule::Zlib),
 ];
-
-fn builtin_exports(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
-    match builtin {
-        BuiltinModule::Process => context.host_mut().shared_state().borrow().process_module
-            .ok_or_else(|| RootedError::host("shared process module is not initialized")),
-        BuiltinModule::InternalDgram => crate::modules::dgram_shared_vm::internal_module(context),
-        BuiltinModule::InternalBlockList | BuiltinModule::InternalSocketAddress => {
-            let module = context.object_rooted()?;
-            let (block_list, socket_address) = crate::modules::net_block_list::classes(context)?;
-            let (name, constructor) = match builtin {
-                BuiltinModule::InternalBlockList => ("BlockList", block_list),
-                _ => ("SocketAddress", socket_address),
-            };
-            set(context, module, name, constructor)?;
-            Ok(module)
-        }
-        BuiltinModule::Assert => crate::modules::assert_shared_vm::module(context),
-        BuiltinModule::AssertStrict => crate::modules::assert_shared_vm::strict_module(context),
-        BuiltinModule::Path => crate::modules::path_shared_vm::module(context),
-        BuiltinModule::PathPosix => crate::modules::path_shared_vm::posix(context),
-        BuiltinModule::PathWin32 => crate::modules::path_shared_vm::win32(context),
-        BuiltinModule::AsyncHooks => crate::modules::async_hooks_shared_vm::module(context),
-        BuiltinModule::Internal("internal/async_hooks") => crate::modules::domain_trampoline::internal_hooks(context),
-        BuiltinModule::DiagnosticsChannel => crate::modules::diagnostics_channel_shared_vm::module(context),
-        BuiltinModule::Internal("internal/histogram") => cached_builtin(context, BuiltinModule::PerfHooks),
-        _ => cached_builtin(context, builtin),
-    }
-}
 
 fn cached_builtin(
     context: &mut Context<'_>,
@@ -1578,7 +1644,7 @@ pub(crate) fn cached_native_binding(
 /// Node's internal `require(id)` of a builtin, or `ERR_UNKNOWN_BUILTIN_MODULE`.
 pub(crate) fn builtin_require(context: &mut Context<'_>, id: &str) -> Result<RootId, RootedError> {
     if let Some(builtin) = BuiltinModule::from_specifier(id) {
-        return builtin_exports(context, builtin);
+        return cached_builtin(context, builtin);
     }
     let error = context.error_rooted(&format!("No such built-in module: {id}"))?;
     crate::modules::node_errors_shared_vm::decorate_error(context, error, "ERR_UNKNOWN_BUILTIN_MODULE")?;
@@ -1759,7 +1825,179 @@ fn task_queues_module(context: &mut Context<'_>) -> Result<RootId, RootedError> 
     let raw_queue_key = context.string_rooted("\0quench:queueMicrotaskRaw");
     let raw_enqueue = context.get_property_rooted(global, raw_queue_key)?;
     let require = get(context, global, BOOTSTRAP_REQUIRE)?;
-    crate::modules::task_queues_shared_vm::module(context, raw_enqueue, require)
+    let state = context.null_object_rooted()?;
+    set(context, state, "enqueue", raw_enqueue)?;
+    set(context, state, "require", require)?;
+    let queue = context.host_function_named_with_data(super::operation("taskQueueMicrotask"), "queueMicrotask", state)?;
+    let module = context.object_rooted()?;
+    set(context, module, "queueMicrotask", queue)?;
+    Ok(module)
+}
+
+/// The web and timer globals Node defines enumerable.
+const ENUMERABLE_GLOBALS: &[&str] = &[
+    "queueMicrotask", "clearImmediate", "clearInterval", "clearTimeout", "setImmediate",
+    "setInterval", "setTimeout", "structuredClone", "fetch", "crypto", "performance",
+];
+
+/// Node's global descriptors: `ENUMERABLE_GLOBALS` enumerable, a `navigator` getter, and
+/// `globalThis[Symbol.toStringTag]` as `'global'`.
+fn install_global_descriptors(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let yes = context.boolean(true);
+    for name in ENUMERABLE_GLOBALS {
+        let key = context.string_rooted(name);
+        let descriptor = context.own_property_descriptor_rooted(global, key)?;
+        if !context.is_object_rooted(descriptor)? {
+            continue;
+        }
+        let enumerable = get(context, descriptor, "enumerable")?;
+        if !context.truthy_rooted(enumerable)? {
+            set(context, descriptor, "enumerable", yes)?;
+            context.define_property_descriptor_rooted(global, key, descriptor)?;
+        }
+    }
+    let key = context.string_rooted("navigator");
+    let existing = context.own_property_descriptor_rooted(global, key)?;
+    if !context.is_object_rooted(existing)? {
+        let getter = context.host_function_named(super::operation("navigatorGet"), "get navigator")?;
+        let descriptor = context.null_object_rooted()?;
+        set(context, descriptor, "get", getter)?;
+        set(context, descriptor, "enumerable", yes)?;
+        set(context, descriptor, "configurable", yes)?;
+        context.define_property_descriptor_rooted(global, key, descriptor)?;
+    }
+    let symbol = get(context, global, "Symbol")?;
+    let tag = get(context, symbol, "toStringTag")?;
+    let own = context.own_property_descriptor_rooted(global, tag)?;
+    if !context.is_object_rooted(own)? {
+        let value = context.string_rooted("global");
+        context.define_data_property_rooted(global, tag, value, false, false, true)?;
+    }
+    Ok(())
+}
+
+/// `navigator`'s getter: one object whose `userAgent` names the Node major version.
+pub(crate) fn navigator_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    const CACHE: &str = "\0builtin:navigator";
+    let shared = context.host_mut().shared_state();
+    if let Some(navigator) = shared.borrow().builtin_cache.get(CACHE).copied() {
+        return Ok(navigator);
+    }
+    let major = crate::modules::process_state::NODE_VERSION.split('.').next().unwrap_or_default();
+    let navigator = context.object_rooted()?;
+    let agent = context.string_rooted(&format!("Node.js/{major}"));
+    set(context, navigator, "userAgent", agent)?;
+    let navigator = context.retain(navigator)?;
+    shared.borrow_mut().builtin_cache.insert(CACHE.to_owned(), navigator);
+    Ok(navigator)
+}
+
+/// A replaceable global whose getter loads `module` on first access and reads its `export`;
+/// assigning it replaces the value, as Node's lazy bootstrap globals do.
+pub(crate) fn install_lazy_global(
+    context: &mut Context<'_>,
+    name: &str,
+    module: &str,
+    export: &str,
+    enumerable: bool,
+) -> Result<(), RootedError> {
+    let slot = context.null_object_rooted()?;
+    let module_name = context.string_rooted(module);
+    set(context, slot, "module", module_name)?;
+    let export_name = context.string_rooted(export);
+    set(context, slot, "export", export_name)?;
+    let getter = context.host_function_named_with_data(super::operation("lazyGlobalGet"), &format!("get {name}"), slot)?;
+    let setter = context.host_function_named_with_data(super::operation("lazyGlobalSet"), &format!("set {name}"), slot)?;
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    set(context, descriptor, "set", setter)?;
+    let enumerable = context.boolean(enumerable);
+    set(context, descriptor, "enumerable", enumerable)?;
+    let yes = context.boolean(true);
+    set(context, descriptor, "configurable", yes)?;
+    let global = context.global_root()?;
+    let key = context.string_rooted(name);
+    context.define_property_descriptor_rooted(global, key, descriptor)?;
+    Ok(())
+}
+
+/// A lazy global's getter.
+pub(crate) fn lazy_global_get(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = context.host_function_data()?;
+    if context.has_own_property_rooted(slot, "value")? {
+        return get(context, slot, "value");
+    }
+    let global = context.global_root()?;
+    let require = get(context, global, BOOTSTRAP_REQUIRE)?;
+    let module = get(context, slot, "module")?;
+    let undefined = context.undefined();
+    let exports = context.call_rooted(require, undefined, &[module])?;
+    let export = get(context, slot, "export")?;
+    let value = context.get_property_rooted(exports, export)?;
+    set(context, slot, "value", value)?;
+    Ok(value)
+}
+
+/// A lazy global's setter.
+pub(crate) fn lazy_global_set(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = context.host_function_data()?;
+    let value = match args.first() {
+        Some(value) => *value,
+        None => context.undefined(),
+    };
+    set(context, slot, "value", value)?;
+    Ok(context.undefined())
+}
+
+/// `queueMicrotask(callback)`: the callback runs in a `Microtask` AsyncResource's scope,
+/// which is destroyed after it, so async context follows it; async_hooks loads on the first
+/// queued callback. Other values reach the host operation, which validates them.
+pub(crate) fn queue_microtask(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let state = context.host_function_data()?;
+    let enqueue = get(context, state, "enqueue")?;
+    let callback = match args.first() {
+        Some(callback) => *callback,
+        None => context.undefined(),
+    };
+    let undefined = context.undefined();
+    if !context.is_callable_rooted(callback)? {
+        return context.call_rooted(enqueue, undefined, &[callback]);
+    }
+    let mut resource_class = get(context, state, "AsyncResource")?;
+    if context.rooted_value(resource_class).is_some_and(|value| value.is_undefined()) {
+        let require = get(context, state, "require")?;
+        let name = context.string_rooted("async_hooks");
+        let hooks = context.call_rooted(require, undefined, &[name])?;
+        resource_class = get(context, hooks, "AsyncResource")?;
+        set(context, state, "AsyncResource", resource_class)?;
+    }
+    let options = context.object_rooted()?;
+    let yes = context.boolean(true);
+    set(context, options, "requireManualDestroy", yes)?;
+    let kind = context.string_rooted("Microtask");
+    let resource = context.construct_rooted(resource_class, resource_class, &[kind, options])?;
+    set(context, resource, "callback", callback)?;
+    let job = context.host_function_with_data(super::operation("taskQueueMicrotaskJob"), resource)?;
+    context.call_rooted(enqueue, undefined, &[job])
+}
+
+/// A queued microtask: runs its callback in its resource's scope.
+pub(crate) fn queue_microtask_job(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = context.host_function_data()?;
+    let run = context.host_function_with_data(super::operation("taskQueueMicrotaskRun"), resource)?;
+    let scope = get(context, resource, "runInAsyncScope")?;
+    context.call_rooted(scope, resource, &[run])
+}
+
+/// The scope's body: the callback, then the resource's destroy, whatever the callback did.
+pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let resource = context.host_function_data()?;
+    let callback = get(context, resource, "callback")?;
+    let result = context.call_rooted(callback, resource, &[]);
+    let destroy = get(context, resource, "emitDestroy")?;
+    context.call_rooted(destroy, resource, &[])?;
+    result
 }
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {

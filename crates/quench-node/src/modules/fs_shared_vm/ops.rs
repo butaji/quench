@@ -370,6 +370,7 @@ fn statfs(c: &mut Context<'_>, args: &[RootId]) -> Call {
         Ok(()) => {
             // SAFETY: `statfs` succeeded and filled the buffer.
             let fields = unsafe { buffer.assume_init() };
+            // libuv uses the block size where statfs has no fragment-size field.
             #[cfg(target_os = "linux")]
             let fragment_size = fields.f_frsize;
             #[cfg(not(target_os = "linux"))]

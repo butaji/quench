@@ -3954,13 +3954,12 @@ impl ProgramSource {
                 if previous.is_some_and(|old| old >= key) || !self.text.is_char_boundary(site.offset as usize) || site.callee.is_empty() {
                     return Err("invalid frozen call-site descriptions".into());
                 }
-                if let Some(span) = site.expression {
-                    if span.start > site.offset || span.end < site.offset || span.start >= span.end
+                if let Some(span) = site.expression
+                    && (span.start > site.offset || span.end < site.offset || span.start >= span.end
                         || !self.text.is_char_boundary(span.start as usize)
                         || !self.text.is_char_boundary(span.end as usize)
-                        || self.text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}'])
+                        || self.text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}']))
                     { return Err("invalid frozen call-site expression".into()); }
-                }
                 previous = Some(key);
             }
         }

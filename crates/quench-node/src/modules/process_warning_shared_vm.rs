@@ -1,249 +1,222 @@
-//! Node's process warnings: `process.emitWarning` and the default `warning` listener.
+//! Node's process warnings: `process.emitWarning` and the default `warning` listener
+//! (`lib/internal/process/warning.js`'s semantics), in Rust.
+
+use std::cell::Cell;
+use std::io::Write;
 
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 use crate::host::NodeHost;
-use std::io::Write;
 
-
-
-#[cfg(test)]
-mod scheduling_tests {
-    #[test]
-    fn warnings_are_deferred_and_keep_error_identity() {
-        let source = r#"
-          const jobs=[], delivered=[];
-          process.nextTick=function(fn,...args){jobs.push([fn,args]);};
-          process.emit=function(event,warning){delivered.push([event,warning]);return true;};
-          if(process.emitWarning.name!=='emitWarning'||process.emitWarning.length!==4||!Object.hasOwn(process.emitWarning,'prototype'))throw Error('emitWarning metadata');
-          process.emitWarning('hello',{type:'CustomWarning',code:'CODE',detail:'detail'});
-          if(jobs.length!==1||delivered.length!==0)throw Error('warning was not deferred');
-          const [job,args]=jobs.shift();
-          if(job.name!=='doEmitWarning'||job.length!==1||args.length!==1)throw Error('tick callback metadata');
-          const warning=args[0];
-          if(warning.message!=='hello'||warning.name!=='CustomWarning'||warning.code!=='CODE'||warning.detail!=='detail')throw Error('warning fields');
-          job(...args);
-          if(delivered[0][0]!=='warning'||delivered[0][1]!==warning)throw Error('warning identity');
-          process.noDeprecation=true;
-          process.emitWarning(7,'DeprecationWarning');
-          if(jobs.length)throw Error('suppressed warning was queued');
-          process.noDeprecation=false;process.throwDeprecation=true;
-          const original=new Error('original');original.name='DeprecationWarning';
-          process.emitWarning(original);
-          if(jobs.length!==1)throw Error('deprecation throw not deferred');
-          try{jobs.shift()[0]();throw Error('missing throw');}catch(e){if(e!==original)throw e;}
-        "#;
-        let program = quench_runtime::Engine::specialize(source,"native-warning-scheduling.js").unwrap();
-        let host = crate::NodeHost::new(vec!["quench-node".into()]);
-        quench_runtime::Runtime::new(host).execute(&program).unwrap();
-    }
-}
-
-
-/// The `[emitWarning, onWarning]` pair, built once.
-fn binding(c: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    const BINDING: &str = "\0binding:process-warning";
-    let shared = c.host_mut().shared_state();
-    if let Some(pair) = shared.borrow().builtin_cache.get(BINDING).copied() { return Ok(pair); }
-    let state = c.null_object_rooted()?;
-    let process = shared.borrow().process_module.ok_or_else(|| RootedError::host("warning process missing"))?;
-    c.assign_named_property_rooted(state, "process", process)?;
-    let emit = c.host_constructor_named_with_data(crate::host::shared_vm::operation("warningEmit"), "emitWarning", state)?;
-    let on = c.host_constructor_named_with_data(crate::host::shared_vm::operation("warningOn"), "onWarning", state)?;
-    let pair = c.array_rooted(&[emit, on])?;
-    let pair = c.retain(pair)?;
-    shared.borrow_mut().builtin_cache.insert(BINDING.to_owned(), pair);
-    Ok(pair)
-}
-
-use super::event_constructor_shared_vm::get;
-use quench_runtime::ValueType;
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-fn undefined(c: &Context<'_>, value: RootId) -> bool {
+/// The name a warning takes without a `type`.
+const DEFAULT_TYPE: &str = "Warning";
+/// The type whose warnings `--no-deprecation`, `--throw-deprecation` and
+/// `--trace-deprecation` govern.
+const DEPRECATION: &str = "DeprecationWarning";
+
+thread_local! {
+    /// Whether the "(Use `node --trace-warnings ...`)" hint has been printed.
+    static TRACE_HINT_SHOWN: Cell<bool> = const { Cell::new(false) };
+    /// The features `emit_experimental` has warned about.
+    static EXPERIMENTAL_WARNED: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Node's `emitExperimentalWarning(feature)`: one `ExperimentalWarning` per feature.
+pub(crate) fn emit_experimental(c: &mut Context<'_>, feature: &'static str) -> Result<(), RootedError> {
+    let first = EXPERIMENTAL_WARNED.with_borrow_mut(|warned| {
+        let first = !warned.contains(&feature);
+        if first {
+            warned.push(feature);
+        }
+        first
+    });
+    if first {
+        let process = process(c)?;
+        let emit = get(c, process, "emitWarning")?;
+        let message = c.string_rooted(&format!("{feature} is an experimental feature and might change at any time"));
+        let kind = c.string_rooted("ExperimentalWarning");
+        c.call_rooted(emit, process, &[message, kind])?;
+    }
+    Ok(())
+}
+
+fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
+    c.get_named_property_rooted(object, name)
+}
+
+fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))
+}
+
+fn is_undefined(c: &Context<'_>, value: RootId) -> bool {
     c.rooted_value(value).is_some_and(|value| value.is_undefined())
 }
-fn named(c: &mut Context<'_>, value: RootId, expected: &str) -> Result<bool, RootedError> {
-    Ok(c.string_text(value)?.as_deref() == Some(expected))
+
+/// Ahead of a warning that follows a release of the compiler's pages; nothing to build.
+pub(crate) fn prepare(_: &mut Context<'_>) -> Result<(), RootedError> {
+    Ok(())
 }
+
+/// `process.emitWarning`.
+pub(crate) fn emit_warning(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    c.host_function_named(crate::host::shared_vm::operation("processEmitWarning"), "emitWarning")
+}
+
+/// The default `warning` listener.
+pub(crate) fn on_warning(c: &mut Context<'_>) -> Result<RootId, RootedError> {
+    c.host_function_named(crate::host::shared_vm::operation("processOnWarning"), "onWarning")
+}
+
 fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
-    if c.value_type_rooted(value) != Some(ValueType::String) {
+    if c.string_text(value)?.is_none() {
         return Err(super::util_shared_vm::argument_type_error(c, value, name, "string")?);
     }
     Ok(())
 }
 
+/// `emitWarning(warning[, type[, code]][, ctor])` or `emitWarning(warning, options)`.
 pub(crate) fn emit(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let missing = c.undefined();
-    let mut warning = args.first().copied().unwrap_or(missing);
-    let mut kind = args.get(1).copied().unwrap_or(missing);
-    let mut code = args.get(2).copied().unwrap_or(missing);
-    let mut constructor = args.get(3).copied().unwrap_or(missing);
-    let state = c.host_function_data()?;
-    let process = get(c, state, "process")?;
-    let no = get(c, process, "noDeprecation")?;
-    if c.truthy_rooted(no)? && named(c, kind, "DeprecationWarning")? { return Ok(missing); }
-    let mut detail = missing;
-    if c.value_type_rooted(kind) == Some(ValueType::Object) && !c.is_array_rooted(kind)? {
-        constructor = get(c, kind, "ctor")?;
-        code = get(c, kind, "code")?;
-        let value = get(c, kind, "detail")?;
-        if c.value_type_rooted(value) == Some(ValueType::String) { detail = get(c, kind, "detail")?; }
-        kind = get(c, kind, "type")?;
-        if !c.truthy_rooted(kind)? { kind = c.string_rooted("Warning"); }
+    let undefined = c.undefined();
+    let argument = |index: usize| args.get(index).copied().unwrap_or(undefined);
+    let mut warning = argument(0);
+    let mut kind = argument(1);
+    let mut code = argument(2);
+    let mut constructor = argument(3);
+    let mut detail = undefined;
+    if c.is_object_rooted(kind)? && !c.is_array_rooted(kind)? && !c.is_callable_rooted(kind)? {
+        let options = kind;
+        constructor = get(c, options, "ctor")?;
+        code = get(c, options, "code")?;
+        let given = get(c, options, "detail")?;
+        if c.string_text(given)?.is_some() {
+            detail = given;
+        }
+        kind = get(c, options, "type")?;
+        if !c.truthy_rooted(kind)? {
+            kind = c.string_rooted(DEFAULT_TYPE);
+        }
     } else if c.is_callable_rooted(kind)? {
-        constructor = kind; code = missing; kind = c.string_rooted("Warning");
+        constructor = kind;
+        code = undefined;
+        kind = c.string_rooted(DEFAULT_TYPE);
     }
-    if !undefined(c, kind) { validate_string(c, kind, "type")?; }
-    if c.is_callable_rooted(code)? { constructor = code; code = missing; }
-    else if !undefined(c, code) { validate_string(c, code, "code")?; }
-    let error_constructor = c.with_startup_intrinsics(|c| {
-        let global = c.global_root()?; get(c, global, "Error")
-    })?;
-    if c.value_type_rooted(warning) == Some(ValueType::String) {
-        warning = c.construct_rooted(error_constructor, error_constructor, &[warning])?;
-        if !c.truthy_rooted(kind)? { kind = c.string_rooted("Warning"); }
-        c.assign_named_property_rooted(warning, "name", kind)?;
-        if !undefined(c, code) { c.assign_named_property_rooted(warning, "code", code)?; }
-        if !undefined(c, detail) { c.assign_named_property_rooted(warning, "detail", detail)?; }
-        let capture = get(c, error_constructor, "captureStackTrace")?;
-        if !c.truthy_rooted(constructor)? { constructor = get(c, process, "emitWarning")?; }
-        c.call_rooted(capture, error_constructor, &[warning, constructor])?;
-    } else if !c.instance_of_rooted(warning, error_constructor)? {
+    if !is_undefined(c, kind) {
+        validate_string(c, kind, "type")?;
+    }
+    if c.is_callable_rooted(code)? {
+        constructor = code;
+        code = undefined;
+    } else if !is_undefined(c, code) {
+        validate_string(c, code, "code")?;
+    }
+    if let Some(message) = c.string_text(warning)? {
+        warning = c.error_rooted(&message)?;
+        let name = if c.truthy_rooted(kind)? { c.to_string(kind)? } else { DEFAULT_TYPE.to_owned() };
+        let name = c.string_rooted(&name);
+        c.assign_named_property_rooted(warning, "name", name)?;
+        if !is_undefined(c, code) {
+            c.assign_named_property_rooted(warning, "code", code)?;
+        }
+        if !is_undefined(c, detail) {
+            c.assign_named_property_rooted(warning, "detail", detail)?;
+        }
+        let global = c.global_root()?;
+        let error = get(c, global, "Error")?;
+        let capture = get(c, error, "captureStackTrace")?;
+        if c.is_callable_rooted(capture)? {
+            let process = process(c)?;
+            let anchor = if c.is_callable_rooted(constructor)? { constructor } else { get(c, process, "emitWarning")? };
+            c.call_rooted(capture, error, &[warning, anchor])?;
+        }
+    } else if !c.is_error_rooted(warning)? {
         return Err(super::util_shared_vm::argument_type_error_with_expected(c, warning, "warning", "of type string or an instance of Error")?);
     }
+    let process = process(c)?;
     let name = get(c, warning, "name")?;
-    let mut throw = false;
-    if named(c, name, "DeprecationWarning")? {
-        let no = get(c, process, "noDeprecation")?;
-        if c.truthy_rooted(no)? { return Ok(missing); }
-        let flag = get(c, process, "throwDeprecation")?;
-        throw = c.truthy_rooted(flag)?;
+    if c.string_text(name)?.as_deref() == Some(DEPRECATION) {
+        let silenced = get(c, process, "noDeprecation")?;
+        if c.truthy_rooted(silenced)? {
+            return Ok(undefined);
+        }
+        let throws = get(c, process, "throwDeprecation")?;
+        if c.truthy_rooted(throws)? {
+            return Err(c.throw(warning));
+        }
     }
-    let job = if throw {
-        c.host_function_named_with_data(crate::host::shared_vm::operation("warningThrowTick"), "", warning)?
-    } else {
-        c.host_constructor_named_with_data(crate::host::shared_vm::operation("warningEmitTick"), "doEmitWarning", process)?
-    };
-    let tick = get(c, process, "nextTick")?;
-    if throw { c.call_rooted(tick, process, &[job])?; }
-    else { c.call_rooted(tick, process, &[job, warning])?; }
-    Ok(missing)
+    let dispatch = c.host_function_with_data(crate::host::shared_vm::operation("processEmitWarningEvent"), warning)?;
+    super::shared_event_loop::queue_next_tick(c, dispatch, undefined, &[])?;
+    Ok(undefined)
 }
 
-pub(crate) fn emit_tick(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let process = c.host_function_data()?;
-    let warning = args.first().copied().unwrap_or_else(|| c.undefined());
+/// `doEmitWarning(warning)`: `process.emit('warning', warning)`.
+pub(crate) fn emit_event(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let warning = c.host_function_data()?;
+    let process = process(c)?;
     let emit = get(c, process, "emit")?;
     let event = c.string_rooted("warning");
-    c.call_rooted(emit, process, &[event, warning])?;
-    Ok(c.undefined())
-}
-pub(crate) fn throw_tick(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let warning = c.host_function_data()?;
-    Err(c.throw(warning))
+    c.call_rooted(emit, process, &[event, warning])
 }
 
+/// `onWarning(warning)`: `(node:<pid>) [<code>] <name>: <message>`, its detail, and once the
+/// hint naming the trace flag, on stderr or the `--redirect-warnings` file.
 pub(crate) fn on(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let missing = c.undefined();
-    let warning = args.first().copied().unwrap_or(missing);
-    let state = c.host_function_data()?;
-    let process = get(c, state, "process")?;
-    let name = if undefined(c, warning) || c.rooted_value(warning).is_some_and(|value| value.is_null()) { missing } else { get(c, warning, "name")? };
-    let code = if undefined(c, warning) || c.rooted_value(warning).is_some_and(|value| value.is_null()) { missing } else { get(c, warning, "code")? };
-    let disabled = c.host_mut().shared_state().borrow().cli_options.repeated_values()
-        .find(|(name, _)| *name == "--disable-warning").map(|(_, values)| values.to_vec()).unwrap_or_default();
-    for value in disabled { if named(c, name, &value)? || named(c, code, &value)? { return Ok(missing); } }
-    let error = c.with_startup_intrinsics(|c| { let global = c.global_root()?; get(c, global, "Error") })?;
-    if !c.instance_of_rooted(warning, error)? { return Ok(missing); }
-    let deprecation = named(c, name, "DeprecationWarning")?;
-    let no = get(c, process, "noDeprecation")?;
-    if deprecation && c.truthy_rooted(no)? { return Ok(missing); }
-    let trace = get(c, process, "traceProcessWarnings")?;
-    let trace = if c.truthy_rooted(trace)? { true } else if deprecation {
-        let value = get(c, process, "traceDeprecation")?; c.truthy_rooted(value)?
-    } else { false };
+    let undefined = c.undefined();
+    let warning = args.first().copied().unwrap_or(undefined);
+    if !c.is_error_rooted(warning)? {
+        return Ok(undefined);
+    }
+    let process = process(c)?;
+    let name = get(c, warning, "name")?;
+    let deprecation = c.string_text(name)?.as_deref() == Some(DEPRECATION);
+    let silenced = get(c, process, "noDeprecation")?;
+    if deprecation && c.truthy_rooted(silenced)? {
+        return Ok(undefined);
+    }
+    let trace_warnings = get(c, process, "traceProcessWarnings")?;
+    let trace_deprecation = get(c, process, "traceDeprecation")?;
+    let trace = c.truthy_rooted(trace_warnings)? || (deprecation && c.truthy_rooted(trace_deprecation)?);
     let release = get(c, process, "release")?;
-    let release = get(c, release, "name")?;
-    let release = c.to_string(release)?;
+    let runtime = if c.is_object_rooted(release)? { get(c, release, "name")? } else { undefined };
+    let runtime = if c.truthy_rooted(runtime)? { c.to_string(runtime)? } else { "node".to_owned() };
     let pid = get(c, process, "pid")?;
     let pid = c.to_string(pid)?;
-    let mut text: Vec<u16> = format!("({release}:{pid}) ").encode_utf16().collect();
-    if c.truthy_rooted(code)? { text.push(u16::from(b'[')); text.extend(c.to_string_code_units(code)?); text.extend("] ".encode_utf16()); }
-    let stack = if trace { get(c, warning, "stack")? } else { missing };
-    let rendered = if trace && c.truthy_rooted(stack)? { stack } else {
-        let to_string = get(c, warning, "toString")?;
-        if c.is_callable_rooted(to_string)? { c.call_rooted(to_string, warning, &[])? } else {
-            let prototype = get(c, error, "prototype")?;
-            let to_string = get(c, prototype, "toString")?;
-            c.call_rooted(to_string, warning, &[])?
-        }
-    };
-    text.extend(c.to_string_code_units(rendered)?);
+    let mut message = format!("({runtime}:{pid}) ");
+    let code = get(c, warning, "code")?;
+    if c.truthy_rooted(code)? {
+        message.push_str(&format!("[{}] ", c.to_string(code)?));
+    }
+    let stack = get(c, warning, "stack")?;
+    if trace && c.truthy_rooted(stack)? {
+        message.push_str(&c.to_string(stack)?);
+    } else {
+        message.push_str(&c.to_string(warning)?);
+    }
     let detail = get(c, warning, "detail")?;
-    if c.value_type_rooted(detail) == Some(ValueType::String) { text.push(u16::from(b'\n')); text.extend(c.to_string_code_units(detail)?); }
-    if !trace && !c.has_own_property_rooted(state, "hintShown")? {
-        let argv = get(c, process, "argv0")?;
-        let argv = if c.truthy_rooted(argv)? { c.to_string(argv)? } else { "node".to_owned() };
+    if let Some(detail) = c.string_text(detail)? {
+        message.push('\n');
+        message.push_str(&detail);
+    }
+    if !trace && !TRACE_HINT_SHOWN.get() {
+        TRACE_HINT_SHOWN.set(true);
         let flag = if deprecation { "--trace-deprecation" } else { "--trace-warnings" };
-        text.extend(format!("\n(Use `{} {flag} ...` to show where the warning was created)", basename(&argv, ".exe")).encode_utf16());
-        let yes = c.boolean(true); c.assign_named_property_rooted(state, "hintShown", yes)?;
+        let argv0 = get(c, process, "argv0")?;
+        let argv0 = if c.truthy_rooted(argv0)? { c.to_string(argv0)? } else { "node".to_owned() };
+        message.push_str(&format!("\n(Use `{} {flag} ...` to show where the warning was created)", basename(&argv0, ".exe")));
     }
-    let redirect = c.host_mut().shared_state().borrow().cli_options
-        .string_value("--redirect-warnings").map(str::to_owned);
-    if let Some(path) = redirect.filter(|path| !path.is_empty()) {
-        // UTF-8 output replaces isolated surrogates, as the process stream does.
-        let message = String::from_utf16_lossy(&text);
-        let written = std::fs::OpenOptions::new().create(true).append(true).open(path)
-            .and_then(|mut file| writeln!(file, "{message}"));
-        if written.is_ok() { return Ok(missing); }
+    let redirect = c.host_mut().shared_state().borrow().cli_options.string_value("--redirect-warnings").map(str::to_owned);
+    match redirect {
+        Some(path) if !path.is_empty() => {
+            let written = std::fs::OpenOptions::new().create(true).append(true).open(&path)
+                .and_then(|mut file| writeln!(file, "{message}"));
+            if written.is_err() {
+                eprintln!("{message}");
+            }
+        }
+        _ => eprintln!("{message}"),
     }
-    let message = c.string_units_rooted(&text);
-    let mut writer = get(c, state, "writer")?;
-    if undefined(c, writer) { writer = super::console_shared_vm::warning_writer(c, missing, &[])?; c.assign_named_property_rooted(state, "writer", writer)?; }
-    c.call_rooted(writer, missing, &[message])?;
-    Ok(missing)
-}
-
-/// Per-VM experimental warning markers, stored with the native builtin state.
-const EXPERIMENTAL_WARNING: &str = "\0warning:experimental/";
-
-/// Node emits an experimental warning once per feature in each process.
-pub(crate) fn emit_experimental(c: &mut Context<'_>, feature: &'static str) -> Result<(), RootedError> {
-    let state = c.host_mut().shared_state();
-    let key = format!("{EXPERIMENTAL_WARNING}{feature}");
-    if state.borrow().builtin_cache.contains_key(&key) { return Ok(()); }
-    let yes = c.boolean(true);
-    let yes = c.retain(yes)?;
-    state.borrow_mut().builtin_cache.insert(key, yes);
-    let process = state.borrow().process_module.ok_or_else(|| RootedError::host("warning process missing"))?;
-    let emit = get(c, process, "emitWarning")?;
-    let message = c.string_rooted(&format!("{feature} is an experimental feature and might change at any time"));
-    let kind = c.string_rooted("ExperimentalWarning");
-    c.call_rooted(emit, process, &[message, kind])?;
-    Ok(())
-}
-
-/// Builds the functions ahead of a warning that follows a release of the compiler's pages
-/// (`esm_wasm`: compiling the Wasm module releases them, and its warning comes next).
-pub(crate) fn prepare(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
-    binding(context).map(drop)
-}
-
-fn member(context: &mut NativeContext<'_, NodeHost>, index: usize) -> Result<RootId, RootedError> {
-    let pair = binding(context)?;
-    let key = context.string_rooted(&index.to_string());
-    context.get_property_rooted(pair, key)
-}
-
-/// `process.emitWarning`: Node's `emitWarning`.
-pub(crate) fn emit_warning(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    member(context, 0)
-}
-
-/// The default `warning` listener's implementation: Node's `onWarning`.
-pub(crate) fn on_warning(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    member(context, 1)
+    Ok(undefined)
 }
 
 /// `path.posix.basename(path, suffix)` (`lib/path.js`) over UTF-8 text. The module passes

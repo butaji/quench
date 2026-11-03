@@ -920,7 +920,7 @@ fn define_lazy_property(
 }
 
 /// `property` on `target` reads export `export` of library module `id` on first access.
-pub(crate) fn define_lazy_export(
+fn define_lazy_export(
     context: &mut NativeContext<'_, NodeHost>, target: RootId, id: RootId, property: RootId, export: RootId, enumerable: bool,
 ) -> Result<(), RootedError> {
     let name = context.to_string(property)?;

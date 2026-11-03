@@ -648,6 +648,15 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             return Ok(ExitCode::from(9));
         }
     }
+    if let Some(signal) = cli_option_value(&args, "--watch-kill-signal") {
+        if !crate::modules::process_signals_state::SIGNALS
+            .iter()
+            .any(|(name, _)| *name == signal)
+        {
+            eprintln!("TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {signal}");
+            return Ok(ExitCode::FAILURE);
+        }
+    }
     if let Some(status) = validate_permission_cli_args(&args) {
         return Ok(status);
     }
@@ -694,15 +703,12 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     // the parse goal for `-e`/stdin even though it is not present in the
     // executable's argument vector (for example `NODE_OPTIONS=--input-type=module
     // quench-node -e 'console.log(await "B")'`).
-    let environment_options = std::env::var("NODE_OPTIONS")
+    let mut input_type_module = std::env::var("NODE_OPTIONS")
         .ok()
         .and_then(|node_options| {
             crate::modules::cli_options::CliOptions::parse(Some(&node_options), &[], false).ok()
-        });
-    let mut input_type_module = environment_options.as_ref()
+        })
         .is_some_and(|options| options.string_value("--input-type") == Some("module"));
-    let mut watch_mode = environment_options.as_ref().is_some_and(|options| options.enabled("--watch"));
-    let mut watch_signal = environment_options.as_ref().and_then(|options| options.string_value("--watch-kill-signal"));
     let mut test_mode = false;
     let mut interactive = false;
     let mut input = None;
@@ -713,13 +719,6 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
-        let (option, value) = args[index].split_once('=').map_or((args[index].as_str(), None), |(name, value)| (name, Some(value)));
-        match option {
-            "--watch" | "--watch-path" => watch_mode = true,
-            "--no-watch" => watch_mode = false,
-            "--watch-kill-signal" if value.is_some() => watch_signal = value,
-            _ => {}
-        }
         match args[index].as_str() {
             "--jit" => jit = true,
             option if option.split_once('=').is_some_and(|(name, _)| name == MEMORY_POLICY_FLAG) => {
@@ -782,10 +781,10 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             option if crate::modules::cli_options::takes_string_value(option) => {
                 let option = args[index].clone();
                 index += 1;
-                let Some(value) = args.get(index).filter(|value| !value.starts_with('-')).cloned() else {
-                    return Ok(cli_usage_error(&format!("{option} requires an argument")));
-                };
-                if option == "--watch-kill-signal" { watch_signal = Some(args[index].as_str()); }
+                let value = args
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| format!("{option} requires an argument"))?;
                 exec_argv.extend([option, value]);
             }
             "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
@@ -915,13 +914,6 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             }
         }
         index += 1;
-    }
-    // Node validates this option when entering watch mode, not during ordinary
-    // script execution. Use only parsed host options, never guest arguments.
-    if let Some(signal) = watch_signal.filter(|signal| watch_mode
-        && !crate::modules::os_binding_shared_vm::SIGNAL_CONSTANTS.iter().any(|(name, _)| name.eq_ignore_ascii_case(signal))) {
-        eprintln!("TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {signal}");
-        return Ok(ExitCode::FAILURE);
     }
     select_memory_policy(memory_policy.as_deref())?;
     if interactive && input_type_module {
@@ -1565,3 +1557,4 @@ fn read_cli_stdin() -> Result<String, String> {
         .map_err(|error| format!("read stdin: {error}"))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
+

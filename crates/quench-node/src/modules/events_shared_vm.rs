@@ -270,7 +270,11 @@ fn argument(context: &mut Context<'_>, args: &[RootId], index: usize) -> RootId 
 /// throws where `[[Set]]` refuses it.
 pub(crate) fn strict_assign(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (object, key, value) = (argument(context, args, 0), argument(context, args, 1), argument(context, args, 2));
-    context.assign_property_rooted(object, key, value)?;
+    if !context.set_property_rooted(object, key, value, object)? {
+        let name = context.to_string(key)?;
+        let error = context.type_error_rooted(&format!("Cannot assign to read only property '{name}' of object"))?;
+        return Err(context.throw(error));
+    }
     Ok(context.undefined())
 }
 
@@ -278,7 +282,11 @@ pub(crate) fn strict_assign(context: &mut Context<'_>, _: RootId, args: &[RootId
 /// `[[Delete]]` refuses it.
 pub(crate) fn strict_delete(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let (object, key) = (argument(context, args, 0), argument(context, args, 1));
-    context.delete_property_strict_rooted(object, key)?;
+    if !context.delete_property_rooted(object, key)? {
+        let name = context.to_string(key)?;
+        let error = context.type_error_rooted(&format!("Cannot delete property '{name}' of object"))?;
+        return Err(context.throw(error));
+    }
     Ok(context.undefined())
 }
 

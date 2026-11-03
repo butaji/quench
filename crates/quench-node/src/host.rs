@@ -13,3 +13,4 @@ pub(crate) use node_host::SharedNodeState;
 pub use node_host::{NodeHost, NodeOutputSink};
 #[cfg(feature = "native-execution")]
 pub use node_host::NativeProgramResolver;
+

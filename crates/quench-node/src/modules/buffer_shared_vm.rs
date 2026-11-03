@@ -60,7 +60,7 @@ fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, Rooted
     c.get_named_property_rooted(object, name)
 }
 
-/// The native module and host-created views share the canonical Buffer class.
+/// The `buffer` module (`buffer_module`), over the canonical `Buffer`.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let buffer = fast_buffer_class(c)?;
     super::buffer_module::exports(c, buffer)
@@ -71,18 +71,54 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// built on the first read of either, not at start-up; the getter then holds the constructor
 /// that read loaded, as Node's holds the one its bootstrap loaded.
 pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
-    let load = c.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
-    super::lazy_binding_shared_vm::install(c, "Buffer", load, false, ["get", "set"])?;
     let global = c.global_root()?;
-    let yes = c.boolean(true);
+    // `Buffer`'s accessor pair shares one slot: unbound, the getter builds the class; a set
+    // replaces it.
+    let slot = c.null_object_rooted()?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("bufferGlobalGet"), "get", slot)?;
+    let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("bufferGlobalSet"), "set", slot)?;
     let no = c.boolean(false);
-    let alias = c.null_object_rooted()?;
-    c.assign_named_property_rooted(alias, "get", load)?;
-    c.assign_named_property_rooted(alias, "configurable", yes)?;
-    c.assign_named_property_rooted(alias, "enumerable", no)?;
+    let yes = c.boolean(true);
+    let descriptor = c.null_object_rooted()?;
+    c.assign_named_property_rooted(descriptor, "get", getter)?;
+    c.assign_named_property_rooted(descriptor, "set", setter)?;
+    c.assign_named_property_rooted(descriptor, "enumerable", no)?;
+    c.assign_named_property_rooted(descriptor, "configurable", yes)?;
+    let key = c.string_rooted("Buffer");
+    c.define_property_descriptor_rooted(global, key, descriptor)?;
+    let load = c.host_function_named(crate::host::shared_vm::operation("bufferConstructor"), "get")?;
+    let descriptor = c.null_object_rooted()?;
+    c.assign_named_property_rooted(descriptor, "get", load)?;
+    c.assign_named_property_rooted(descriptor, "enumerable", no)?;
+    c.assign_named_property_rooted(descriptor, "configurable", yes)?;
     let key = c.string_rooted("NodeBuffer");
-    c.define_property_descriptor_rooted(global, key, alias)?;
+    c.define_property_descriptor_rooted(global, key, descriptor)?;
     Ok(())
+}
+
+/// The slot key behind the global `Buffer` accessor.
+const GLOBAL_BUFFER_SLOT: &str = "value";
+
+/// `globalThis.Buffer`'s getter.
+pub(crate) fn global_get(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = c.host_function_data()?;
+    if c.has_own_property_rooted(slot, GLOBAL_BUFFER_SLOT)? {
+        return get(c, slot, GLOBAL_BUFFER_SLOT);
+    }
+    let buffer = fast_buffer_class(c)?;
+    c.assign_named_property_rooted(slot, GLOBAL_BUFFER_SLOT, buffer)?;
+    Ok(buffer)
+}
+
+/// `globalThis.Buffer`'s setter.
+pub(crate) fn global_set(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let slot = c.host_function_data()?;
+    let value = match args.first() {
+        Some(value) => *value,
+        None => c.undefined(),
+    };
+    c.assign_named_property_rooted(slot, GLOBAL_BUFFER_SLOT, value)?;
+    Ok(c.undefined())
 }
 
 /// The canonical FastBuffer class, made on first use by the host or by `internal/buffer.js`

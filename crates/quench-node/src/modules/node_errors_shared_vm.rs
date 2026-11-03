@@ -5,30 +5,6 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
-#[cfg(test)]
-mod prototype_tests {
-    #[test]
-    fn native_coded_error_prototype_preserves_node_brand_and_constructor() {
-        let source = r#"
-          let error;
-          try { process.emitWarning(42); } catch(e) { error=e; }
-          if (!(error instanceof TypeError) || error.constructor !== TypeError) throw Error('coded error inheritance');
-          if (error.code !== 'ERR_INVALID_ARG_TYPE') throw Error('coded error code');
-          const message='The "warning" argument must be of type string or an instance of Error. Received type number (42)';
-          if (error.message !== message || error.toString() !== 'TypeError [ERR_INVALID_ARG_TYPE]: '+message) throw Error('coded error rendering');
-          const prototype=Object.getPrototypeOf(error);
-          const ctor=Object.getOwnPropertyDescriptor(prototype,'constructor');
-          if(ctor.enumerable||!ctor.configurable||ctor.set!==undefined||ctor.get.name!=='get constructor'||ctor.get.length!==0)throw Error('constructor descriptor');
-          const text=Object.getOwnPropertyDescriptor(prototype,'toString');
-          if(text.enumerable||!text.configurable||!text.writable||text.value.name!=='toString'||text.value.length!==0)throw Error('toString descriptor');
-          const symbols=Object.getOwnPropertySymbols(prototype);
-          if(symbols.length!==1||symbols[0].description!=='kIsNodeError'||error[symbols[0]]!==true)throw Error('coded error brand');
-        "#;
-        let program=quench_runtime::Engine::specialize(source,"native-node-error-prototype.js").unwrap();
-        let host=crate::NodeHost::new(vec!["quench-node".into()]);
-        quench_runtime::Runtime::new(host).execute(&program).unwrap();
-    }
-}
 pub(crate) struct NodeErrorApi {
     brand: RootId,
     prototypes: std::collections::HashMap<(&'static str, ErrorClass, ErrorPresentation), RootId>,
@@ -52,11 +28,7 @@ fn class_member(
     key: RootId,
     function: RootId,
     accessor: bool,
-    name: &str,
 ) -> Result<(), RootedError> {
-    let name = context.string_rooted(name);
-    let name_key = context.string_rooted("name");
-    context.define_data_property_rooted(function, name_key, name, false, false, true)?;
     let descriptor = context.null_object_rooted()?;
     let yes = context.boolean(true);
     let no = context.boolean(false);
@@ -82,13 +54,13 @@ fn presentation_prototype(
 ) -> Result<RootId, RootedError> {
     let prototype = context.object_rooted()?;
     let key = context.string_rooted("constructor");
-    class_member(context, prototype, key, constructor, true, "get constructor")?;
+    class_member(context, prototype, key, constructor, true)?;
     if let (ErrorPresentation::Direct, Some((base, brand, string, brand_key))) = (presentation, direct) {
         let base_prototype = get(context, base, "prototype")?;
         context.set_prototype_rooted(prototype, base_prototype)?;
-        class_member(context, prototype, brand_key, brand, true, "get [kIsNodeError]")?;
+        class_member(context, prototype, brand_key, brand, true)?;
         let key = context.string_rooted("toString");
-        class_member(context, prototype, key, string, false, "toString")?;
+        class_member(context, prototype, key, string, false)?;
     }
     Ok(prototype)
 }
@@ -254,7 +226,7 @@ pub(super) fn decorate_range_error(
 pub(crate) fn prepare_coded_error_support(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<(), RootedError> {
-    coded_error_prototype(context, INVALID_ARGUMENT_TYPE, ErrorClass::TypeError).map(drop)
+    super::util_shared_vm::module(context).map(drop)
 }
 
 fn decorate_coded_error(

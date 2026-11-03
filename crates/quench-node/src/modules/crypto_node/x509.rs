@@ -508,3 +508,4 @@ pub(crate) fn spkac_challenge(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
         None => Ok(c.string_rooted("")),
     }
 }
+

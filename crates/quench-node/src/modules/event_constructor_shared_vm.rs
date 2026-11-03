@@ -10,6 +10,8 @@ pub(crate) fn get(
 ) -> Result<RootId, RootedError> {
     context.get_named_property_rooted(object, name)
 }
+/// Strict-mode `object[key] = value`, the assignment the event configuration's guest
+/// `assign` operation performs.
 fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
     context
         .rooted_value(value)
@@ -65,10 +67,6 @@ fn validate_boolean(
     )?)
 }
 
-pub(crate) fn bootstrap(context: &mut NativeContext<'_, NodeHost>, data: RootId) -> Result<(), RootedError> {
-    super::event_emitter_shared_vm::install_class(context, data).map(drop)
-}
-
 pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let data = context
         .host_mut()
@@ -105,50 +103,16 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<(), R
     Ok(())
 }
 
-pub(crate) fn construct(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let constructor = get(context, data, "emitterCtor")?;
-    let initialize = get(context, constructor, "init")?;
-    let undefined = context.undefined();
-    context.call_rooted(initialize, receiver, &[args.first().copied().unwrap_or(undefined)])?;
-    Ok(undefined)
-}
-
-pub(crate) fn init(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    let data = context.host_function_data()?;
-    let events = get(context, receiver, "_events")?;
-    let undefined = context.undefined();
-    let reset = if context.strict_equal_rooted(events, undefined)? { true } else {
-        let events = get(context, receiver, "_events")?;
-        let prototype = context.prototype_rooted(receiver)?;
-        let inherited = get(context, prototype, "_events")?;
-        context.strict_equal_rooted(events, inherited)?
-    };
-    if reset {
-        let events = context.null_object_rooted()?;
-        context.assign_named_property_rooted(receiver, "_events", events)?;
-        let zero = context.number(0.0);
-        context.assign_named_property_rooted(receiver, "_eventsCount", zero)?;
-    }
-    let shape_key = get(context, data, "shapeKey")?;
-    let reused = context.boolean(!reset);
-    context.assign_property_rooted(receiver, shape_key, reused)?;
-    let maximum = get(context, receiver, "_maxListeners")?;
-    if !context.truthy_rooted(maximum)? {
-        context.assign_named_property_rooted(receiver, "_maxListeners", undefined)?;
-    }
-    let options = args.first().copied().unwrap_or(undefined);
-    let capture = if nullish(context, options) { undefined } else { get(context, options, "captureRejections")? };
-    let capture = if context.truthy_rooted(capture)? {
-        let value = get(context, options, "captureRejections")?;
-        validate_boolean(context, value, "options.captureRejections")?;
-        let value = get(context, options, "captureRejections")?;
-        let enabled = context.truthy_rooted(value)?;
-        context.boolean(enabled)
-    } else { capture_default(context, data)? };
-    let key = get(context, data, "captureKey")?;
-    context.assign_property_rooted(receiver, key, capture)?;
-    Ok(undefined)
+/// The `options.captureRejections` check of `EventEmitter.init`: a non-boolean throws Node's
+/// argument type error.
+pub(crate) fn validate_capture_rejections(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    validate_boolean(context, value, "options.captureRejections")?;
+    Ok(context.undefined())
 }
 
 pub(crate) fn default_get(

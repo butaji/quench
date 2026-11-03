@@ -444,12 +444,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
             pc = self.unit.markers[frame];
         }
         self.canonicalize(state, pc);
-        let block = match self.exits[pc as usize] {
+        let block = match self.exits[pc] {
             Some(block) => block,
             None => {
                 let block = self.builder.create_block();
                 self.builder.set_cold_block(block);
-                self.exits[pc as usize] = Some(block);
+                self.exits[pc] = Some(block);
                 block
             }
         };
