@@ -772,6 +772,43 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn native_loop_calls_return_their_integer_state_with_a_captured_constant() {
+        let body = r#"
+            const feedback = 0xD008;
+            function state(n, seed) {
+                n |= 0; let x = seed | 0;
+                for (let i = 0; i < n; i = (i + 1) | 0) {
+                    if ((x & 1) === 0) x = x >> 1;
+                    else x = (x >> 1) ^ feedback;
+                }
+                return x | 0;
+            }
+            for (let warm = 0; warm < 64; warm++) state(1, warm);
+            const args = ['-1', '0', '123456789', '1', '17'];
+            print(state(Number(args[0]), Number(args[1])));
+            print(state(Number(args[1]), Number(args[2])));
+            print(state(Number(args[3]), Number(args[2])));
+            print(state(Number(args[4]), Number(args[2])));
+        "#;
+        let method = format!("const sink = {{ log: print }}; {}", body.replace("print(state(", "sink.log(state("));
+        for source in [body.to_owned(), format!("(function () {{ {body} }})();"), format!("(function () {{ {method} }})();")] {
+            let program = Engine::specialize(&source, "native-loop-result.js").unwrap();
+            let mut expected = Runtime::new(crate::test_host::TestHost::default());
+            expected.set_execution_mode(crate::ExecutionMode::Interpreted);
+            expected.execute(&program).unwrap();
+            let expected = expected.host_mut().lines().to_vec();
+            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let mut builder = Runtime::new(crate::test_host::TestHost::default());
+            let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
+            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+            runtime.execute_native_from_snapshot(Rc::new(bytes), &native, |_, _| Ok(())).unwrap();
+            assert_eq!(runtime.host_mut().lines().to_vec(), expected, "{source}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn native_bootstrap_preserves_static_namespace_and_retains_code_for_jobs() {
         let program = Engine::specialize(r#"
             function fold(n, x) { for (let i = 0; i < n; i++) x = (x ^ (x << 3)) | 0; return x; }
