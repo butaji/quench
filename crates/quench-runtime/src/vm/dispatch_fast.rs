@@ -4664,8 +4664,12 @@ script_handler! {
             None
         };
         let Some(value) = value else {
+            #[cfg(feature = "profile-lane-exits")]
+            super::lane_exits::capture(super::lane_exits::CaptureEvent::LaneMiss);
             sibling!(lane_load_outer_capture_walk::<H>, r, ip, view)
         };
+        #[cfg(feature = "profile-lane-exits")]
+        super::lane_exits::capture(super::lane_exits::CaptureEvent::LaneHit);
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
