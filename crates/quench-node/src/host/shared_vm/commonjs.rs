@@ -450,14 +450,12 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::crypto_node::install_global)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
-    // Builtins built after this point see the intrinsics as they are now, whatever a
-    // preload or the entry script does to them (`cached_builtin`).
-    context.seal_startup_intrinsics();
     // The SDK console reads its primordial snapshot. It loads on the first read of
     // `console`, inside the startup intrinsics, so it sees the original globals whatever a
     // preload or the entry script has done; most of a run that never logs never loads it.
     let initializer = context.host_function(crate::host::shared_vm::operation!("consoleGlobalInitialize"))?;
     context.define_lazy_data_properties_rooted(global, &["console"], false, initializer)?;
+    // Capture once, after the last intrinsic definition and before any preload or entry.
     context.seal_startup_intrinsics();
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_console_global");

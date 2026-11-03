@@ -587,7 +587,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Process([0; LaneHelper::COUNT]), &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -2115,6 +2115,13 @@ lane_helper_inventory! { H;
     GuardedCall => lane_guarded_call::<H>,
     FunctionBinding => lane_function_binding::<H>,
     MaterializeInline => lane_materialize_inline::<H>,
+    InterruptOwner => lane_interrupt_owner,
+}
+
+unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
+    // SAFETY: the running entry binds this owner for its whole native call.
+    let context = unsafe { &*(context as *const CallContext) };
+    u64::from(unsafe { context.interrupt_owner.as_ref() }.is_some_and(|owner| owner.exclusive_and_clear()))
 }
 
 /// Recovery is the first operation allowed to allocate a full callee frame.
@@ -2174,6 +2181,7 @@ thread_local! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
+    Numeric,
     Process([usize; LaneHelper::COUNT]),
     #[cfg(feature = "aot")]
     Linked(u32),
@@ -2181,12 +2189,16 @@ pub(super) enum LaneHelpers {
     Bound(ir::Value),
 }
 impl LaneHelpers {
-    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
+    fn address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
-            Self::Process(addresses) => builder.ins().iconst(types::I64, addresses[helper as usize] as i64),
+            Self::Numeric => match helper {
+                LaneHelper::InterruptOwner => builder.iconst(types::I64, lane_interrupt_owner as *const () as usize as i64),
+                _ => unreachable!("frameless Number regions have no VM helper capability"),
+            },
+            Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
             Self::Bound(table) => {
-                builder.ins().load(types::I64, invariant(), table,
+                builder.load(types::I64, invariant(), table,
                     (helper as usize * std::mem::size_of::<usize>()) as i32)
             },
             #[cfg(feature = "aot")]
@@ -4546,6 +4558,8 @@ pub(super) struct CallContext {
     /// replace a running program's constant allocation.
     js_constants: *const Value,
     js_constant_count: usize,
+    /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
+    interrupt_owner: *const crate::ExecutionInterrupt,
 }
 
 impl CallContext {
@@ -4592,6 +4606,7 @@ impl CallContext {
             adapter_payload: std::ptr::null_mut(),
             js_constants: std::ptr::null(),
             js_constant_count: 0,
+            interrupt_owner: std::ptr::null(),
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -4650,6 +4665,7 @@ impl CallContext {
             adapter_payload: std::ptr::null_mut(),
             js_constants: std::ptr::null(),
             js_constant_count: 0,
+            interrupt_owner: interrupt,
         }
     }
 
@@ -4702,6 +4718,7 @@ impl CallContext {
             adapter_payload: std::ptr::null_mut(),
             js_constants: self.js_constants,
             js_constant_count: self.js_constant_count,
+            interrupt_owner: self.interrupt_owner,
         }
     }
 }
@@ -7609,6 +7626,7 @@ impl<H: Host> Vm<H> {
             let context = &raw mut (*frame).context;
             (*context).adapter_payload = dispatch.cast();
             (*context).interrupt = self.execution_interrupt.atomic_flag() as *const _;
+            (*context).interrupt_owner = &self.execution_interrupt;
             context
         };
         let mut word = 0_u64;
@@ -7687,7 +7705,7 @@ impl<H: Host> Vm<H> {
         let binding = unsafe {
             let context = &(*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
-                context.adapter_payload, context.poll_start, context.poll_end)
+                context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
         let exit = self.run_lane_method(method, LaneStart::First, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above; the callee's run may have grown the scratch window.
@@ -7695,7 +7713,7 @@ impl<H: Host> Vm<H> {
             saved.install(&mut (*frame).dispatch);
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
-                context.adapter_payload, context.poll_start, context.poll_end) = binding;
+                context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner) = binding;
             (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
         }
         exit
@@ -7896,6 +7914,7 @@ fn run_js_native_entry<H: Host>(
         None => Box::new(CallContext::native_adapter(payload, interrupt, poll_page)),
     };
     context.vm = vm.cast();
+    context.interrupt_owner = unsafe { &(*vm).execution_interrupt };
     context.program = program;
     // Linked entries import their fixed semantic operations directly.
     if crate::DYNAMIC_EXECUTION_ENABLED {
@@ -9025,7 +9044,7 @@ impl CompiledJsFunction {
     pub(super) fn call(
         &self,
         arguments: &[f64],
-        interrupt: &std::sync::atomic::AtomicBool,
+        interrupt: &crate::ExecutionInterrupt,
         poll_page: Option<(usize, usize)>,
     ) -> Option<CompiledJsResult> {
         if self.is_general_dispatch() {
@@ -9053,7 +9072,7 @@ impl CompiledJsFunction {
         }
         self.call_through_shared_entry(JsNativeCallInput::Arguments {
             values: arguments,
-            interrupt,
+            interrupt: interrupt.atomic_flag(),
         }, poll_page)
     }
 
@@ -14138,18 +14157,19 @@ fn run_native_adapter(
 fn run_native_entry(
     entry: Entry,
     arguments: &[f64],
-    interrupt: &std::sync::atomic::AtomicBool,
+    interrupt: &crate::ExecutionInterrupt,
     poll_page: Option<(usize, usize)>,
     mode: NativeEntryMode,
 ) -> (u32, u64) {
     if mode == NativeEntryMode::Leaf {
         return run_leaf(std::ptr::null_mut(), arguments.as_ptr().cast::<u64>(), entry);
     }
-    let interrupt = poll_page.map_or_else(
-        || std::ptr::from_ref(interrupt),
+    let flag = poll_page.map_or_else(
+        || std::ptr::from_ref(interrupt.atomic_flag()),
         |(start, _)| start as *const std::sync::atomic::AtomicBool,
     );
-    let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt, poll_page);
+    let mut context = CallContext::native_adapter(std::ptr::null_mut(), flag, poll_page);
+    context.interrupt_owner = interrupt;
     let mut result = 0u64;
     // SAFETY: the scalar region is guarded before entry, reads only `arguments`, writes one
     // result word, and its common ABI does not inspect the adapter payload.
@@ -15529,7 +15549,7 @@ impl<H: Host> Vm<H> {
         } else {
             compiled.call(
                 &arguments,
-                self.execution_interrupt.atomic_flag(),
+                &self.execution_interrupt,
                 poll_page,
             )?
         };
@@ -16655,6 +16675,7 @@ impl<H: Host> Vm<H> {
                 adapter_payload: std::ptr::null_mut(),
                 js_constants: std::ptr::null(),
                 js_constant_count: 0,
+                interrupt_owner: std::ptr::null(),
             };
             let mut out = 0u64;
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
@@ -17151,7 +17172,7 @@ fn direct_call(
     let poll_page = (compiled.native_entry_mode() == NativeEntryMode::Resumable)
         .then(|| native_poll_page(interrupt))
         .flatten();
-    match compiled.call(&numeric_arguments, interrupt.atomic_flag(), poll_page)? {
+    match compiled.call(&numeric_arguments, interrupt, poll_page)? {
         CompiledJsResult::Number(value) => Some(CompiledJsCallResult::Value(value)),
         CompiledJsResult::Int32Identity { value, .. } => Some(CompiledJsCallResult::Value(Value::number(value))),
         CompiledJsResult::Boolean(value) => {
@@ -17826,6 +17847,42 @@ mod tests {
         vm.set_execution_mode(ExecutionMode::NativeOnly);
         let error = vm.execute_native_program(&native, true).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn typed_owner_export_after_private_warmup_keeps_native_termination() {
+        use std::{sync::mpsc, thread, time::Duration};
+        const WAIT: Duration = Duration::from_secs(10);
+        fn expose(c: &mut crate::NativeContext<'_, crate::test_host::TestHost>, _: crate::RootId,
+            _: &[crate::RootId]) -> Result<crate::RootId, crate::RootedError> {
+            let handle = c.execution_interrupt_handle();
+            c.host_mut().state::<mpsc::Sender<crate::ExecutionInterrupt>>().send(handle).unwrap();
+            Ok(c.undefined())
+        }
+        for linked in [false, true] {
+            let (send_handle, receive_handle) = mpsc::channel::<crate::ExecutionInterrupt>();
+            let (send_done, receive_done) = mpsc::channel();
+            let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
+                let program = crate::Engine::specialize(
+                    "function spin(n,x){n=n|0;x=x|0;for(let i=0;i<n;i=(i+1)|0){x=x^(x<<13);x=x^(x>>>17);x=x^(x<<5);}return x|0;}let result=0;for(let warm=0;warm<64;warm++)result^=spin(2000,warm);expose();result=spin(2147483647,result);",
+                    "late-interrupt-owner.js").unwrap();
+                let host = crate::test_host::TestHost::default()
+                    .with_natives(crate::host_functions![global "expose" (0) => expose])
+                    .with_state(Rc::new(send_handle));
+                let mut vm = Vm::new(host);
+                vm.set_execution_mode(if linked { ExecutionMode::NativeOnly } else { ExecutionMode::Compiled });
+                let result = if linked { vm.execute_native_program(&linked_optimized_test_program(program), true) }
+                    else { vm.execute(&program) };
+                assert!(result.unwrap_err().is_execution_terminated());
+                send_done.send(()).unwrap();
+            }).unwrap();
+            let handle = receive_handle.recv_timeout(WAIT).expect("warmup must reach the exporting callback");
+            thread::sleep(Duration::from_millis(20));
+            handle.request_termination();
+            receive_done.recv_timeout(WAIT).expect("previously private code must poll after authority escapes");
+            worker.join().unwrap();
+        }
     }
 
     #[cfg(feature = "aot")]
@@ -18514,7 +18571,7 @@ mod tests {
         let interrupt = crate::ExecutionInterrupt::default();
         assert!(direct_call(&compiled, &[], &interrupt).is_none());
         assert!(direct_call(&compiled, &[Value::number(17.0)], &interrupt).is_none());
-        assert!(compiled.call(&[17.0], interrupt.atomic_flag(), None).is_none());
+        assert!(compiled.call(&[17.0], &interrupt, None).is_none());
         assert!(matches!(direct_call(&compiled, &[Value::number(17.0), Value::number(0.0), Value::UNDEFINED], &interrupt),
             Some(CompiledJsCallResult::Value(value)) if value == Value::number(0.0)), "extra unused inputs are ignored");
         for value in [Value::UNDEFINED, Value::NULL, Value::TRUE] {
@@ -18548,6 +18605,16 @@ mod tests {
             assert!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt).is_none(),
                 "a ToInt32 beyond 2^63 declines exactly");
         }
+        let inputs = [Value::integer(257), Value::integer(123456789)];
+        let Some(CompiledJsCallResult::Value(expected)) = direct_call(&compiled, &inputs, &interrupt) else { panic!("private result") };
+        let shared = interrupt.clone();
+        assert!(matches!(direct_call(&compiled, &inputs, &interrupt), Some(CompiledJsCallResult::Value(value)) if value == expected));
+        drop(shared);
+        assert!(matches!(direct_call(&compiled, &inputs, &interrupt), Some(CompiledJsCallResult::Value(value)) if value == expected));
+        let replacement = crate::ExecutionInterrupt::default();
+        assert!(matches!(direct_call(&compiled, &inputs, &replacement), Some(CompiledJsCallResult::Value(value)) if value == expected));
+        replacement.request_termination();
+        assert!(direct_call(&compiled, &inputs, &replacement).is_none());
         let effectful = crate::Engine::specialize("function f(n,o){for(let i=0;i<n;i++)o.x++;return n;}", "numeric-effects.js").unwrap();
         assert!(compile_js_typed_numeric_region(&effectful, 1).is_none());
         let patterned = crate::Engine::specialize("function f({n}){let sum=0;for(let i=0;i<n;i++)sum++;return sum;}", "numeric-pattern.js").unwrap();
@@ -18594,7 +18661,7 @@ mod tests {
         let before = unsafe {
             let context = &(*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
-                context.adapter_payload, context.poll_start, context.poll_end)
+                context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
         let mut registers = vec![Value::number(7.0); usize::from(method.caller_registers)];
         let result = vm.run_nested_lane_method(&method, ProgramId::MAIN, &program,
@@ -18603,7 +18670,7 @@ mod tests {
         let after = unsafe {
             let context = &(*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
-                context.adapter_payload, context.poll_start, context.poll_end)
+                context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
         assert_eq!(before, after, "outer native recovery binding is borrowed, not replaced");
         unsafe { (*frame).context.entry_stack = original_landing; }
@@ -19762,6 +19829,7 @@ mod tests {
             adapter_payload: std::ptr::null_mut(),
             js_constants: std::ptr::null(),
             js_constant_count: 0,
+            interrupt_owner: std::ptr::null(),
         }
     }
 

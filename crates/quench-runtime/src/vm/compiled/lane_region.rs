@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::bytecode::FieldLayout;
-use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type, VerifiedFact};
+use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, ObjectHeader, ObjectRecord, PackedAccess};
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
@@ -172,6 +172,8 @@ struct Lowering<'a, 'f> {
     /// An entry-bound poll page, or the ordinary atomic termination flag.
     interrupt: ir::Value,
     fault_poll: bool,
+    reentry: Reentry,
+    polls: smallvec::SmallVec<[ir::Inst; 4]>,
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
@@ -877,6 +879,8 @@ pub(super) fn lower(
         fields,
         interrupt,
         fault_poll,
+        reentry: Reentry::Closed,
+        polls: smallvec::SmallVec::new(),
         direct,
         frame_captures,
         context,
@@ -1130,7 +1134,7 @@ pub(super) fn lower(
                 let function = lowering.builder.ins().iconst(types::I64, i64::from(inlined.target.function));
                 let call = lowering.builder.ins().iconst(types::I64, i64::from(inlined.call));
                 let source = lowering.builder.ins().iconst(types::I64, i64::from(record));
-                let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::MaterializeInline);
+                let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::MaterializeInline);
                 emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
                     &[lowering.payload, function, call, source, scratch]);
                 lowering.return_at(u64::from(JS_INLINE_MATERIALIZED_PC));
@@ -1166,14 +1170,59 @@ pub(super) fn lower(
     if !lowering.valid { return None; }
     let number_result = (completion == Completion::Number).then(|| lowering.finish_number_returns());
     let native_count = lowering.native;
+    let owner_proof = lowering.reentry == Reentry::Closed && fault_poll;
+    let polls = std::mem::take(&mut lowering.polls);
+    let helpers = lowering.helpers;
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
+    if owner_proof && !polls.is_empty() { specialize_interrupt_owner(&mut native, helpers, context, &polls, isa); }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result })
 }
 
 /// 2^63: below it in magnitude a double truncates to an int64 exactly, whose low 32 bits are its
 /// ToInt32 (ECMA-262 7.1.6).
 const TO_INT32_EXACT_BOUND: f64 = 9_223_372_036_854_775_808.0;
+
+/// Bind the current owner's proof once, after helper binding and before guest execution.
+/// The closed effect type prevents a callback from exporting an interrupt during this run.
+fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers, context: ir::Value,
+    polls: &[ir::Inst], isa: &dyn cranelift_codegen::isa::TargetIsa)
+{
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    let entry = function.layout.entry_block().expect("native entry");
+    let after = match helpers {
+        #[cfg(feature = "aot")]
+        LaneHelpers::Bound(table) => match function.dfg.value_def(table) {
+            ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
+        },
+        LaneHelpers::Numeric | LaneHelpers::Process(_) => None,
+        #[cfg(feature = "aot")]
+        LaneHelpers::Linked(_) => unreachable!("helpers bind before lowering"),
+    };
+    let mut cursor = FuncCursor::new(function);
+    if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
+    else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
+    let address = helpers.address(cursor.ins(), LaneHelper::InterruptOwner);
+    let mut signature = ir::Signature::new(isa.default_call_conv());
+    signature.params.push(ir::AbiParam::new(types::I64));
+    signature.returns.push(ir::AbiParam::new(types::I64));
+    let signature = cursor.func.import_signature(signature);
+    let call = cursor.ins().call_indirect(signature, address, &[context]);
+    let exclusive = cursor.func.dfg.inst_results(call)[0];
+    let mut gates = Vec::with_capacity(polls.len());
+    for &poll in polls {
+        let before = cursor.func.layout.inst_block(poll).expect("poll block");
+        let polled = cursor.func.dfg.make_block();
+        cursor.func.layout.split_block(polled, poll);
+        let next = cursor.func.layout.next_inst(poll).expect("poll continuation");
+        let resume = cursor.func.dfg.make_block();
+        cursor.func.layout.split_block(resume, next);
+        cursor.goto_bottom(before); let gate = cursor.ins().brif(exclusive, resume, &[], polled, &[]);
+        gates.push((gate, false));
+        cursor.goto_bottom(polled); cursor.ins().jump(resume, &[]);
+    }
+    cursor.func.effect_specializations.push(ir::function::EffectSpecialization { proof: call, gates });
+}
 
 impl Lowering<'_, '_> {
     /// A bitwise operand's ToInt32: an int32 as it is, a number by truncation modulo 2^32. A
@@ -1382,6 +1431,7 @@ impl Lowering<'_, '_> {
     /// The facts every run proves once at entry, before either start (`lower`'s loop entry).
     fn entry_facts(&mut self, instructions: &[WideInstruction], start: ir::Value, loop_entry: Option<usize>) -> Entry {
         let this_bits = match self.helpers {
+            LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Process(_) => emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver)),
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(_) => {
@@ -1658,7 +1708,7 @@ impl Lowering<'_, '_> {
                 let exit = self.guard_exit(state, pc32);
                 let callee = self.tagged(state, instruction.register_b());
                 let receiver = self.tagged(state, instruction.register_c());
-                let helper = self.helpers.address(&mut self.builder, LaneHelper::GuardedCall);
+                let helper = self.helpers.address(self.builder.ins(), LaneHelper::GuardedCall);
                 let program = self.builder.ins().load(types::I32, MemFlagsData::trusted(), self.payload,
                     std::mem::offset_of!(JsStepDispatch, program_id) as i32);
                 let program = self.builder.ins().uextend(types::I64, program);
@@ -1731,7 +1781,7 @@ impl Lowering<'_, '_> {
                 let value = self.tagged(state, instruction.register_a());
                 let base = self.tagged(state, instruction.register_b());
                 let key = self.tagged(state, instruction.register_c());
-                let helper = self.helpers.address(&mut self.builder, LaneHelper::IndexSet);
+                let helper = self.helpers.address(self.builder.ins(), LaneHelper::IndexSet);
                 let stored = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[base, key, value]);
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
                 emit_js_guard(&mut self.builder, hit, exit);
@@ -1902,7 +1952,7 @@ impl Lowering<'_, '_> {
             Some(callee) => {
                 let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
                 let slot = self.ins().iconst(types::I64, i64::from(slot));
-                let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionCapture);
+                let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionCapture);
                 let read = emit_lane_call(&mut self.builder, helper, &[vm, callee, slot]);
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, hit, exit);
@@ -2059,7 +2109,7 @@ impl Lowering<'_, '_> {
             std::mem::offset_of!(JsStepDispatch, program_id) as i32);
         let program = self.ins().uextend(types::I64, program);
         let function = self.ins().iconst(types::I64, i64::from(function));
-        let helper = self.helpers.address(&mut self.builder, LaneHelper::FunctionBinding);
+        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FunctionBinding);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[program, callee, function]);
         self.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0)
     }
@@ -2073,6 +2123,7 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
+        self.reentry = Reentry::Possible;
         let missed = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
         let caller_registers = self.unit.caller_registers;
@@ -2094,7 +2145,7 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(helper);
         let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
         let call_word = self.ins().iconst(types::I64, i64::from(call_pc));
-        let helper_address = self.helpers.address(&mut self.builder, LaneHelper::Call);
+        let helper_address = self.helpers.address(self.builder.ins(), LaneHelper::Call);
         let status = emit_lane_helper_call(&mut self.builder, self.payload, helper_address, &[context, call_word]);
         let other = self.builder.create_block();
         let left = self.builder.create_block();
@@ -2267,7 +2318,11 @@ impl Lowering<'_, '_> {
     fn interrupt_check(&mut self, state: &State, pc: u32) {
         let flag = self.interrupt;
         let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
-        if self.fault_poll { return; }
+        if self.fault_poll {
+            let ir::ValueDef::Result(inst, _) = self.builder.func.dfg.value_def(requested) else { unreachable!("poll instruction") };
+            self.polls.push(inst);
+            return;
+        }
         let exit = self.guard_exit(state, pc);
         let requested = self.ins().uextend(types::I32, requested);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
@@ -2664,7 +2719,7 @@ impl Lowering<'_, '_> {
 
     fn field_probe_unbound(&mut self, object: ir::Value, site: u16, exit: ir::Block) -> ir::Value {
         let site = self.ins().iconst(types::I64, i64::from(site));
-        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldGet);
+        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldGet);
         let value = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[object, site]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);
@@ -2853,7 +2908,7 @@ impl Lowering<'_, '_> {
     fn store_helper_unbound(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block) {
         let atom = self.ins().iconst(types::I64, i64::from(atom));
         let site = self.ins().iconst(types::I64, i64::from(site));
-        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldSet);
+        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldSet);
         let stored = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[object, atom, site, value]);
         let ok = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
         emit_js_guard(&mut self.builder, ok, exit);

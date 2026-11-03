@@ -145,6 +145,18 @@ impl FunctionParameters {
     }
 }
 
+/// A frontend-proved conditional effect region. Each gate may safely take its
+/// retained truth arm unconditionally. The query has no observable effects and
+/// may be removed when unused, but its result may depend on mutable state.
+#[derive(Clone, PartialEq, Hash)]
+#[cfg_attr(feature = "enable-serde", derive(serde_derive::Serialize, serde_derive::Deserialize))]
+pub struct EffectSpecialization {
+    /// Side-effect-free query; observing mutable state still prevents motion across effects.
+    pub proof: Inst,
+    /// Branches and the truth arm that may safely execute without the query.
+    pub gates: alloc::vec::Vec<(Inst, bool)>,
+}
+
 /// Function fields needed when compiling a function.
 ///
 /// Additionally, these fields can be the same for two functions that would be compiled the same
@@ -207,6 +219,9 @@ pub struct FunctionStencil {
     /// ensure that a trap happens if the stack pointer goes below the
     /// threshold specified here.
     pub stack_limit: Option<ir::GlobalValue>,
+    #[cfg_attr(feature = "enable-serde", serde(default))]
+    /// Frontend-proved effects to specialize, or retain when loop versioning is inapplicable.
+    pub effect_specializations: alloc::vec::Vec<EffectSpecialization>,
 }
 
 impl FunctionStencil {
@@ -220,6 +235,7 @@ impl FunctionStencil {
         self.srclocs.clear();
         self.debug_tags.clear();
         self.stack_limit = None;
+        self.effect_specializations.clear();
     }
 
     /// Create a `ReplaceBuilder` that will replace `inst` with a new
@@ -420,6 +436,7 @@ impl Function {
                 srclocs: SecondaryMap::new(),
                 stack_limit: None,
                 debug_tags: DebugTags::default(),
+                effect_specializations: alloc::vec::Vec::new(),
             },
             params: FunctionParameters::new(),
         }

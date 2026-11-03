@@ -380,6 +380,8 @@ fn inline_one(
     // cannot have tags).
     let call_debug_tags = func.debug_tags.get(call_inst).to_vec();
     func.debug_tags.set(call_inst, []);
+    let mut effect_instructions = (!callee.effect_specializations.is_empty())
+        .then(|| cranelift_entity::SecondaryMap::<ir::Inst, Option<ir::Inst>>::with_capacity(callee.dfg.num_insts()));
 
     // Translate each instruction from the callee into the caller,
     // appending them to their associated block in the caller.
@@ -414,6 +416,7 @@ fn inline_one(
             }
             let inlined_inst = func.dfg.make_inst(inlined_inst_data);
             func.layout.append_inst(inlined_inst, inlined_block);
+            if let Some(instructions) = &mut effect_instructions { instructions[callee_inst] = Some(inlined_inst); }
 
             // Copy over debug tags, translating referenced entities
             // as appropriate.
@@ -516,6 +519,15 @@ fn inline_one(
             );
 
             next_callee_inst = callee.layout.next_inst(callee_inst);
+        }
+    }
+
+    if let Some(instructions) = effect_instructions {
+        for effect in &callee.effect_specializations {
+            if let Some(proof) = instructions[effect.proof] {
+                let gates = effect.gates.iter().filter_map(|&(inst, truth)| instructions[inst].map(|inst| (inst, truth))).collect();
+                func.effect_specializations.push(ir::function::EffectSpecialization { proof, gates });
+            }
         }
     }
 
