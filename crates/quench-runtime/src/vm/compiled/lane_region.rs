@@ -869,9 +869,7 @@ pub(super) fn lower(
     let fault_poll = super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
         matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
             && instruction.jump_target() as usize <= pc);
-    let interrupt_offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) }
-        else { std::mem::offset_of!(CallContext, interrupt) };
-    let interrupt = builder.ins().load(types::I64, invariant(), context, interrupt_offset as i32);
+    let interrupt = super::native_interrupt_pointer(&mut builder, context, fault_poll);
     #[cfg(feature = "aot")]
     let helpers = if let LaneHelpers::Linked(symbol) = helpers {
         let signature = builder.import_signature(native_lane_helpers_signature(isa));

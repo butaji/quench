@@ -10986,20 +10986,29 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
     }
 }
 
+/// Bind the activation's stable interrupt capability. The pointer is invariant;
+/// the byte it addresses remains atomic and must be read at every safepoint.
+fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
+    let offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) as i32 }
+        else { CONTEXT_INTERRUPT };
+    builder.ins().load(types::I64, invariant(), context, offset)
+}
+
 /// The common native region core: builder, call context, interrupt check and its
 /// termination block. Frontends keep their own state representation and exit semantics.
 struct RegionCore<'b> {
     builder: FunctionBuilder<'b>,
     context: ir::Value,
     /// The VM's poll page when every entry runs through the fault-resuming trampoline.
-    poll: Option<i64>,
+    poll: Option<ir::Value>,
     /// Where a flag check that finds termination requested goes; the frontend fills it with
     /// the terminated status (`TERMINATED_STATUS`).
     termination_block: Option<ir::Block>,
 }
 
 impl<'b> RegionCore<'b> {
-    fn new(builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>) -> Self {
+    fn new(mut builder: FunctionBuilder<'b>, context: ir::Value, poll: Option<i64>) -> Self {
+        let poll = poll.map(|_| native_interrupt_pointer(&mut builder, context, true));
         Self {
             builder,
             context,
@@ -11015,10 +11024,8 @@ impl<'b> RegionCore<'b> {
     /// Read the call context's interrupt flag. A JS region uses the result to
     /// take its exact-PC callout; scalar regions use it for termination exits.
     fn interrupt_requested(&mut self) -> ir::Value {
-        let pointer = self
-            .builder
-            .ins()
-            .load(types::I64, invariant(), self.context, CONTEXT_INTERRUPT);
+        let context = self.context;
+        let pointer = native_interrupt_pointer(&mut self.builder, context, false);
         let requested = self
             .builder
             .ins()
@@ -11035,10 +11042,9 @@ impl<'b> RegionCore<'b> {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
             // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
-            let page = self.builder.ins().iconst(types::I64, poll);
             self.builder
                 .ins()
-                .atomic_load(types::I8, MemFlagsData::trusted(), page);
+                .atomic_load(types::I8, MemFlagsData::trusted(), poll);
             return;
         }
         let stop = self.interrupt_requested();
@@ -18884,6 +18890,42 @@ mod tests {
         handle.request_termination();
         finished.recv_timeout(TIMEOUT).expect("shared numeric JIT loop must observe live cancellation");
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn scalar_core_binds_poll_pointer_before_loop_but_keeps_atomic_reads() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let signature = native_entry_signature(isa.pointer_type(), isa.default_call_conv());
+        let mut native = ir::Function::with_name_signature(UserFuncName::testcase("bound_poll"), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut native, &mut context);
+        let entry = builder.create_block();
+        let header = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let activation = builder.block_params(entry)[0];
+        // The old address establishes fault-poll availability, not executable identity.
+        let interrupt = crate::ExecutionInterrupt::default();
+        let Some(address) = poll_address(&interrupt) else { return };
+        let mut core = RegionCore::new(builder, activation, Some(address));
+        core.ins().jump(header, &[]);
+        core.switch_to_block(header);
+        core.interrupt_safepoint();
+        core.interrupt_safepoint();
+        core.ins().jump(header, &[]);
+        core.seal_all_blocks();
+        core.into_builder().finalize(isa.frontend_config());
+        cranelift_codegen::verify_function(&native, &*isa).unwrap();
+        let owners: Vec<_> = native.layout.block_insts(entry).filter_map(|inst| {
+            matches!(native.dfg.insts[inst], ir::InstructionData::Load { arg, offset, .. }
+                if arg == activation && i32::from(offset) == std::mem::offset_of!(CallContext, poll_start) as i32)
+                .then(|| native.dfg.inst_results(inst)[0])
+        }).collect();
+        assert_eq!(owners.len(), 1, "bind the activation's pointer once before the loop");
+        let polls: Vec<_> = native.layout.block_insts(header).filter(|&inst|
+            native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad).collect();
+        assert_eq!(polls.len(), 2, "poll reads must remain separate observable operations");
+        for inst in polls { assert_eq!(native.dfg.inst_args(inst), &[owners[0]]); }
     }
 
     #[cfg(feature = "aot")]
