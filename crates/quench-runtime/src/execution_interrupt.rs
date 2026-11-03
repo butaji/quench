@@ -102,6 +102,11 @@ pub struct ExecutionInterrupt {
     state: Arc<State>,
 }
 impl ExecutionInterrupt {
+    /// With one owner, a non-reentrant region cannot gain an external requester.
+    /// The caller must end this proof before any host/guest callback can export a handle.
+    pub(crate) fn exclusive_and_clear(&self) -> bool {
+        Arc::strong_count(&self.state) == 1 && !self.is_termination_requested()
+    }
     /// Irreversibly terminate this execution owner. No guest error is thrown.
     pub fn request_termination(&self) {
         if self.state.requested.swap(true, Ordering::AcqRel) {
