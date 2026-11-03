@@ -470,10 +470,14 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
 /// this process's options, preloads and entry install.
 pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.scoped(crate::modules::process_shared_vm::initialize_warning_policy)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_warning_policy");
     context.scoped(crate::modules::report_configuration_shared_vm::initialize_signal)?;
     // IPC and cluster startup precede all user preloads and synchronous entry.
     context.scoped(crate::modules::child_process_ipc_shared_vm::activate_process)?;
     context.scoped(initialize_cluster_worker)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_process_channels");
     let interactive = context.host_mut().commonjs_entry.is_none()
         && context
             .host_mut()
@@ -491,6 +495,8 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
     // user preloads inspect globalThis. Node 26 also provides navigator by
     // default; retain the standard getter shape even when the engine lacks it.
     context.scoped(install_global_descriptors)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_global_descriptors");
     context.scoped(preload_modules)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");

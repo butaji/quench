@@ -2782,7 +2782,11 @@ impl quench_runtime::Host for NodeHost {
     fn resume(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
         crate::host::resident_pages::release_read_only_pages();
         context.scoped(crate::modules::process_shared_vm::refresh_identity)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_resume_identity");
         context.scoped(crate::modules::performance_binding_shared_vm::refresh_time_origins)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_resume_time_origins");
         commonjs::finish_initialize(context)?;
         context.host_mut().bootstrapped = true;
         Ok(())
