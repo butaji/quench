@@ -889,4 +889,93 @@ mod tests {
             Value::number(f64::from_bits(0x7ff0_0000_0000_0001))
         );
     }
+
+    #[test]
+    fn length_encoding_matches_number_at_representation_boundaries() {
+        fn check(value: usize) {
+            let encoded = Value::length(value);
+            assert_eq!(encoded, Value::number(value as f64));
+            assert_eq!(
+                encoded.as_number().unwrap().to_bits(),
+                (value as f64).to_bits(),
+            );
+            assert_eq!(encoded.as_int().is_some(), i32::try_from(value).is_ok());
+        }
+        for value in [
+            0,
+            1,
+            i32::MAX as usize,
+            i32::MAX as usize + 1,
+            u32::MAX as usize,
+            usize::MAX,
+        ] {
+            check(value);
+        }
+        for exponent in 1..usize::BITS {
+            let power = 1_usize << exponent;
+            for value in [power - 1, power, power + 1] {
+                check(value);
+            }
+        }
+        const SAMPLE_COUNT: usize = 100_000;
+        const SAMPLE_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut value = 0_u64;
+        for _ in 0..SAMPLE_COUNT {
+            value = value.wrapping_add(SAMPLE_STEP);
+            check(value as usize);
+            check(value as u32 as usize);
+        }
+    }
+
+    #[test]
+    fn number_encoding_preserves_arbitrary_float_bits_and_integer_boundaries() {
+        fn check(number: f64) {
+            let encoded = Value::number(number);
+            let decoded = encoded.as_number().unwrap();
+            if number.is_nan() {
+                assert_eq!(encoded.to_bits(), super::CANONICAL_NAN);
+            } else {
+                assert_eq!(decoded.to_bits(), number.to_bits());
+                let integer = number.fract() == 0.0
+                    && number >= f64::from(i32::MIN)
+                    && number <= f64::from(i32::MAX)
+                    && !(number == 0.0 && number.is_sign_negative());
+                assert_eq!(encoded.as_int().is_some(), integer, "{number:?}");
+            }
+        }
+        for number in [
+            0.0,
+            -0.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::MAX,
+            -f64::MAX,
+        ] {
+            check(number);
+        }
+        for exponent in 0..=f64::MANTISSA_DIGITS {
+            let power = 2_f64.powi(exponent as i32);
+            for sign in [-1.0, 1.0] {
+                for offset in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+                    let number = sign * power + offset;
+                    check(number);
+                    check(number.next_up());
+                    check(number.next_down());
+                }
+            }
+        }
+        const SAMPLE_COUNT: usize = 100_000;
+        // An odd Weyl step covers the whole word space before repeating; bound the
+        // sample count so representation checks stay cheap in the regular suite.
+        const SAMPLE_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut bits = 0_u64;
+        for _ in 0..SAMPLE_COUNT {
+            bits = bits.wrapping_add(SAMPLE_STEP);
+            check(f64::from_bits(bits));
+            check(f64::from(bits as i32));
+        }
+    }
 }

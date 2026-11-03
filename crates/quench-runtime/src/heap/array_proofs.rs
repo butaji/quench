@@ -213,3 +213,69 @@ impl Drop for LaneProofScope {
         retire_array_storage_proofs();
     }
 }
+
+#[cfg(all(test, not(feature = "profile-aggregate")))]
+mod tests {
+    use super::*;
+    use crate::heap::{Cell, Object};
+
+    fn array(heap: &mut Heap) -> Value {
+        heap.alloc(Cell::Array {
+            object: ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]),
+        })
+    }
+
+    #[test]
+    fn proved_replacements_preserve_element_kinds_and_copy_on_write() {
+        let mut heap = Heap::new();
+        let base = array(&mut heap);
+        let mut proofs = Box::new(ArrayStorageProofs::new());
+        let _scope = LaneProofScope::enter();
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        for value in [Value::number(0.5), Value::NULL, Value::integer(3)] {
+            assert!(proofs.replace(0, base, 0, value));
+            assert_eq!(proofs.element(0, base, 0), Some(value));
+            assert_eq!(heap.array(base).unwrap().elements().holds_only_int32(), value.as_int().is_some());
+        }
+        let copy = heap.array(base).unwrap().elements().clone();
+        assert!(!proofs.holds(0, base), "sharing retires the writable proof");
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        assert!(!proofs.replace(0, base, 0, Value::integer(4)));
+        heap.array_mut(base).unwrap().elements_mut().make_mut().set(0, Value::number(1.5));
+        assert_eq!(copy[0], Value::integer(3));
+        assert!(copy.holds_only_int32());
+        assert!(!proofs.holds(0, base));
+    }
+
+    #[test]
+    fn proved_storage_retires_before_mutation_collection_and_nested_lanes() {
+        let mut heap = Heap::new();
+        let mut proofs = Box::new(ArrayStorageProofs::new());
+        let _scope = LaneProofScope::enter();
+        let mutations: [fn(&mut ArrayObject); 5] = [
+            |array| array.elements_mut().make_mut().truncate(0),
+            |array| array.set_frozen(true),
+            |array| array.mark_indexed_descriptors(),
+            |array| array.set_arguments_map(vec![0]),
+            |array| array.mark_as_prototype(),
+        ];
+        for mutate in mutations {
+            let base = array(&mut heap);
+            assert!(heap.prove_array_storage(&mut proofs, 0, base));
+            assert!(proofs.replace(0, base, 0, Value::integer(2)));
+            mutate(heap.array_mut(base).unwrap());
+            assert!(!proofs.holds(0, base));
+            assert!(!proofs.replace(0, base, 0, Value::integer(3)));
+        }
+        let base = array(&mut heap);
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        heap.collect([base]);
+        assert!(!proofs.holds(0, base));
+        assert!(heap.prove_array_storage(&mut proofs, 0, base));
+        {
+            let _nested = LaneProofScope::enter();
+            assert!(!proofs.holds(0, base));
+        }
+        assert!(!proofs.holds(0, base));
+    }
+}

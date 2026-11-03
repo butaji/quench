@@ -2177,7 +2177,7 @@ impl ProgramStore {
     }
 
     /// Set before loading a test program; general/OSR coverage then owns entry.
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn disable_js_entry_specializations(&mut self) {
         self.js_entry_specializations_enabled = false;
     }

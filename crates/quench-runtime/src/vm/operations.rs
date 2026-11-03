@@ -741,6 +741,52 @@ fn numeric_integer_arithmetic_result(operation: NumberArithmetic, left: i32, rig
     }
 }
 
+#[cfg(test)]
+mod integer_arithmetic_tests {
+    use super::*;
+
+    #[test]
+    fn checked_integer_results_match_general_number_arithmetic() {
+        fn check<const OP: u32>(left: i32, right: i32) {
+            let actual = integer_operator::<OP>(Value::integer(left), Value::integer(right)).unwrap();
+            let expected =
+                Value::number(number_operator::<OP>(f64::from(left), f64::from(right)).unwrap());
+            assert_eq!(actual, expected, "operator={OP} left={left} right={right}");
+        }
+        fn pair(left: i32, right: i32) {
+            check::<ADDITION>(left, right);
+            check::<SUBTRACTION>(left, right);
+            check::<MULTIPLICATION>(left, right);
+        }
+        let square_boundary = i32::MAX.isqrt();
+        let edges = [
+            i32::MIN,
+            i32::MIN + 1,
+            -square_boundary - 1,
+            -square_boundary,
+            -1,
+            0,
+            1,
+            square_boundary,
+            square_boundary + 1,
+            i32::MAX - 1,
+            i32::MAX,
+        ];
+        for left in edges {
+            for right in edges {
+                pair(left, right);
+            }
+        }
+        const SAMPLE_COUNT: usize = 100_000;
+        const SAMPLE_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut bits = 0_u64;
+        for _ in 0..SAMPLE_COUNT {
+            bits = bits.wrapping_add(SAMPLE_STEP);
+            pair(bits as i32, (bits >> i32::BITS) as i32);
+        }
+    }
+}
+
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
 /// their IEEE 754 values.
 pub(super) const ADDITION: u32 = BinaryOperator::Addition as u32;

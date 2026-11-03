@@ -26,18 +26,21 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
         globalThis.answer=result;
     "#;
     let program = Engine::specialize(source, "default-osr-calls.js").unwrap();
+    #[cfg(not(quench_profiled))]
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
     let mut answers = Vec::new();
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let answer = vm.intern_atom("answer");
         let effects = vm.intern_atom("effects");
         answers.push((vm.own_property(global, answer).unwrap(), vm.own_property(global, effects).unwrap()));
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
                 .and_then(super::program_store::derived_lane_view).unwrap();
@@ -66,12 +69,14 @@ fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let answer = vm.intern_atom("answer");
         let calls = vm.intern_atom("calls");
         answers.push((vm.own_property(global, answer).unwrap(), vm.own_property(global, calls).unwrap()));
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
                 .and_then(super::program_store::derived_lane_view).unwrap();
@@ -108,10 +113,12 @@ fn typed_osr_returns_ssa_values_from_a_vm_owned_frame() {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
+        #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let answer = vm.intern_atom("answer");
         assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(12000)));
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
                 .and_then(super::program_store::derived_lane_view).unwrap();
@@ -306,8 +313,11 @@ fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
     ] {
         for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
             let mut vm = Vm::new(TestHost::default());
-            vm.programs.enable_js_general_dispatch();
-            vm.programs.compile_general_baseline_when_hot();
+            #[cfg(not(quench_profiled))]
+            {
+                vm.programs.enable_js_general_dispatch();
+                vm.programs.compile_general_baseline_when_hot();
+            }
             vm.set_execution_mode(mode);
             vm.execute(&program).unwrap();
             #[cfg(not(quench_profiled))]
@@ -341,8 +351,11 @@ fn shorthand_assignment_captures_with_binding_without_reading_its_value() {
     ] {
         for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
             let mut vm = Vm::new(TestHost::default());
-            vm.programs.enable_js_general_dispatch();
-            vm.programs.compile_general_baseline_when_hot();
+            #[cfg(not(quench_profiled))]
+            {
+                vm.programs.enable_js_general_dispatch();
+                vm.programs.compile_general_baseline_when_hot();
+            }
             vm.set_execution_mode(mode);
             vm.execute(&program).unwrap();
             #[cfg(not(quench_profiled))]

@@ -1,3 +1,6 @@
+#[cfg(all(target_os = "macos", feature = "profile-memory"))]
+mod code_residency;
+
 #[cfg(target_os = "macos")]
 pub fn report_allocator_memory(phase: &str) {
     use std::ffi::{c_int, c_uint, c_void};
@@ -41,6 +44,8 @@ pub fn report_allocator_memory(phase: &str) {
             task.resident_size_max,
         );
     }
+    #[cfg(feature = "profile-memory")]
+    code_residency::report(phase);
 }
 
 #[cfg(all(

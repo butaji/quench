@@ -18640,6 +18640,7 @@ mod tests {
             let Some(super::super::program_store::JsTierState::Compiled(native)) =
                 vm.programs.js_tier(ProgramId::MAIN, 1) else { panic!("numeric function must compile"); };
             assert!(matches!(native.entry, CompiledJsEntry::SharedNumber { mode: NativeEntryMode::Resumable, .. }));
+            #[cfg(not(quench_profiled))]
             assert!(native.native_entries() > 0);
             complete.send(()).unwrap();
         }).unwrap();
@@ -19380,18 +19381,22 @@ mod tests {
             vm.initialize_shared(&Rc::new(native.residual().clone()), super::super::builtins::RealmScope::Complete).unwrap();
             let prepared = vm.prepare_native_script(native).unwrap();
             vm.programs.attach_native_js(ProgramId::MAIN, prepared.native.unwrap()).unwrap();
+            #[cfg(not(quench_profiled))]
             vm.programs.enable_js_jit_diagnostics();
             // Linked code skips JIT admission, which normally creates this row.
             vm.programs.record_js_jit_entry(ProgramId::MAIN, caller, false, 0);
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.run_main(&prepared.program, true).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::number(42.0)));
-            let sites = vm.programs.js_jit_call_site_counts(ProgramId::MAIN, caller).unwrap();
-            for opcode in [Op::Call, Op::CallArray] {
-                assert!(sites.iter().any(|(_, op, _, outcomes, ..)| {
-                    *op == opcode as u16
-                        && outcomes[super::super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
-                }), "linked {opcode:?} must use the shared frame transition");
+            #[cfg(not(quench_profiled))]
+            {
+                let sites = vm.programs.js_jit_call_site_counts(ProgramId::MAIN, caller).unwrap();
+                for opcode in [Op::Call, Op::CallArray] {
+                    assert!(sites.iter().any(|(_, op, _, outcomes, ..)| {
+                        *op == opcode as u16
+                            && outcomes[super::super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
+                    }), "linked {opcode:?} must use the shared frame transition");
+                }
             }
         }
     }

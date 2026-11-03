@@ -15,6 +15,10 @@ name = "quench_runtime"
 name = "quench"
 path = "src/bin/quench.rs"
 
+[[bench]]
+name = "number_primitives"
+required-features = ["bench-primitives"]
+
 [features]
 default = ["jit"]
 jit = ["dep:cranelift-native", "cranelift-codegen/host-arch"]
@@ -32,6 +36,8 @@ profile-lane-exits = []
 # Reads the collection pacing knobs from the environment (measurement builds only).
 gc-tuning = []
 reference = []
+# Test-only direct measurements; contract and evidence live in Linear TOD-9.
+bench-primitives = []
 # Recompiles each replayable function after its program loads and logs any difference
 # (`QUENCH_REPLAY_LOG`); verification builds only.
 verify-replay = []
