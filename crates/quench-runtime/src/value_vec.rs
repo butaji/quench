@@ -187,20 +187,21 @@ impl Default for ValueVec {
 }
 
 /// What every value a slot has held is, a lattice joined by `max`: no value yet, an int32, any
-/// number, any value. Integral numbers are stored in int form (`Value::number`), so each class
-/// keeps the same encoding and a slot widens in place.
+/// value. Native reads speculate on int32 alone (`lane_region::int32_read`), so a double is any
+/// value, and a slot of doubles saturates (`ValueArena::saturated`). Integral numbers are
+/// stored in int form (`Value::number`), so each class keeps its encoding and a slot widens in
+/// place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SlotRepresentation {
     None,
     Int32,
-    Number,
     Tagged,
 }
 
 impl SlotRepresentation {
     #[inline(always)]
     pub(crate) fn of(value: Value) -> Self {
-        if value.as_int().is_some() { Self::Int32 } else if value.as_number().is_some() { Self::Number } else { Self::Tagged }
+        if value.as_int().is_some() { Self::Int32 } else { Self::Tagged }
     }
 }
 

@@ -2105,9 +2105,7 @@ impl Lowering<'_, '_> {
     /// Continue where the slot representation `representation` holds `value`, of type `ty`,
     /// else at `otherwise`: statically where `ty` proves it, else by `value`'s int tag.
     fn represented(&mut self, representation: SlotRepresentation, ty: Type, value: ir::Value, otherwise: ir::Block) {
-        let class = if ty.is_subtype(Type::INT32) { SlotRepresentation::Int32 }
-            else if ty.is_subtype(Type::NUMBER) { SlotRepresentation::Number }
-            else { SlotRepresentation::Tagged };
+        let class = if ty.is_subtype(Type::INT32) { SlotRepresentation::Int32 } else { SlotRepresentation::Tagged };
         if class <= representation { return; }
         // An int is held by any representation but `None`, a slot no value reached yet.
         let held = if representation == SlotRepresentation::None { self.ins().iconst(types::I8, 0) }
