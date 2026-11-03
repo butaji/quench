@@ -17525,6 +17525,56 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn conditional_xor_masks_preserve_integer_words_and_bit_positions() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I8, types::I16, types::I32, types::I64] {
+            let word = u64::MAX >> (u64::BITS - ty.bits());
+            let sign = 1_u64 << (ty.bits() - 1);
+            for tested in (0..ty.bits()).map(|bit| 1_u64 << bit).chain([0, word]) { for invert in [false, true] {
+              for comparison in [None, Some(IntCC::Equal), Some(IntCC::NotEqual)] {
+                let mut signature = Signature::new(isa.default_call_conv());
+                signature.params.extend([AbiParam::new(types::I64); 3]);
+                signature.returns.push(AbiParam::new(types::I64));
+                let mut function = ir::Function::with_name_signature(UserFuncName::testcase("conditional_xor"), signature);
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                let entry = builder.create_block();
+                builder.append_block_params_for_function_params(entry);
+                builder.switch_to_block(entry);
+                let args = builder.block_params(entry).to_vec();
+                let values: Vec<_> = args.into_iter().map(|value| if ty == types::I64 { value }
+                    else { builder.ins().ireduce(ty, value) }).collect();
+                let condition = builder.ins().band_imm_u(values[0], tested as i64);
+                let condition = comparison.map_or(condition, |cc| builder.ins().icmp_imm_u(cc, condition, 0));
+                let changed = builder.ins().bxor(values[1], values[2]);
+                let result = if invert { builder.ins().select(condition, values[1], changed) }
+                    else { builder.ins().select(condition, changed, values[1]) };
+                let result = if ty == types::I64 { result } else { builder.ins().uextend(types::I64, result) };
+                builder.ins().return_(&[result]);
+                builder.seal_all_blocks(); builder.finalize(isa.frontend_config());
+                let mut compiler = cranelift_codegen::Context::for_function(function);
+                compiler.compile(&*isa, &mut Default::default()).unwrap();
+                if tested.is_power_of_two() {
+                    assert!(!compiler.func.layout.blocks().flat_map(|block| compiler.func.layout.block_insts(block))
+                        .any(|inst| compiler.func.dfg.insts[inst].opcode() == ir::Opcode::Select), "{ty} mask{tested} invert{invert}: {}", compiler.func);
+                }
+                let memory = CodeMemory::new(compiler.compiled_code().unwrap().buffer.data()).unwrap();
+                // SAFETY: verified native ABI accepts and returns machine words; mapping stays live.
+                let run: unsafe extern "C" fn(u64, u64, u64) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
+                let sources: Vec<_> = if ty == types::I8 { (0..=word).collect() }
+                    else { vec![0, 1, sign, word, tested, word ^ tested] };
+                let deltas: Vec<_> = if ty == types::I8 { (0..=word).collect() }
+                    else { vec![0, 1, sign, word, tested, word ^ tested] };
+                for source in sources { for base in [0, 1, sign, word] { for &delta in &deltas {
+                    let expected = base ^ if (source & tested != 0) ^ invert ^ (comparison == Some(IntCC::Equal)) { delta } else { 0 };
+                    assert_eq!(unsafe { run(source, base, delta) }, expected, "{ty} mask{tested} invert{invert} source{source} base{base} delta{delta}");
+                }}}
+            }}}
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn conditional_integer_update_keeps_countdown_after_poll_unswitch() {
         let program = crate::Engine::specialize(r#"
             const feedback=7;
