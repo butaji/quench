@@ -173,6 +173,19 @@ impl<H: Host> Vm<H> {
         self.startup_intrinsics.holders = sealed;
     }
 
+    /// A namespace built after bootstrap joins the captured intrinsics before guest code
+    /// can change it. Its one-time initialization owns this transition.
+    pub(super) fn seal_initialized_intrinsic(&mut self, holder: Value) {
+        if self.startup_intrinsics.holders.is_empty() {
+            return;
+        }
+        let sealed = self.sealed_holder(holder).expect("initialized intrinsic has shape slots");
+        let mut roots = std::mem::take(&mut self.startup_intrinsics.shape_roots).into_vec();
+        roots.extend(self.shape_roots(std::slice::from_ref(&sealed)));
+        self.startup_intrinsics.shape_roots = roots.into_boxed_slice();
+        self.startup_intrinsics.holders.push(sealed);
+    }
+
     /// `holder`'s current shape and slot values.
     fn sealed_holder(&self, holder: Value) -> Option<SealedHolder> {
         let object = self.object_data(holder)?;

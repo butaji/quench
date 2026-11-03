@@ -2378,6 +2378,13 @@ node_bindings! {
         method "traceCategories" (0) => crate::modules::trace_shared_vm::categories,
         method "traceEnabled" (0) => crate::modules::trace_shared_vm::enabled,
         method "traceGetEnabledCategories" (0) => crate::modules::trace_shared_vm::get_enabled_categories,
+        method "cliModuleInfo" (0) => crate::modules::cli_options_shared_vm::internal::get_info,
+        method "cliModuleValue" (1) => crate::modules::cli_options_shared_vm::internal::get_value,
+        method "cliModuleFlags" (0) => crate::modules::cli_options_shared_vm::internal::get_flags,
+        method "cliModuleAllowUnauthorized" (0) => crate::modules::cli_options_shared_vm::internal::allow_unauthorized,
+        method "cliModuleEmbedder" (0) => crate::modules::cli_options_shared_vm::internal::get_embedder,
+        method "cliModuleSchema" (0) => crate::modules::cli_options_shared_vm::internal::generate_schema,
+        method "cliModuleRefresh" (0) => crate::modules::cli_options_shared_vm::internal::refresh,
 }
 
 /// The file a directory's `package.json` `main` names, which Node suggests importing

@@ -671,6 +671,24 @@ pub(super) enum RealmScope {
     Core,
 }
 
+#[cfg(test)]
+mod namespace_tests {
+    use super::*;
+    use crate::{Engine, test_host::TestHost};
+
+    #[test]
+    fn independent_builtin_namespaces_remain_unallocated_until_observed() {
+        let program = Engine::specialize("0", "namespace-preparation.js").unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.initialize(&program).unwrap();
+        for name in ["Math", "Temporal"] {
+            let atom = vm.lookup_atom(name).unwrap();
+            assert!(vm.is_pending_lazy_data_property(vm.realm.globals, PropertyKey::string(atom)), "{name}");
+        }
+        assert!(vm.natives.get(Native::MathSin).is_none());
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(
         &mut self,
@@ -920,15 +938,25 @@ impl<H: Host> Vm<H> {
         }
         self.install_json_for_realm(program, self.realm.globals)?;
         self.install_reflect(program)?;
-        self.install_math(program)?;
+        self.install_lazy_builtin_namespace(program, "Math", Native::MathInitialize)?;
         self.install_promise(program)?;
         self.install_webassembly(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
-        // `Temporal` is about as large as every other builtin together and few programs use
-        // it, so it is a lazy data property built on first use.
-        let initializer = self.native_with_env(Native::TemporalInitialize, Value::NULL);
-        let atom = self.intern_atom("Temporal");
+        self.install_lazy_builtin_namespace(program, "Temporal", Native::TemporalInitialize)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_temporal");
+        Ok(())
+    }
+
+    fn install_lazy_builtin_namespace(
+        &mut self,
+        program: &ResidualProgram,
+        name: &str,
+        initializer: Native,
+    ) -> Result<(), JsError> {
+        let initializer = self.native_with_env(initializer, Value::NULL);
+        let atom = self.intern_atom(name);
         let key = self.heap.alloc_string(self.atom_value(atom));
         self.with_call_roots([initializer, key], |vm| {
             vm.define_lazy_data_properties(
@@ -942,11 +970,9 @@ impl<H: Host> Vm<H> {
                 false,
                 initializer,
             )
-        })?;
-        #[cfg(feature = "profile-memory")]
-        self.report_memory_if_enabled("runtime_temporal");
-        Ok(())
+        })
     }
+
     fn install_prototypes(&mut self) {
         self.object_proto = self
             .heap
@@ -1022,7 +1048,7 @@ impl<H: Host> Vm<H> {
         self.install_builtin_to_string_tag(reflect, "Reflect")?;
         self.global(program, "Reflect", reflect)
     }
-    fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
         self.install_builtin_to_string_tag(math, "Math")?;
         for (name, value) in [
@@ -1040,6 +1066,7 @@ impl<H: Host> Vm<H> {
         for (name, native) in MATH_FUNCTIONS {
             self.set_builtin_named(program, math, name, *native)?;
         }
+        self.seal_initialized_intrinsic(math);
         self.global(program, "Math", math)
     }
 

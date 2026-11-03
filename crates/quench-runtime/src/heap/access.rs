@@ -740,6 +740,41 @@ impl Heap {
         }
     }
 
+    /// The type every value `slot` of `shape`'s objects has held; `Type::ANY` where
+    /// representations are not kept or the shape does not register the slot.
+    pub(crate) fn slot_type(&self, shape: u32, slot: usize) -> crate::typed_ir::Type {
+        if !self.properties.tracks() || slot >= self.properties.shape_length(shape) {
+            return crate::typed_ir::Type::ANY;
+        }
+        self.properties.slot_representation(shape, slot).ty()
+    }
+
+    /// The slots of live object records whose value its owner's representation does not hold
+    /// (`ValueArena::slot_representation`): zero while every write joins its value's class;
+    /// zero too where representations are not kept.
+    pub(crate) fn unrepresented_slots(&self) -> usize {
+        if !self.properties.tracks() { return 0; }
+        let mut unrepresented = 0;
+        self.object_records.for_each_live(|_, object| {
+            let shape = object.exact_shape();
+            if shape != object.shape() { return; }
+            for slot in 0..self.properties.shape_length(shape) {
+                // SAFETY: an exact, non-dictionary shape holds its registered slots.
+                let value = unsafe { self.property_get_flat(object, slot) };
+                if !value.is_deleted()
+                    && crate::value_vec::SlotRepresentation::of(value) > self.properties.slot_representation(shape, slot) {
+                    unrepresented += 1;
+                }
+            }
+        });
+        unrepresented
+    }
+
+    /// Every live object record, for a diagnostics census (`Vm::field_site_report`).
+    pub(crate) fn for_each_live_object_record(&self, mut visit: impl FnMut(&Object)) {
+        self.object_records.for_each_live(|_, object| visit(object));
+    }
+
     pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
         // SAFETY: direct-object Values name live records, retired after weak pruning.
         unsafe { self.object_records.get_live(record_id) }

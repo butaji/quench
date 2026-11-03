@@ -41,7 +41,12 @@ pub fn report_allocator_memory(phase: &str) {
             task.resident_size_max,
         );
     }
+    #[cfg(feature = "profile-memory")]
+    code_residency::report(phase);
 }
+
+#[cfg(all(target_os = "macos", feature = "profile-memory"))]
+mod code_residency;
 
 #[cfg(all(
     target_os = "linux",

@@ -104,6 +104,15 @@ pub(super) enum NativeCompileRejection {
 }
 
 impl NativeCompileRejection {
+    /// Whether replanning with less inlined code can address this rejection.
+    pub(super) const fn exceeds_code_budget(self) -> bool {
+        match self {
+            #[cfg(any(feature = "jit", feature = "aot"))]
+            Self::CodeSizeBudget => true,
+            _ => false,
+        }
+    }
+
     pub(super) const fn reason(self) -> &'static str {
         match self {
             #[cfg(any(feature = "jit", feature = "aot"))]

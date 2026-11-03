@@ -1296,6 +1296,10 @@ impl Heap {
         prototype: Value,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Value {
+        if self.properties.tracks() {
+            let length = self.properties.shape_length(header.shape());
+            self.properties.note_shape_values(header.shape(), &inline[..length.min(INLINE_PROPERTY_COUNT)]);
+        }
         let Some(object) = Object::from_inline_header(header, inline) else {
             return self.alloc_object_with_properties_of_header(header, prototype, inline);
         };
@@ -1315,6 +1319,7 @@ impl Heap {
     ) -> Value {
         debug_assert!(values.len() > INLINE_PROPERTY_COUNT);
         self.properties.assert_shape_length(header.shape(), values.len());
+        self.properties.note_shape_values(header.shape(), values);
         match self.properties.run_of(values) {
             Some(start) => self.alloc_object_of(Object::from_run_header(header, start), prototype),
             None => self.alloc_object_with_properties(prototype, header.shape(), values),
@@ -1603,6 +1608,7 @@ impl Heap {
         values: &[Value],
     ) -> Value {
         self.properties.assert_shape_length(shape, values.len());
+        self.properties.note_shape_values(shape, values);
         if values.len() <= INLINE_PROPERTY_COUNT
             && let Some(object) = Object::with_inline_values(proto, shape, values)
         {
@@ -1628,6 +1634,7 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) -> Value {
+        self.properties.note_shape_values(shape, values);
         let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
         let previous = array.replace_property_storage(properties, inline_properties);
         self.properties.release(previous);
@@ -1648,6 +1655,7 @@ impl Heap {
             .object(owner)
             .expect("property owner is an object")
             .is_array();
+        self.properties.note_shape_values(shape, values);
         let (properties, inline_properties) = self.initial_object_storage(shape, values, inline);
         let previous = {
             let object = self.object_mut(owner).expect("property owner is an object");
@@ -1679,10 +1687,15 @@ impl Heap {
             )
         }
     }
-    pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
-        self.properties.register_shape(shape, length);
+    /// Registers `shape`, of `length` slots, made from `parent` and its length, whose slot
+    /// owners it extends (`ValueArena::register_derived_shape`).
+    pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize, parent: Option<(u32, usize)>) {
+        self.properties.register_derived_shape(shape, length, parent);
     }
-    pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], lengths: &[usize]) {
+    /// Moves every live object to its compacted shape, and registers the compacted table:
+    /// each shape's length and parent (a parent precedes its children), its slot owners, and
+    /// their representations joined anew from the values live objects hold.
+    pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], layouts: &[(usize, Option<(u32, usize)>)]) {
         self.object_records.for_each_live_mut(|_, object| {
             let old_shape = object.shape() as usize;
             object.set_shape(mapping[old_shape]);
@@ -1710,9 +1723,46 @@ impl Heap {
             let old_shape = object.shape() as usize;
             object.set_shape(mapping[old_shape]);
         }
+        self.register_shape_layouts(layouts);
+    }
+
+    /// Registers a whole shape table, each shape's length and parent (a parent precedes its
+    /// children), and, where representations are kept, their slot owners and their
+    /// representations joined anew from the values live objects hold.
+    fn register_shape_layouts(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {
+        let tracking = self.properties.tracks();
         self.properties.reset_shapes();
-        for (shape, length) in lengths.iter().copied().enumerate() {
-            self.properties.register_shape(shape as u32, length);
+        if tracking { self.properties.track(); }
+        for (shape, (length, parent)) in layouts.iter().copied().enumerate() {
+            debug_assert!(parent.is_none_or(|(parent, _)| (parent as usize) < shape), "a parent precedes its children");
+            self.properties.register_derived_shape(shape as u32, length, parent);
+        }
+        self.join_live_slot_values();
+    }
+
+    /// Keeps slot representations from now on (`ValueArena::track`), over the shape table
+    /// `layouts` (`register_shape_layouts`), from what live objects hold.
+    pub(crate) fn track_slot_representations(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {
+        self.properties.track();
+        self.register_shape_layouts(layouts);
+    }
+
+    /// Joins each live object record's slot values into its owners' representations.
+    fn join_live_slot_values(&mut self) {
+        if !self.properties.tracks() { return; }
+        let mut held = Vec::new();
+        let properties = &self.properties;
+        self.object_records.for_each_live(|_, object| {
+            let shape = object.exact_shape();
+            if shape != object.shape() { return; }
+            for slot in 0..properties.shape_length(shape) {
+                held.push((shape, slot, object as *const Object));
+            }
+        });
+        for (shape, slot, object) in held {
+            // SAFETY: the record is live and its exact, non-dictionary shape holds the slot.
+            let value = unsafe { self.property_get_flat(&*object, slot) };
+            if !value.is_deleted() { self.properties.note_slot_value(shape, slot, value); }
         }
     }
     /// Slide every live arena range down over released ones, in offset order.
@@ -1944,7 +1994,7 @@ impl Heap {
         self.collect_at = self.allocated;
     }
     /// Leave room until the next charged payload growth, for native recovery tests.
-    #[cfg(test)]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(crate) fn make_collection_due_after_growth_for_test(&mut self) {
         self.collect_at = self.allocated.saturating_add(1);
         self.uncharged_payload_bytes = 0;
@@ -3464,6 +3514,9 @@ impl Heap {
     /// when they pack there (`Object::store_packed_inline_values`), the arena's slots when
     /// they live there, else `property_set` of each.
     pub(crate) fn set_leading_properties(&mut self, object: Value, values: [Value; INLINE_PROPERTY_COUNT]) {
+        for (slot, value) in values.into_iter().enumerate() {
+            self.note_value_slot(object, slot, value);
+        }
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let data = self.object_store_mut(object, stored).expect("property owner is an object");
@@ -3482,7 +3535,20 @@ impl Heap {
         }
     }
 
+    /// `note_object_slot` of the object `object` names, before a write of `value` to `slot`.
+    #[inline(always)]
+    fn note_value_slot(&mut self, object: Value, slot: usize, value: Value) {
+        if !self.properties.tracks() { return; }
+        if let Some(data) = self.object(object) {
+            let shape = data.exact_shape();
+            if shape == data.shape() && slot < self.properties.shape_length(shape) {
+                self.properties.note_slot_value(shape, slot, value);
+            }
+        }
+    }
+
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
+        self.note_value_slot(object, slot, value);
         let vector = {
             let data = self
                 .object_store_mut(object, value)
@@ -3519,6 +3585,7 @@ impl Heap {
         slot: usize,
         value: Value,
     ) {
+        self.note_value_slot(object, slot, value);
         let vector = {
             let data = self
                 .object_store_mut(object, value)
@@ -4320,6 +4387,7 @@ fn widen_inline_storage(
 /// storage length, and moves the owner to `shape`.
 #[inline(always)]
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+    properties.note_shape_value(shape, slot, value);
     let mut vector = data.properties();
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
@@ -4352,6 +4420,8 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
 /// Preserve declines before changing storage or values.
 #[inline(always)]
 fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+    // The caller matched the exact shape, which holds the slot.
+    properties.note_slot_value(data.shape(), slot, value);
     if let Some(start) = data.plain_storage_start() {
         debug_assert!(!data.properties().is_dictionary(), "the caller matched an exact shape");
         // SAFETY: the caller proves that the property slot exists outside dictionary storage.

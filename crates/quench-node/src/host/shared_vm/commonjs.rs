@@ -1381,7 +1381,7 @@ fn internals_exposed(context: &mut Context<'_>) -> bool {
 
 fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
     let builtin = BuiltinModule::from_specifier(specifier)?;
-    if matches!(builtin, BuiltinModule::InternalTimers) && !internals_exposed(context) {
+    if matches!(builtin, BuiltinModule::InternalTimers | BuiltinModule::Internal("internal/options")) && !internals_exposed(context) {
         None
     } else {
         Some(builtin)
@@ -1393,6 +1393,8 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 }
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
+    ("internal/options", BuiltinModule::Internal("internal/options")),
+    ("node:internal/options", BuiltinModule::Internal("internal/options")),
     (
         "internal/source_map/source_map_cache",
         BuiltinModule::Internal("internal/source_map/source_map_cache"),
@@ -2000,6 +2002,7 @@ pub(crate) fn queue_microtask_run(context: &mut Context<'_>, _: RootId, _: &[Roo
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal("internal/options") => crate::modules::cli_options_shared_vm::internal::module(context),
         BuiltinModule::Internal(name @ ("_http_agent" | "_http_client" | "_http_incoming" | "_http_outgoing" | "_http_server")) => {
             crate::modules::http_shared_vm::internal_module(context, name)
         }

@@ -587,7 +587,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -2116,6 +2116,7 @@ lane_helper_inventory! { H;
     FunctionBinding => lane_function_binding::<H>,
     MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
+    GlobalGet => lane_global_get::<H>,
 }
 
 unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
@@ -2339,7 +2340,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
-            &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, isa,
+            &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, isa,
             coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
             .map(|mut region| {
                 region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, header);
@@ -7393,13 +7394,22 @@ fn guarded_call_instruction(instruction: WideInstruction) -> bool {
         && instruction.call_window().count == 0
 }
 
+/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
+/// for one the lane's own read would not take, which leaves the body at the read.
+unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
+    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    vm.lane_global_read(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
+}
+
 /// A lane body's element store: the lane's own in-place replacement of a record array's
-/// element (`Vm::try_replace_record_element`), whose miss changes nothing and leaves the
-/// body at the store.
+/// element (`Vm::try_replace_record_element`) or fill of a hole it may take
+/// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
 unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
     // SAFETY: as `lane_field_get`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    u64::from(vm.try_replace_record_element(Value::from_bits(object), Value::from_bits(key), Value::from_bits(value)))
+    let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
+    u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking
@@ -7418,6 +7428,41 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 }
 
 impl<H: Host> Vm<H> {
+    /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
+    /// (`dispatch_fast::lane_load_name_first`): in a function whose unresolved names are
+    /// global and resolve statically, a name no internal binding owns.
+    fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeSet<usize> {
+        let global = |function: u32| program.function_get(function as usize)
+            .is_some_and(|body| body.names_resolve_statically(program))
+            && self.programs.unresolved_names_are_global(self.active_program, function);
+        unit.instructions.iter().enumerate()
+            .filter(|(_, instruction)| matches!(instruction.op(), Op::LoadName | Op::LoadNameCall))
+            .filter(|(pc, instruction)| {
+                let atom = instruction.atom_index();
+                let function = match unit.origins[*pc] {
+                    lane_unit::Origin::Caller(_) => function,
+                    lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
+                };
+                global(function) && (!self.atom_class(atom).contains(super::object::AtomClass::INTERNAL)
+                    || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
+            })
+            .map(|(pc, _)| pc)
+            .collect()
+    }
+
+    /// The value a global read of `atom` through cache `site` takes as the lane's own read
+    /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
+    /// global object's cached data property; none for a binding in its TDZ or a miss.
+    pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted());
+        }
+        match self.cached_field_hit(code, self.realm.globals, site) {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            _ => None,
+        }
+    }
+
     /// The field cache sites `unit` reads or writes, each with the exact shapes and slots its
     /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
     /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
@@ -7459,44 +7504,79 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
             let body = program.function_get(function as usize)?;
-            // A pure numeric body observes neither closure environment nor identity.
-            // Bind its definition at the edge, as AOT does, so fresh closures share
-            // the same residual while recovery retries the actual caller value.
-            let valid_bindings = std::cell::Cell::new(true);
-            let bindings = |caller, pc| {
-                let mut bound = targets(caller, pc);
-                for target in &mut bound {
-                    let numeric = program.function_get(target.function as usize).is_some_and(|body|
-                        body.plain_activation(program) && lane_region::restartable_numeric_function(program, body,
-                            &body.instructions().collect::<Vec<_>>()));
-                    if numeric {
-                        if let Some(callee) = target.identity()
-                            && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
-                                owner == self.active_program && function == target.function) {
-                            valid_bindings.set(false);
+            let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
+            let (unit, region, fields, direct, direct_sites) = loop {
+                // A pure numeric body observes neither closure environment nor identity.
+                // Bind its definition at the edge, as AOT does, so fresh closures share
+                // the same residual while recovery retries the actual caller value.
+                let valid_bindings = std::cell::Cell::new(true);
+                let bindings = |caller, pc| {
+                    let mut bound = targets(caller, pc);
+                    for target in &mut bound {
+                        let numeric = program.function_get(target.function as usize).is_some_and(|body|
+                            body.plain_activation(program) && lane_region::restartable_numeric_function(program, body,
+                                &body.instructions().collect::<Vec<_>>()));
+                        if numeric {
+                            if let Some(callee) = target.identity()
+                                && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
+                                    owner == self.active_program && function == target.function) {
+                                valid_bindings.set(false);
+                            }
+                            target.callee = CalleeBinding::Function;
                         }
-                        target.callee = CalleeBinding::Function;
                     }
+                    // Different closures of the same pure definition are one case.
+                    let mut kept = 0;
+                    for index in 0..bound.len() {
+                        let target = bound[index];
+                        if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
+                    }
+                    bound.truncate(kept);
+                    bound
+                };
+                // Captured stores already use the shared frameless kernel.
+                let unit = lane_unit::with_budget(program, function, body, budget, &bindings, &|callee| program.function_get(callee as usize)
+                    .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
+                if !valid_bindings.get() { return None; }
+                if !unit.frames.iter().all(|frame| match frame.target.callee {
+                    CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
+                    CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
+                        && program.function_get(frame.target.function as usize).is_some_and(|body|
+                            lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>())),
+                }) {
+                    return None;
                 }
-                // Different closures of the same pure definition are one case.
-                let mut kept = 0;
-                for index in 0..bound.len() {
-                    let target = bound[index];
-                    if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
+                let loop_entry = match loop_header {
+                    Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
+                    None => None,
+                };
+                let fields = self.lane_unit_fields(program, &unit);
+                let global_reads = self.lane_global_reads(program, function, &unit);
+                // The calls the unit still makes (none it inlines) whose callees have bodies.
+                // Each candidate owns one contiguous stable slice. A rejected candidate
+                // releases it; replanning keeps the original targets available.
+                let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
+                    .filter(|(_, instruction)| instruction.op() == Op::Call)
+                    .filter_map(|(pc, _)| match unit.origins[pc] {
+                        lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
+                        lane_unit::Origin::Inlined { .. } => None,
+                    })
+                    .unzip();
+                let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
+                let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
+                    pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
+                let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
+                    .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
+                let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
+                match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, &direct_sites,
+                    &frame_captures, loop_entry, allow_first_entry) {
+                    Ok(region) => break (unit, region, fields, direct, direct_sites),
+                    Err(lane_region::LaneDecline::Rejected(reason))
+                        if reason.exceeds_code_budget() && !unit.frames.is_empty() && budget > 0 => budget /= 2,
+                    Err(_) => return None,
                 }
-                bound.truncate(kept);
-                bound
             };
-            // Captured stores already use the shared frameless kernel.
-            let unit = lane_unit::unit(program, function, body, &bindings, &|callee| program.function_get(callee as usize)
-                .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
-            if !valid_bindings.get() { return None; }
-            if !unit.frames.iter().all(|frame| match frame.target.callee {
-                CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
-                CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
-                    && program.function_get(frame.target.function as usize).is_some_and(|body|
-                        lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>())),
-            }) {
+            if region.native == 0 {
                 return None;
             }
             let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
@@ -7504,33 +7584,6 @@ impl<H: Host> Vm<H> {
                     && (instruction.imm() as usize) <= pc
             });
             let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
-            let loop_entry = match loop_header {
-                Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
-                None => None,
-            };
-            let fields = self.lane_unit_fields(program, &unit);
-            // The calls the unit still makes (none it inlines) whose callees have bodies.
-            let mut direct = direct;
-            // The code names each callee by its address in this boxed slice, which never moves.
-            let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-                .filter(|(_, instruction)| instruction.op() == Op::Call)
-                .filter_map(|(pc, _)| match unit.origins[pc] {
-                    lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take().map(|callee| (pc, callee)),
-                    lane_unit::Origin::Inlined { .. } => None,
-                })
-                .unzip();
-            let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
-            let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
-                pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
-            let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
-                .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-            let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-            let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites,
-                &frame_captures, loop_entry, allow_first_entry);
-            let region = region?;
-            if region.native == 0 {
-                return None;
-            }
             let code = CodeMemory::new(&region.code)?;
             if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
                 dump_native_code(directory, function, &code, clif);
@@ -7719,6 +7772,7 @@ impl<H: Host> Vm<H> {
 /// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
 /// target the lane would activate, fixed by the callee's identity, which the call guards,
 /// and its specialized body. The caller's body owns it.
+#[derive(Clone)]
 pub(super) struct DirectCallee {
     pub(super) target: super::dispatch_fast::ScriptCallTarget,
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
@@ -17875,8 +17929,8 @@ mod tests {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
-        for id in 0..program.function_count() {
-            let mut regions = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0);
+        for (id, targets) in targets.iter().enumerate().take(program.function_count()) {
+            let mut regions = lower_static_typed_regions(&program, id as u32, targets, &*isa, 0);
             for region in &mut regions {
                 // Bind the pure helper-table resolver as the image linker does.
                 let instructions: Vec<_> = region.function.layout.blocks()
@@ -18574,9 +18628,20 @@ mod tests {
                     "n={count} seed={seed}");
             }
         }
-        for value in [1.5, f64::NAN, f64::INFINITY, 4294967295.0] {
+        for value in [1.5, -1.5, -0.0, 4294967295.0, 4294967297.0] {
+            let mut expected = 1_u32;
+            for _ in 0..(crate::value::number_to_u32(value) as i32) {
+                expected ^= expected << 13;
+                expected ^= expected >> 17;
+                expected ^= expected << 5;
+            }
+            assert!(matches!(direct_call(&compiled, &[Value::number(value), Value::integer(1)], &interrupt),
+                Some(CompiledJsCallResult::Value(actual)) if actual == Value::integer(expected as i32)),
+                "explicit ToInt32 accepts {value:?}");
+        }
+        for value in [f64::NAN, f64::INFINITY, crate::value::EXACT_I64_TRUNCATION_LIMIT] {
             assert!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt).is_none(),
-                "unproved word32 input must decline exactly");
+                "unsupported ToInt32 input must decline exactly");
         }
         let inputs = [Value::integer(257), Value::integer(123456789)];
         let Some(CompiledJsCallResult::Value(expected)) = direct_call(&compiled, &inputs, &interrupt) else { panic!("private result") };
@@ -18709,6 +18774,7 @@ mod tests {
             let Some(super::super::program_store::JsTierState::Compiled(native)) =
                 vm.programs.js_tier(ProgramId::MAIN, 1) else { panic!("numeric function must compile"); };
             assert!(matches!(native.entry, CompiledJsEntry::SharedNumber { mode: NativeEntryMode::Resumable, .. }));
+            #[cfg(not(quench_profiled))]
             assert!(native.native_entries() > 0);
             complete.send(()).unwrap();
         }).unwrap();
@@ -19441,7 +19507,9 @@ mod tests {
                 "function target(value) { return value + 1; } function caller() { const a = target(20); const b = target(20, ...[]); return a + b; } throw caller();",
                 typescript,
             );
+            #[cfg(not(quench_profiled))]
             let program = native.residual();
+            #[cfg(not(quench_profiled))]
             let caller = program.functions.iter().position(|body| {
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "caller")
             }).unwrap() as u32;
@@ -19449,18 +19517,24 @@ mod tests {
             vm.initialize_shared(&Rc::new(native.residual().clone()), super::super::builtins::RealmScope::Complete).unwrap();
             let prepared = vm.prepare_native_script(native).unwrap();
             vm.programs.attach_native_js(ProgramId::MAIN, prepared.native.unwrap()).unwrap();
-            vm.programs.enable_js_jit_diagnostics();
-            // Linked code skips JIT admission, which normally creates this row.
-            vm.programs.record_js_jit_entry(ProgramId::MAIN, caller, false, 0);
+            #[cfg(not(quench_profiled))]
+            {
+                vm.programs.enable_js_jit_diagnostics();
+                // Linked code skips JIT admission, which normally creates this row.
+                vm.programs.record_js_jit_entry(ProgramId::MAIN, caller, false, 0);
+            }
             vm.set_execution_mode(ExecutionMode::NativeOnly);
             let error = vm.run_main(&prepared.program, true).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::number(42.0)));
-            let sites = vm.programs.js_jit_call_site_counts(ProgramId::MAIN, caller).unwrap();
-            for opcode in [Op::Call, Op::CallArray] {
-                assert!(sites.iter().any(|(_, op, _, outcomes, ..)| {
-                    *op == opcode as u16
-                        && outcomes[super::super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
-                }), "linked {opcode:?} must use the shared frame transition");
+            #[cfg(not(quench_profiled))]
+            {
+                let sites = vm.programs.js_jit_call_site_counts(ProgramId::MAIN, caller).unwrap();
+                for opcode in [Op::Call, Op::CallArray] {
+                    assert!(sites.iter().any(|(_, op, _, outcomes, ..)| {
+                        *op == opcode as u16
+                            && outcomes[super::super::program_store::JsJitCallOutcome::PushFrame as usize] > 0
+                    }), "linked {opcode:?} must use the shared frame transition");
+                }
             }
         }
     }

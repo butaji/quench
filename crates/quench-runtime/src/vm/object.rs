@@ -565,7 +565,8 @@ impl<H: Host> Vm<H> {
             child.lookup_index = OnceCell::from(index);
         }
         self.shapes.push(child);
-        self.heap.register_property_shape(next, storage_len);
+        let parent_length = self.shapes[parent as usize].storage_len();
+        self.heap.register_property_shape(next, storage_len, Some((parent, parent_length)));
         next
     }
     /// Whether `to` is `from` extended by one appended property slot: the shape an add of
@@ -1565,6 +1566,7 @@ impl<H: Host> Vm<H> {
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
+            ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
         })
     }
 
@@ -1610,8 +1612,9 @@ impl<H: Host> Vm<H> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
-        (usize::from(entry.slot) < storage_len).then_some(super::compiled::NativeFieldLoad {
+        (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
+            ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
         })
     }
 
@@ -4677,6 +4680,11 @@ fn cached_holder_matches(holder: &crate::heap::Object, shape: u32) -> bool {
 }
 
 impl<H> Vm<H> {
+    /// The shape table as the heap registers it (`Heap::track_slot_representations`).
+    pub(super) fn shape_layouts(&self) -> Vec<(usize, Option<(u32, usize)>)> {
+        super::shape_layouts(&self.shapes)
+    }
+
     /// The field sites' polymorphism, for a diagnostics run (`QUENCH_JS_JIT_STATS`): the
     /// polymorphic sites by how many receiver shapes they recorded, how many name only own
     /// fields and of those how many find the field at one slot in every shape (a layout whose
@@ -4698,7 +4706,35 @@ impl<H> Vm<H> {
                 holders += 1;
             }
         }
-        format!(
+        // The representation each own field a cache entry names holds across the live objects
+        // of its shape, the join of their values' classes (`SlotRepresentation`).
+        use crate::value_vec::SlotRepresentation;
+        let mut classes: std::collections::HashMap<(u32, u16), SlotRepresentation> = std::collections::HashMap::new();
+        self.heap.for_each_live_object_record(|object| {
+            let shape = object.exact_shape();
+            if shape != object.shape() { return; }
+            let Some(len) = self.shapes.get(shape as usize).map(|shape| shape.storage_len()) else { return };
+            for slot in 0..len {
+                // SAFETY: an exact, non-dictionary shape holds `len` slots.
+                let value = unsafe { self.heap.property_get_flat(object, slot) };
+                if value.is_deleted() { continue; }
+                let class = SlotRepresentation::of(value);
+                let joined = classes.entry((shape, slot as u16)).or_insert(class);
+                *joined = (*joined).max(class);
+            }
+        });
+        let mut reps = [0_usize; 4];
+        let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
+            .filter(|cache| cache.receiver != NO_FIELD_RECEIVER && cache.holder == NO_FIELD_HOLDER);
+        for cache in own_entries {
+            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotRepresentation::None) as usize] += 1;
+        }
+        let reps = format!(
+            "QUENCH_FIELD_REPS {{\"no_live_object\":{},\"int32\":{},\"number\":{},\"tagged\":{},\"unrepresented_slots\":{}}}",
+            reps[SlotRepresentation::None as usize], reps[SlotRepresentation::Int32 as usize],
+            reps[SlotRepresentation::Number as usize], reps[SlotRepresentation::Tagged as usize], self.heap.unrepresented_slots(),
+        );
+        reps + "\n" + &format!(
             "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
         )

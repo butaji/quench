@@ -1,6 +1,8 @@
 //! Native option queries project the same startup state used by feature gates.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+pub(crate) mod internal;
+mod schema;
 const CACHE_KEY: &str = "\0native:options";
 pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let shared = context.host_mut().shared_state();
@@ -63,8 +65,7 @@ pub(crate) fn info(
     context.assign_named_property_rooted(result, "aliases", aliases)?;
     Ok(result)
 }
-/// Node's normalized startup options as flags (`getOptionsAsFlags`): `NODE_OPTIONS`, then
-/// options from `--env-file` and `--config-file`, then the command line's.
+/// Original arguments in startup precedence order, retained for permission policy.
 pub(crate) fn option_flags(context: &mut NativeContext<'_, NodeHost>) -> Vec<String> {
     let exec_argv = context.host_mut().shared_state().borrow().exec_argv.clone();
     let mut flags = Vec::new();
@@ -84,9 +85,9 @@ pub(crate) fn flags(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let values = option_flags(context)
-        .iter()
-        .map(|flag| context.string_rooted(flag))
+    let options = context.host_mut().shared_state().borrow().cli_options.clone();
+    let values = options.flags()
+        .map(|flag| context.string_rooted(&flag))
         .collect::<Vec<_>>();
     context.array_rooted(&values)
 }

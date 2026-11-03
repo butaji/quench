@@ -11,6 +11,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub(crate) mod encrypted;
 pub(crate) mod transport_poll;
+#[cfg(all(test, feature = "bench-primitives"))]
+mod primitive_bench;
 
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
@@ -3188,20 +3190,22 @@ pub(crate) fn listener_is_tcp(transport: &Transport, id: u64) -> bool {
 }
 
 impl Transport {
+    /// No owned endpoint, connection, close completion or queued transport event.
+    pub(crate) fn is_quiescent(&self) -> bool {
+        let Self { native_tcp_connecting, native_tcp_unbound, next_id: _, listeners, sockets, connecting, closing_sockets, read_buffer: _, pending_events } = self;
+        native_tcp_connecting.is_empty()
+            && native_tcp_unbound.is_empty()
+            && listeners.is_empty()
+            && sockets.is_empty()
+            && connecting.is_empty()
+            && closing_sockets.is_empty()
+            && pending_events.is_empty()
+    }
+
     pub(crate) fn write_snapshot(&self, writer: &mut quench_runtime::SnapshotWriter<'_>) -> Result<(), String> {
         use crate::host::startup_snapshot::{require_quiescent, HostSnap};
-        let Self { native_tcp_connecting, native_tcp_unbound, next_id, listeners, sockets, connecting, closing_sockets, read_buffer: _, pending_events } = self;
-        require_quiescent(
-            native_tcp_connecting.is_empty()
-                && native_tcp_unbound.is_empty()
-                && listeners.is_empty()
-                && sockets.is_empty()
-                && connecting.is_empty()
-                && closing_sockets.is_empty()
-                && pending_events.is_empty(),
-            "a TCP socket",
-        )?;
-        next_id.write(writer)
+        require_quiescent(self.is_quiescent(), "a TCP socket")?;
+        self.next_id.write(writer)
     }
     pub(crate) fn read_snapshot(&mut self, reader: &mut quench_runtime::SnapshotReader<'_, '_>) -> Result<(), String> {
         self.next_id = crate::host::startup_snapshot::HostSnap::read(reader)?;
@@ -3213,6 +3217,24 @@ impl Transport {
 mod tests {
     use super::Transport;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn quiescence_keeps_unreferenced_owners_and_close_completions() {
+        let mut transport = Transport::new();
+        assert!(transport.is_quiescent());
+        let socket = super::native_tcp_create(&mut transport).unwrap();
+        super::native_tcp_reference(&mut transport, socket, false);
+        assert!(!super::has_work(&transport));
+        assert!(!transport.is_quiescent());
+
+        super::native_tcp_close(&mut transport, socket);
+        assert!(!transport.is_quiescent());
+        assert!(super::poll(&mut transport).is_empty());
+        assert!(!transport.is_quiescent());
+        assert!(matches!(super::poll(&mut transport).as_slice(),
+            [super::TransportEvent::CloseCompleted { socket: closed }] if *closed == socket));
+        assert!(transport.is_quiescent());
+    }
 
     /// A cross-thread completion must end the idle wait at once instead of
     /// leaving the event loop to discover it on the poll interval.
