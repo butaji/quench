@@ -1,6 +1,58 @@
 //! Parsed startup values for implemented Node feature switches.
+
+/// Compare schema names at Rust binding time, without allocating a runtime index.
+const fn option_name_order(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    let mut index = 0;
+    while index < left.len() && index < right.len() {
+        if left[index] < right[index] { return Less; }
+        if left[index] > right[index] { return Greater; }
+        index += 1;
+    }
+    if left.len() < right.len() { Less } else if left.len() > right.len() { Greater } else { Equal }
+}
+
+const fn option_index<T>(schema: &[(&str, T)], name: &str) -> usize {
+    let mut index = 0;
+    while index < schema.len() {
+        if matches!(option_name_order(schema[index].0, name), std::cmp::Ordering::Equal) { return index; }
+        index += 1;
+    }
+    panic!("option belongs to its declared schema")
+}
+
+/// Preserve the old public lexical iteration order; the declaration owns each default.
+const fn option_order<T, const N: usize>(schema: &[(&str, T)]) -> [u16; N] {
+    assert!(N == schema.len() && N <= u16::MAX as usize);
+    let mut order = [0; N];
+    let mut index = 0;
+    while index < N {
+        let mut slot = index;
+        while slot > 0 && matches!(option_name_order(schema[order[slot - 1] as usize].0, schema[index].0), std::cmp::Ordering::Greater) {
+            order[slot] = order[slot - 1];
+            slot -= 1;
+        }
+        if slot > 0 { assert!(!matches!(option_name_order(schema[order[slot - 1] as usize].0, schema[index].0), std::cmp::Ordering::Equal)); }
+        order[slot] = index as u16;
+        index += 1;
+    }
+    order
+}
+
+macro_rules! option_schema {
+    ($table:ident, $lookup:ident, $order:ident, $ty:ty, [$(($name:literal, $default:expr)),* $(,)?]) => {
+        const $table: &[(&str, $ty)] = &[$(($name, $default)),*];
+        const $order: [u16; $table.len()] = option_order($table);
+        #[inline(always)]
+        fn $lookup(name: &str) -> Option<usize> {
+            match name { $($name => Some(const { option_index($table, $name) }),)* _ => None }
+        }
+    };
+}
+
 include!("node_option_tables.rs");
-const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
+option_schema!(BOOLEAN_OPTIONS, boolean_index, BOOLEAN_ORDER, bool, [
     // The default Node condition includes native addon exports. Workers can
     // opt out with --no-addons, which is also a valid boolean negation.
     ("--addons", true),
@@ -91,8 +143,8 @@ const BOOLEAN_OPTIONS: &[(&str, bool)] = &[
     ("--use-openssl-ca", false),
     ("--use-system-ca", false),
     ("--use-bundled-ca", false),
-];
-const STRING_OPTIONS: &[(&str, &str)] = &[
+]);
+option_schema!(STRING_OPTIONS, string_index, STRING_ORDER, &str, [
     // Node 26 bootstrap reads this unconditionally; an empty value disables it.
     ("--vfs-load", ""),
     ("--input-type", "commonjs"),
@@ -127,15 +179,15 @@ const STRING_OPTIONS: &[(&str, &str)] = &[
     ("--bench-reporter-destination", ""),
     ("--bench-samples", ""),
     ("--bench-warmup", ""),
-];
-const NUMBER_OPTIONS: &[(&str, &str)] = &[
+]);
+option_schema!(NUMBER_OPTIONS, number_index, NUMBER_ORDER, &str, [
     ("--test-timeout", "0"),
     ("--test-concurrency", "0"),
     ("--test-random-seed", "0"),
     ("--test-coverage-branches", "0"),
     ("--test-coverage-lines", "0"),
     ("--test-coverage-functions", "0"),
-];
+]);
 const VALUE_OPTIONS: &[&str] = &["--max-http-header-size"];
 
 /// Return the original spelling of the first option Node forbids in
@@ -184,13 +236,13 @@ pub(crate) enum OptionType {
 /// Every parsed option with its Node type and whether it defaults to true; a repeated
 /// option is a string list whatever its single-value entry says.
 pub(crate) fn option_types() -> impl Iterator<Item = (&'static str, OptionType, bool)> {
-    let list = |name: &&str| EMPTY_STRING_LIST_OPTIONS.contains(name);
+    let list = |name: &&str| repeated_index(name).is_some();
     BOOLEAN_OPTIONS
         .iter()
         .map(|&(name, default)| (name, OptionType::Boolean, default))
         .chain(STRING_OPTIONS.iter().filter(move |(name, _)| !list(name)).map(|&(name, _)| (name, OptionType::String, false)))
         .chain(NUMBER_OPTIONS.iter().map(|&(name, _)| (name, OptionType::UInteger, false)))
-        .chain(EMPTY_STRING_LIST_OPTIONS.iter().map(|&name| (name, OptionType::StringList, false)))
+        .chain(EMPTY_STRING_LIST_OPTIONS.iter().map(|&(name, ())| (name, OptionType::StringList, false)))
 }
 
 /// Node's option aliases this parser accepts, each with the option it stands for.
@@ -206,33 +258,52 @@ pub(crate) fn takes_string_value(option: &str) -> bool {
         || NUMBER_OPTIONS
             .iter()
             .any(|(name, _)| *name == canonical_option(option))
-        || EMPTY_STRING_LIST_OPTIONS.contains(&canonical_option(option))
+        || repeated_index(canonical_option(option)).is_some()
 }
+
+const OPTION_WORD_BITS: usize = u64::BITS as usize;
+const BOOLEAN_WORDS: usize = BOOLEAN_OPTIONS.len().div_ceil(OPTION_WORD_BITS);
+const PROVIDED_WORDS: usize = NUMBER_OPTIONS.len().div_ceil(OPTION_WORD_BITS);
+const DEFAULT_BOOLEANS: [u64; BOOLEAN_WORDS] = {
+    let mut words = [0; BOOLEAN_WORDS];
+    let mut index = 0;
+    while index < BOOLEAN_OPTIONS.len() {
+        if BOOLEAN_OPTIONS[index].1 { words[index / OPTION_WORD_BITS] |= 1 << (index % OPTION_WORD_BITS); }
+        index += 1;
+    }
+    words
+};
+
+fn option_bit(words: &[u64], index: usize) -> bool {
+    words[index / OPTION_WORD_BITS] & (1 << (index % OPTION_WORD_BITS)) != 0
+}
+
+fn set_option_bit(words: &mut [u64], index: usize, value: bool) {
+    let bit = 1 << (index % OPTION_WORD_BITS);
+    let word = &mut words[index / OPTION_WORD_BITS];
+    if value { *word |= bit; } else { *word &= !bit; }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CliOptions {
-    booleans: std::collections::BTreeMap<&'static str, bool>,
-    strings: std::collections::BTreeMap<&'static str, String>,
-    numbers: std::collections::BTreeMap<&'static str, String>,
-    provided: std::collections::BTreeSet<String>,
-    repeated: std::collections::BTreeMap<&'static str, Vec<String>>,
+    booleans: [u64; BOOLEAN_WORDS],
+    /// Only explicit text values are owned; unchanged defaults stay in the schema.
+    strings: [Option<String>; STRING_OPTIONS.len()],
+    numbers: [Option<String>; NUMBER_OPTIONS.len()],
+    provided: [u64; PROVIDED_WORDS],
+    repeated: [Vec<String>; EMPTY_STRING_LIST_OPTIONS.len()],
+    /// Accepted Node booleans outside the implemented schema, in public lexical order.
+    extra_booleans: Vec<(&'static str, bool)>,
 }
 impl Default for CliOptions {
     fn default() -> Self {
         Self {
-            booleans: BOOLEAN_OPTIONS.iter().copied().collect(),
-            strings: STRING_OPTIONS
-                .iter()
-                .map(|(name, value)| (*name, (*value).to_owned()))
-                .collect(),
-            numbers: NUMBER_OPTIONS
-                .iter()
-                .map(|(name, value)| (*name, (*value).to_owned()))
-                .collect(),
-            provided: std::collections::BTreeSet::new(),
-            repeated: EMPTY_STRING_LIST_OPTIONS
-                .iter()
-                .map(|name| (*name, Vec::new()))
-                .collect(),
+            booleans: DEFAULT_BOOLEANS,
+            strings: [const { None }; STRING_OPTIONS.len()],
+            numbers: [const { None }; NUMBER_OPTIONS.len()],
+            provided: [0; PROVIDED_WORDS],
+            repeated: [const { Vec::new() }; EMPTY_STRING_LIST_OPTIONS.len()],
+            extra_booleans: Vec::new(),
         }
     }
 }
@@ -243,9 +314,7 @@ impl CliOptions {
         pending_deprecation: bool,
     ) -> Result<Self, String> {
         let mut options = Self::default();
-        options
-            .booleans
-            .insert("--pending-deprecation", pending_deprecation);
+        options.set_boolean("--pending-deprecation", pending_deprecation);
         if let Some(environment) = environment {
             options.apply(&parse_node_options(environment).map_err(str::to_owned)?)?;
         }
@@ -253,7 +322,7 @@ impl CliOptions {
         if options.enabled("--trace-env-js-stack")
             || options.enabled("--trace-env-native-stack")
         {
-            options.booleans.insert("--trace-env", true);
+            options.set_boolean("--trace-env", true);
         }
         if options.enabled("--tls-min-v1.3") && options.enabled("--tls-max-v1.2") {
             return Err("either --tls-min-v1.3 or --tls-max-v1.2 can be used, not both".to_owned());
@@ -261,31 +330,55 @@ impl CliOptions {
         Ok(options)
     }
     pub(crate) fn enabled(&self, name: &str) -> bool {
-        self.booleans.get(name).copied().unwrap_or(false)
+        match boolean_index(name) {
+            Some(index) => option_bit(&self.booleans, index),
+            None => self.extra_booleans.binary_search_by_key(&name, |&(name, _)| name)
+                .ok().is_some_and(|index| self.extra_booleans[index].1),
+        }
     }
     pub(crate) fn values(&self) -> impl Iterator<Item = (&'static str, bool)> + '_ {
-        self.booleans.iter().map(|(name, value)| (*name, *value))
+        let mut declared = BOOLEAN_ORDER.iter().map(|&index| {
+            let index = usize::from(index);
+            (BOOLEAN_OPTIONS[index].0, option_bit(&self.booleans, index))
+        }).peekable();
+        let mut extra = self.extra_booleans.iter().copied().peekable();
+        std::iter::from_fn(move || match (declared.peek(), extra.peek()) {
+            (Some((left, _)), Some((right, _))) if right < left => extra.next(),
+            (Some(_), _) => declared.next(),
+            _ => extra.next(),
+        })
     }
     pub(crate) fn string_value(&self, name: &str) -> Option<&str> {
-        self.strings.get(canonical_option(name)).map(String::as_str)
+        let index = string_index(canonical_option(name))?;
+        Some(self.strings[index].as_deref().unwrap_or(STRING_OPTIONS[index].1))
     }
     pub(crate) fn strings(&self) -> impl Iterator<Item = (&'static str, &str)> + '_ {
-        self.strings
-            .iter()
-            .map(|(name, value)| (*name, value.as_str()))
+        STRING_ORDER.iter().map(|&index| {
+            let index = usize::from(index);
+            (STRING_OPTIONS[index].0, self.strings[index].as_deref().unwrap_or(STRING_OPTIONS[index].1))
+        })
     }
     pub(crate) fn numbers(&self) -> impl Iterator<Item = (&'static str, &str)> + '_ {
-        self.numbers
-            .iter()
-            .map(|(name, value)| (*name, value.as_str()))
+        NUMBER_ORDER.iter().map(|&index| {
+            let index = usize::from(index);
+            (NUMBER_OPTIONS[index].0, self.numbers[index].as_deref().unwrap_or(NUMBER_OPTIONS[index].1))
+        })
     }
     pub(crate) fn was_provided(&self, name: &str) -> bool {
-        self.provided.contains(name)
+        number_index(name).is_some_and(|index| option_bit(&self.provided, index))
     }
     pub(crate) fn repeated_values(&self) -> impl Iterator<Item = (&'static str, &[String])> + '_ {
-        self.repeated
-            .iter()
-            .map(|(name, values)| (*name, values.as_slice()))
+        REPEATED_ORDER.iter().map(|&index| {
+            let index = usize::from(index);
+            (EMPTY_STRING_LIST_OPTIONS[index].0, self.repeated[index].as_slice())
+        })
+    }
+
+    fn set_boolean(&mut self, name: &str, value: bool) -> bool {
+        if let Some(index) = boolean_index(name) { set_option_bit(&mut self.booleans, index, value); return true; }
+        let Ok(index) = self.extra_booleans.binary_search_by_key(&name, |&(name, _)| name) else { return false };
+        self.extra_booleans[index].1 = value;
+        true
     }
     fn apply(&mut self, arguments: &[String]) -> Result<(), String> {
         let mut arguments = arguments.iter().peekable();
@@ -295,33 +388,33 @@ impl CliOptions {
                     .split_once('=')
                     .map_or(argument.as_str(), |(flag, _)| flag),
             );
-            if let Some(values) = self.repeated.get_mut(flag) {
+            if let Some(index) = repeated_index(flag) {
                 let value = argument
                     .split_once('=')
                     .map(|(_, value)| value.to_owned())
                     .or_else(|| arguments.next().cloned())
                     .ok_or_else(|| format!("{flag} requires an argument"))?;
-                values.push(value);
+                self.repeated[index].push(value);
                 continue;
             }
-            if let Some(value) = self.strings.get_mut(flag) {
-                *value = argument
+            if let Some(index) = string_index(flag) {
+                self.strings[index] = Some(argument
                     .split_once('=')
                     .map(|(_, value)| value.to_owned())
                     .or_else(|| arguments.next().cloned())
-                    .ok_or_else(|| format!("{flag} requires an argument"))?;
+                    .ok_or_else(|| format!("{flag} requires an argument"))?);
                 if flag == "--report-signal" {
-                    self.booleans.insert("--report-on-signal", true);
+                    self.set_boolean("--report-on-signal", true);
                 }
                 continue;
             }
-            if let Some(value) = self.numbers.get_mut(flag) {
-                self.provided.insert(flag.to_owned());
-                *value = argument
+            if let Some(index) = number_index(flag) {
+                set_option_bit(&mut self.provided, index, true);
+                self.numbers[index] = Some(argument
                     .split_once('=')
                     .map(|(_, value)| value.to_owned())
                     .or_else(|| arguments.next().cloned())
-                    .ok_or_else(|| format!("{flag} requires an argument"))?;
+                    .ok_or_else(|| format!("{flag} requires an argument"))?);
                 continue;
             }
             match flag {
@@ -340,16 +433,14 @@ impl CliOptions {
                     arguments.next();
                 }
                 _ => {
-                    if let Some(value) = self.booleans.get_mut(flag) {
-                        *value = true;
-                    } else if let Some(positive) = flag.strip_prefix("--no-") {
+                    if self.set_boolean(flag, true) { continue; }
+                    if let Some(positive) = flag.strip_prefix("--no-") {
                         let positive = format!("--{positive}");
-                        if let Some(value) = self.booleans.get_mut(positive.as_str()) {
-                            *value = false;
-                        } else if VALUE_OPTIONS.contains(&positive.as_str())
-                            || self.strings.contains_key(positive.as_str())
-                            || self.numbers.contains_key(positive.as_str())
-                            || self.repeated.contains_key(positive.as_str())
+                        if self.set_boolean(positive.as_str(), false) { continue; }
+                        if VALUE_OPTIONS.contains(&positive.as_str())
+                            || string_index(positive.as_str()).is_some()
+                            || number_index(positive.as_str()).is_some()
+                            || repeated_index(positive.as_str()).is_some()
                         {
                             return Err(format!(
                                 "{flag} is an invalid negation because it is not a boolean option"
@@ -357,7 +448,8 @@ impl CliOptions {
                         } else if let Some(listed) = node_listed_flag(&positive) {
                             // A Node boolean this host keeps no default for: its negation is
                             // what `getOptionValue` reads.
-                            self.booleans.insert(listed, false);
+                            let index = self.extra_booleans.binary_search_by_key(&listed, |&(name, _)| name).unwrap_err();
+                            self.extra_booleans.insert(index, (listed, false));
                         } else if node_listed_flag(flag).is_none() {
                             return Err(format!("bad option: {flag}"));
                         }
@@ -410,6 +502,33 @@ pub(crate) fn parse_node_options(text: &str) -> Result<Vec<String>, &'static str
 
 #[cfg(test)]
 mod node_flag_list_tests {
+    #[test]
+    fn invocation_overrides_environment_and_keeps_repeated_input_order() {
+        let arguments = ["--warnings", "--conditions=invocation", "--report-directory=chosen", "--test-random-seed=0"]
+            .map(str::to_owned);
+        let options = super::CliOptions::parse(Some("--no-warnings --conditions=environment"), &arguments, true).unwrap();
+        assert!(options.enabled("--warnings"));
+        assert!(options.enabled("--pending-deprecation"));
+        assert_eq!(options.string_value("--report-dir"), Some("chosen"));
+        assert!(options.was_provided("--test-random-seed"));
+        let conditions = options.repeated_values().find(|(name, _)| *name == "--conditions").unwrap().1;
+        assert_eq!(conditions, ["environment", "invocation"]);
+        let names: Vec<_> = options.values().map(|(name, _)| name).collect();
+        assert!(names.windows(2).all(|names| names[0] < names[1]));
+    }
+
+    #[test]
+    fn listed_extra_booleans_keep_precedence_and_public_order() {
+        let arguments = ["--no-node-snapshot", "--node-snapshot"].map(str::to_owned);
+        let options = super::CliOptions::parse(None, &arguments, false).unwrap();
+        assert!(options.enabled("--node-snapshot"));
+        let values: Vec<_> = options.values().collect();
+        assert!(values.windows(2).all(|values| values[0].0 < values[1].0));
+        assert_eq!(values.iter().filter(|(name, _)| *name == "--node-snapshot").count(), 1);
+        assert!(super::CliOptions::parse(None, &["--no-conditions".into()], false).unwrap_err()
+            .contains("not a boolean option"));
+    }
+
     #[test]
     fn node_lists_its_negatable_options() {
         assert!(super::node_listed_flag("--no-node-snapshot").is_some());
