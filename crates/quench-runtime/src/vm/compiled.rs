@@ -7394,12 +7394,13 @@ fn guarded_call_instruction(instruction: WideInstruction) -> bool {
 }
 
 /// A lane body's element store: the lane's own in-place replacement of a record array's
-/// element (`Vm::try_replace_record_element`), whose miss changes nothing and leaves the
-/// body at the store.
+/// element (`Vm::try_replace_record_element`) or fill of a hole it may take
+/// (`Vm::try_fill_record_hole`), whose miss changes nothing and leaves the body at the store.
 unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
     // SAFETY: as `lane_field_get`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    u64::from(vm.try_replace_record_element(Value::from_bits(object), Value::from_bits(key), Value::from_bits(value)))
+    let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
+    u64::from(vm.try_replace_record_element(object, key, value) || vm.try_fill_record_hole(object, key, value))
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking

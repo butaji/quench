@@ -1237,8 +1237,28 @@ impl Lowering<'_, '_> {
         if integral {
             return self.operand_int(state, operand, exit);
         }
-        let number = self.operand_number(state, operand, exit)?;
-        Some(self.number_to_int32(number, exit))
+        // A register only its tag types is its int where the tag says so, else its Number's
+        // ToInt32; neither path proves a fact the other does not.
+        let tagged = operand.kind() == Some(OperandKind::Register)
+            && state.values[usize::from(operand.payload())].value.representation == Representation::Tagged;
+        if !tagged {
+            let number = self.operand_number(state, operand, exit)?;
+            return Some(self.number_to_int32(number, exit));
+        }
+        let bits = self.operand_tagged(state, operand)?;
+        let integer = is_int_tagged(&mut self.builder, bits);
+        let (int_block, number_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let int32 = self.builder.append_block_param(join, types::I32);
+        self.ins().brif(integer, int_block, &[], number_block, &[]);
+        self.builder.switch_to_block(int_block);
+        let int = self.ins().ireduce(types::I32, bits);
+        self.ins().jump(join, &[ir::BlockArg::Value(int)]);
+        self.builder.switch_to_block(number_block);
+        let number = emit_js_tagged_number(&mut self.builder, bits, exit);
+        let truncated = self.number_to_int32(number, exit);
+        self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
+        self.builder.switch_to_block(join);
+        Some(int32)
     }
 
     /// Whether the increment at `pc` of `source` into `register` is a loop's induction that its
