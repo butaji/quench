@@ -189,19 +189,33 @@ impl Unit {
     }
 }
 
-/// Static method-name and local-closure hints, resolved into flat per-PC targets.
+/// Static method-name, local-closure and captured-slot hints, resolved into flat per-PC targets.
 /// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
 #[cfg(feature = "aot")]
 pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
     let mut methods = vec![None::<Option<u32>>; program.atoms.len()];
+    let mut captured = Vec::new();
+    let mut offsets = Vec::with_capacity(program.function_count() + 1);
+    let mut parents = Vec::with_capacity(program.function_count());
+    let observe = |slot: &mut Option<Option<u32>>, target| {
+        *slot = Some(match *slot { None => Some(target), Some(Some(old)) if old == target => Some(target), _ => None });
+    };
     for id in 0..program.function_count() {
         program.with_record(id, |function| {
+            let start = captured.len();
+            offsets.push(start);
+            parents.push(function.parent);
+            captured.resize(start + usize::from(function.locals), None);
             let mut closures = vec![None; usize::from(function.registers)];
             for instruction in function.instructions() {
                 if matches!(instruction.op(), Op::SetField | Op::SetFieldStrict)
                     && let Some(id) = closures.get(usize::from(instruction.register_a())).copied().flatten() {
-                        let slot = &mut methods[instruction.atom_index() as usize];
-                        *slot = Some(match *slot { None => Some(id), Some(Some(old)) if old == id => Some(id), _ => None });
+                        observe(&mut methods[instruction.atom_index() as usize], id);
+                    }
+                if matches!(instruction.op(), Op::StoreLocal | Op::StoreEnvLocal)
+                    && let Some(target) = closures.get(usize::from(instruction.register_a())).copied().flatten()
+                    && let Some(slot) = captured[start..].get_mut(instruction.local_slot()) {
+                        observe(slot, target);
                     }
                 let value = match instruction.op() {
                     Op::MakeClosure => Some(instruction.closure_function_index()),
@@ -213,6 +227,7 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
             }
         });
     }
+    offsets.push(captured.len());
     (0..program.function_count()).map(|id| program.with_record(id, |function| {
         let mut methods_by_register = vec![None; usize::from(function.registers)];
         function.instructions().map(|instruction| {
@@ -224,6 +239,15 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
                     _ => None,
                 },
                 Op::MakeClosure => Some(instruction.closure_function_index()),
+                Op::LoadCapture => {
+                    // The lexical owner and source slot come from the same layout as
+                    // capture execution. This identifies a possible body, never the
+                    // closure: admission checks its body, and captures read its actual environment.
+                    let owner = (0..=instruction.capture_depth()).try_fold(id, |owner, _|
+                        parents.get(owner).copied().flatten().map(|parent| parent as usize));
+                    owner.and_then(|owner| captured[offsets[owner]..offsets[owner + 1]]
+                        .get(usize::from(instruction.capture_slot())).copied().flatten().flatten())
+                }
                 Op::Move => methods_by_register[usize::from(instruction.register_b())],
                 _ => None,
             };
@@ -636,6 +660,30 @@ pub(crate) fn with_budget<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn captured_hints_resolve_lexical_depth_and_reject_conflicting_bodies() {
+        for (binding, expected) in [
+            ("let target = function leaf(x) {return x + 1;};", true),
+            ("let target; if (flag) target = function first(x) {return x + 1;}; else target = function second(x) {return x + 2;};", false),
+        ] {
+            let source = format!("function outer(flag) {{{binding} function middle() {{function caller(x) {{return target(x);}} return caller;}} return middle();}}");
+            let program = crate::Engine::specialize(&source, "capture-depth.js").unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "caller")).unwrap();
+            assert!(program.function(caller).instructions().any(|instruction|
+                instruction.op() == Op::LoadCapture && instruction.capture_depth() == 1));
+            let targets = static_call_targets(&program);
+            assert_eq!(targets[caller].iter().any(Option::is_some), expected);
+            if expected {
+                let target = targets[caller].iter().copied().flatten().next().unwrap();
+                let name = program.function(target as usize).name.unwrap();
+                assert_eq!(&program.atoms[name as usize], "leaf");
+            }
+        }
+    }
+
 
     #[cfg(feature = "aot")]
     #[test]

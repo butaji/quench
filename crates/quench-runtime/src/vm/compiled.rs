@@ -18488,6 +18488,58 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn captured_call_hints_share_native_inlining_and_exact_recovery() {
+        let source = r#"
+            function make(delta) {
+                let step = function step(state) {
+                    state.count = (state.count - 1) | 0;
+                    state.value = state.value + delta;
+                };
+                function run(seed) {
+                    const state = {count: 20, value: seed};
+                    globalThis.last = state;
+                    while (state.count > 0) step(state);
+                    return state.value;
+                }
+                return {run, replace(value) {step = value;}};
+            }
+            const a = make(2), b = make(5);
+            if (a.run(3) !== 43 || b.run(3) !== 103) throw 'closure environment';
+            a.replace(function replacement(state) {state.count--; state.value += 100;});
+            if (a.run(3) !== 2003 || b.run(3) !== 103) throw 'replacement';
+            let calls = 0;
+            const marker = {};
+            const failing = make({valueOf() {calls++; throw marker;}});
+            try {failing.run(3); throw 'missing throw';} catch (error) {if (error !== marker) throw error;}
+            if (calls !== 1 || last.count !== 19 || last.value !== 3) throw 'replayed prefix';
+            throw 42;
+        "#;
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(source, "captured-target.cts") }
+                else { crate::Engine::specialize(source, "captured-target.cjs") }.unwrap();
+            let id = |name: &str| program.functions.iter().position(|body|
+                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            let (caller, callee) = (id("run"), id("step"));
+            let targets = static_call_targets(&program);
+            assert!(targets[caller].contains(&Some(callee as u32)), "capture must supply the shared inliner");
+            let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc|
+                targets[function as usize].get(pc as usize).copied().flatten()
+                    .map(|function| CallTarget {function, callee: CalleeBinding::Function}).into_iter().collect(),
+                &|function| program.function_get(function as usize)).unwrap();
+            assert_eq!(unit.frames.len(), 1);
+            assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
+            let isa = super::super::jit_backend::target_isa("speed").unwrap();
+            assert!(!lower_static_typed_regions(&program, caller as u32, &targets[caller], &*isa, 0).is_empty());
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn effectful_inline_recovery_materializes_exact_callee_state() {
         let program = crate::Engine::specialize(
             "let p={};p.consume=function(input){this.count=this.count+1;let value=input.value;return value+this.count;};function run(owner,input){let value=owner.consume(input);return value+3;}",
