@@ -57,9 +57,7 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 /// Every field is derived from the storage types below; this is a projection of the heap's
 /// representation, not a second copy of its length or element state. A consumer resolves the
 /// current live array record from the current rooted `Value`, then loads its current
-/// `ArrayElements` header and backing on every access. Before dereferencing that header it
-/// must exclude the object extras tag: an array with extras keeps its elements there and
-/// takes the shared fallback. It must not retain a record or backing
+/// `ArrayElements` header and backing on every access. It must not retain a record or backing
 /// pointer across a VM safepoint: record addresses are stable for the heap lifetime, but a
 /// copy-on-write array mutation can replace and free its backing. The read itself must not
 /// call into the VM or permit collection while the borrowed raw pointers are in use.

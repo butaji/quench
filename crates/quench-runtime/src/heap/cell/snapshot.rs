@@ -136,7 +136,7 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
         // The payload word: narrow inline values or the storage position.
         None => {
             writer.u8(0);
-            writer.u64(if object.is_array() { 0 } else { object.payload.word() });
+            writer.u64(object.payload);
         }
         // The payload word is the extras pointer; the extras are written field by field.
         Some(extras) => {
@@ -155,20 +155,11 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
         1 => Object::tag_extras(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
     };
-    let mut object = Object { meta, auxiliary, payload: ObjectPayload { word: payload } };
-    if object.is_array() {
-        if let Some(extras) = object.extras_mut_existing() {
-            extras.array_elements = Some(super::super::ArrayElements::new());
-        } else {
-            object.payload = ObjectPayload::from_elements(super::super::ArrayElements::new());
-        }
-    }
-    Ok(object)
+    Ok(Object { meta, auxiliary, payload })
 }
 
 fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
     let ObjectExtras {
-        array_elements: _, // ArrayObject writes its elements after the object header.
         prototype_lookup: lookup,
         inline_properties,
         arena_start,
@@ -271,7 +262,6 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         length_descriptor,
         side_descriptors,
         watch: Default::default(),
-        array_elements: None,
     })
 }
 
@@ -397,7 +387,7 @@ impl ArrayObject {
             return Err(SnapshotError("snapshot array without its array flag".into()));
         }
         let elements = super::super::ArrayElements::from(reader.values()?);
-        Ok(Self::new(object, elements))
+        Ok(Self { object, elements })
     }
 }
 

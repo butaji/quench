@@ -5077,9 +5077,6 @@ impl<'a, 'b> Lowering<'a, 'b> {
             record,
             (array_layout.elements_offset + array_layout.elements_header_offset) as i32,
         );
-        let tag = self.body.builder.ins().band_imm_u(header, object_layout.extras_tag_mask as i64);
-        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, object_layout.extras_tag as i64);
-        self.guard(pc, extras);
         let length = self.body.builder.ins().load(types::I32, flags(), header, array_layout.header_length_offset as i32);
         let length = self.body.builder.ins().uextend(types::I64, length);
         let elements = self.body.builder.ins().iadd_imm_u(header, array_layout.header_values_offset as i64);
@@ -5097,6 +5094,15 @@ impl<'a, 'b> Lowering<'a, 'b> {
         );
         let frozen = self.body.builder.ins().band_imm_u(meta, i64::from(array_layout.frozen_mask));
         self.guard(pc, frozen);
+        let payload = self.body.builder.ins().load(
+            types::I64,
+            flags(),
+            record,
+            (array_layout.object_offset + object_layout.payload_offset) as i32,
+        );
+        let tag = self.body.builder.ins().band_imm_u(payload, object_layout.extras_tag_mask as i64);
+        let extras = self.body.builder.ins().icmp_imm_u(IntCC::Equal, tag, object_layout.extras_tag as i64);
+        self.guard(pc, extras);
         Some(ArrayView { identity: value.value, elements, entry_index: None, access: ArrayAccess::InBounds { length } })
     }
 
