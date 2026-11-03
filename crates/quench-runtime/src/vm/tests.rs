@@ -102,14 +102,60 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}\n{}",
-                program.function(id).plain_activation(&program), program.disassemble()));
+            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}; osr={:?}; answers={answers:?}\n{}",
+                program.function(id).plain_activation(&program), view.osr_diagnostics(), program.disassemble()));
             assert!(report.contains("\"frames\":1"), "numeric calls must share the caller's typed unit: {report}");
             assert!(report.contains("\"compiles\":1,"), "fresh pure closures and completed loop exits must retain their definition: {report}");
         }
     }
     assert_eq!(answers[0], answers[1]);
     assert_eq!(answers[1].1, Value::integer(192), "initialization and post-loop effect each run once per call");
+}
+
+#[test]
+fn default_osr_keeps_self_contained_loop_regions() {
+    let source = r#"
+        const invocations=96;
+        globalThis.effects=0;
+        function pipe(){
+            globalThis.effects++;
+            let value=7;
+            for(let i=0;i<4000;i=(i+1)|0)value=(value+i)|0;
+            globalThis.effects++;
+            return value;
+        }
+        let result;
+        for(let pass=0;pass<invocations;pass++)result=pipe();
+        globalThis.answer=result;
+        globalThis.expectedEffects=2*invocations;
+    "#;
+    let program = Engine::specialize(source, "default-osr-region-priority.js").unwrap();
+    #[cfg(not(quench_profiled))]
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let answer = vm.intern_atom("answer");
+        let effects = vm.intern_atom("effects");
+        let expected = vm.intern_atom("expectedEffects");
+        answers.push(vm.own_property(global, answer).unwrap());
+        assert_eq!(vm.own_property(global, effects), vm.own_property(global, expected));
+        #[cfg(not(quench_profiled))]
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            let osr = view.osr_diagnostics();
+            assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
+            assert!(view.body_stats.report(0).is_none(), "a self-contained region keeps priority over its lane body");
+        }
+    }
+    assert_eq!(answers[0], answers[1]);
 }
 
 #[test]
@@ -236,8 +282,10 @@ fn native_countdown_keeps_dynamic_starts_and_exit_values_exact() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
         vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
                 .and_then(super::program_store::derived_lane_view).unwrap();
