@@ -14,6 +14,8 @@ path = "src/bin/quench-node.rs"
 
 [features]
 default = ["jit", "bundled-sources"]
+# Test-only direct host-primitive measurements; contract/evidence: Linear TOD-123.
+bench-primitives = []
 jit = ["quench-runtime/jit", "quench-wasm/jit"]
 bundled-sources = []
 native-execution = ["quench-runtime/native-execution"]
