@@ -213,6 +213,28 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
         ImmLogic::maybe_from_u64(n, ty)
     }
 
+    /// A constant integer mask tested for nonzero can produce Z directly.
+    /// Truncate narrow masks so unspecified upper register bits cannot affect Z.
+    fn masked_nonzero(&mut self, value: Value) -> Option<(Type, Value, ImmLogic)> {
+        let ty = self.lower_ctx.value_ty(value);
+        if !ty.is_int() || ty.bits() > I64.bits() {
+            return None;
+        }
+        let inst = self.def_inst(value)?;
+        let InstructionData::Binary { opcode: Opcode::Band, args } = *self.lower_ctx.data(inst) else {
+            return None;
+        };
+        let machine_ty = if ty.bits() < I32.bits() { I32 } else { ty };
+        let word_mask = u64::MAX >> (I64.bits() - ty.bits());
+        for (source, mask) in [(args[0], args[1]), (args[1], args[0])] {
+            if let Some(mask) = self.lower_ctx.get_value_as_source_or_const(mask).constant {
+                let immediate = ImmLogic::maybe_from_u64(mask & word_mask, machine_ty)?;
+                return Some((machine_ty, source, immediate));
+            }
+        }
+        None
+    }
+
     fn imm_size_from_type(&mut self, ty: Type) -> Option<u16> {
         match ty {
             I32 => Some(32),

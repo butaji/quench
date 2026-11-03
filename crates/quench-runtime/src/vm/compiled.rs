@@ -17557,6 +17557,53 @@ mod tests {
         assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
     }
 
+    #[test]
+    fn masked_integer_conditions_preserve_width_polarity_and_other_uses() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I8, types::I16, types::I32, types::I64] {
+            let word_mask = u64::MAX >> (u64::BITS - ty.bits());
+            let sign_bit = 1_u64 << (ty.bits() - 1);
+            for mask in [0, 1, sign_bit, sign_bit | 1, word_mask, 0x55 & word_mask] {
+                for condition in [None, Some(IntCC::Equal), Some(IntCC::NotEqual)] {
+                    let mut signature = Signature::new(isa.default_call_conv());
+                    signature.params.extend([AbiParam::new(types::I64); 3]);
+                    signature.returns.push(AbiParam::new(types::I64));
+                    let mut function = ir::Function::with_name_signature(UserFuncName::testcase("masked_condition"), signature);
+                    let mut context = FunctionBuilderContext::new();
+                    let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                    let entry = builder.create_block();
+                    builder.append_block_params_for_function_params(entry);
+                    builder.switch_to_block(entry);
+                    let args = builder.block_params(entry).to_vec();
+                    let source = if ty == types::I64 { args[0] } else { builder.ins().ireduce(ty, args[0]) };
+                    let masked = builder.ins().band_imm_u(source, mask as i64);
+                    let predicate = match condition {
+                        None => masked,
+                        Some(condition) => builder.ins().icmp_imm_u(condition, masked, 0),
+                    };
+                    let selected = builder.ins().select(predicate, args[1], args[2]);
+                    // Keep a second consumer: folding the predicate must not remove its value.
+                    let masked = if ty == types::I64 { masked } else { builder.ins().uextend(types::I64, masked) };
+                    let result = builder.ins().bxor(selected, masked);
+                    builder.ins().return_(&[result]);
+                    builder.seal_all_blocks();
+                    builder.finalize(isa.frontend_config());
+                    let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+                    let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, u64) -> u64>(code.pointer()) };
+                    for source in (0..=255).chain([sign_bit, sign_bit - 1, word_mask, !word_mask, u64::MAX]) {
+                        let masked = source & mask;
+                        let choose_first = if condition == Some(IntCC::Equal) { masked == 0 } else { masked != 0 };
+                        for (first, second) in [(0, u64::MAX), (sign_bit, 1)] {
+                            let expected = (if choose_first { first } else { second }) ^ masked;
+                            assert_eq!(unsafe { run(source, first, second) }, expected,
+                                "{ty} source={source:x} mask={mask:x} condition={condition:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn countdown_induction_preserves_words_checkpoints_and_labels() {
