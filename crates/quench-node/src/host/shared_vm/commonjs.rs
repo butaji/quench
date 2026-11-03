@@ -505,9 +505,15 @@ pub(super) fn finish_initialize(context: &mut Context<'_>) -> Result<(), RootedE
         let filename = context.host_mut().module_path(&entry.path).map_err(|error| RootedError::host(error.to_string()))?;
         #[cfg(not(feature = "native-execution"))]
         let filename = std::fs::canonicalize(entry.path).map_err(|error| RootedError::host(error.to_string()))?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_filename_ready");
         let module = cached_builtin(context, BuiltinModule::Module)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_module_ready");
         let run_main = get(context, module, "runMain")?;
         let filename = context.string_rooted(&filename.to_string_lossy());
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_entry_run_main_ready");
         context.call_rooted(run_main, module, &[filename])?;
     } else {
         let filename = inline_directory(context)?.join(context.host_mut().inline_source.label());
