@@ -877,6 +877,15 @@ impl LaneView {
         self.start.set(prologue.cast_const());
     }
 
+    /// Whether a call's resolution claims the prologue for the lane tier: while its body warms
+    /// and nothing claimed it yet. A specialized body's prologue already enters it, and any
+    /// other body (declined, retired, or serving native callers only) runs its function in
+    /// the lane; claiming again would take the prologue back to `lane_tier_prologue`.
+    fn lane_tier_unclaimed(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) && self.start.get() != self.prologue.get().cast_const()
+    }
+
     /// Starts activations at the first record again, once the tier declines the function.
     fn release_from_tier(&self) {
         self.start.set(self.records());
@@ -11013,7 +11022,12 @@ impl<H: Host> Vm<H> {
             && !body.rest
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
-            && (self.js_tier_may_claim(code, program, function) || self.programs.js_jit_lane_methods_enabled())
+            && if self.programs.js_jit_lane_methods_enabled() {
+                // SAFETY: as below.
+                unsafe { &*view }.lane_tier_unclaimed()
+            } else {
+                self.js_tier_may_claim(code, program, function)
+            }
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
