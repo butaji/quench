@@ -2036,6 +2036,23 @@ impl Lowering<'_, '_> {
                     self.branch(state, pc, target, taken);
                     return false;
                 }
+                if let Some(operation) = super::operations::NumberBitwise::from_operator(operator)
+                    && self.operand_supported(left) && self.operand_supported(right)
+                    && [left, right].iter().all(|operand| operand.kind() != Some(OperandKind::Constant)
+                        || super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
+                {
+                    let exit = self.guard_exit(state, pc32);
+                    let left = self.operand_to_int32(state, left, exit).expect("supported numeric operand");
+                    let right = self.operand_to_int32(state, right, exit).expect("supported numeric operand");
+                    // Signed and unsigned bitwise results are false exactly when all bits
+                    // are zero. Reuse the value operation without boxing its branch result.
+                    let bits = emit_number_bitwise_bits(&mut self.builder, operation, left, right);
+                    let taken = self.ins().icmp_imm_u(IntCC::Equal, bits, 0);
+                    let target = instruction.jump_target() as usize;
+                    if target <= pc { self.interrupt_check(state, pc32); }
+                    self.branch(state, pc, target, taken);
+                    return false;
+                }
                 if let Some(holds) = self.number_relation(state, pc32, operator, left, right) {
                     let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
                     let target = instruction.jump_target() as usize;
@@ -2251,7 +2268,22 @@ impl Lowering<'_, '_> {
         if !admitted && !numeric {
             let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
             let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-            emit_js_guard(&mut self.builder, object, exit);
+            // A nullish receiver needs no boxing on recovery (lane_call_this). Its
+            // sloppy global substitution is irrelevant only when the body never reads
+            // this. Keep primitive receivers guarded: materialization may need boxing.
+            let unused = callee.instructions().all(|instruction| {
+                !instruction.writes_current_this()
+                    && !matches!(instruction.op(), Op::LoadThis | Op::SetThisField | Op::SetThisFieldStrict)
+                    && (instruction.op() != Op::GetField || matches!(instruction.field_lookup(),
+                        Some(FieldLookup::Atom { base, .. }) if base != crate::bytecode::FieldBase::THIS))
+            });
+            let admitted = if unused {
+                let undefined = self.ins().icmp_imm_u(IntCC::Equal, receiver, Value::UNDEFINED.to_bits() as i64);
+                let null = self.ins().icmp_imm_u(IntCC::Equal, receiver, Value::NULL.to_bits() as i64);
+                let nullish = self.ins().bor(undefined, null);
+                self.ins().bor(object, nullish)
+            } else { object };
+            emit_js_guard(&mut self.builder, admitted, exit);
         }
         for register in 0..inlined.registers {
             let destination = inlined.base + register;

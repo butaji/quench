@@ -113,6 +113,137 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn typed_field_call_compiles_with_observed_target() {
+    let source = r#"(function() {
+        function advance(state) {
+            state.count = (state.count - 1) | 0;
+            state.control = (state.control >> 1) ^ ((state.control & 1) ? 0xD008 : 0);
+        }
+        function run(iterations, seed) {
+            const state = { count: iterations | 0, control: seed | 0 };
+            while (state.count > 0) advance(state);
+            return state.control | 0;
+        }
+        globalThis.advance = advance;
+        globalThis.run = run;
+        globalThis.answer = run(4000, 7);
+    })();"#;
+    let program = Engine::specialize(source, "typed-field-target.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_jit_diagnostics();
+    vm.execute(&program).unwrap();
+    let id = |name: &str| program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
+    let caller = id("run");
+    let callee_id = id("advance");
+    let advance = vm.intern_atom("advance");
+    let callee = vm.own_property(vm.realm.globals, advance).unwrap();
+    let captures = vm.lane_callee_captures(callee);
+    let body = program.function(caller as usize);
+    let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap() as u32;
+    let header = body.instructions().filter(|instruction| instruction.op() == crate::bytecode::Op::Jump)
+        .map(|instruction| instruction.jump_target()).min().unwrap();
+    let method = vm.compile_lane_method(&program, caller, &|function, pc| {
+        if function == caller && pc == call {
+            vec![super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id }]
+        } else { Vec::new() }
+    }, &|_| captures, Vec::new(), Some(header)).expect("observed field target must lower");
+    assert_eq!(method.inlined.len(), 1, "the effectful call must share the typed unit");
+    assert!(method.recovery_space().activations > 0, "effectful recovery needs a callee activation");
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(caller as usize)
+        .and_then(super::program_store::derived_lane_view).unwrap();
+    let report = view.body_stats.report(0).expect("field call must enter the typed unit");
+    let exit = body.instructions().nth(header as usize + 1).unwrap().jump_target();
+    assert!(report.contains(&format!("[(\"{exit}\", 1)]")),
+        "the native loop must leave once at its successor, never at the call: {report}");
+    let expected = (0..4000).fold(7i32, |control, _|
+        (control >> 1) ^ if control & 1 != 0 { 0xD008 } else { 0 });
+    let answer = vm.intern_atom("answer");
+    assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(expected)));
+}
+
+#[test]
+fn typed_field_call_materializes_after_effects_once() {
+    let source = r#"(function() {
+        function advance(state, replacement) {
+            state.count = (state.count - 1) | 0;
+            if (state.count === 1500) state.control = replacement;
+            state.control = (state.control >> 1) ^ ((state.control & 1) ? 0xD008 : 0);
+        }
+        function run(state, replacement) {
+            while (state.count > 0) advance(state, replacement);
+        }
+        run({count: 4000, control: 7}, 7);
+        const state = {count: 4000, control: 7};
+        let calls = 0;
+        const marker = {};
+        try { run(state, {valueOf() { calls++; throw marker; }}); }
+        catch (error) { if (error !== marker) throw error; }
+        if (state.count !== 1500 || calls !== 1) throw 'replayed callee effects';
+        print(state.count + ':' + calls);
+    })();"#;
+    let program = Engine::specialize(source, "typed-call-recovery.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1500:1"]);
+    }
+}
+
+#[test]
+fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
+    for operator in ["&", "|", "^", "<<", ">>", ">>>"] {
+        let source = format!(r#"
+            function step(state, value, shift) {{
+                state.writes = (state.writes + 1) | 0;
+                if (value {operator} shift) state.hits = (state.hits + 1) | 0;
+            }}
+            function run(value, shift) {{
+                const state = {{ writes: 0, hits: 0 }};
+                for (let i = 0; i < 4000; i++) step(state, value, shift);
+                return state.writes + ':' + state.hits;
+            }}
+            let calls = 0;
+            const object = {{ valueOf() {{ calls++; return 7; }} }};
+            for (const value of [0, -1, 7, 2147483648, 4294967296, 1.5, -0,
+                    NaN, Infinity, 1e100, '7', null, undefined, object]) {{
+                for (const shift of [0, 1, 31, 32, -1, 1.5]) print(run(value, shift));
+            }}
+            print(calls);
+            const marker = {{}};
+            let writes = 0, coercions = 0;
+            function throws(value) {{
+                for (let i = 0; i < 4000; i++) {{
+                    writes++;
+                    if (value {operator} 1) continue;
+                }}
+            }}
+            throws(7);
+            try {{ throws({{ valueOf() {{ coercions++; throw marker; }} }}); }}
+            catch (error) {{ print(error === marker); }}
+            print(writes + ':' + coercions);
+            try {{ throws(7n); }} catch (error) {{ print(error instanceof TypeError); }}
+            print(writes);
+        "#);
+        let program = Engine::specialize(&source, "typed-bitwise-branch.js").unwrap();
+        let mut results = Vec::new();
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let output = Rc::new(RefCell::new(Vec::new()));
+            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            results.push(output.borrow().clone());
+        }
+        assert_eq!(results[0], results[1], "operator {operator}");
+        assert_eq!(&results[1][results[1].len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
+    }
+}
+
+#[test]
 fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
     let source = r#"(function(){
         function fraction(x){for(let k=0;k<1;k=(k+1)|0)x=x+1.5;return x|0;}
