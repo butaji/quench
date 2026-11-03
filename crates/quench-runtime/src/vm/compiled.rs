@@ -17834,8 +17834,8 @@ mod tests {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let mut owners = Vec::new();
         let mut entries = Vec::new();
-        for id in 0..program.function_count() {
-            let mut regions = lower_static_typed_regions(&program, id as u32, &targets[id], &*isa, 0);
+        for (id, targets) in targets.iter().enumerate().take(program.function_count()) {
+            let mut regions = lower_static_typed_regions(&program, id as u32, targets, &*isa, 0);
             for region in &mut regions {
                 // Bind the pure helper-table resolver as the image linker does.
                 let instructions: Vec<_> = region.function.layout.blocks()
