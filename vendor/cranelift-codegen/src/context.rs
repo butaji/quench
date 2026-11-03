@@ -391,6 +391,10 @@ impl Context {
             self.compute_cfg();
             self.compute_domtree();
             self.compute_loop_analysis();
+            // Splitting and phi repair expose additional induction proofs.
+            // Retain the pre-split conversion above: coupled-loop bounds can
+            // lose their common definition when the graph is duplicated.
+            crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis);
         }
 
         self.verify_if(fisa)?;

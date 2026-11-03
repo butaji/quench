@@ -17525,6 +17525,40 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn conditional_integer_update_keeps_countdown_after_poll_unswitch() {
+        let program = crate::Engine::specialize(r#"
+            const feedback=7;
+            function fold(n,x){n|=0;x|=0;for(let i=0;i<n;i=(i+1)|0){
+                if((x&1)===0)x=x>>1;else x=(x>>1)^feedback;
+            }return x|0;}
+            if(fold(0,-1)!==-1||fold(-1,17)!==17||fold(1,-1)!==-8||fold(3,3)!==6)throw 'integer fold';
+            throw 42;
+        "#, "conditional-countdown.cjs").unwrap();
+        let module = crate::lower_native_js_module(&program, "conditional_countdown").unwrap();
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        let function = module.functions.into_iter().find_map(|function| match function {
+            super::super::native_object::NativeFunction::Definition { name, function }
+                if name == "conditional_countdown_function_1" => Some(function), _ => None,
+        }).unwrap();
+        let counters = super::super::jit_backend::compile_function(function, &*isa, None, |_, native| {
+            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+            loops.compute(native, &cfg, &dom);
+            Ok(native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
+                .flat_map(|block| native.layout.block_insts(block))
+                .filter(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub).count())
+        }).unwrap();
+        assert!(counters > 0, "conditional update must retain its countdown after loop splitting");
+        let native = linked_optimized_test_program(program);
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn countdown_induction_preserves_words_checkpoints_and_labels() {
         use cranelift_codegen::settings::Configurable;
         use std::sync::atomic::AtomicU8;
