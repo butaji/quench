@@ -148,6 +148,12 @@ struct Lowering<'a, 'f> {
     /// ones arrived with: a block they all reach keeps the object proofs they share.
     forward: Vec<Option<usize>>,
     arrived: BTreeMap<usize, Vec<State>>,
+    /// The block leaders an entry or a lowered edge enters: a block none does is not
+    /// lowered, its code reached only past a leave.
+    entered: Vec<bool>,
+    /// Whether a run can do anything but leave: complete natively or run a loop natively. A
+    /// body that can do neither declines (`lower`).
+    finishes: bool,
     /// The one epilogue every stop shares: it returns its status parameter.
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
@@ -318,8 +324,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn continue_at(&mut self, state: &mut State, pc: usize) {
-        match self.blocks.get(pc).copied().flatten() {
+        // A block before this one that no edge entered was not lowered.
+        let lowered = pc > self.at || self.entered.get(pc).copied().unwrap_or(false);
+        match self.blocks.get(pc).copied().flatten().filter(|_| lowered) {
             Some(block) => {
+                self.entered[pc] = true;
+                self.finishes |= pc <= self.at;
                 if self.at < pc { self.hoist_reads(state, pc); }
                 self.conform(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
@@ -700,6 +710,8 @@ fn lower(
         at: 0,
         forward: Vec::new(),
         arrived: BTreeMap::new(),
+        entered: vec![false; unit.instructions.len()],
+        finishes: false,
         leave,
         stop,
     };
@@ -750,6 +762,7 @@ fn lower(
     let starts: Vec<usize> = std::iter::once(0).chain(loop_entry).collect();
     lowering.hoists = invariant_reads(&instructions, &program.constants, &starts);
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
+    for start in &starts { if let Some(entered) = lowering.entered.get_mut(*start) { *entered = true; } }
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
     if let [at_first, at_header] = start_blocks[..] {
         let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
@@ -786,7 +799,12 @@ fn lower(
                 lowering.hoist_reads(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
+                lowering.entered[pc] = true;
                 lowering.builder.ins().jump(block, &[]);
+            }
+            if !lowering.entered[pc] {
+                reachable = false;
+                continue;
             }
             lowering.builder.switch_to_block(block);
             state = lowering.entry_state(pc, count);
@@ -847,7 +865,7 @@ fn lower(
     lowering.builder.switch_to_block(leave);
     let status = lowering.builder.block_params(leave)[0];
     lowering.builder.ins().return_(&[status]);
-    if !lowering.valid { return None; }
+    if !lowering.valid || !lowering.finishes { return None; }
     let native_count = lowering.native;
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
@@ -1555,6 +1573,7 @@ impl Lowering<'_, '_> {
     /// Stops with the activation's completion: `value` in the result word, `record` the
     /// record that completes it (`LANE_BODY_RETURNED`).
     fn return_value(&mut self, record: u32, value: ir::Value) {
+        self.finishes = true;
         let result = self.result;
         self.ins().store(MemFlagsData::trusted(), value, result, 0);
         let record = self.ins().iconst(types::I64, i64::from(record));

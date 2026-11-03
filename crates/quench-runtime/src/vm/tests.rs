@@ -21871,7 +21871,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
 #[cfg(not(quench_profiled))]
 fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let program = Engine::specialize(r#"
-      function exposed(value) { value=123; return globalThis.probe.value; }
+      function exposed(value, done) { value=123; if (done) return 0; return globalThis.probe.value; }
       globalThis.probe={ get value() { return exposed.arguments[0]; } };
     "#, "typed-lane-reflected-parameter.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
