@@ -3,7 +3,7 @@ resolver = "2"
 # The vendored oxc crates are patches ([patch.crates-io]), not members: as members their
 # dev-dependencies (oxc_ast "serialize") would join `--workspace` feature resolution and
 # rebuild the oxc, regexp and runtime graph under a second feature set.
-exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression"]
+exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression", "vendor/iana-time-zone"]
 members = [
     "quench-bench",
     "crates/quench-js-check",
@@ -118,6 +118,7 @@ debug = true
 strip = "none"
 
 [patch.crates-io]
+iana-time-zone = { path = "vendor/iana-time-zone" }
 oxc_parser = { path = "vendor/oxc-parser" }
 oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
 cranelift-codegen = { path = "vendor/cranelift-codegen" }
