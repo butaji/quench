@@ -105,8 +105,7 @@ impl<H: Host> Vm<H> {
         self.embedding_program()?;
         let (name, length) = self
             .host
-            .functions()
-            .get(id.0 as usize)
+            .function_descriptor(id.0 as usize)
             .map(|binding| (binding.name, binding.length))
             .ok_or_else(|| JsError("unknown host function index".into()))?;
         let name = name_override.unwrap_or(name);
@@ -205,8 +204,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn initialize_host(&mut self) -> Result<(), JsError> {
-        for index in 0..self.host.functions().len() {
-            let Some(name) = self.host.functions()[index].global else {
+        for index in 0..self.host.function_count() {
+            let Some(name) = self.host.function_descriptor(index)
+                .ok_or_else(|| JsError("unknown host function index".into()))?.global else {
                 continue;
             };
             let id = u32::try_from(index)
@@ -287,7 +287,7 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-lane-exits")]
     pub(super) fn host_function_name(&self, function: Value) -> Option<&'static str> {
         let index = self.host_operation_index(self.heap.function(function)?.env)?;
-        self.host.functions().get(index as usize).map(|binding| binding.name)
+        self.host.function_descriptor(index as usize).map(|binding| binding.name)
     }
 
     fn run_host_function(&mut self, receiver: Value, args: &[Value]) -> Result<Value, JsError> {
@@ -297,9 +297,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid host function environment".into()))?;
         let callback = self
             .host
-            .functions()
-            .get(index as usize)
-            .map(|binding| binding.call)
+            .function_callback(index as usize)
             .ok_or_else(|| JsError("unknown host function index".into()))?;
         let callee = self.active_native_callable();
         let new_target = self

@@ -4,6 +4,49 @@ use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
+fn split_host_catalog_preserves_descriptors_and_dispatch_indices() {
+    struct SplitHost(Rc<std::cell::Cell<usize>>);
+    fn probe(c: &mut NativeContext<'_, SplitHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+        Ok(c.number(42.0))
+    }
+    impl crate::Host for SplitHost {
+        fn write_line(&mut self, _: &str) { panic!("unexpected output") }
+        fn clock_millis(&mut self) -> f64 { 0.0 }
+        fn functions(&self) -> &[HostFunction<Self>] { panic!("combined catalog must not be read") }
+        fn function_count(&self) -> usize { 2 }
+        fn function_descriptor(&self, index: usize) -> Option<HostFunctionDescriptor> {
+            crate::host_functions![@descriptors;
+                method "hidden" (0) => probe,
+                global "catalogProbe" (2) => probe,
+            ].get(index).copied()
+        }
+        fn function_callback(&self, index: usize) -> Option<HostCallback<Self>> {
+            assert_eq!(index, 1, "metadata reads must not resolve callback addresses");
+            self.0.set(self.0.get() + 1);
+            Some(probe)
+        }
+    }
+    let source = "if (catalogProbe.name !== 'catalogProbe' || catalogProbe.length !== 2 || typeof hidden !== 'undefined') throw new Error('descriptor'); if (catalogProbe(1, 2) !== 42) throw new Error('dispatch');";
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(source, "split-host-catalog.js").unwrap();
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let mut runtime = Runtime::new(SplitHost(calls.clone()));
+        runtime.execute(&program).unwrap();
+        assert_eq!(calls.get(), 1);
+        #[cfg(feature = "aot")]
+        {
+            let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+            let calls = Rc::new(std::cell::Cell::new(0));
+            let mut runtime = Runtime::new(SplitHost(calls.clone()));
+            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
+            runtime.execute_native(&native).unwrap();
+            assert_eq!(calls.get(), 1);
+            assert_eq!(runtime.native_execution_rejections(), 0);
+        }
+    }
+}
+
+#[test]
 fn guest_catch_does_not_hide_unavailable_native_host_operations() {
     fn unavailable(c: &mut NativeContext<'_, TestHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
         Err(c.native_execution_unavailable("native operation is not linked"))

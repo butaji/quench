@@ -345,6 +345,14 @@ impl<T> BuiltinData<T> {
 pub type HostCallback<H> =
     for<'a> fn(&mut NativeContext<'a, H>, RootId, &[RootId]) -> Result<RootId, RootedError>;
 
+/// Stable operation metadata, independent of its executable callback address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostFunctionDescriptor {
+    pub name: &'static str,
+    pub length: u16,
+    pub global: Option<&'static str>,
+}
+
 /// One authority for a native operation's descriptor and Rust implementation.
 pub struct HostFunction<H: Host> {
     pub name: &'static str,
@@ -356,6 +364,16 @@ pub struct HostFunction<H: Host> {
 /// Declare global and module-owned native descriptors from one binding table.
 #[macro_export]
 macro_rules! host_functions {
+    (@descriptors; $( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+        &[$($(#[$attribute])* $crate::HostFunctionDescriptor {
+            name: $name,
+            length: $length,
+            global: $crate::host_functions!(@global $scope $name),
+        }),*]
+    };
+    (@callbacks; $( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
+        &[$($(#[$attribute])* { $callback as $crate::HostCallback<_> }),*]
+    };
     ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
         &[$($(#[$attribute])* $crate::HostFunction {
             name: $name,

@@ -247,6 +247,25 @@ pub trait Host {
         &[]
     }
 
+    /// Metadata and callback projections share stable indices. Every index below
+    /// this count must have a descriptor. Split catalogs may override these
+    /// operations without constructing a combined address table.
+    fn function_count(&self) -> usize where Self: Sized {
+        self.functions().len()
+    }
+
+    fn function_descriptor(&self, index: usize) -> Option<crate::HostFunctionDescriptor>
+    where Self: Sized {
+        self.functions().get(index).map(|binding| crate::HostFunctionDescriptor {
+            name: binding.name, length: binding.length, global: binding.global,
+        })
+    }
+
+    fn function_callback(&self, index: usize) -> Option<crate::HostCallback<Self>>
+    where Self: Sized {
+        self.functions().get(index).map(|binding| binding.call)
+    }
+
     /// Install host-owned objects after shared intrinsics and native globals,
     /// before guest execution. Context roots expire when installation returns.
     fn initialize(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>

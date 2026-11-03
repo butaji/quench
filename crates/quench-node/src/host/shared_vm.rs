@@ -1,7 +1,7 @@
 //! The existing Node host adapted to the shared VM; Node policy stays in modules.
 
 use super::NodeHost;
-use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, SystemHost};
+use quench_runtime::{HostCallback, HostFunctionDescriptor, HostFunctionId, NativeContext, RootedError, SystemHost};
 
 pub(crate) mod commonjs;
 pub(crate) mod commonjs_exports;
@@ -71,8 +71,10 @@ const fn operation_beside_activations(name: &str) -> bool {
 // Both projections preserve declaration order and platform-specific entries.
 macro_rules! node_bindings {
     ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
-        const OPERATION_NAMES: &[&str] = &[$($(#[$attribute])* $name),*];
-        const BESIDE_OPERATION_WORDS: usize = OPERATION_NAMES.len().div_ceil(u64::BITS as usize);
+        const OPERATION_DESCRIPTORS: &[HostFunctionDescriptor] = quench_runtime::host_functions![@descriptors;
+            $($(#[$attribute])* $scope $name ($length) => $callback),*
+        ];
+        const BESIDE_OPERATION_WORDS: usize = OPERATION_DESCRIPTORS.len().div_ceil(u64::BITS as usize);
         const BESIDE_OPERATIONS: [u64; BESIDE_OPERATION_WORDS] = operation_bits(&[
             $($(#[$attribute])* const { operation_beside_activations($name) }),*
         ]);
@@ -82,7 +84,14 @@ macro_rules! node_bindings {
             $($(#[$attribute])* const { operation_abi(stringify!($scope), $name, $length, stringify!($callback)) }),*
         ]);
 
-        pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
+        fn callbacks() -> &'static [HostCallback<NodeHost>] {
+            quench_runtime::host_functions![@callbacks;
+                $($(#[$attribute])* $scope $name ($length) => $callback),*
+            ]
+        }
+
+        // Compatibility projection for embedders using the combined catalog.
+        fn bindings() -> &'static [quench_runtime::HostFunction<NodeHost>] {
             quench_runtime::host_functions![
                 $($(#[$attribute])* $scope $name ($length) => $callback),*
             ]
@@ -101,8 +110,8 @@ pub(crate) use literal_operation as operation;
 pub(crate) const fn static_operation(name: &str) -> HostFunctionId {
     let name = name.as_bytes();
     let mut position = 0;
-    while position < OPERATION_NAMES.len() {
-        let candidate = OPERATION_NAMES[position].as_bytes();
+    while position < OPERATION_DESCRIPTORS.len() {
+        let candidate = OPERATION_DESCRIPTORS[position].name.as_bytes();
         if candidate.len() == name.len() {
             let mut byte = 0;
             while byte < name.len() && candidate[byte] == name[byte] {
@@ -2443,20 +2452,20 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
     /// for every binding, was 50 KiB of every process's heap at start-up (massif, V8-v7
     /// Richards, 2026-10-22); a binary search costs about eleven comparisons of short names.
     static INDEX: std::sync::OnceLock<Box<[u16]>> = std::sync::OnceLock::new();
-    let names = OPERATION_NAMES;
+    let descriptors = OPERATION_DESCRIPTORS;
     let index = INDEX.get_or_init(|| {
-        let mut index: Box<[u16]> = (0..names.len())
+        let mut index: Box<[u16]> = (0..descriptors.len())
             .map(|position| u16::try_from(position).expect("Node binding index fits u16"))
             .collect();
         // Stable, so a repeated name resolves to its first registration.
-        index.sort_by_key(|&position| names[usize::from(position)]);
+        index.sort_by_key(|&position| descriptors[usize::from(position)].name);
         index
     });
-    let first = index.partition_point(|&position| names[usize::from(position)] < name);
+    let first = index.partition_point(|&position| descriptors[usize::from(position)].name < name);
     let position = index
         .get(first)
         .copied()
-        .filter(|&position| names[usize::from(position)] == name)
+        .filter(|&position| descriptors[usize::from(position)].name == name)
         .expect("registered Node operation");
     HostFunctionId(u32::from(position))
 }
@@ -2798,8 +2807,20 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::async_hooks_shared_vm::release_promise_contexts(&self.shared_state, contexts);
     }
 
-    fn functions(&self) -> &[HostFunction<Self>] {
+    fn functions(&self) -> &[quench_runtime::HostFunction<Self>] {
         bindings()
+    }
+
+    fn function_count(&self) -> usize {
+        OPERATION_DESCRIPTORS.len()
+    }
+
+    fn function_descriptor(&self, index: usize) -> Option<HostFunctionDescriptor> {
+        OPERATION_DESCRIPTORS.get(index).copied()
+    }
+
+    fn function_callback(&self, index: usize) -> Option<HostCallback<Self>> {
+        callbacks().get(index).copied()
     }
 
     /// The host operations a lane calls beside its frameless activations: each reads no
@@ -3231,16 +3252,21 @@ mod tests {
     fn operation_names_are_unique() {
         let mut names = std::collections::HashSet::new();
         let host = super::NodeHost::new(Vec::new());
-        assert_eq!(super::OPERATION_NAMES.len(), super::bindings().len());
-        for (index, binding) in super::bindings().iter().enumerate() {
+        assert_eq!(super::OPERATION_DESCRIPTORS.len(), super::callbacks().len());
+        for (index, binding) in super::OPERATION_DESCRIPTORS.iter().enumerate() {
+            let legacy = &super::bindings()[index];
+            assert_eq!((binding.name, binding.length, binding.global), (legacy.name, legacy.length, legacy.global));
+            assert!(std::ptr::fn_addr_eq(super::callbacks()[index], legacy.call));
+            assert_eq!(quench_runtime::Host::function_descriptor(&host, index), Some(*binding));
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
-            assert_eq!(super::OPERATION_NAMES[index], binding.name);
             assert_eq!(super::static_operation(binding.name), super::HostFunctionId(index as u32));
             assert_eq!(super::operation(binding.name), super::static_operation(binding.name));
             assert_eq!(quench_runtime::Host::host_function_runs_beside_activations(&host, index),
                 super::BESIDE_ACTIVATIONS.contains(&binding.name), "{}", binding.name);
         }
-        for index in [super::OPERATION_NAMES.len(), usize::MAX] {
+        for index in [super::OPERATION_DESCRIPTORS.len(), usize::MAX] {
+            assert!(quench_runtime::Host::function_descriptor(&host, index).is_none());
+            assert!(quench_runtime::Host::function_callback(&host, index).is_none());
             assert!(!quench_runtime::Host::host_function_runs_beside_activations(&host, index));
         }
         const FIRST: super::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
