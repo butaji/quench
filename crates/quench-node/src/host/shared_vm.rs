@@ -6,6 +6,7 @@ use quench_runtime::{HostCallback, HostFunctionDescriptor, HostFunctionId, Nativ
 pub(crate) mod commonjs;
 pub(crate) mod commonjs_exports;
 mod esm_errors;
+mod operation_index;
 pub(crate) mod esm_wasm;
 pub(crate) use commonjs::source_kind;
 
@@ -2447,20 +2448,11 @@ fn esm_directory_import_suggestion(directory: &std::path::Path) -> Option<String
 /// indexed once, by a binary search, rather than scanned among every binding. Each name
 /// registers exactly one function (`operation_names_are_unique`).
 pub(crate) fn operation(name: &str) -> HostFunctionId {
-    /// The bindings' positions, ordered by name: the names are the bindings' own static
-    /// strings, so the index holds two bytes a binding. A hash map keyed by the names, sized
-    /// for every binding, was 50 KiB of every process's heap at start-up (massif, V8-v7
-    /// Richards, 2026-10-22); a binary search costs about eleven comparisons of short names.
-    static INDEX: std::sync::OnceLock<Box<[u16]>> = std::sync::OnceLock::new();
+    // Resolve immutable declaration order during compilation, without first-use
+    // allocation, sorting or synchronization. Each entry is only a binding index.
+    static INDEX: [u16; OPERATION_DESCRIPTORS.len()] = operation_index::sorted_indices(OPERATION_DESCRIPTORS);
     let descriptors = OPERATION_DESCRIPTORS;
-    let index = INDEX.get_or_init(|| {
-        let mut index: Box<[u16]> = (0..descriptors.len())
-            .map(|position| u16::try_from(position).expect("Node binding index fits u16"))
-            .collect();
-        // Stable, so a repeated name resolves to its first registration.
-        index.sort_by_key(|&position| descriptors[usize::from(position)].name);
-        index
-    });
+    let index = &INDEX;
     let first = index.partition_point(|&position| descriptors[usize::from(position)].name < name);
     let position = index
         .get(first)
