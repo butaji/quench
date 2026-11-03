@@ -62,6 +62,10 @@ pub struct HeapMemoryComposition {
     pub array_buffer_store_bytes: usize,
     pub cell_payload_bytes: usize,
     pub other_cell_payload_bytes: usize,
+    /// Diagnostic backing census, overlapping the existing environment payload estimate.
+    pub environment_logical_slots: usize,
+    pub environment_storage_bytes: usize,
+    pub environment_sparse_count: usize,
     pub profile_instrumentation_bytes: usize,
 }
 
@@ -85,6 +89,9 @@ impl Heap {
         let mut string_buffers_bytes = 0;
         let mut string_buffer_count = 0;
         let mut other_cell_payload_bytes = 0;
+        let mut environment_logical_slots = 0;
+        let mut environment_storage_bytes = 0;
+        let mut environment_sparse_count = 0;
         let mut array_identities = HashSet::new();
         let mut string_identities = HashSet::new();
         let mut array_buffer_bytes = 0;
@@ -95,6 +102,11 @@ impl Heap {
             let object_record = self.object_record(identity);
             let direct_array = identity.direct_array_index().is_some();
             let cell = self.get(identity);
+            if let Some(Cell::Environment { slots, .. }) = cell {
+                environment_logical_slots += slots.len();
+                environment_storage_bytes += slots.0.allocated_bytes();
+                environment_sparse_count += usize::from(slots.dense().is_none());
+            }
             let array = self.array(identity);
             let direct_object = identity.direct_object_index().is_some();
             let direct_function = identity.direct_function_index().is_some();
@@ -309,6 +321,9 @@ impl Heap {
             array_buffer_store_bytes,
             cell_payload_bytes,
             other_cell_payload_bytes,
+            environment_logical_slots,
+            environment_storage_bytes,
+            environment_sparse_count,
             profile_instrumentation_bytes: {
                 #[cfg(feature = "profile-memory")]
                 {

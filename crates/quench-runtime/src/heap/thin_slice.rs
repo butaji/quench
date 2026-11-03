@@ -57,6 +57,12 @@ impl<T> ThinBoxSlice<T> {
         self.len() == 0
     }
 
+    /// Extent including the header and padding; the shared empty header owns no bytes.
+    /// For an in-place view this describes storage within its owner, not another allocation.
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        if self.is_empty() { 0 } else { Self::layout(self.len()).0.size() }
+    }
+
     #[inline(always)]
     fn header(&self) -> usize {
         // SAFETY: the header was initialized at allocation; only `mark` changes it, and only
@@ -306,6 +312,7 @@ mod tests {
         let empty: ThinBoxSlice<std::rc::Rc<i32>> = Vec::new().into_boxed_slice().into();
         let other = ThinBoxSlice::<std::rc::Rc<i32>>::from_exact_iter(std::iter::empty());
         assert!(empty.is_empty() && other.is_empty());
+        assert_eq!(empty.allocated_bytes(), 0);
         assert_eq!(empty.header, other.header);
         let copy = empty.clone();
         assert_eq!(copy.len(), 0);
@@ -334,5 +341,17 @@ mod tests {
         let empty: ThinBoxSlice<u64> = Vec::new().into_boxed_slice().into();
         assert!(empty.is_empty());
         assert_eq!(size_of::<ThinBoxSlice<u64>>(), size_of::<usize>());
+    }
+
+    #[test]
+    fn allocation_extent_includes_header_padding_and_ignores_mark() {
+        #[repr(align(32))]
+        #[derive(Clone, Copy)]
+        struct Aligned(u8);
+        let mut slice = ThinBoxSlice::from_slice(&[Aligned(7); 3]);
+        assert_eq!(slice.allocated_bytes(), 4 * size_of::<Aligned>());
+        slice.mark();
+        assert_eq!(slice.allocated_bytes(), 4 * size_of::<Aligned>());
+        assert_eq!(slice[2].0, 7);
     }
 }

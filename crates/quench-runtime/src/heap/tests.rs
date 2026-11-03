@@ -1553,3 +1553,26 @@ fn memory_census_accounts_for_direct_and_legacy_vectors_across_collection() {
     assert_eq!(empty.cell_counts[CellKind::WasmV128 as usize], 0);
     assert_eq!(empty.v128_record_used_bytes, 0);
 }
+
+#[test]
+fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
+    let mut heap = Heap::new();
+    let width = super::cell::SPARSE_CLONE_MIN_SLOTS;
+    let slots = EnvironmentSlots::from_values(std::iter::repeat_n(Value::UNDEFINED, width));
+    let (owner, _) = heap.alloc_environment(Value::UNDEFINED, 0, slots, EnvironmentScopeRef::of_program(0));
+    let Some(Cell::Environment { slots, .. }) = heap.get(owner) else { unreachable!() };
+    let sparse = slots.iteration_copy(owner, &[], &[], |_, _| None).unwrap();
+    assert!(sparse.dense().is_none());
+    let sparse_bytes = sparse.0.allocated_bytes();
+    let (copy, _) = heap.alloc_environment(owner, 0, sparse, EnvironmentScopeRef::of_program(0));
+    let census = heap.memory_composition();
+    assert_eq!(census.environment_logical_slots, 2 * width);
+    assert_eq!(census.environment_sparse_count, 1);
+    assert_eq!(census.environment_storage_bytes,
+        size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
+    assert!(sparse_bytes < width * size_of::<EnvironmentSlot>());
+    heap.collect([copy]);
+    assert_eq!(heap.memory_composition().environment_storage_bytes, census.environment_storage_bytes);
+    heap.collect([]);
+    assert_eq!(heap.memory_composition().environment_storage_bytes, 0);
+}

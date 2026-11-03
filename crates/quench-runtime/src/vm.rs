@@ -2807,6 +2807,13 @@ impl<H: Host> Vm<H> {
             + frame_bytes;
         let v128_record_reserved_bytes = heap.v128_record_reserved_bytes;
         let v128_record_used_bytes = heap.v128_record_used_bytes;
+        eprintln!(
+            "{{\"kind\":\"quench-environment-storage\",\"phase\":\"{phase}\",\"collection\":{},\"logical_slots\":{},\"storage_bytes\":{},\"sparse_count\":{}}}",
+            self.heap.collection_count(),
+            heap.environment_logical_slots,
+            heap.environment_storage_bytes,
+            heap.environment_sparse_count,
+        );
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
             + heap.object_record_reserved_bytes
             + heap.array_record_reserved_bytes
