@@ -227,6 +227,13 @@ impl NativeSupport {
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
+        // Apple Silicon's macOS floor already supports chained fixups. Request
+        // them explicitly: rustc's default deployment target otherwise selects
+        // classic relocations, dirtying every pointer-bearing constant page at
+        // launch. Newer kernels can apply chains on page-in instead. Leave the
+        // deployment target and older x86-64 platform behavior unchanged.
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        command.args(["-C", "link-arg=-Wl,-fixup_chains"]);
         for path in &self.native_paths {
             command.arg("-L").arg(path);
         }
