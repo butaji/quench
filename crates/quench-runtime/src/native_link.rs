@@ -1,10 +1,12 @@
 //! Host-neutral native executable publication, available only in compiler builds.
 
 mod exports;
+mod footprint;
 mod link;
 mod payload;
 pub use exports::{DynamicInterface, ExportPolicy};
 pub use link::{NativeLinkAudit, NativeSupport, checked_output};
+pub use footprint::NativeImageFootprint;
 pub use payload::{PayloadReduction, remove_offline_symbols};
 
 use std::{collections::BTreeSet, path::{Path, PathBuf}};

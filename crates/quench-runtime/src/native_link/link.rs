@@ -13,6 +13,7 @@ use std::{
 #[derive(Serialize)]
 pub struct NativeLinkAudit {
     pub dynamic_interface: super::exports::DynamicInterface,
+    pub footprint: super::NativeImageFootprint,
 }
 
 impl NativeLinkAudit {
@@ -266,9 +267,10 @@ impl NativeSupport {
             .arg(format!("link-arg={}", map.display()));
         let interface = super::exports::configure(&mut command, inputs, executable)?;
         checked_output(&mut command, "native image link")?;
-        audit(inputs, executable, self.support)?;
+        let symbols = audit(inputs, executable, self.support)?;
+        let footprint = super::footprint::read(executable, &symbols)?;
         let dynamic_interface = interface.verify(executable)?;
-        Ok(NativeLinkAudit { dynamic_interface })
+        Ok(NativeLinkAudit { dynamic_interface, footprint })
     }
 }
 
@@ -435,7 +437,7 @@ fn retained_execution_support(symbols: &str) -> BTreeMap<&'static str, &str> {
     retained
 }
 
-fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<(), String> {
+fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupport) -> Result<String, String> {
     let bytes = checked_output(Command::new("nm").arg("-C").arg(executable), "native symbol audit")?;
     let symbols = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     // Inspect whole demangled names: Rust types may contain spaces, and a
@@ -470,7 +472,7 @@ fn audit(inputs: &NativeImageInputs, executable: &Path, support: NativeImageSupp
     if exports != expected {
         return Err("native semantic helper exports do not match object imports".into());
     }
-    Ok(())
+    Ok(symbols)
 }
 
 #[cfg(test)]

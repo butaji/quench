@@ -493,6 +493,12 @@ fn compile_command_preserves_pooled_source_reflection() {
 
 fn assert_reduced_payload(report: &serde_json::Value, executable: &Path) {
     assert_eq!(report["symbol_audit_stage"], "before_symbol_removal");
+    assert_eq!(report["startup_options_binding_time"], "runtime");
+    let footprint = &report["footprint_before_symbol_removal"];
+    let code_bytes = footprint["code_bytes"].as_u64().unwrap();
+    assert!(code_bytes > 0);
+    assert_eq!(footprint["code_spans_by_symbol_root"].as_object().unwrap()
+        .values().map(|bytes| bytes.as_u64().unwrap()).sum::<u64>(), code_bytes);
     let interface = &report["dynamic_interface"];
     let linked = interface["linked"].as_array().unwrap();
     let required = interface["required"].as_array().unwrap();

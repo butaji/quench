@@ -202,6 +202,7 @@ fn compile(options: Options) -> Result<(), String> {
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
         "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile,
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
+        "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
         "js_source_frontend": support.allows_dynamic_source(),
         "bytecode_interpreter": support.allows_dynamic_source(),
@@ -287,6 +288,7 @@ fn compile(options: Options) -> Result<(), String> {
     let audit = support.link_audited(&inputs, &driver, &staged)?;
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
+    report["footprint_before_symbol_removal"] = json!(audit.footprint);
     let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
     report["symbol_audit_stage"] = json!("before_symbol_removal");
     report["binary_bytes"] = json!(payload.binary_bytes);
