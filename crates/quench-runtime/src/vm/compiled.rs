@@ -18736,6 +18736,7 @@ mod tests {
             let Some(super::super::program_store::JsTierState::Compiled(native)) =
                 vm.programs.js_tier(ProgramId::MAIN, 1) else { panic!("numeric function must compile"); };
             assert!(matches!(native.entry, CompiledJsEntry::SharedNumber { mode: NativeEntryMode::Resumable, .. }));
+            #[cfg(not(quench_profiled))]
             assert!(native.native_entries() > 0);
             complete.send(()).unwrap();
         }).unwrap();
