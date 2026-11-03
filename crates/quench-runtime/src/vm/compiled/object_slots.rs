@@ -7,7 +7,7 @@
 use super::*;
 use crate::heap::PlainPropertyStorage;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ObjectHeader {
     pub(super) record: ir::Value,
     pub(super) shape: ir::Value,
@@ -103,7 +103,7 @@ mod tests {
 #[derive(Clone, Copy)]
 pub(super) enum PackedAccess { Snapshot, Reload }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum PackedValue { Snapshot(ir::Value), Record(ir::Value) }
 
 impl PackedValue {
@@ -116,7 +116,7 @@ impl PackedValue {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Slots {
     Packed(PackedValue),
     Arena(ir::Value),
@@ -125,7 +125,7 @@ enum Slots {
 
 /// A projection for a guarded receiver and exact shape. It may only be reused
 /// while no admitted effect can change its layout, arena base or object lifetime.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct CheckedObject {
     slots: Slots,
     pub(super) storage_len: usize,

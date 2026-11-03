@@ -209,6 +209,10 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, (Variable, bool)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
+    /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
+    /// ones arrived with: a block they all reach keeps the object proofs they share.
+    forward: Vec<Option<usize>>,
+    arrived: BTreeMap<usize, Vec<State>>,
     /// The one epilogue every stop shares: it returns its status parameter.
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
@@ -474,10 +478,32 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 if self.at < pc { self.hoist_reads(state, pc); }
                 self.conform(state, pc);
+                if self.at < pc { self.arrive(state, pc); }
                 self.ins().jump(block, &[]);
             }
             None => self.exit(state, pc as u32),
         }
+    }
+
+    /// Record `state` arriving at block leader `pc` by one of its forward edges.
+    fn arrive(&mut self, state: &State, pc: usize) {
+        if self.forward.get(pc).copied().flatten().is_some() {
+            self.arrived.entry(pc).or_default().push(state.clone());
+        }
+    }
+
+    /// The object proofs every forward edge into `pc` arrived with, as the same values, for
+    /// a block no other edge enters: each was made in a block over all of them, so over this.
+    fn keep_shared_proofs(&mut self, state: &mut State, pc: usize) {
+        let Some(edges) = self.forward.get(pc).copied().flatten() else { return };
+        let Some(arrived) = self.arrived.remove(&pc) else { return };
+        let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
+        state.headers = first.headers.iter().enumerate().map(|(index, header)| header.filter(|header| rest.iter()
+            .all(|other| other.headers[index] == Some(*header)))).collect();
+        state.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
+            .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
+        state.receivers = first.receivers.iter().filter(|register| rest.iter()
+            .all(|other| other.receivers.contains(register))).copied().collect();
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -660,10 +686,18 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
     }
 }
 
+/// Whether `instruction` is a store natively: of its atom, into a slot the object already
+/// has, so it changes no shape, layout or other property; anything else leaves first.
+fn stores_own(instruction: WideInstruction) -> bool {
+    matches!(instruction.op(), Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict)
+        && !instruction.returns_from_frame()
+}
+
 /// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
 /// entered by one edge from before it and no other, of instructions that only read
-/// (`reads_only`), whose reads of a register it never writes, by one cached atom, see the
-/// same object and value every iteration. Entries (`starts`) enter no such loop.
+/// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
+/// writes, by one cached atom it stores to no object, see the same object and value every
+/// iteration. Entries (`starts`) enter no such loop.
 fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
     -> BTreeMap<usize, Vec<usize>> {
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
@@ -678,16 +712,37 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
             + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
         let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
-        if entries != 1 || side || !body.iter().all(|candidate| reads_only(constants, *candidate)) { continue }
+        if entries != 1 || side
+            || !body.iter().all(|candidate| reads_only(constants, *candidate) || stores_own(*candidate)) { continue }
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
+        let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
+            .map(|candidate| candidate.atom_index()).collect();
         let reads: Vec<usize> = body.iter().enumerate().filter_map(|(offset, candidate)| match candidate.field_lookup() {
-            Some(FieldLookup::Atom { base, .. }) if candidate.op() == Op::GetField
+            Some(FieldLookup::Atom { atom, base, .. }) if candidate.op() == Op::GetField && !stored.contains(&atom)
                 && base.register_index().is_some_and(|register| !written.contains(&register)) => Some(header + offset),
             _ => None,
         }).collect();
         if !reads.is_empty() { hoists.insert(header, reads); }
     }
     hoists
+}
+
+/// Per block leader, the edges into it, all from before it; `None` for one an entry
+/// (`starts`) or a later PC enters, whose proofs no earlier edge can give.
+fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, starts: &[usize]) -> Vec<Option<usize>> {
+    let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
+    for start in starts { if let Some(slot) = edges.get_mut(*start) { *slot = None; } }
+    for (pc, instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        let falls = !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
+        let jumps = matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            .then(|| instruction.jump_target() as usize);
+        for target in [falls.then_some(pc + 1), jumps].into_iter().flatten() {
+            let Some(slot) = edges.get_mut(target) else { continue };
+            *slot = if target > pc { slot.map(|count| count + 1) } else { None };
+        }
+    }
+    edges
 }
 
 /// Why a unit has no lane body: it does not lower, or its machine code is rejected.
@@ -849,6 +904,8 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
         at: 0,
+        forward: Vec::new(),
+        arrived: BTreeMap::new(),
         leave,
         stop,
     };
@@ -957,6 +1014,7 @@ pub(super) fn lower(
     // from the registers live there, each proved to its header facts or leaving at it.
     let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
     lowering.hoists = invariant_reads(&instructions, &program.constants, &starts);
+    lowering.forward = forward_edges(&instructions, &leaders, &starts);
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
     if let [at_first, at_header] = start_blocks[..] {
         let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
@@ -1010,6 +1068,7 @@ pub(super) fn lower(
             if reachable {
                 lowering.hoist_reads(&mut state, pc);
                 lowering.conform(&mut state, pc);
+                lowering.arrive(&state, pc);
                 lowering.builder.ins().jump(block, &[]);
             }
             if (numeric || coverage.selected_entry()) && lowering.facts.at(pc).is_none() {
@@ -1018,6 +1077,7 @@ pub(super) fn lower(
             }
             lowering.builder.switch_to_block(block);
             state = lowering.entry_state(pc, count);
+            lowering.keep_shared_proofs(&mut state, pc);
             reachable = true;
         }
         if !reachable {
@@ -2690,6 +2750,11 @@ impl Lowering<'_, '_> {
             let payload = self.payload;
             emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
         }
+        // An int32 into a packed object's inline slot is its narrow word where it fits and
+        // the object has no extras (`Object::store_inline_narrow`); it needs no barrier.
+        if ty.is_subtype(Type::INT32) && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
+            self.store_narrow_int(object, inline, field.slot, value, done, general);
+        }
         let projection = match projection {
             Some(projection) => projection,
             None => {
@@ -2722,6 +2787,33 @@ impl Lowering<'_, '_> {
         } else {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])
         }
+    }
+
+    /// Store the int32 `value` (tagged) into inline `slot` of the packed object `record` and
+    /// continue at `done`; an object with arena storage continues here, one with extras or a
+    /// value past the narrow range takes `general`.
+    fn store_narrow_int(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value,
+        done: ir::Block, general: ir::Block) {
+        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+        use crate::value::NarrowLayout as NARROW;
+        let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
+        self.ins().brif(inline, packed, &[], arena, &[]);
+        self.builder.switch_to_block(packed);
+        let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
+        let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
+        let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+        emit_js_guard(&mut self.builder, plain, general);
+        let int = self.ins().ireduce(types::I32, value);
+        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
+        let biased = self.ins().iadd_imm_s(int, half_range);
+        let fits = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
+        emit_js_guard(&mut self.builder, fits, general);
+        let shifted = self.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
+        let narrow = self.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG));
+        let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
+        self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(arena);
     }
 
     /// Continue where a slot of type `slot` (`NativeFieldLoad::ty`) holds `value`, by its int
