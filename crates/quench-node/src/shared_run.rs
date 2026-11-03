@@ -7,7 +7,7 @@ use std::{path::PathBuf, process::ExitCode};
 /// Observe startup before a VM exists, using the same opt-in allocator/code census
 /// as the runtime's later initialization boundaries.
 #[cfg(feature = "profile-memory")]
-fn profile_startup_boundary(phase: &str) {
+pub(crate) fn profile_startup_boundary(phase: &str) {
     if std::env::var_os("QUENCH_MEMORY").is_some() {
         quench_runtime::report_allocator_memory(phase);
     }
