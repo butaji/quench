@@ -920,6 +920,15 @@ impl LaneView {
         self.start.set(prologue.cast_const());
     }
 
+    /// Whether a call's resolution claims the prologue for the lane tier: while its body warms
+    /// and nothing claimed it yet. A specialized body's prologue already enters it, and any
+    /// other body (declined, retired, or serving native callers only) runs its function in
+    /// the lane; claiming again would take the prologue back to `lane_tier_prologue`.
+    fn lane_tier_unclaimed(&self) -> bool {
+        // SAFETY: as `lane_body`.
+        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) && self.start.get() != self.prologue.get().cast_const()
+    }
+
     /// Starts activations at the first record again, once the tier declines the function.
     fn release_from_tier(&self) {
         self.start.set(self.records());
@@ -7525,6 +7534,9 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     let specialize = || {
+        // A function whose loop the loop tier admitted runs that loop in its region, which
+        // a body would only leave for at each of the loop's entries.
+        if own.loops.iter().any(|site| site.active_region().is_some()) { return None; }
         let direct = code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, body)).unwrap_or_default();
         let method = vm.compile_lane_method(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|callee| lane_callee_captures(cx, callee), direct, loop_header);
         if diagnostics && let Some(method) = &method {
@@ -11306,6 +11318,8 @@ impl<H: Host> Vm<H> {
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
             && self.js_tier_may_claim(code, program, function)
+            // SAFETY: as below.
+            && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.lane_tier_unclaimed())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(lane_tier_prologue::<H>, function, body.params, !body.is_arrow);
