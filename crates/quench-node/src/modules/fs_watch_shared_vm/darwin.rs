@@ -29,6 +29,7 @@ struct DirectoryContext {
 }
 struct Directory {
     stream: ffi::Stream,
+    api: &'static ffi::FsEvents,
     // Stable allocation remains live through Stop/Invalidate/Release.
     _context: Box<DirectoryContext>,
 }
@@ -37,9 +38,9 @@ impl Drop for Directory {
         // SAFETY: stream was scheduled and started on this VM thread. Invalidating
         // removes its run-loop source before the boxed callback context is freed.
         unsafe {
-            ffi::FSEventStreamStop(self.stream);
-            ffi::FSEventStreamInvalidate(self.stream);
-            ffi::FSEventStreamRelease(self.stream);
+            (self.api.stop)(self.stream);
+            (self.api.invalidate)(self.stream);
+            (self.api.release)(self.stream);
         }
     }
 }
@@ -124,16 +125,19 @@ impl Kernel {
         {
             return Ok(Some(event));
         }
-        if self
+        if let Some(api) = self
             .subscriptions
             .values()
-            .any(|entry| matches!(entry, Subscription::Directory { .. }))
+            .find_map(|entry| match entry {
+                Subscription::Directory { _stream } => Some(_stream.api),
+                Subscription::File(_) => None,
+            })
         {
             // SAFETY: streams are scheduled only on the VM's current thread.
             // Apple specifies seconds=0 as one nonblocking pass through ready sources.
             unsafe {
-                ffi::CFRunLoopRunInMode(
-                    ffi::kCFRunLoopDefaultMode,
+                (api.run_loop_run)(
+                    api.default_mode,
                     ffi::POLL_WITHOUT_WAIT_SECONDS,
                     u8::from(true),
                 );
@@ -251,6 +255,7 @@ impl Directory {
         let path = std::fs::canonicalize(path)?;
         let bytes = path.as_os_str().as_bytes();
         let c_path = CString::new(bytes).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+        let api = ffi::FsEvents::get()?;
         let mut context = Box::new(DirectoryContext {
             descriptor,
             path: bytes.to_vec(),
@@ -267,21 +272,21 @@ impl Directory {
         // all branches. The array retains its strings through the canonical CF type callbacks.
         let stream = unsafe {
             let string =
-                ffi::CFStringCreateWithFileSystemRepresentation(ptr::null(), c_path.as_ptr());
+                (api.string_create)(ptr::null(), c_path.as_ptr());
             if string.is_null() {
                 return Err(io::Error::from_raw_os_error(libc::ENOMEM));
             }
-            let paths = ffi::CFArrayCreate(
+            let paths = (api.array_create)(
                 ptr::null(),
                 &string,
                 1,
-                ptr::addr_of!(ffi::kCFTypeArrayCallBacks).cast(),
+                api.array_callbacks.cast(),
             );
             if paths.is_null() {
-                ffi::CFRelease(string);
+                (api.cf_release)(string);
                 return Err(io::Error::from_raw_os_error(libc::ENOMEM));
             }
-            let stream = ffi::FSEventStreamCreate(
+            let stream = (api.create)(
                 ptr::null(),
                 directory_callback,
                 &mut abi_context,
@@ -290,25 +295,26 @@ impl Directory {
                 ffi::DELIVERY_LATENCY_SECONDS,
                 ffi::CREATE_NO_DEFER | ffi::CREATE_FILE_EVENTS,
             );
-            ffi::CFRelease(paths);
-            ffi::CFRelease(string);
+            (api.cf_release)(paths);
+            (api.cf_release)(string);
             if stream.is_null() {
                 return Err(io::Error::from_raw_os_error(libc::ENOMEM));
             }
-            ffi::FSEventStreamScheduleWithRunLoop(
+            (api.schedule)(
                 stream,
-                ffi::CFRunLoopGetCurrent(),
-                ffi::kCFRunLoopDefaultMode,
+                (api.run_loop_current)(),
+                api.default_mode,
             );
-            if ffi::FSEventStreamStart(stream) == 0 {
-                ffi::FSEventStreamInvalidate(stream);
-                ffi::FSEventStreamRelease(stream);
+            if (api.start)(stream) == 0 {
+                (api.invalidate)(stream);
+                (api.release)(stream);
                 return Err(io::Error::from_raw_os_error(libc::EMFILE));
             }
             stream
         };
         Ok(Self {
             stream,
+            api,
             _context: context,
         })
     }

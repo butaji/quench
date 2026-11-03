@@ -598,8 +598,21 @@ pub(crate) fn shared_openssl() -> bool {
     unsafe {
         let mut host: libc::Dl_info = std::mem::zeroed();
         let mut ssl: libc::Dl_info = std::mem::zeroed();
+        #[cfg(target_os = "macos")]
+        let host_address = {
+            unsafe extern "C" {
+                #[link_name = "__dso_handle"]
+                static IMAGE_HEADER: u8;
+            }
+            // The linker binds this header to the image containing this code, including
+            // when an embedder links the host into a dylib. dyld answers its base without
+            // scanning the image's symbol table as a function-address lookup would.
+            std::ptr::addr_of!(IMAGE_HEADER).cast::<libc::c_void>()
+        };
+        #[cfg(not(target_os = "macos"))]
+        let host_address = shared_openssl as *const () as *const libc::c_void;
         libc::dladdr(
-            shared_openssl as *const () as *const libc::c_void,
+            host_address,
             &mut host,
         ) != 0
             && libc::dladdr(

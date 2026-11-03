@@ -25,6 +25,7 @@ pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled)
 
 /// Names the diagnostic that reports, at each start-up phase boundary, the peak resident set
 /// since the previous one (`phase_peak`).
+#[cfg(target_os = "linux")]
 const RSS_PHASES_ENV: &str = "QUENCH_RSS_PHASES";
 
 /// The kernel's per-process status, for `phase_peak`.
@@ -1204,12 +1205,12 @@ pub fn at_native_compilation(boundary: NativeCompilation) {
 
 /// Measurement builds (`release-tuning`) read a release knob from the environment, in place
 /// of its value; other builds use the value.
-#[cfg(feature = "release-tuning")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "release-tuning"))]
 fn tuned(name: &str, value: u64) -> u64 {
     std::env::var(name).ok().and_then(|text| text.parse().ok()).unwrap_or(value)
 }
 
-#[cfg(not(feature = "release-tuning"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "release-tuning")))]
 const fn tuned(_name: &str, value: u64) -> u64 {
     value
 }

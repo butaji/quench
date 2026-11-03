@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-const STAGE_SPEC: &str = include_str!("../../../STAGES.md");
+const STAGE_SPEC: &str = include_str!("stages.spec");
 
 /// One canonical stage entry.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -14,9 +14,11 @@ pub(crate) fn type_str() -> String {
 }
 
 pub(crate) struct MemoryInfo {
+    #[cfg(not(target_os = "macos"))]
     pub(crate) total: u64,
     pub(crate) available: u64,
 }
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn memory_info() -> MemoryInfo {
     let mut system = sysinfo::System::new();
     system.refresh_memory();
@@ -25,10 +27,30 @@ pub(crate) fn memory_info() -> MemoryInfo {
         available: system.available_memory(),
     }
 }
-/// Physical memory in bytes. On Darwin `sysinfo` reads `hw.memsize`, the same
-/// sysctl libuv reports as `uv_get_total_memory`.
+/// The same Darwin counters as sysinfo 0.32.1, without constructing its process/CPU backend.
+#[cfg(target_os = "macos")]
+pub(crate) fn memory_info() -> MemoryInfo {
+    let available = darwin_vm_statistics().map_or(0, |statistics| {
+        u64::from(statistics.free_count)
+            .saturating_add(u64::from(statistics.inactive_count))
+            .saturating_add(u64::from(statistics.purgeable_count))
+            .saturating_sub(u64::from(statistics.compressor_page_count))
+            .saturating_mul(page_size_bytes())
+    });
+    MemoryInfo { available }
+}
+/// Physical memory in bytes, from the platform backend.
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn total_memory_bytes() -> u64 {
     memory_info().total
+}
+
+/// libuv and sysinfo both read hw.memsize; this fact needs no other VM counters.
+#[cfg(target_os = "macos")]
+pub(crate) fn total_memory_bytes() -> u64 {
+    let mut total = 0_u64;
+    darwin_sysctl(c"hw.memsize", &mut total);
+    total
 }
 
 /// Node's `os.freemem` follows libuv: Darwin reports the kernel's free page
@@ -252,6 +274,52 @@ fn darwin_sysctl<T>(name: &CStr, out: &mut T) -> Option<usize> {
         )
     };
     (read == 0).then_some(size)
+}
+
+/// Variable-length kernel text, including its terminating NUL, as sysinfo reads it.
+#[cfg(target_os = "macos")]
+pub(crate) fn system_text(name: &CStr) -> Option<String> {
+    let mut size = 0;
+    // SAFETY: query the required size, then supply that many bytes for the same key.
+    if unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return None;
+    }
+    let mut bytes = vec![0_u8; size];
+    if unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            bytes.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return None;
+    }
+    bytes.truncate(size);
+    if let Some(end) = bytes.iter().position(|&byte| byte == 0) {
+        bytes.truncate(end);
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Preserve the fallback OS facade's integer-second sysinfo clock. Node's Unix binding
+/// has its separate libuv-compatible fractional clock (`os_binding_shared_vm`).
+#[cfg(target_os = "macos")]
+pub(crate) fn coarse_uptime_seconds() -> u64 {
+    let mut boot: libc::timeval = unsafe { std::mem::zeroed() };
+    darwin_sysctl(c"kern.boottime", &mut boot);
+    unsafe { libc::difftime(libc::time(std::ptr::null_mut()), boot.tv_sec) as u64 }
 }
 
 /// libc marks the Mach ports deprecated only to point at the `mach2` crate; they

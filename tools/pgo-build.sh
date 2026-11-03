@@ -4,7 +4,7 @@
 # usage: tools/pgo-build.sh [--static] [PROFILE]   (default: production)
 #
 # --static builds the static x86_64 Linux binary (C runtime linked in, static relocation
-# model), the input of the BOLT layout step in docs/README.md: both the instrumented and the
+# model), the input of the BOLT layout step in the Linear command reference: both the instrumented and the
 # profile-guided build add `-Ctarget-feature=+crt-static -Crelocation-model=static` and build
 # for the host triple, so the binary lands at target/<host>/PROFILE/quench-node. Every build
 # passes its flags in `RUSTFLAGS`, which replaces the repository's rustflags

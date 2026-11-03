@@ -3,6 +3,7 @@
 
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+#[cfg(not(target_os = "macos"))]
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[cfg(not(unix))]
@@ -54,8 +55,14 @@ pub(crate) fn string_operation(
         "type" => crate::modules::os_facts::type_str(),
         "platform" => node_platform().to_owned(),
         "arch" => node_arch().to_owned(),
+        #[cfg(not(target_os = "macos"))]
         "release" => sysinfo::System::kernel_version().unwrap_or_default(),
+        #[cfg(not(target_os = "macos"))]
         "hostname" => sysinfo::System::host_name().unwrap_or_default(),
+        #[cfg(target_os = "macos")]
+        "release" => crate::modules::os_facts::system_text(c"kern.osrelease").unwrap_or_default(),
+        #[cfg(target_os = "macos")]
+        "hostname" => crate::modules::os_facts::system_text(c"kern.hostname").unwrap_or_default(),
         "homedir" => std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned()),
@@ -81,7 +88,11 @@ pub(crate) fn uptime_operation(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    Ok(context.number(sysinfo::System::uptime() as f64))
+    #[cfg(not(target_os = "macos"))]
+    let uptime = sysinfo::System::uptime();
+    #[cfg(target_os = "macos")]
+    let uptime = crate::modules::os_facts::coarse_uptime_seconds();
+    Ok(context.number(uptime as f64))
 }
 
 pub(crate) fn network_interfaces_operation(
@@ -89,6 +100,10 @@ pub(crate) fn network_interfaces_operation(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
+    #[cfg(target_os = "macos")]
+    { network_interfaces(context) }
+    #[cfg(not(target_os = "macos"))]
+    {
     let result = context.null_object_rooted()?;
     let networks = sysinfo::Networks::new_with_refreshed_list();
     for (name, network) in networks.list() {
@@ -124,6 +139,7 @@ pub(crate) fn network_interfaces_operation(
         set(context, result, name, addresses)?;
     }
     Ok(result)
+    }
 }
 
 fn node_platform() -> &'static str {
@@ -145,6 +161,7 @@ fn node_arch() -> &'static str {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn mask4(prefix: u8) -> u32 {
     if prefix == 0 {
         0
@@ -153,6 +170,7 @@ fn mask4(prefix: u8) -> u32 {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn mask6(prefix: u8) -> u128 {
     if prefix == 0 {
         0
@@ -185,6 +203,7 @@ fn set_string(
     set(context, object, name, value)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn set_bool(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
