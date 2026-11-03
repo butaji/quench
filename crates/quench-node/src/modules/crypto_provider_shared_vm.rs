@@ -39,7 +39,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     ] {
         let data = c.string_rooted(name);
         let function = c.host_function_named_with_data(
-            crate::host::shared_vm::operation("cryptoProviderFacts"),
+            crate::host::shared_vm::operation!("cryptoProviderFacts"),
             name,
             data,
         )?;

@@ -214,7 +214,7 @@ fn define_method(c: &mut Context<'_>, target: RootId, name: &str, operation_name
 
 /// `(MIMEType, MIMEParams)`.
 pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let mime = c.host_constructor_named(operation("mimeTypeConstruct"), "MIMEType")?;
+    let mime = c.host_constructor_named(crate::host::shared_vm::operation!("mimeTypeConstruct"), "MIMEType")?;
     let key = c.string_rooted("length");
     let one = c.number(1.0);
     c.define_data_property_rooted(mime, key, one, false, false, true)?;
@@ -222,10 +222,10 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
     for (index, &(name, settable)) in ACCESSORS.iter().enumerate() {
         let data = c.number(index as f64);
         let descriptor = c.null_object_rooted()?;
-        let getter = c.host_function_named_with_data(operation("mimeTypeGet"), &format!("get {name}"), data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("mimeTypeGet"), &format!("get {name}"), data)?;
         c.assign_named_property_rooted(descriptor, "get", getter)?;
         if settable {
-            let setter = c.host_function_named_with_data(operation("mimeTypeSet"), &format!("set {name}"), data)?;
+            let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("mimeTypeSet"), &format!("set {name}"), data)?;
             c.assign_named_property_rooted(descriptor, "set", setter)?;
         }
         let no = c.boolean(false);
@@ -238,7 +238,7 @@ pub(crate) fn classes(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedErr
     let to_string = define_method(c, prototype, "toString", "mimeTypeToString", 0.0)?;
     let key = c.string_rooted("toJSON");
     c.define_data_property_rooted(prototype, key, to_string, true, true, true)?;
-    let params = c.host_constructor_named(operation("mimeParamsConstruct"), "MIMEParams")?;
+    let params = c.host_constructor_named(crate::host::shared_vm::operation!("mimeParamsConstruct"), "MIMEParams")?;
     let key = c.string_rooted("length");
     let zero = c.number(0.0);
     c.define_data_property_rooted(params, key, zero, false, false, true)?;

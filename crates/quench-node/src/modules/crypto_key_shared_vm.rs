@@ -54,9 +54,9 @@ fn function(
     let operation = c.string_rooted(op);
     let data = c.array_rooted(&[state, operation])?;
     let function = if constructor {
-        c.host_constructor_with_data(crate::host::shared_vm::operation("cryptoKeySlots"), data)?
+        c.host_constructor_with_data(crate::host::shared_vm::operation!("cryptoKeySlots"), data)?
     } else {
-        c.host_function_with_data(crate::host::shared_vm::operation("cryptoKeySlots"), data)?
+        c.host_function_with_data(crate::host::shared_vm::operation!("cryptoKeySlots"), data)?
     };
     let key = c.string_rooted("name");
     let display = c.string_rooted(display);

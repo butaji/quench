@@ -531,19 +531,19 @@ const SUBTLE_METHODS: [(&str, &str, usize); 12] = [
 ];
 
 pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedError> {
-    let crypto = c.host_constructor_named(crate::host::shared_vm::operation("cryptoWebIllegalConstructor"), "Crypto")?;
+    let crypto = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoWebIllegalConstructor"), "Crypto")?;
     let prototype = get(c, crypto, "prototype")?;
     define_getters(c, prototype, &[("subtle", "cryptoWebSubtle")], Members::Assigned)?;
     define_methods(c, prototype, &[("getRandomValues", "cryptoWebGetRandomValues"), ("randomUUID", "cryptoWebRandomUuid")], Members::Assigned)?;
     super::to_string_tag(c, prototype, "Crypto")?;
 
-    let subtle = c.host_constructor_named(crate::host::shared_vm::operation("cryptoWebIllegalConstructor"), "SubtleCrypto")?;
+    let subtle = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoWebIllegalConstructor"), "SubtleCrypto")?;
     let prototype = get(c, subtle, "prototype")?;
     let methods: Vec<(&str, &str)> = SUBTLE_METHODS.iter().map(|(name, operation, _)| (*name, *operation)).collect();
     define_methods(c, prototype, &methods, Members::Assigned)?;
     super::to_string_tag(c, prototype, "SubtleCrypto")?;
 
-    let key = c.host_constructor_named(crate::host::shared_vm::operation("cryptoWebIllegalConstructor"), "CryptoKey")?;
+    let key = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoWebIllegalConstructor"), "CryptoKey")?;
     let prototype = get(c, key, "prototype")?;
     define_getters(
         c,
@@ -552,7 +552,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
         Members::Assigned,
     )?;
     super::to_string_tag(c, prototype, "CryptoKey")?;
-    let inspect = c.host_function_named(crate::host::shared_vm::operation("cryptoKeyInspect"), "[nodejs.util.inspect.custom]")?;
+    let inspect = c.host_function_named(crate::host::shared_vm::operation!("cryptoKeyInspect"), "[nodejs.util.inspect.custom]")?;
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
     let name = c.string_rooted("nodejs.util.inspect.custom");

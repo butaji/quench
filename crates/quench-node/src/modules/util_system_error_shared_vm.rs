@@ -27,7 +27,7 @@ pub(crate) fn uv_binding(context: &mut Context<'_>) -> Result<RootId, RootedErro
         let binding = context.object_rooted()?;
         let warning_state = context.null_object_rooted()?;
         let errname = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("uvErrName"),
+            crate::host::shared_vm::operation!("uvErrName"),
             "errname",
             warning_state,
         )?;
@@ -191,7 +191,7 @@ pub(crate) fn coded_system_error(
     for name in ["errno", "syscall"].into_iter().chain(extras) {
         let key = c.string_rooted(name);
         let data = c.array_rooted(&[ctx, key])?;
-        let accessor = c.host_function_with_data(crate::host::shared_vm::operation("systemErrorField"), data)?;
+        let accessor = c.host_function_with_data(crate::host::shared_vm::operation!("systemErrorField"), data)?;
         let descriptor = c.null_object_rooted()?;
         c.assign_named_property_rooted(descriptor, "get", accessor)?;
         c.assign_named_property_rooted(descriptor, "set", accessor)?;
@@ -209,7 +209,7 @@ fn system_error_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(prototype) = state.borrow().builtin_cache.get(SYSTEM_ERROR_CLASS).copied() {
         return Ok(prototype);
     }
-    let class = c.host_constructor_named(crate::host::shared_vm::operation("systemErrorConstructor"), "SystemError")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("systemErrorConstructor"), "SystemError")?;
     let prototype = c.get_named_property_rooted(class, "prototype")?;
     let global = c.global_root()?;
     let error = c.get_named_property_rooted(global, "Error")?;
@@ -217,7 +217,7 @@ fn system_error_prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.set_prototype_rooted(prototype, error_prototype)?;
     c.set_prototype_rooted(class, error)?;
     let code = c.string_rooted("ERR_SYSTEM_ERROR");
-    let to_string = c.host_function_named_with_data(crate::host::shared_vm::operation("nodeErrorToString"), "toString", code)?;
+    let to_string = c.host_function_named_with_data(crate::host::shared_vm::operation!("nodeErrorToString"), "toString", code)?;
     let key = c.string_rooted("toString");
     c.define_data_property_rooted(prototype, key, to_string, true, false, true)?;
     let prototype = c.retain(prototype)?;

@@ -300,17 +300,17 @@ fn define_fields(c: &mut Context<'_>, prototype: RootId, fields: &[(&str, Field)
 
 fn define_field(c: &mut Context<'_>, prototype: RootId, name: &str, index: usize, read_only: bool) -> Result<(), RootedError> {
     let data = c.number(index as f64);
-    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("streamStateFieldGet"), "get", data)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamStateFieldGet"), "get", data)?;
     let setter = if read_only {
         None
     } else {
-        Some(c.host_function_named_with_data(crate::host::shared_vm::operation("streamStateFieldSet"), "set", data)?)
+        Some(c.host_function_named_with_data(crate::host::shared_vm::operation!("streamStateFieldSet"), "set", data)?)
     };
     define_accessor(c, prototype, name, getter, setter)
 }
 
 pub(crate) fn build_readable_state(c: &mut Context<'_>) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamReadableState"), "ReadableState")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamReadableState"), "ReadableState")?;
     let prototype = get(c, constructor, "prototype")?;
     define_fields(c, prototype, READABLE_FIELDS, 0)?;
     define_methods(c, prototype, &[(Key::Symbol(Slot::OnConstructed), "streamReadableOnConstructed", "onConstructed")])?;
@@ -318,7 +318,7 @@ pub(crate) fn build_readable_state(c: &mut Context<'_>) -> Outcome {
 }
 
 pub(crate) fn build_writable_state(c: &mut Context<'_>) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamWritableState"), "WritableState")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamWritableState"), "WritableState")?;
     let prototype = get(c, constructor, "prototype")?;
     define_fields(c, prototype, WRITABLE_FIELDS, READABLE_FIELDS.len())?;
     define_methods(c, prototype, &[(Key::Name("getBuffer"), "streamWritableGetBuffer", "getBuffer")])?;

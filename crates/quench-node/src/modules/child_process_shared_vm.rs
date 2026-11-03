@@ -407,7 +407,7 @@ pub(crate) fn register_child(
         let is_stdout = context.boolean(is_stdout);
         let data = context.array_rooted(&[id, is_stdout])?;
         let closed = context.host_function_with_data(
-            crate::host::shared_vm::operation("childProcessStreamClosed"),
+            crate::host::shared_vm::operation!("childProcessStreamClosed"),
             data,
         )?;
         let key = context.string_rooted("once");
@@ -456,7 +456,7 @@ pub(crate) fn queue_stdio_flush(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let callback = context.host_function(crate::host::shared_vm::operation(
+    let callback = context.host_function(crate::host::shared_vm::operation!(
         "childProcessFlushStdioRun",
     ))?;
     let receiver = context.undefined();
@@ -1888,7 +1888,7 @@ fn install_process_handle(
         let reference = context.boolean(reference);
         let data = context.array_rooted(&[id_root, handle, reference])?;
         let method = context.host_function_with_data(
-            crate::host::shared_vm::operation("childProcessHandleReference"),
+            crate::host::shared_vm::operation!("childProcessHandleReference"),
             data,
         )?;
         let key = context.string_rooted("name");
@@ -1898,7 +1898,7 @@ fn install_process_handle(
     }
     let data = context.array_rooted(&[id_root, handle])?;
     let has_ref = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessHandleHasRef"),
+        crate::host::shared_vm::operation!("childProcessHandleHasRef"),
         data,
     )?;
     let key = context.string_rooted("name");
@@ -2350,7 +2350,7 @@ pub(crate) fn spawn_failed(
         if context.is_object_rooted(stream)? {
             remaining += 1;
             let closed = context.host_function_with_data(
-                crate::host::shared_vm::operation("childProcessSpawnFailedClosed"),
+                crate::host::shared_vm::operation!("childProcessSpawnFailedClosed"),
                 data,
             )?;
             let once = property(context, stream, "once")?;
@@ -2361,7 +2361,7 @@ pub(crate) fn spawn_failed(
     let remaining = context.number(remaining as f64);
     set(context, data, "remaining", remaining)?;
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessSpawnFailedRun"),
+        crate::host::shared_vm::operation!("childProcessSpawnFailedRun"),
         data,
     )?;
     let global = context.global_root()?;
@@ -2437,7 +2437,7 @@ pub(crate) fn spawn_failed_run(
     // Native failed-pipe completion belongs after the current tick/microtask
     // drain, like other owned native close completions in the host scheduler.
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessSpawnFailedFlush"),
+        crate::host::shared_vm::operation!("childProcessSpawnFailedFlush"),
         data,
     )?;
     let shared = context.host_mut().shared_state();
@@ -2526,7 +2526,7 @@ pub(crate) fn spawn_succeeded(
 ) -> Result<RootId, RootedError> {
     let child = args[0];
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("childProcessSpawnSucceededRun"),
+        crate::host::shared_vm::operation!("childProcessSpawnSucceededRun"),
         child,
     )?;
     let global = context.global_root()?;

@@ -44,14 +44,14 @@ fn normalize(id: &str) -> Option<&str> {
 }
 
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let class = c.host_constructor_named(operation("processConstructor"), "BuiltinModule")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("processConstructor"), "BuiltinModule")?;
     for (name, operation_name) in QUERIES {
         let function = c.host_function_named(operation(operation_name), name)?;
         c.assign_named_property_rooted(class, name, function)?;
     }
     let module = c.object_rooted()?;
     c.assign_named_property_rooted(module, "BuiltinModule", class)?;
-    let binding = c.host_function_named(operation("traceInternal"), "internalBinding")?;
+    let binding = c.host_function_named(crate::host::shared_vm::operation!("traceInternal"), "internalBinding")?;
     c.assign_named_property_rooted(module, "internalBinding", binding)?;
     Ok(module)
 }

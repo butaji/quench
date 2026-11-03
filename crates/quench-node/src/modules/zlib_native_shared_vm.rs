@@ -125,7 +125,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             }
             put(c, result, name, ctor)?;
         }
-        let crc32 = c.host_function_named(crate::host::shared_vm::operation("zlibNativeCrc32"), "crc32")?;
+        let crc32 = c.host_function_named(crate::host::shared_vm::operation!("zlibNativeCrc32"), "crc32")?;
         put(c, result, "crc32", crc32)?;
         let version = c.string_rooted(&super::zlib_native_codec::version());
         put(c, result, "ZLIB_VERSION", version)?;
@@ -457,7 +457,7 @@ pub(crate) fn write_sync(
 }
 fn queue_poll(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
     let callback =
-        c.host_function_with_data(crate::host::shared_vm::operation("zlibNativePoll"), data)?;
+        c.host_function_with_data(crate::host::shared_vm::operation!("zlibNativePoll"), data)?;
     let shared = c.host_mut().shared_state();
     let id = shared
         .borrow_mut()

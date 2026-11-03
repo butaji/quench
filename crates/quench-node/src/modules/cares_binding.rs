@@ -31,16 +31,16 @@ fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result
 }
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let object = c.object_rooted()?;
-    let factory = c.host_function(crate::host::shared_vm::operation("dnsAddressArray"))?;
+    let factory = c.host_function(crate::host::shared_vm::operation!("dnsAddressArray"))?;
     let factory = c.retain(factory)?;
     c.host_mut().shared_state().borrow_mut().dns.array_factory = Some(factory);
-    let request = c.host_constructor(crate::host::shared_vm::operation("dnsRequestConstruct"))?;
+    let request = c.host_constructor(crate::host::shared_vm::operation!("dnsRequestConstruct"))?;
     put(c, object, "GetAddrInfoReqWrap", request)?;
-    let operation = c.host_function(crate::host::shared_vm::operation("dnsGetAddrInfo"))?;
+    let operation = c.host_function(crate::host::shared_vm::operation!("dnsGetAddrInfo"))?;
     put(c, object, "getaddrinfo", operation)?;
-    let request = c.host_constructor(crate::host::shared_vm::operation("dnsRequestConstruct"))?;
+    let request = c.host_constructor(crate::host::shared_vm::operation!("dnsRequestConstruct"))?;
     put(c, object, "GetNameInfoReqWrap", request)?;
-    let operation = c.host_function(crate::host::shared_vm::operation("dnsGetNameInfo"))?;
+    let operation = c.host_function(crate::host::shared_vm::operation!("dnsGetNameInfo"))?;
     put(c, object, "getnameinfo", operation)?;
     for (name, number) in [
         ("AF_INET", libc::AF_INET),

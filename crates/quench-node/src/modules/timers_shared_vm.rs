@@ -131,7 +131,7 @@ fn scheduler_object(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId,
     let object_key = context.string_rooted("Object");
     let object = context.get_property_rooted(global, object_key)?;
     let handler = context.object_rooted()?;
-    let illegal_constructor = context.host_function(crate::host::shared_vm::operation(
+    let illegal_constructor = context.host_function(crate::host::shared_vm::operation!(
         "timersPromiseSchedulerConstructor",
     ))?;
     install(context, handler, "apply", illegal_constructor)?;
@@ -272,7 +272,7 @@ fn promise_timer(
     install(context, operation, PROMISE_VALUE, value)?;
     install(context, operation, PROMISE_OPTIONS, options)?;
     let executor = context.host_function_with_data(
-        crate::host::shared_vm::operation("timersPromiseSchedule"),
+        crate::host::shared_vm::operation!("timersPromiseSchedule"),
         operation,
     )?;
     let global = context.global_root()?;
@@ -402,7 +402,7 @@ pub(crate) fn schedule_promise_timeout(
         return reject_operation(context, operation, error);
     }
     let listener = context.host_function_with_data(
-        crate::host::shared_vm::operation("timersPromiseAbort"),
+        crate::host::shared_vm::operation!("timersPromiseAbort"),
         operation,
     )?;
     install(context, operation, PROMISE_LISTENER, listener)?;
@@ -424,7 +424,7 @@ fn schedule_promise_operation(
 ) -> Result<RootId, RootedError> {
     let kind = property_text(context, operation, PROMISE_KIND)?;
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("timersPromiseComplete"),
+        crate::host::shared_vm::operation!("timersPromiseComplete"),
         operation,
     )?;
     let handle = if kind == PROMISE_IMMEDIATE {
@@ -902,17 +902,17 @@ fn build_timer_handle_api(
     // This is Node's primitive alias registry, not an activity projection.
     let primitive_registry = context.null_object_rooted()?;
     let primitive_cleanup =
-        context.host_function(crate::host::shared_vm::operation("timerPrimitiveCleanup"))?;
+        context.host_function(crate::host::shared_vm::operation!("timerPrimitiveCleanup"))?;
     let global = context.global_root()?;
     let reflect = property(context, global, "Reflect")?;
     let delete_property = property(context, reflect, "deleteProperty")?;
     let number_string = property(context, global, "String")?;
     let apply = property(context, reflect, "apply")?;
-    let timer_callback = context.host_function(crate::host::shared_vm::operation("timerInvoke"))?;
+    let timer_callback = context.host_function(crate::host::shared_vm::operation!("timerInvoke"))?;
     let repeat_delay =
-        context.host_function(crate::host::shared_vm::operation("timerRepeatDelay"))?;
+        context.host_function(crate::host::shared_vm::operation!("timerRepeatDelay"))?;
     let binding = context.object_rooted()?;
-    let clock = context.host_function(crate::host::shared_vm::operation("timerLibuvNow"))?;
+    let clock = context.host_function(crate::host::shared_vm::operation!("timerLibuvNow"))?;
     let name = context.string_rooted("name");
     let value = context.string_rooted("getLibuvNow");
     context.define_data_property_rooted(clock, name, value, false, false, true)?;
@@ -1014,7 +1014,7 @@ fn timer_handle_prototype(
         context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     }
     if owner == "Timeout" {
-        let method = context.host_function_named(crate::host::shared_vm::operation("timerClose"), "close")?;
+        let method = context.host_function_named(crate::host::shared_vm::operation!("timerClose"), "close")?;
         install(context, prototype, "close", method)?;
     }
     Ok(prototype)
@@ -1373,7 +1373,7 @@ pub(crate) fn install_promisify_globals(
         let function = property(context, global, name)?;
         let name = context.string_rooted(name);
         let getter = context.host_function_with_data(
-            crate::host::shared_vm::operation("timerPromisifyGet"),
+            crate::host::shared_vm::operation!("timerPromisifyGet"),
             name,
         )?;
         let key = context.string_rooted("name");
@@ -1597,7 +1597,7 @@ pub(crate) fn internal_module(
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let method = context.host_function_named(
-        crate::host::shared_vm::operation("internalSetUnrefTimeout"),
+        crate::host::shared_vm::operation!("internalSetUnrefTimeout"),
         "setUnrefTimeout",
     )?;
     install(context, module, "setUnrefTimeout", method)?;

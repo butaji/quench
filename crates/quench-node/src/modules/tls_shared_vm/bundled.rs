@@ -6,7 +6,7 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 pub(crate) fn install(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let data = c.null_object_rooted()?;
     let getter =
-        c.host_constructor_with_data(crate::host::shared_vm::operation("tlsBundledRoots"), data)?;
+        c.host_constructor_with_data(crate::host::shared_vm::operation!("tlsBundledRoots"), data)?;
     let key = c.string_rooted("name");
     let name = c.string_rooted("cacheBundledRootCertificates");
     c.define_data_property_rooted(getter, key, name, false, false, true)?;

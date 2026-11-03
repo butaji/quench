@@ -39,7 +39,7 @@ pub(crate) fn install(c: &mut Context<'_>, process: RootId) -> Result<(), Rooted
         ""
     };
     let function = c.host_function_named(
-        crate::host::shared_vm::operation("processDefaultFatalException"),
+        crate::host::shared_vm::operation!("processDefaultFatalException"),
         name,
     )?;
     let key = c.string_rooted("_fatalException");

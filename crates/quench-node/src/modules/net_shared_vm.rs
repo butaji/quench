@@ -1274,11 +1274,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Destruction latches its outcome before guest error handlers run.
     let close_outcome = context.symbol_rooted(Some("kSocketCloseHadError"));
     let destroy = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketDestroy"),
+        crate::host::shared_vm::operation!("netSocketDestroy"),
         close_outcome,
     )?;
     let close_completed = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketCloseCompleted"),
+        crate::host::shared_vm::operation!("netSocketCloseCompleted"),
         close_outcome,
     )?;
     let close_completed = context.retain(close_completed)?;
@@ -1288,27 +1288,27 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .borrow_mut()
         .net_socket_close_completed = Some(close_completed);
     let listen =
-        context.host_constructor_named(crate::host::shared_vm::operation("netServerListen"), "")?;
+        context.host_constructor_named(crate::host::shared_vm::operation!("netServerListen"), "")?;
     let close =
-        context.host_constructor_named(crate::host::shared_vm::operation("netServerClose"), "")?;
+        context.host_constructor_named(crate::host::shared_vm::operation!("netServerClose"), "")?;
     let address = context
-        .host_constructor_named(crate::host::shared_vm::operation("netServerAddress"), "")?;
+        .host_constructor_named(crate::host::shared_vm::operation!("netServerAddress"), "")?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
     let duplex = context.get_named_property_rooted(stream, "Duplex")?;
     let global = context.global_root()?;
     let buffer = context.get_named_property_rooted(global, "Buffer")?;
     let byte_length = context.get_named_property_rooted(buffer, "byteLength")?;
     let account = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketAccountWrite"),
+        crate::host::shared_vm::operation!("netSocketAccountWrite"),
         byte_length,
     )?;
     let fin = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketWriteAfterFin"),
+        crate::host::shared_vm::operation!("netSocketWriteAfterFin"),
         duplex,
     )?;
     let fin = super::net_internal_shared_vm::method(context, fin, "writeAfterFIN")?;
     let readable_end = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketReadableEnd"),
+        crate::host::shared_vm::operation!("netSocketReadableEnd"),
         fin,
     )?;
     let readable_end =
@@ -1321,7 +1321,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
     let emitter = context.get_named_property_rooted(emitter_api, "emitterCtor")?;
     let init_server_emitter = context.host_function_with_data(
-        crate::host::shared_vm::operation("netServerInitEmitter"),
+        crate::host::shared_vm::operation!("netServerInitEmitter"),
         emitter,
     )?;
     let internal_net = super::net_internal_shared_vm::module(context)?;
@@ -1331,7 +1331,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let original_end = context.get_named_property_rooted(duplex_prototype, "end")?;
     let end_data = context.array_rooted(&[original_end, byte_length])?;
     let end_stream = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketEndStream"),
+        crate::host::shared_vm::operation!("netSocketEndStream"),
         end_data,
     )?;
     let normalized_args =
@@ -1385,7 +1385,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             .expect("built net export")
     };
     let simultaneous_accepts = context.host_function_named(
-        crate::host::shared_vm::operation("streamNop"),
+        crate::host::shared_vm::operation!("streamNop"),
         "_setSimultaneousAccepts",
     )?;
     let (block_list, socket_address) = super::net_block_list::classes(context)?;
@@ -2188,7 +2188,7 @@ fn queue_listen_error(
     let key = context.string_rooted("port");
     let pipe_port = context.number(-1.0);
     context.define_data_property_rooted(error, key, pipe_port, true, true, true)?;
-    let callback = context.host_function(crate::host::shared_vm::operation("netListenError"))?;
+    let callback = context.host_function(crate::host::shared_vm::operation!("netListenError"))?;
     let receiver = context.undefined();
     super::shared_event_loop::queue_next_tick(context, callback, receiver, &[server, error])?;
     Ok(server)

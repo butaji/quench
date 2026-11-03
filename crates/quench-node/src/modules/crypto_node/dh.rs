@@ -487,14 +487,14 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<Vec<(Class, RootId)>, RootedE
         ("getPublicKey", "cryptoDhGetPublicKey", "dhGetPublicKey"),
         ("getPrivateKey", "cryptoDhGetPrivateKey", "dhGetPrivateKey"),
     ];
-    let diffie_hellman = c.host_constructor_named(crate::host::shared_vm::operation("cryptoDiffieHellmanConstructor"), "DiffieHellman")?;
+    let diffie_hellman = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoDiffieHellmanConstructor"), "DiffieHellman")?;
     let prototype = get(c, diffie_hellman, "prototype")?;
     define_named_methods(c, prototype, &shared)?;
     define_methods(c, prototype, &[("setPublicKey", "cryptoDhSetPublicKey"), ("setPrivateKey", "cryptoDhSetPrivateKey")], Members::Assigned)?;
-    let group = c.host_constructor_named(crate::host::shared_vm::operation("cryptoDiffieHellmanGroupConstructor"), "DiffieHellmanGroup")?;
+    let group = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoDiffieHellmanGroupConstructor"), "DiffieHellmanGroup")?;
     let prototype = get(c, group, "prototype")?;
     define_named_methods(c, prototype, &shared)?;
-    let ecdh = c.host_constructor_named(crate::host::shared_vm::operation("cryptoEcdhConstructor"), "ECDH")?;
+    let ecdh = c.host_constructor_named(crate::host::shared_vm::operation!("cryptoEcdhConstructor"), "ECDH")?;
     let prototype = get(c, ecdh, "prototype")?;
     define_named_methods(
         c,

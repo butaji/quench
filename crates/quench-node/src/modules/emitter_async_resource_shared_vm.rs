@@ -22,7 +22,7 @@ const ACCESSORS: [(&str, &str); 3] = [
 
 /// `EventEmitter.EventEmitterAsyncResource`, a getter that builds the class on first use.
 pub(super) fn install(c: &mut Context<'_>, emitter: RootId) -> Result<(), RootedError> {
-    let getter = c.host_function_named(crate::host::shared_vm::operation("emitterAsyncConstructor"), "get EventEmitterAsyncResource")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("emitterAsyncConstructor"), "get EventEmitterAsyncResource")?;
     let key = c.string_rooted(CLASS);
     let undefined = c.undefined();
     c.define_property_fields_rooted(

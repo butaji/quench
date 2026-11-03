@@ -537,7 +537,7 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>, owner: u64, tar
         let key = context.string_rooted(name);
         context.define_data_property_rooted(control, key, function, true, false, true)?;
     }
-    let descriptor = context.host_function_named_with_data(crate::host::shared_vm::operation("ipcDescriptor"), "get fd", data)?;
+    let descriptor = context.host_function_named_with_data(crate::host::shared_vm::operation!("ipcDescriptor"), "get fd", data)?;
     let fields = quench_runtime::DescriptorFields {
         get: Some(descriptor),
         enumerable: Some(true),
@@ -567,7 +567,7 @@ pub(crate) fn activate_process(context: &mut NativeContext<'_, NodeHost>) -> Res
         let event = context.string_rooted(event);
         let add = context.boolean(add);
         let data = context.array_rooted(&[control, add])?;
-        let callback = context.host_function_named_with_data(crate::host::shared_vm::operation("processIpcListenerReference"), name, data)?;
+        let callback = context.host_function_named_with_data(crate::host::shared_vm::operation!("processIpcListenerReference"), name, data)?;
         context.call_rooted(on, process, &[event, callback])?;
     }
     Ok(())
@@ -654,7 +654,7 @@ pub(crate) fn send(
             let undefined = context.undefined();
             super::shared_event_loop::queue_next_tick(context, callback, undefined, &[error])?;
         } else {
-            let emit = context.host_function(crate::host::shared_vm::operation("ipcEmit"))?;
+            let emit = context.host_function(crate::host::shared_vm::operation!("ipcEmit"))?;
             let event = context.string_rooted("error");
             let undefined = context.undefined();
             super::shared_event_loop::queue_next_tick(
@@ -811,7 +811,7 @@ pub(crate) fn send(
         closed?;
     }
     for (callback, failed) in callbacks {
-        let complete = context.host_function(crate::host::shared_vm::operation("ipcComplete"))?;
+        let complete = context.host_function(crate::host::shared_vm::operation!("ipcComplete"))?;
         let undefined = context.undefined();
         let failed = context.boolean(failed);
         super::shared_event_loop::queue_next_tick(
@@ -954,7 +954,7 @@ pub(crate) fn poll(
         for (handle, sent) in progress.close_handles {
             if sent {
                 let close = runtime
-                    .host_function(crate::host::shared_vm::operation("ipcCloseHandle"))
+                    .host_function(crate::host::shared_vm::operation!("ipcCloseHandle"))
                     .map_err(|error| runtime.format_error(program, &error.error))?;
                 let receiver = runtime.root(Value::UNDEFINED);
                 state.borrow_mut().scheduler.queue_shared_next_tick(
@@ -973,7 +973,7 @@ pub(crate) fn poll(
             let receiver = runtime.root(Value::UNDEFINED);
             let failed = runtime.root(if failed { Value::TRUE } else { Value::FALSE });
             let complete = runtime
-                .host_function(crate::host::shared_vm::operation("ipcComplete"))
+                .host_function(crate::host::shared_vm::operation!("ipcComplete"))
                 .map_err(|error| runtime.format_error(program, &error.error))?;
             state.borrow_mut().scheduler.queue_shared_next_tick(
                 super::shared_event_loop::SharedCallback {
@@ -999,7 +999,7 @@ pub(crate) fn poll(
                 bytes.drain(..HANDLE_FRAME_PREFIX.len());
             }
             let decode = runtime
-                .host_function(crate::host::shared_vm::operation("ipcDecode"))
+                .host_function(crate::host::shared_vm::operation!("ipcDecode"))
                 .map_err(|error| runtime.format_error(program, &error.error))?;
             let receiver = runtime.root(Value::UNDEFINED);
             let target = runtime.root(
@@ -1046,7 +1046,7 @@ fn queue_event(
     event: &str,
 ) -> Result<(), String> {
     let emit = runtime
-        .host_function(crate::host::shared_vm::operation("ipcEmit"))
+        .host_function(crate::host::shared_vm::operation!("ipcEmit"))
         .map_err(|error| runtime.format_error(program, &error.error))?;
     let receiver = runtime.root(Value::UNDEFINED);
     let target = runtime.root(

@@ -273,8 +273,8 @@ pub(crate) fn lazy_transform(c: &mut Context<'_>, transform: RootId) -> Outcome 
     let prototype = get(c, constructor, "prototype")?;
     for name in LAZY_STATES {
         let data = c.string_rooted(name);
-        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoLazyTransformGet"), "get", data)?;
-        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoLazyTransformSet"), "set", data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoLazyTransformGet"), "get", data)?;
+        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoLazyTransformSet"), "set", data)?;
         let key = c.string_rooted(name);
         let fields = DescriptorFields {
             get: Some(getter),

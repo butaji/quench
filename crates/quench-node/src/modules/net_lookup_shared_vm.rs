@@ -109,7 +109,7 @@ pub(super) fn start(
         set(context, owner, name, value)?;
     }
     let callback = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("netLookupResult"),
+        crate::host::shared_vm::operation!("netLookupResult"),
         "emitLookup",
         owner,
     )?;
@@ -149,7 +149,7 @@ fn fail(
     socket: RootId,
     error: RootId,
 ) -> Result<RootId, RootedError> {
-    let callback = context.host_function(crate::host::shared_vm::operation("netLookupError"))?;
+    let callback = context.host_function(crate::host::shared_vm::operation!("netLookupError"))?;
     let undefined = context.undefined();
     super::shared_event_loop::queue_next_tick(context, callback, undefined, &[socket, error])?;
     Ok(undefined)

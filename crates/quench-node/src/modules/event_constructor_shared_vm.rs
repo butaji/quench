@@ -198,7 +198,7 @@ pub(super) fn capture_result(
         if context.is_callable_rooted(then)? {
             let callback_data = context.array_rooted(&[data, target, event, event_args])?;
             let rejected = context.host_function_with_data(
-                crate::host::shared_vm::operation("emitterCaptureRejected"),
+                crate::host::shared_vm::operation!("emitterCaptureRejected"),
                 callback_data,
             )?;
             context.call_rooted(then, result, &[undefined, rejected])?;
@@ -226,7 +226,7 @@ pub(crate) fn capture_rejected(
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("emitterCaptureDeliver"),
+        crate::host::shared_vm::operation!("emitterCaptureDeliver"),
         data,
     )?;
     let undefined = context.undefined();

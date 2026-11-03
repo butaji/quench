@@ -89,8 +89,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.define_data_property_rooted(target, key, value, true, true, true)?;
     }
     let descriptor = context.null_object_rooted()?;
-    let getter = context.host_function_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxGet"), "get", data)?;
-    let setter = context.host_function_named_with_data(crate::host::shared_vm::operation("eventsDefaultMaxSet"), "set", data)?;
+    let getter = context.host_function_named_with_data(crate::host::shared_vm::operation!("eventsDefaultMaxGet"), "get", data)?;
+    let setter = context.host_function_named_with_data(crate::host::shared_vm::operation!("eventsDefaultMaxSet"), "set", data)?;
     set(context, descriptor, "get", getter)?;
     set(context, descriptor, "set", setter)?;
     let yes = context.boolean(true);

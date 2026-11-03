@@ -103,7 +103,7 @@ const REPORT_ON_UNCAUGHT_EXCEPTION: &str = "--report-uncaught-exception";
 
 /// `process.report`: an enumerable, configurable getter of the one report object.
 pub(crate) fn install(context: &mut Context<'_>, process: RootId) -> Result<(), RootedError> {
-    let getter = context.host_function_named(crate::host::shared_vm::operation("processReport"), "get")?;
+    let getter = context.host_function_named(crate::host::shared_vm::operation!("processReport"), "get")?;
     accessor(context, process, "report", getter, None)
 }
 
@@ -155,12 +155,12 @@ fn build_report(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     for (index, setting) in SETTINGS.iter().enumerate() {
         let data = context.number(index as f64);
         let get = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("reportConfigGet"),
+            crate::host::shared_vm::operation!("reportConfigGet"),
             &format!("get {}", setting.property),
             data,
         )?;
         let set = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("reportPropertySet"),
+            crate::host::shared_vm::operation!("reportPropertySet"),
             &format!("set {}", setting.property),
             data,
         )?;
@@ -283,7 +283,7 @@ fn process(context: &mut Context<'_>) -> Result<RootId, RootedError> {
 }
 
 fn build_signal_listener(context: &mut Context<'_>) -> Result<RootId, RootedError> {
-    context.host_function_named(crate::host::shared_vm::operation("reportSignal"), "signalHandler")
+    context.host_function_named(crate::host::shared_vm::operation!("reportSignal"), "signalHandler")
 }
 
 /// `addSignalHandler(sig)`: with `reportOnSignal`, listen for `sig`, or the configured signal.

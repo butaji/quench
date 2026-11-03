@@ -124,7 +124,7 @@ pub(crate) fn install(
             let value = context.string_rooted(field);
             set(context, data, "field", value)?;
             let operation = context.host_function_with_data(
-                crate::host::shared_vm::operation("netSocketEndpointView"),
+                crate::host::shared_vm::operation!("netSocketEndpointView"),
                 data,
             )?;
             let getter = super::net_internal_shared_vm::method(context, operation, &name)?;

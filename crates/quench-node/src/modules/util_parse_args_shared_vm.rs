@@ -191,7 +191,7 @@ pub(crate) fn function(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         }
         api
     };
-    c.host_function_with_data(crate::host::shared_vm::operation("parseArgs"), api)
+    c.host_function_with_data(crate::host::shared_vm::operation!("parseArgs"), api)
 }
 
 fn positional(c: &mut Context<'_>, index: RootId, value: RootId) -> Result<RootId, RootedError> {
@@ -390,7 +390,7 @@ fn tokenize(
             let state = c.null_object_rooted()?;
             define(c, state, "index", position)?;
             let callback = c.host_function_with_data(
-                crate::host::shared_vm::operation("utilParseArgsPositional"),
+                crate::host::shared_vm::operation!("utilParseArgsPositional"),
                 state,
             )?;
             let positionals = op.call(c, "arrayMap", remaining, &[callback])?;

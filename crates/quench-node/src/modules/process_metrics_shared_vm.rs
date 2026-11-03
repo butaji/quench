@@ -54,11 +54,11 @@ fn create_binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         }
         #[cfg(unix)]
         {
-            let function = c.host_function_named(crate::host::shared_vm::operation("processExecve"), "execve")?;
+            let function = c.host_function_named(crate::host::shared_vm::operation!("processExecve"), "execve")?;
             put(c, module, "execve", function)?;
         }
         let patch_process_object = c.host_function_named(
-            crate::host::shared_vm::operation("processMetricsPatchProcessObject"),
+            crate::host::shared_vm::operation!("processMetricsPatchProcessObject"),
             "patchProcessObject",
         )?;
         put(c, module, "patchProcessObject", patch_process_object)?;
@@ -447,7 +447,7 @@ pub(crate) fn define_methods(c: &mut Context<'_>, process: RootId) -> Result<(),
         put(c, process, name, function)?;
     }
     let memory_usage = get(c, process, "memoryUsage")?;
-    let rss = c.host_function_named(crate::host::shared_vm::operation("processMetricsRss"), "rss")?;
+    let rss = c.host_function_named(crate::host::shared_vm::operation!("processMetricsRss"), "rss")?;
     put(c, memory_usage, "rss", rss)
 }
 

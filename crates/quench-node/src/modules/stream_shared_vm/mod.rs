@@ -549,7 +549,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
         ticks[index] = c.retain(function)?;
     }
-    let nop = c.host_function_named(crate::host::shared_vm::operation("streamNop"), "nop")?;
+    let nop = c.host_function_named(crate::host::shared_vm::operation!("streamNop"), "nop")?;
     let nop = c.retain(nop)?;
     let global = c.global_root()?;
     let promise = get(c, global, "Promise")?;
@@ -627,7 +627,7 @@ fn exports(
         ],
     )?;
     let promises = promises_module(c)?;
-    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("streamConstant"), "get", promises)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamConstant"), "get", promises)?;
     let key = c.string_rooted("promises");
     let undefined = c.undefined();
     let fields = DescriptorFields {
@@ -663,7 +663,7 @@ fn custom_promisify(c: &mut Context<'_>, target: RootId, value: RootId) -> Resul
     let symbol = get(c, global, "Symbol")?;
     let description = c.string_rooted("nodejs.util.promisify.custom");
     let key = call_method(c, symbol, "for", &[description])?;
-    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("streamConstant"), "get", value)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("streamConstant"), "get", value)?;
     let undefined = c.undefined();
     let fields = DescriptorFields {
         get: Some(getter),

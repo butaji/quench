@@ -173,7 +173,7 @@ pub(crate) fn colored_writer(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
 }
 
 fn recoverable_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("replRecoverable"), "Recoverable")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("replRecoverable"), "Recoverable")?;
     let prototype = get(c, constructor, "prototype")?;
     let global = c.global_root()?;
     let syntax_error = get(c, global, "SyntaxError")?;
@@ -200,7 +200,7 @@ fn is_recoverable(c: &mut Context<'_>, value: RootId) -> Result<bool, RootedErro
 }
 
 fn server_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("replServer"), "REPLServer")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("replServer"), "REPLServer")?;
     let prototype = get(c, constructor, "prototype")?;
     let interface = interface_constructor(c)?;
     let parent = get(c, interface, "prototype")?;

@@ -69,7 +69,7 @@ pub(crate) fn dirent_is(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outc
 }
 
 pub(crate) fn dirent_class(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("fsDirentConstruct"), "Dirent")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("fsDirentConstruct"), "Dirent")?;
     let prototype = get(c, constructor, "prototype")?;
     for (name, _, kind) in super::stats::TYPE_PREDICATES {
         let key = c.string_rooted(name);
@@ -89,9 +89,9 @@ const DIR_METHODS: [(&str, &str); 5] = [
 ];
 
 pub(crate) fn dir_class(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError> {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("fsDirConstruct"), "Dir")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("fsDirConstruct"), "Dir")?;
     let prototype = get(c, constructor, "prototype")?;
-    let getter = c.host_function_named(crate::host::shared_vm::operation("fsDirPath"), "get path")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("fsDirPath"), "get path")?;
     classes::accessor(c, prototype, "path", getter, None, false)?;
     for (name, operation) in DIR_METHODS {
         let key = c.string_rooted(name);
@@ -241,7 +241,7 @@ pub(crate) fn read(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcom
     // A settlement reads `(rejected, value)` and a callback `(error, entry)`: both take `null` first.
     let (deliver, result) = if args.is_empty() || is_undefined(c, args[0]) {
         let promise = c.pending_promise_rooted()?;
-        (c.host_function_with_data(crate::host::shared_vm::operation("fsSettle"), promise)?, promise)
+        (c.host_function_with_data(crate::host::shared_vm::operation!("fsSettle"), promise)?, promise)
     } else {
         (args::function(c, args[0], "callback")?, c.undefined())
     };
@@ -347,7 +347,7 @@ pub(crate) fn iterate_state(c: &mut Context<'_>, state: RootId) -> Outcome {
         put(c, iterator, name, function)?;
     }
     let key = classes::well_known_symbol(c, "asyncIterator", "Symbol.asyncIterator")?;
-    let identity = c.host_function_named(crate::host::shared_vm::operation("fsDirIteratorSelf"), "[Symbol.asyncIterator]")?;
+    let identity = c.host_function_named(crate::host::shared_vm::operation!("fsDirIteratorSelf"), "[Symbol.asyncIterator]")?;
     c.set_property_rooted(iterator, key, identity, iterator)?;
     Ok(iterator)
 }

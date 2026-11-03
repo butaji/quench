@@ -266,7 +266,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         .event_targets_api
         .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
     let emitter = get(c, emitter_api, "emitterCtor")?;
-    let socket = c.host_constructor_named_with_data(crate::host::shared_vm::operation("dgramSocketConstruct"), "Socket", emitter)?;
+    let socket = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("dgramSocketConstruct"), "Socket", emitter)?;
     let prototype = get(c, socket, "prototype")?;
     let emitter_prototype = get(c, emitter, "prototype")?;
     c.set_prototype_rooted(prototype, emitter_prototype)?;
@@ -276,7 +276,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
-    let dispose = c.host_function_named(crate::host::shared_vm::operation("dgramAsyncDispose"), "[Symbol.asyncDispose]")?;
+    let dispose = c.host_function_named(crate::host::shared_vm::operation!("dgramAsyncDispose"), "[Symbol.asyncDispose]")?;
     let key = super::fs_shared_vm::classes::well_known_symbol(c, "asyncDispose", "nodejs.asyncDispose")?;
     c.define_data_property_rooted(prototype, key, dispose, true, false, true)?;
     put(c, holder, "Socket", socket)?;
@@ -285,7 +285,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
 
 pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let module = c.object_rooted()?;
-    let create = c.host_function_named(crate::host::shared_vm::operation("dgramCreateSocket"), "createSocket")?;
+    let create = c.host_function_named(crate::host::shared_vm::operation!("dgramCreateSocket"), "createSocket")?;
     put(c, module, "createSocket", create)?;
     let socket = intrinsics(c)?.socket;
     put(c, module, "Socket", socket)?;
@@ -495,9 +495,9 @@ fn buffer_size(c: &mut Context<'_>, socket: RootId, size: RootId, receive: bool)
 fn start_listening(c: &mut Context<'_>, socket: RootId) -> Result<(), RootedError> {
     let state = state(c, socket)?;
     let handle = handle(c, state)?;
-    let on_message = c.host_function_named(crate::host::shared_vm::operation("dgramOnMessage"), "onMessage")?;
+    let on_message = c.host_function_named(crate::host::shared_vm::operation!("dgramOnMessage"), "onMessage")?;
     put(c, handle, "onmessage", on_message)?;
-    let on_error = c.host_function_named(crate::host::shared_vm::operation("dgramOnError"), "onError")?;
+    let on_error = c.host_function_named(crate::host::shared_vm::operation!("dgramOnError"), "onError")?;
     put(c, handle, "onerror", on_error)?;
     call_method(c, handle, "recvStart", &[])?;
     let yes = c.boolean(true);
@@ -1108,7 +1108,7 @@ pub(crate) fn after_send_lookup(c: &mut Context<'_>, _: RootId, args: &[RootId])
     put(c, request, "port", port)?;
     if has_callback {
         put(c, request, "callback", callback)?;
-        let complete = c.host_function_named(crate::host::shared_vm::operation("dgramAfterSend"), "afterSend")?;
+        let complete = c.host_function_named(crate::host::shared_vm::operation!("dgramAfterSend"), "afterSend")?;
         put(c, request, "oncomplete", complete)?;
     }
     let count = get(c, list, "length")?;

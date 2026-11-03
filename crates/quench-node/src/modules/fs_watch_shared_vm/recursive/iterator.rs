@@ -31,7 +31,7 @@ pub(crate) fn next(
     set(context, data, "owner", owner)?;
     set(context, data, "state", state)?;
     let executor = context.host_function_with_data(
-        crate::host::shared_vm::operation("fsRecursiveIteratorExecutor"),
+        crate::host::shared_vm::operation!("fsRecursiveIteratorExecutor"),
         data,
     )?;
     let global = context.global_root()?;
@@ -64,7 +64,7 @@ pub(crate) fn executor(
     if !nullish(context, signal) {
         set(context, data, "signal", signal)?;
         let abort = context.host_function_with_data(
-            crate::host::shared_vm::operation("fsRecursiveIteratorAbort"),
+            crate::host::shared_vm::operation!("fsRecursiveIteratorAbort"),
             data,
         )?;
         set(context, data, "abort", abort)?;
@@ -84,7 +84,7 @@ pub(crate) fn executor(
         context.call_rooted(add, signal, &[event, abort, options])?;
     }
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("fsRecursiveIteratorChange"),
+        crate::host::shared_vm::operation!("fsRecursiveIteratorChange"),
         data,
     )?;
     let once = get(context, owner, "once")?;

@@ -200,14 +200,14 @@ pub(crate) fn install_channel(c: &mut Context<'_>, binding: RootId) -> Result<()
         let function = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
         put(c, binding, name, function)?;
     }
-    let request = c.host_constructor_named(crate::host::shared_vm::operation("dnsRequestConstruct"), "QueryReqWrap")?;
+    let request = c.host_constructor_named(crate::host::shared_vm::operation!("dnsRequestConstruct"), "QueryReqWrap")?;
     put(c, binding, "QueryReqWrap", request)?;
-    let channel = c.host_constructor_named(crate::host::shared_vm::operation("caresChannelConstruct"), "ChannelWrap")?;
+    let channel = c.host_constructor_named(crate::host::shared_vm::operation!("caresChannelConstruct"), "ChannelWrap")?;
     let key = c.string_rooted("prototype");
     let prototype = c.get_property_rooted(channel, key)?;
     for (index, (name, _)) in QUERIES.iter().enumerate() {
         let kind = c.number(index as f64);
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation("caresChannelQuery"), name, kind)?;
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("caresChannelQuery"), name, kind)?;
         put(c, prototype, name, function)?;
     }
     for (name, operation) in [
@@ -232,7 +232,7 @@ fn channel_slot(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 fn channel_registry(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0dns:channel-registry", |c| {
-        let release = c.host_function(crate::host::shared_vm::operation("caresChannelRelease"))?;
+        let release = c.host_function(crate::host::shared_vm::operation!("caresChannelRelease"))?;
         let global = c.global_root()?;
         let key = c.string_rooted("FinalizationRegistry");
         let registry = c.get_property_rooted(global, key)?;

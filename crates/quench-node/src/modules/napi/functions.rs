@@ -99,7 +99,7 @@ fn native_function(
         class,
     }));
     let external = c.external_rooted(record as usize).napi(env, c)?;
-    let operation = crate::host::shared_vm::operation("napiCallback");
+    let operation = crate::host::shared_vm::operation!("napiCallback");
     let function = c
         .host_constructor_named_with_data(operation, name, external)
         .napi(env, c)?;

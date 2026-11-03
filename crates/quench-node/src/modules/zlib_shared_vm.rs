@@ -688,7 +688,7 @@ fn process_chunk_sync(c: &mut Context<'_>, engine: RootId, chunk: RootId, flush:
     let mut buffer = get(c, engine, "_outBuffer")?;
     let undefined = c.undefined();
     let seen = c.array_rooted(&[undefined])?;
-    let listener = c.host_function_named_with_data(crate::host::shared_vm::operation("zlibSyncOnError"), "onError", seen)?;
+    let listener = c.host_function_named_with_data(crate::host::shared_vm::operation!("zlibSyncOnError"), "onError", seen)?;
     super::stream_shared_vm::on(c, engine, "error", listener)?;
     let error_key = internal(c, Internal::Error)?;
     loop {
@@ -1276,7 +1276,7 @@ fn subclass(c: &mut Context<'_>, constructor: RootId, parent: RootId) -> Outcome
 }
 
 fn abstract_class(c: &mut Context<'_>, name: &str, parent: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("zlibAbstract"), name)?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("zlibAbstract"), name)?;
     subclass(c, constructor, parent)?;
     Ok(constructor)
 }
@@ -1285,7 +1285,7 @@ fn abstract_class(c: &mut Context<'_>, name: &str, parent: RootId) -> Outcome {
 fn base_class(c: &mut Context<'_>, transform: RootId) -> Outcome {
     let base = abstract_class(c, "ZlibBase", transform)?;
     let prototype = get(c, base, "prototype")?;
-    let getter = c.host_function_named(crate::host::shared_vm::operation("zlibClosed"), "get")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("zlibClosed"), "get")?;
     accessor(c, prototype, "_closed", getter, None)?;
     let warned = c.boolean(false);
     let getter = closure(c, "zlibBytesRead", "deprecated", &[warned])?;
@@ -1338,7 +1338,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
         let mode_value = c.number(mode as i32 as f64);
         let data = c.array_rooted(&[mode_value])?;
         let constructor =
-            c.host_constructor_named_with_data(crate::host::shared_vm::operation("zlibConstruct"), name, data)?;
+            c.host_constructor_named_with_data(crate::host::shared_vm::operation!("zlibConstruct"), name, data)?;
         let index = c.number(1.0);
         c.set_property_rooted(data, index, constructor, data)?;
         let parent = match Family::of(mode) {
@@ -1365,7 +1365,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     }
     for (name, class) in FACTORIES {
         let class = class_named(class).ok_or_else(|| RootedError::host("zlib factory class missing"))?;
-        let function = c.host_function_named_with_data(crate::host::shared_vm::operation("zlibFactory"), "value", class)?;
+        let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("zlibFactory"), "value", class)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(module, key, function, false, true, true)?;
     }

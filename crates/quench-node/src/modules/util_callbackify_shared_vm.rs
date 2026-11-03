@@ -3,7 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    context.host_function_named(crate::host::shared_vm::operation("callbackify"), "callbackify")
+    context.host_function_named(crate::host::shared_vm::operation!("callbackify"), "callbackify")
 }
 
 pub(crate) fn callbackify(
@@ -18,7 +18,7 @@ pub(crate) fn callbackify(
         )?);
     }
     let function = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("utilCallbackified"),
+        crate::host::shared_vm::operation!("utilCallbackified"),
         "callbackified",
         original,
     )?;
@@ -69,7 +69,7 @@ pub(crate) fn callbackified(
         let rejection = context.boolean(rejection);
         let data = context.array_rooted(&[callback, receiver, rejection])?;
         handlers.push(context.host_function_with_data(
-            crate::host::shared_vm::operation("utilCallbackifySettled"),
+            crate::host::shared_vm::operation!("utilCallbackifySettled"),
             data,
         )?);
     }
@@ -84,7 +84,7 @@ pub(crate) fn settled(
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
     let forward = context.host_function_with_data(
-        crate::host::shared_vm::operation("utilCallbackifyInvoke"),
+        crate::host::shared_vm::operation!("utilCallbackifyInvoke"),
         data,
     )?;
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
