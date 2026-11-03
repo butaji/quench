@@ -3,6 +3,8 @@
 //! The host boundary owns Node policy and API behavior. JavaScript semantics
 //! and execution belong to the shared runtime.
 
+#![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
+
 #[cfg(feature = "native-execution")]
 pub mod aot;
 pub mod esm_imports;

@@ -8,11 +8,26 @@ use quench_runtime::{RootId, Runtime, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[inline(never)]
 pub(crate) fn poll(
     runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
+    let quiescent = {
+        let host = runtime.host_mut();
+        let state = shared_state.borrow();
+        // Zero capacity also proves emptiness, while the general path still releases
+        // allocated empty command buffers as before.
+        host.net_pending_writes.capacity() == 0
+            && host.net_pending_ends.capacity() == 0
+            && host.net_pending_destroys.capacity() == 0
+            && state.net_servers.is_empty()
+            && state.tcp.is_quiescent()
+    };
+    if quiescent {
+        return Ok(false);
+    }
     let (pending_writes, pending_ends, pending_destroys) = {
         let host = runtime.host_mut();
         (
