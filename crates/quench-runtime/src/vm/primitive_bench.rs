@@ -22,6 +22,60 @@ use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
+fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(b: &mut Bencher) {
+    let compile = if SPECIALIZED {
+        crate::Engine::specialize
+    } else {
+        crate::Engine::specialize_unspecialized
+    };
+    let program = compile(
+        "function identity(x) { return x; } var nativeAbs = Math.abs;",
+        "primitive-call.js",
+    ).unwrap();
+    let mut vm = super::Vm::new(crate::test_host::TestHost::default());
+    vm.set_execution_mode(crate::ExecutionMode::Interpreted);
+    vm.execute(&program).unwrap();
+    let name = vm.lookup_atom(if NATIVE { "nativeAbs" } else { "identity" }).unwrap();
+    let callee = vm.own_property(vm.realm.globals, name).unwrap();
+    let inputs: [Value; BATCH_VALUES] = std::array::from_fn(|index| {
+        Value::integer(-(index as i32) - 1)
+    });
+    let call = |vm: &mut super::Vm<crate::test_host::TestHost>, input| {
+        if BODY {
+            vm.call_native(&program, black_box(crate::heap::Native::MathAbs), Value::UNDEFINED, &[input])
+        } else {
+            vm.call_value(&program, black_box(callee), Value::UNDEFINED, &[input])
+        }.unwrap()
+    };
+    let validate = |vm: &mut super::Vm<crate::test_host::TestHost>| {
+        for (index, input) in inputs.iter().copied().enumerate() {
+            let expected = if NATIVE { Value::integer(index as i32 + 1) } else { input };
+            assert_eq!(call(vm, input), expected);
+        }
+        assert!(vm.active_call_roots.is_empty());
+        assert!(vm.frames.is_empty());
+        assert!(vm.realm.promise.active_native.is_empty());
+    };
+    validate(&mut vm);
+    b.iter(|| {
+        for input in inputs {
+            black_box(call(black_box(&mut vm), black_box(input)));
+        }
+    });
+    validate(&mut vm);
+}
+
+// The native body includes its receiver/argument roots and interrupt check. It omits
+// callee lookup, realm/native activation and stack guarding of the full call.
+#[bench]
+fn primitive_call_native_abs_batch(b: &mut Bencher) { call_boundary::<true, false, false>(b); }
+#[bench]
+fn primitive_call_native_abs_body_batch(b: &mut Bencher) { call_boundary::<true, true, false>(b); }
+#[bench]
+fn primitive_call_user_identity_general_batch(b: &mut Bencher) { call_boundary::<false, false, false>(b); }
+#[bench]
+fn primitive_call_user_identity_specialized_batch(b: &mut Bencher) { call_boundary::<false, false, true>(b); }
+
 fn native_arity<const DERIVED: bool>(b: &mut Bencher) {
     use crate::heap::Native;
     let natives: Vec<_> = (0..Native::COUNT)
