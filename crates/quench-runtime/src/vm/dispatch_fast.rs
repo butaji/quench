@@ -12400,12 +12400,12 @@ script_handler! {
         let Some((callee, receiver, args)) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             return lane_bound_arguments_call(cx, r, ip, i);
         };
-        if let Some(FunctionRecord { kind: kind @ FunctionKind::Native(_), .. }) = vm.heap.function(callee) {
-            let kind = *kind;
+        if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
+            let native = *native;
             if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
                 return exit(ip);
             }
-            let value = lane_native_value(cx, ip, i, kind, callee, receiver, args);
+            let value = lane_native_value(cx, ip, i, native, callee, receiver, args);
             return lane_native_complete(cx, ip, i, value);
         }
         match lane_function_call_activation(cx, r, ip, i, callee, receiver, args) {
@@ -12605,20 +12605,20 @@ script_handler! {
     fn lane_native_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // The callee's kind, read once: a call changes no function record before it runs.
-        let kind = match vm.heap.function(r.get(i.b)) {
+        let native = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord {
-                kind: kind @ FunctionKind::Native(_),
+                kind: FunctionKind::Native(native),
                 ..
-            }) => *kind,
+            }) => *native,
             _ => sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx)),
         };
-        if matches!(kind, FunctionKind::Native(Native::FunctionCall | Native::FunctionBoundCall)) {
+        if matches!(native, Native::FunctionCall | Native::FunctionBoundCall) {
             sibling!(lane_function_call::<H>, r, ip, Carried::script(cx))
         }
-        if matches!(kind, FunctionKind::Native(Native::FunctionApply | Native::ReflectApply)) {
+        if matches!(native, Native::FunctionApply | Native::ReflectApply) {
             sibling!(lane_apply_call::<H>, r, ip, Carried::script(cx))
         }
-        lane_native_call_value(cx, r, ip, i, kind)
+        lane_native_call_value(cx, r, ip, i, native)
     }
 }
 
@@ -12629,19 +12629,19 @@ script_handler! {
     /// handler that makes it, whose dispatch then is a call, not a sibling jump.
     #[inline(never)]
     fn lane_apply_call<>(cx, r, ip, i, view) {
-        let Some(FunctionRecord { kind: kind @ FunctionKind::Native(native), .. }) =
+        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) =
             (unsafe { vm(cx) }).heap.function(r.get(i.b))
         else {
             unreachable!("lane_native_call routes only a native apply here");
         };
-        let (kind, native) = (*kind, *native);
+        let native = *native;
         if let Some(activation) = lane_apply_activation(cx, r, ip, i, native) {
             return match activation {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                 Err(next) => next,
             };
         }
-        lane_native_call_value(cx, r, ip, i, kind)
+        lane_native_call_value(cx, r, ip, i, native)
     }
 }
 
@@ -12653,7 +12653,7 @@ fn lane_native_call_value<H: Host>(
     r: Registers,
     ip: Ip,
     i: &LaneInstruction,
-    kind: FunctionKind,
+    native: Native,
 ) -> Ip {
     // A call that returns its result completes its caller: an activation in the lane, or
     // the frame in the general loop (`lane_frame_return`).
@@ -12666,7 +12666,7 @@ fn lane_native_call_value<H: Host>(
     // SAFETY: the call's window is registers of the running function, which the native
     // call copies before anything can move them.
     let args = unsafe { lane_call_window(r, i) };
-    let value = lane_native_value(cx, ip, i, kind, r.get(i.b), r.get(i.c), args);
+    let value = lane_native_value(cx, ip, i, native, r.get(i.b), r.get(i.c), args);
     lane_native_complete(cx, ip, i, value)
 }
 
@@ -12842,8 +12842,8 @@ unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value]
     unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) }
 }
 
-/// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
-/// `receiver` and `args`: dense `push` and `pop`, `charCodeAt` and collection lookups in
+/// The value of the lane `Call` record `i` of the native `callee`, of `native` kind, with
+/// `receiver` and `args`: property queries, dense `push` and `pop`, `charCodeAt` and collection lookups in
 /// place, else `lane_string_or_native_call`. `None` leaves the call to the general path,
 /// which raises an error the call stashed in `Vm::lane_raised`. Out of line: its calls take
 /// stack temporaries, which a handler inlining them would hold across its dispatch, which
@@ -12853,19 +12853,35 @@ fn lane_native_value<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     i: &LaneInstruction,
-    kind: FunctionKind,
+    native: Native,
     callee: Value,
     receiver: Value,
     args: &[Value],
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    // Only natives run from the lane (`lane_call_native`).
-    let FunctionKind::Native(native) = kind else {
-        return None;
-    };
-    // Each shortcut answers its native's common case; a miss falls through to the one call of
-    // `lane_string_or_native_call` below.
+    // The Native argument carries the caller's function-kind proof. Each operation uses
+    // its semantic fallback; the remaining natives try `lane_string_or_native_call`.
     match native {
+        Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
+            // SAFETY: the running program outlives this native call.
+            let code = unsafe { &*(*cx).code };
+            if let Some(key) = args.first()
+                && let Some(value) = vm.plain_own_property_query(code, native, receiver, *key)
+            {
+                return Some(value);
+            }
+            return lane_call_native(cx, ip, native, callee, receiver, args);
+        }
+        Native::ObjectHasOwn => {
+            // SAFETY: as above.
+            let code = unsafe { &*(*cx).code };
+            if let [object, key, ..] = args
+                && let Some(value) = vm.plain_own_property_query(code, Native::ObjectPrototypeHasOwnProperty, *object, *key)
+            {
+                return Some(value);
+            }
+            return lane_call_native(cx, ip, native, callee, receiver, args);
+        }
         // The JIT-mode DataView lane (`js_jit_dataview_float64_enabled`); a miss takes the
         // native, which coerces and throws.
         Native::DataViewGetFloat64 | Native::DataViewSetFloat64
@@ -13137,11 +13153,10 @@ fn lane_promise_native<H: Host>(
 /// ToNumber reads nothing (`Value::immediate_number`), `Boolean` called as a function, whose
 /// ToBoolean runs no guest code, `String` called with a string or an immediate primitive,
 /// `ArrayBuffer.isView`, an array iterator's step over a plain array
-/// (`Vm::plain_array_iterator_next`), which allocates its result, an object's own
-/// property query by a string key (`Vm::plain_own_property_query`), and a dense array's
+/// (`Vm::plain_array_iterator_next`), which allocates its result, and a dense array's
 /// `splice` (`Vm::plain_array_splice`, which allocates the removed array), `unshift`
-/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), for-in's per-key
-/// check (`Vm::plain_for_in_key_is_enumerable`), `Object.hasOwn`, `Object.is`, `Symbol.for`
+/// (`Vm::plain_array_unshift`) and `shift` (`Vm::plain_array_shift`), the legacy for-in
+/// key query (`Vm::plain_for_in_key_is_enumerable`), `Object.is`, `Symbol.for`
 /// of a string, and the Map and Set mutators on their own collections
 /// (`Vm::plain_collection_mutation`), and a DataView element get or set that raises nothing
 /// (`Vm::plain_data_view_access`). `None` leaves any other call to `lane_call_native`.
@@ -13163,9 +13178,6 @@ fn lane_pure_native<H: Host>(
             note_allocation(vm);
             Some(text)
         }
-        Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
-            vm.plain_own_property_query(code, *native, receiver, *args.first()?)
-        }
         Native::ArraySplice => {
             let removed = vm.plain_array_splice(code, callee, receiver, args)?;
             note_allocation(vm);
@@ -13177,12 +13189,6 @@ fn lane_pure_native<H: Host>(
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         Native::ForInKeyIsEnumerable => vm.plain_for_in_key_is_enumerable(code, *args.first()?, *args.get(1)?),
-        Native::ObjectHasOwn => vm.plain_own_property_query(
-            code,
-            Native::ObjectPrototypeHasOwnProperty,
-            *args.first()?,
-            *args.get(1)?,
-        ),
         // Pure of any arguments: SameValue.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
         // `super` reads (`Reflect.get` and `Reflect.getPrototypeOf` of a home object): an
