@@ -22,6 +22,43 @@ use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
+fn property_store(b: &mut Bencher, tracking: bool, initial: Value) {
+    let mut arena = crate::value_vec::ValueArena::default();
+    if tracking { arena.track(); }
+    const SHAPE: u32 = 1;
+    arena.register_derived_shape(SHAPE, BATCH_VALUES, None);
+    let values = [initial; BATCH_VALUES];
+    let vector = arena.with_values(SHAPE, &values);
+    arena.note_shape_values(SHAPE, &values);
+    b.iter(|| {
+        for slot in 0..BATCH_VALUES {
+            let value = black_box(Value::integer(slot as i32));
+            let arena = black_box(&mut arena);
+            arena.note_shape_value(SHAPE, slot, value);
+            // SAFETY: setup allocated all BATCH_VALUES slots in this flat vector.
+            unsafe { arena.set_flat_unchecked(vector, slot, value) };
+        }
+    });
+    for slot in 0..BATCH_VALUES {
+        assert_eq!(arena.get(vector, slot), Some(Value::integer(slot as i32)));
+    }
+}
+
+#[bench]
+fn primitive_property_store_untracked_batch(b: &mut Bencher) {
+    property_store(b, false, Value::integer(0));
+}
+
+#[bench]
+fn primitive_property_store_integer_tracked_batch(b: &mut Bencher) {
+    property_store(b, true, Value::integer(0));
+}
+
+#[bench]
+fn primitive_property_store_tagged_tracked_batch(b: &mut Bencher) {
+    property_store(b, true, Value::UNDEFINED);
+}
+
 fn attribute_hash<const FIELDS: bool, const DEPENDENT: bool>(b: &mut Bencher) {
     const FLAG_STATES: [bool; 2] = [false, true];
     let states = FLAG_STATES.len();
