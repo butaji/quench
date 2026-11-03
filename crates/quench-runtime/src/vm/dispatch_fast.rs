@@ -269,7 +269,7 @@ pub(super) struct LaneView {
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
-    retired: std::cell::RefCell<Vec<super::compiled::LaneMethod>>,
+    retired: std::cell::RefCell<Vec<Box<super::compiled::LaneMethod>>>,
     /// Per record, the register whose value it reads as the carried accumulator
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
@@ -459,6 +459,13 @@ const fn fill_room<const BLOCK: usize>(count: usize) -> usize {
     if room < BLOCK { BLOCK } else { room }
 }
 
+/// The lane-stack room the largest activation of the inlined callees of `registers` takes,
+/// which an exit inside one makes (`lane_activation_room`).
+pub(super) fn lane_inlined_room(registers: impl Iterator<Item = u16>) -> u16 {
+    let room = registers.map(|count| fill_room::<SCRIPT_FILL_BLOCK>(usize::from(count))).max().unwrap_or(0);
+    u16::try_from(room).unwrap_or(u16::MAX)
+}
+
 /// The values of a call window to copy as one fixed-size move each; a longer window copies
 /// value by value.
 const FIXED_ARGUMENT_COPIES: u16 = 4;
@@ -539,7 +546,7 @@ enum LaneBody {
     /// The body its prologue record enters directly (`lane_body_entry`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires.
     Specialized {
-        method: super::compiled::LaneMethod,
+        method: Box<super::compiled::LaneMethod>,
         tier_prologue: *const (),
         room: u16,
         /// Its runs from the prologue and those that left before completing, counted up to
@@ -558,7 +565,7 @@ enum LaneBody {
     },
     /// A body whose runs mostly left: its function runs in the lane again, and its code stays
     /// for the direct callers that name it until they retire with it at a shape compaction.
-    Retired { _method: super::compiled::LaneMethod },
+    Retired { _method: Box<super::compiled::LaneMethod> },
     Declined,
 }
 
@@ -665,7 +672,7 @@ impl LaneView {
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
-    fn specialize_lane_body(&self, entry: Handler, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) -> bool {
+    fn specialize_lane_body(&self, entry: Handler, specialize: impl FnOnce() -> Option<Box<super::compiled::LaneMethod>>) -> bool {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         let body = unsafe { &mut *self.tier_lane.get() };
         if let LaneBody::Unspecialized { entries, recompiles, stuck } = body {
@@ -676,11 +683,7 @@ impl LaneView {
                     Some(method) => {
                         // An exit inside an inlined callee makes its activation; the entry
                         // proves the stack holds the largest of them (`lane_activation_room`).
-                        let room = method.inlined.iter()
-                            .map(|call| fill_room::<SCRIPT_FILL_BLOCK>(usize::from(call.registers)))
-                            .max()
-                            .unwrap_or(0);
-                        let room = u16::try_from(room).unwrap_or(u16::MAX);
+                        let room = lane_inlined_room(method.inlined.iter().map(|call| call.registers));
                         // A body whose entry would not pay for itself serves native callers
                         // only (`lane_body_call`, direct calls); the lane's own entries keep
                         // the records, and it has no trial to run.
@@ -714,7 +717,7 @@ impl LaneView {
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
     /// its calls, so their sites have linked (`lane_loop_body_or_retire`).
-    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce() -> Option<super::compiled::LaneMethod>) {
+    fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce() -> Option<Box<super::compiled::LaneMethod>>) {
         // SAFETY: as `lane_body`; specializing runs no lane body.
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() } {
             *entries = LANE_BODY_WARMUP_ENTRIES - 1;
@@ -14338,8 +14341,16 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
                 && !target.view.is_null()
                 && ImmediateLayout::argument_count(instruction.imm()) <= target.params)
                 .then_some(())?;
+            // A call of the body being specialized names it once it exists: its descriptor
+            // takes the body's entry, method and room then (`LaneMethod::bind_self_calls`).
             // SAFETY: a resolved target's view outlives its program.
-            let method = unsafe { &*target.view }.lane_body().filter(|method| method.calls_only_natively())?;
+            let (method, entry, reserve) = if std::ptr::eq(target.view, view) {
+                (std::ptr::null(), 0, 0)
+            } else {
+                let callee = unsafe { &*target.view };
+                let method = callee.lane_body().filter(|method| method.calls_only_natively())?;
+                (method as *const super::compiled::LaneMethod, method.entry_address(), callee.lane_body_room())
+            };
             // SAFETY: a live environment's slots never move (`ScriptCallTarget::capture`).
             let (capture_values, capture_len) = unsafe { capture_reads(target.capture).as_ref() }
                 .and_then(crate::heap::EnvironmentSlots::native_dense_view)
@@ -14347,10 +14358,11 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
             Some(super::compiled::DirectCallee {
                 target,
                 method,
+                entry,
                 call: view.records().wrapping_add(pc).addr(),
                 callee: target.callee,
                 registers: target.registers,
-                reserve: unsafe { &*target.view }.lane_body_room(),
+                reserve,
                 sloppy,
                 capture_values,
                 capture_len,

@@ -6786,6 +6786,14 @@ pub(super) struct LaneMethod {
 }
 
 impl LaneMethod {
+    /// Names this body, now at its address, in the descriptors of its calls of itself.
+    fn bind_self_calls(&mut self) {
+        let own: *const LaneMethod = self;
+        for callee in self._direct.iter_mut().filter(|callee| callee.method.is_null()) {
+            callee.method = own;
+        }
+    }
+
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
         self.caller_registers
@@ -7060,7 +7068,7 @@ impl<H: Host> Vm<H> {
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: Vec<Option<DirectCallee>>,
         loop_header: Option<u32>,
-    ) -> Option<LaneMethod> {
+    ) -> Option<Box<LaneMethod>> {
         self.host.before_native_compilation();
         let helpers = LaneHelpers {
             field_get: lane_field_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
@@ -7088,6 +7096,11 @@ impl<H: Host> Vm<H> {
                 Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
                 None => None,
             };
+            // A call of the body itself proves the room this unit's inlined calls take.
+            let room = super::dispatch_fast::lane_inlined_room(unit.frames.iter().map(|frame| frame.registers));
+            for callee in direct.iter_mut().flatten().filter(|callee| callee.method.is_null()) {
+                callee.reserve = room;
+            }
             let fields = self.lane_unit_fields(program, &unit);
         let global_reads = self.lane_global_reads(program, function, &unit);
             let sites: std::collections::BTreeMap<usize, usize> = unit.instructions.iter().enumerate()
@@ -7131,13 +7144,18 @@ impl<H: Host> Vm<H> {
         #[cfg(test)]
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         // A body that names a callee's body retires with it (`DirectCallee::method`).
-        let _direct: Vec<Box<DirectCallee>> = sites.values().filter_map(|origin| direct[*origin].take()).collect();
+        let mut _direct: Vec<Box<DirectCallee>> = sites.values().filter_map(|origin| direct[*origin].take()).collect();
+        for callee in _direct.iter_mut().filter(|callee| callee.method.is_null()) {
+            callee.entry = entry as usize;
+        }
         let names_shapes = !fields.is_empty() || !_direct.is_empty();
         let scratch_width = usize::from(unit.registers - unit.caller_registers);
         let caller_registers = unit.caller_registers;
         let closed = unit.instructions.iter().enumerate()
             .all(|(pc, instruction)| instruction.op() != Op::Call || sites.contains_key(&pc));
-        Some(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed })
+        let mut method = Box::new(LaneMethod { _code: code, entry, names_shapes, inlined: unit.frames, scratch_width, caller_registers, loop_header, amortizes, _direct, closed });
+        method.bind_self_calls();
+        Some(method)
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -7293,8 +7311,11 @@ impl<H: Host> Vm<H> {
 pub(super) struct DirectCallee {
     pub(super) target: super::dispatch_fast::ScriptCallTarget,
     /// The callee's specialized body (`LaneBody::Specialized`), which retires with the caller's
-    /// at a shape compaction (`LaneMethod::names_shapes`).
+    /// at a shape compaction (`LaneMethod::names_shapes`); the caller's own for a call of
+    /// itself, bound once it exists (`LaneMethod::bind_self_calls`).
     pub(super) method: *const LaneMethod,
+    /// The callee body's entry, which the call enters; the caller's own, as `method`.
+    pub(super) entry: usize,
     /// The caller's call record, which the callee's activation returns to.
     pub(super) call: usize,
     pub(super) callee: Value,
