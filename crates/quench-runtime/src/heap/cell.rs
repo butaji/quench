@@ -42,8 +42,10 @@ pub(crate) struct WeakMapEntries {
 mod cell_layout_tests {
     use super::*;
 
-    /// Environments retain the common cell extent after array headers become smaller.
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<(Value, u32, super::EnvironmentSlots, super::EnvironmentScopeRef)>();
+    /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
+    /// and its element backing.
+    const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<ArrayObject>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
@@ -56,7 +58,7 @@ mod cell_layout_tests {
         assert_eq!(NATIVE_ARRAY_RECORD_ALIGN, std::mem::align_of::<ArrayObject>());
         assert_eq!(
             NATIVE_ARRAY_ELEMENTS_OFFSET,
-            std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, payload)
+            std::mem::offset_of!(ArrayObject, elements)
         );
         let layout = super::super::NATIVE_ARRAY_LAYOUT;
         assert_eq!(layout.record_size, std::mem::size_of::<ArrayObject>());
@@ -1439,31 +1441,7 @@ pub(crate) struct Object {
     /// (`Value::to_narrow`), the first slot in the lower half; or, without inline storage,
     /// the storage position (`ValueVec`'s start). An inline value that has no narrow form
     /// moves the values into extras, so every value stays storable.
-    payload: ObjectPayload,
-}
-
-/// The object's one owned payload: encoded property state, or an array's dense backing.
-/// OBJECT_ARRAY plus absence of EXTRAS_TAG selects `elements`; all other states use `word`.
-#[repr(C)]
-union ObjectPayload {
-    word: u64,
-    elements: std::mem::ManuallyDrop<super::ArrayElements>,
-}
-
-impl ObjectPayload {
-    fn from_elements(elements: super::ArrayElements) -> Self {
-        const { assert!(size_of::<super::ArrayElements>() <= size_of::<u64>()) };
-        // Initialize the whole word even on hosts whose pointer is narrower than u64.
-        let mut payload = Self { word: 0 };
-        payload.elements = std::mem::ManuallyDrop::new(elements);
-        assert_ne!(payload.word() & EXTRAS_TAG_MASK, EXTRAS_TAG);
-        payload
-    }
-
-    fn word(&self) -> u64 {
-        // SAFETY: both fields occupy one initialized word; reading its bits inspects the tag.
-        unsafe { self.word }
-    }
+    payload: u64,
 }
 
 /// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
@@ -1546,51 +1524,18 @@ impl ProtoLink {
 }
 
 const OBJECT_ARRAY: u32 = 1 << 28;
-/// The array payload can hold elements while its named storage is this empty descriptor.
-const EMPTY_PROPERTY_POSITION: u32 = ValueVec::new().into_parts().0;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
 const _: () = assert!(
     PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
         && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
 );
-/// Payload displaced into extras: inline values for objects, dense backing for arrays.
-/// Object's array flag selects the owner. Array cloning and dropping are handled by Object;
-/// a raw extras clone copies these bits only until Object installs its cloned backing.
-#[repr(C)]
-union DisplacedInline {
-    values: [Value; INLINE_PROPERTY_COUNT],
-    elements: std::mem::ManuallyDrop<super::ArrayElements>,
-}
-
-impl DisplacedInline {
-    fn from_elements(elements: super::ArrayElements) -> Self {
-        let mut storage = Self::default();
-        storage.elements = std::mem::ManuallyDrop::new(elements);
-        storage
-    }
-
-    fn values(&self) -> [Value; INLINE_PROPERTY_COUNT] {
-        // SAFETY: constructors initialize the whole storage; Value has no invalid bit patterns.
-        unsafe { self.values }
-    }
-}
-
-impl Clone for DisplacedInline {
-    fn clone(&self) -> Self { Self { values: self.values() } }
-}
-
-impl std::fmt::Debug for DisplacedInline {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_tuple("DisplacedInline").field(&self.values()).finish()
-    }
-}
-
-const _: () = assert!(size_of::<DisplacedInline>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
-const _: () = assert!(align_of::<DisplacedInline>() == align_of::<[Value; INLINE_PROPERTY_COUNT]>());
+/// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
+#[derive(Clone, Copy, Debug)]
+struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
 
 impl Default for DisplacedInline {
     fn default() -> Self {
-        Self { values: [Value::UNDEFINED; INLINE_PROPERTY_COUNT] }
+        Self([Value::UNDEFINED; INLINE_PROPERTY_COUNT])
     }
 }
 
@@ -1637,22 +1582,10 @@ const _: () = assert!(
 
 impl Clone for Object {
     fn clone(&self) -> Self {
-        // Property words copy directly; owned extras clone and dense backings share via COW.
+        // The word copies bit for bit; a copy with extras gets its own.
         let payload = match self.extras() {
-            Some(extras) => {
-                let mut cloned = extras.clone();
-                if self.is_array() {
-                    // SAFETY: array extras own the elements field. Replace the raw copied
-                    // pointer with one COW clone before the cloned Object becomes an owner.
-                    cloned.inline_properties = DisplacedInline::from_elements(unsafe { &*extras.inline_properties.elements }.clone());
-                }
-                ObjectPayload { word: Self::tag_extras(Box::new(cloned)) }
-            },
-            None if self.is_array() => ObjectPayload::from_elements(
-                // SAFETY: an array without extras owns the elements union field.
-                unsafe { &*self.payload.elements }.clone(),
-            ),
-            None => ObjectPayload { word: self.payload.word() },
+            Some(extras) => Self::tag_extras(Box::new(extras.clone())),
+            None => self.payload,
         };
         Self {
             meta: self.meta,
@@ -1665,33 +1598,27 @@ impl Clone for Object {
 impl Drop for Object {
     fn drop(&mut self) {
         if let Some(extras) = self.extras_pointer() {
-            if self.is_array() {
-                // SAFETY: array extras own one backing; the raw union itself has no Drop.
-                unsafe { std::mem::ManuallyDrop::drop(&mut (*extras).inline_properties.elements) };
-            }
             // SAFETY: the pointer came from `Box::into_raw` in `extras_mut` and is owned by
             // this object alone.
             drop(unsafe { Box::from_raw(extras) });
-        } else if self.is_array() {
-            // SAFETY: this array owns the elements union field, dropped exactly once here.
-            unsafe { std::mem::ManuallyDrop::drop(&mut self.payload.elements) };
         }
     }
 }
 
-/// An array's object owns its dense backing in the payload, or in extras beside named
-/// property storage. The common array needs no separate elements-pointer word.
+/// An array: its object, which keeps named properties in the arena, and its dense element
+/// backing.
 #[derive(Clone)]
 #[repr(C)]
 pub(crate) struct ArrayObject {
     object: Object,
+    elements: super::ArrayElements,
 }
 
 /// Native read-only layout facts for `ArrayObject`, kept beside its field declarations.
 pub(super) const NATIVE_ARRAY_RECORD_SIZE: usize = std::mem::size_of::<ArrayObject>();
 pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayObject>();
 pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
-    std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, payload);
+    std::mem::offset_of!(ArrayObject, elements);
 /// Where an array record's object part (`Object`: meta, auxiliary, payload) starts.
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
 
@@ -1705,6 +1632,7 @@ impl ArrayObject {
         let elements = elements.into();
         // Array objects keep named properties in the arena; a fresh object has none inline.
         let current = object.properties();
+        object.meta |= OBJECT_ARRAY;
         if current.has_inline_property_storage() {
             debug_assert!(
                 object
@@ -1716,28 +1644,11 @@ impl ArrayObject {
             properties.preserve_integrity_from(current);
             object.set_properties(properties);
         }
-        if object.is_array() {
-            let mut array = Self { object };
-            *array.elements_mut() = elements;
-            return array;
-        }
-        let position = object.storage_position();
-        if object.extras_pointer().is_some() || position != EMPTY_PROPERTY_POSITION {
-            object.extras_mut().inline_properties = DisplacedInline::from_elements(elements);
-        } else {
-            object.payload = ObjectPayload::from_elements(elements);
-        }
-        object.meta |= OBJECT_ARRAY;
-        Self { object }
+        Self { object, elements }
     }
 
     pub(crate) fn elements(&self) -> &super::ArrayElements {
-        match self.object.extras() {
-            // SAFETY: extras of an array own their displaced elements field.
-            Some(extras) => unsafe { &extras.inline_properties.elements },
-            // SAFETY: an array without extras owns the elements field.
-            None => unsafe { &self.object.payload.elements },
-        }
+        &self.elements
     }
 
     /// The elements for any change, including their backing's: the running lane's array
@@ -1746,16 +1657,7 @@ impl ArrayObject {
         // A prototype's elements answer index reads of the objects it is the prototype of.
         self.object.note_prototype_elements_change();
         super::array_proofs::retire_array_storage_proofs();
-        self.storage_mut()
-    }
-
-    fn storage_mut(&mut self) -> &mut super::ArrayElements {
-        match self.object.extras_pointer() {
-            // SAFETY: exclusive access to this array's owned extras.
-            Some(extras) => unsafe { &mut (*extras).inline_properties.elements },
-            // SAFETY: an array without extras owns the elements field.
-            None => unsafe { &mut self.object.payload.elements },
-        }
+        &mut self.elements
     }
 
     /// Replaces the present element at `index` in place where this array alone owns its
@@ -1763,7 +1665,7 @@ impl ArrayObject {
     /// changes no backing, so no array storage proof retires; a prototype's dependents do.
     #[inline(always)]
     pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
-        if !self.storage_mut().replace_in_place(index, value) {
+        if !self.elements.replace_in_place(index, value) {
             return false;
         }
         self.object.note_prototype_elements_change();
@@ -1774,7 +1676,7 @@ impl ArrayObject {
     /// replaces elements through (`ArrayStorageProofs::replace`); `None` where it is shared.
     #[inline(always)]
     pub(crate) fn unique_values(&mut self) -> Option<std::ptr::NonNull<Value>> {
-        self.storage_mut().unique_values()
+        self.elements.unique_values()
     }
 }
 
@@ -1874,7 +1776,7 @@ enum PrototypeLookupState {
 #[repr(C)]
 struct ObjectExtras {
     prototype_lookup: PrototypeLookupState,
-    /// Inline property values, or an array's dense backing, displaced by the extras pointer.
+    /// The object's inline property values, displaced from its payload by the extras pointer.
     inline_properties: DisplacedInline,
     /// An array's storage position, displaced from its first payload word.
     arena_start: u32,
@@ -2114,13 +2016,13 @@ impl Object {
     /// or extras, whose start `storage_position` decodes.
     #[inline(always)]
     pub(crate) fn plain_storage_start(&self) -> Option<usize> {
-        let plain = self.meta & (OBJECT_INLINE_STORAGE | OBJECT_ARRAY) == 0 && self.payload.word() >> u32::BITS == 0;
+        let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
         debug_assert!(!plain || self.extras_pointer().is_none());
-        plain.then_some(self.payload.word() as usize)
+        plain.then_some(self.payload as usize)
     }
 
     pub(crate) fn plain_property_storage(&self) -> Option<PlainPropertyStorage> {
-        if self.is_array() || self.properties().is_dictionary() || self.extras_pointer().is_some() {
+        if self.properties().is_dictionary() || self.extras_pointer().is_some() {
             return None;
         }
         Some(if self.meta & OBJECT_INLINE_STORAGE != 0 {
@@ -2157,21 +2059,14 @@ impl Object {
     fn storage_position(&self) -> u32 {
         match self.extras() {
             Some(extras) => extras.arena_start,
-            None if self.is_array() => EMPTY_PROPERTY_POSITION,
-            None => self.payload.word() as u32,
+            None => self.payload as u32,
         }
     }
 
     fn set_storage_position(&mut self, position: u32) {
-        if self.is_array() {
-            if position != EMPTY_PROPERTY_POSITION || self.extras_pointer().is_some() {
-                self.extras_mut().arena_start = position;
-            }
-            return;
-        }
         match self.extras_mut_existing() {
             Some(extras) => extras.arena_start = position,
-            None => self.payload = ObjectPayload { word: u64::from(position) },
+            None => self.payload = u64::from(position),
         }
     }
 
@@ -2186,7 +2081,7 @@ impl Object {
     }
 
     fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
-        let word = self.payload.word();
+        let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
     }
@@ -2202,26 +2097,16 @@ impl Object {
             None => {
                 // The payload word moves into the extras: the inline values, or the storage
                 // position.
-                let (inline, arena_start) = if self.is_array() {
-                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], EMPTY_PROPERTY_POSITION)
-                } else if self.meta & OBJECT_INLINE_STORAGE != 0 {
-                    (Self::unpack_inline(self.payload.word()), 0)
+                let (inline, arena_start) = if self.meta & OBJECT_INLINE_STORAGE != 0 {
+                    (Self::unpack_inline(self.payload), 0)
                 } else {
-                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload.word() as u32)
+                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload as u32)
                 };
-                let array_elements = if self.is_array() {
-                    // SAFETY: no extras means the array owns this field. Leave a valid empty
-                    // backing until installing extras, including if constructing them panics.
-                    Some(unsafe { std::mem::take(&mut *self.payload.elements) })
-                } else { None };
-                self.payload = ObjectPayload { word: Self::tag_extras(Box::new(ObjectExtras {
-                    inline_properties: match array_elements {
-                        Some(elements) => DisplacedInline::from_elements(elements),
-                        None => DisplacedInline { values: inline },
-                    },
+                self.payload = Self::tag_extras(Box::new(ObjectExtras {
+                    inline_properties: DisplacedInline(inline),
                     arena_start,
                     ..ObjectExtras::default()
-                })) };
+                }));
                 self.extras_pointer().expect("extras just installed")
             }
         };
@@ -2261,7 +2146,7 @@ impl Object {
         let mut object = Self {
             meta: Self::encode_proto(proto),
             auxiliary: 0,
-            payload: ObjectPayload { word: payload },
+            payload,
         };
         // Inline storage leaves the payload word alone.
         object.set_properties(ValueVec::inline_property_storage(shape));
@@ -2277,10 +2162,9 @@ impl Object {
     /// The inline property slots, wherever they live.
     #[inline(always)]
     fn inline_values(&self) -> [Value; INLINE_PROPERTY_COUNT] {
-        if self.is_array() { return [Value::UNDEFINED; INLINE_PROPERTY_COUNT]; }
         match self.extras() {
-            Some(extras) => extras.inline_properties.values(),
-            None => Self::unpack_inline(self.payload.word()),
+            Some(extras) => extras.inline_properties.0,
+            None => Self::unpack_inline(self.payload),
         }
     }
 
@@ -2295,7 +2179,7 @@ impl Object {
         }
         match Self::pack_inline(values) {
             Some(word) => {
-                self.payload = ObjectPayload { word };
+                self.payload = word;
                 true
             }
             None => false,
@@ -2304,9 +2188,9 @@ impl Object {
 
     fn store_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
         match (self.extras_mut_existing(), Self::pack_inline(values)) {
-            (Some(extras), _) => extras.inline_properties = DisplacedInline { values },
-            (None, Some(word)) => self.payload = ObjectPayload { word },
-            (None, None) => self.extras_mut().inline_properties = DisplacedInline { values },
+            (Some(extras), _) => extras.inline_properties.0 = values,
+            (None, Some(word)) => self.payload = word,
+            (None, None) => self.extras_mut().inline_properties.0 = values,
         }
     }
 
@@ -2321,14 +2205,14 @@ impl Object {
         let mut object = Self {
             meta: Self::encode_proto(proto),
             auxiliary: 0,
-            payload: ObjectPayload { word: 0 },
+            payload: 0,
         };
         object.set_properties(properties);
         // A new object has no extras: its payload word holds the values when each is narrow.
         if properties.has_inline_property_storage() {
             match Self::pack_inline(inline_properties) {
-                Some(word) => object.payload = ObjectPayload { word },
-                None => object.extras_mut().inline_properties = DisplacedInline { values: inline_properties },
+                Some(word) => object.payload = word,
+                None => object.extras_mut().inline_properties.0 = inline_properties,
             }
         }
         object
@@ -2345,7 +2229,7 @@ impl Object {
         Some(Self {
             meta: header.meta,
             auxiliary: header.auxiliary,
-            payload: ObjectPayload { word: Self::pack_inline(inline)? },
+            payload: Self::pack_inline(inline)?,
         })
     }
 
@@ -2355,7 +2239,7 @@ impl Object {
         Self {
             meta: header.meta,
             auxiliary: header.auxiliary,
-            payload: ObjectPayload { word: u64::from(start) },
+            payload: u64::from(start),
         }
     }
 
@@ -2372,8 +2256,8 @@ impl Object {
         }
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
         Some(match self.extras() {
-            Some(extras) => extras.inline_properties.values()[slot],
-            None => Value::from_narrow((self.payload.word() >> (slot as u32 * u32::BITS)) as u32),
+            Some(extras) => extras.inline_properties.0[slot],
+            None => Value::from_narrow((self.payload >> (slot as u32 * u32::BITS)) as u32),
         })
     }
 
@@ -2443,7 +2327,7 @@ impl Object {
     #[inline(always)]
     fn store_payload_narrow(&mut self, slot: usize, narrow: u32) {
         let shift = slot as u32 * u32::BITS;
-        self.payload = ObjectPayload { word: self.payload.word() & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift };
+        self.payload = self.payload & !(u64::from(u32::MAX) << shift) | u64::from(narrow) << shift;
     }
 
     /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
@@ -2779,39 +2663,14 @@ impl Object {
 
 /// An object is its header word and one payload word.
 const _: () = assert!(std::mem::size_of::<Object>() == 2 * std::mem::size_of::<u64>());
-const _: () = assert!(std::mem::size_of::<ArrayObject>() == std::mem::size_of::<Object>());
 /// The payload word holds every inline slot as a narrow value.
 const _: () = assert!(INLINE_PROPERTY_COUNT * u32::BITS as usize == u64::BITS as usize);
 
 #[cfg(test)]
 mod object_payload_tests {
-    use super::{ArrayObject, Object};
+    use super::Object;
     use crate::value::Value;
     use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
-
-    #[test]
-    fn compact_arrays_preserve_cow_across_extras_clone_and_drop() {
-        let mut array = ArrayObject::new(Object::new(Value::NULL), vec![Value::integer(11)]);
-        assert_eq!(array.allocated_extra_bytes(), 0);
-        let mut copy = array.clone();
-        assert_eq!(array.elements().as_ptr(), copy.elements().as_ptr());
-        // A descriptor/prototype side effect may materialize extras before named storage.
-        array.set_arguments_object();
-        let mut plain = Object::new(Value::NULL);
-        plain.set_arguments_object();
-        assert_eq!(array.allocated_extra_bytes(), plain.allocated_extra_bytes());
-        assert_eq!(array.elements().as_ptr(), copy.elements().as_ptr());
-        let with_extras = array.clone();
-        copy.elements_mut().make_mut().set(0, Value::integer(17));
-        assert_eq!(array.elements()[0], Value::integer(11));
-        assert_eq!(copy.elements()[0], Value::integer(17));
-        drop(array);
-        assert_eq!(with_extras.elements()[0], Value::integer(11));
-        drop(with_extras);
-        copy.set_arguments_object();
-        assert!(copy.replace_in_place(0, Value::integer(23)));
-        assert_eq!(copy.elements()[0], Value::integer(23));
-    }
 
     #[test]
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {

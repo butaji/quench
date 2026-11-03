@@ -136,12 +136,12 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
         // The payload word: narrow inline values or the storage position.
         None => {
             writer.u8(0);
-            writer.u64(if object.is_array() { 0 } else { object.payload.word() });
+            writer.u64(object.payload);
         }
         // The payload word is the extras pointer; the extras are written field by field.
         Some(extras) => {
             writer.u8(1);
-            write_extras(writer, extras, object.is_array())?;
+            write_extras(writer, extras)?;
         }
     }
     Ok(())
@@ -155,18 +155,10 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
         1 => Object::tag_extras(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
     };
-    let mut object = Object { meta, auxiliary, payload: ObjectPayload { word: payload } };
-    if object.is_array() {
-        if let Some(extras) = object.extras_mut_existing() {
-            extras.inline_properties = DisplacedInline::from_elements(super::super::ArrayElements::new());
-        } else {
-            object.payload = ObjectPayload::from_elements(super::super::ArrayElements::new());
-        }
-    }
-    Ok(object)
+    Ok(Object { meta, auxiliary, payload })
 }
 
-fn write_extras(writer: &mut Writer, extras: &ObjectExtras, is_array: bool) -> SnapshotResult<()> {
+fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
     let ObjectExtras {
         prototype_lookup: lookup,
         inline_properties,
@@ -194,8 +186,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras, is_array: bool) -> S
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
     }
     prototype_lookup::write(writer, *lookup);
-    // ArrayObject writes elements after the object header; no address bits enter the image.
-    writer.values(&if is_array { [Value::UNDEFINED; INLINE_PROPERTY_COUNT] } else { inline_properties.values() });
+    writer.values(&inline_properties.0);
     writer.u32(*arena_start);
     writer.bool(arguments_map.is_some());
     if let Some(map) = arguments_map {
@@ -232,9 +223,9 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras, is_array: bool) -> S
 fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let prototype_lookup = prototype_lookup::read(reader)?;
     let inline = reader.values()?;
-    let inline_properties = DisplacedInline {
-        values: inline.try_into().map_err(|_| SnapshotError("invalid snapshot inline properties".into()))?,
-    };
+    let inline_properties = DisplacedInline(
+        inline.try_into().map_err(|_| SnapshotError("invalid snapshot inline properties".into()))?,
+    );
     let arena_start = reader.u32()?;
     let arguments_map = if reader.bool()? { Some(reader.u16s()?) } else { None };
     let [arguments_object, raw_json, error_data, module_namespace, structured_transfer_forbidden, indexed_descriptors, length_descriptor, side_descriptors] =
@@ -396,7 +387,7 @@ impl ArrayObject {
             return Err(SnapshotError("snapshot array without its array flag".into()));
         }
         let elements = super::super::ArrayElements::from(reader.values()?);
-        Ok(Self::new(object, elements))
+        Ok(Self { object, elements })
     }
 }
 
