@@ -1408,6 +1408,31 @@ fn promotion_age_may_change_between_minor_collections() {
 }
 
 #[test]
+fn restored_sparse_slot_marks_survive_minor_and_full_collection() {
+    for count in [0, 1, u64::BITS as usize, u64::BITS as usize + 1, SLOTS_PER_SLAB + 1] {
+        let mut heap = Heap::new();
+        let cells: Vec<_> = (0..count).map(|index| heap.alloc(Cell::Error(index.to_string()))).collect();
+        // Alternating retained slots exercise both bits at word/slab boundaries.
+        let retained: Vec<_> = cells.iter().step_by(2).copied().collect();
+        heap.collect(retained.iter().copied());
+        let mut writer = crate::snapshot::Writer::new();
+        heap.write_snapshot(&mut writer).unwrap();
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
+        reader.finish().unwrap();
+        for (index, &cell) in cells.iter().enumerate() {
+            assert_eq!(restored.is_live(cell), index % 2 == 0);
+            if index % 2 == 0 { assert!(restored.is_old(cell)); }
+        }
+        collect_minor(&mut restored, []);
+        assert!(retained.iter().all(|&cell| restored.is_live(cell)));
+        restored.collect([]);
+        assert!(retained.iter().all(|&cell| !restored.is_live(cell)));
+    }
+}
+
+#[test]
 fn snapshots_restore_aged_survivors_as_old() {
     let mut heap = heap_at(PromotionAge::Second);
     let cell = heap.alloc(Cell::Error("aged".into()));

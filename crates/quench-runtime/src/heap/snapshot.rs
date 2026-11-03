@@ -65,7 +65,8 @@ impl Heap {
             let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
             let live = cell.is_some();
             heap.slots.push(Slot { cell });
-            if index / 64 == heap.marks.len() {
+            let (word, bit) = slot_bit(index);
+            if word == heap.marks.len() {
                 heap.marks.push(AtomicU64::new(0));
             }
             let slab = index / SLOTS_PER_SLAB;
@@ -73,7 +74,9 @@ impl Heap {
                 heap.free_by_slab.push(FreeSlotBitmap::default());
             }
             if live {
-                heap.marks[index / 64].fetch_or(1 << (index % 64), std::sync::atomic::Ordering::Relaxed);
+                // Restoration owns the heap exclusively; parallel marking begins
+                // only after publication. No atomic read-modify-write is needed.
+                *heap.marks[word].get_mut() |= bit;
             } else {
                 if heap.free_by_slab[slab].is_empty() {
                     heap.free_slabs.push(slab as u32);
