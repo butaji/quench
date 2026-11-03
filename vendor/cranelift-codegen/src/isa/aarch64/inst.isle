@@ -3872,6 +3872,21 @@
       (if-let amt (lshl_from_imm64 ty k))
       (alu_rrr_shift op ty y x amt))
 
+;; Right shifts fuse only at the hardware register widths. A narrow CLIF
+;; operand needs its own zero/sign extension before a 32-bit right shift.
+(rule (alu_rs_imm_logic_commutative op (ty_32_or_64 ty) x (ushr _ y (iconst _ (u64_from_imm64 k))))
+      (if-let amt (lshr_from_u64 ty k))
+      (alu_rrr_shift op ty x y amt))
+(rule 1 (alu_rs_imm_logic_commutative op (ty_32_or_64 ty) (ushr _ x (iconst _ (u64_from_imm64 k))) y)
+      (if-let amt (lshr_from_u64 ty k))
+      (alu_rrr_shift op ty y x amt))
+(rule (alu_rs_imm_logic_commutative op (ty_32_or_64 ty) x (sshr _ y (iconst _ (u64_from_imm64 k))))
+      (if-let amt (ashr_from_u64 ty k))
+      (alu_rrr_shift op ty x y amt))
+(rule 1 (alu_rs_imm_logic_commutative op (ty_32_or_64 ty) (sshr _ x (iconst _ (u64_from_imm64 k))) y)
+      (if-let amt (ashr_from_u64 ty k))
+      (alu_rrr_shift op ty y x amt))
+
 ;; Same as `alu_rs_imm_logic_commutative` above, except that it doesn't require
 ;; that the operation is commutative.
 (attr alu_rs_imm_logic (veri chain))

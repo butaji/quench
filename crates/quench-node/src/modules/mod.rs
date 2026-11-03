@@ -3,7 +3,6 @@
 //! Shared-runtime adapters own guest-visible behavior. Neutral modules own
 //! data and host state that those adapters consume.
 
-mod assert_source;
 pub(crate) mod assert_shared_vm;
 pub(crate) mod napi;
 pub(crate) mod worker_shared_vm;

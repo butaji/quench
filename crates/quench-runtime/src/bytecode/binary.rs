@@ -213,6 +213,11 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
                 out.u32(site.offset);
                 out.bool(site.construct);
                 out.string(&site.callee);
+                out.bool(site.expression.is_some());
+                if let Some(span) = site.expression {
+                    out.u32(span.start);
+                    out.u32(span.end);
+                }
             }
         }
     }
@@ -525,6 +530,9 @@ fn decode_program(
                         offset: input.u32()?,
                         construct: input.bool()?,
                         callee: input.string()?,
+                        expression: if input.bool()? {
+                            Some(super::SourceSpan { start: input.u32()?, end: input.u32()? })
+                        } else { None },
                     })
                 })?))
             } else {

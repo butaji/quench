@@ -800,7 +800,9 @@ impl<I: VCodeInst> VCode<I> {
         let _tt = timing::vcode_emit();
         let mut buffer = MachBuffer::new();
         buffer.set_log2_min_function_alignment(self.log2_min_function_alignment);
-        let mut bb_starts: Vec<Option<CodeOffset>> = vec![];
+        let mut block_offsets = if flags.machine_code_cfg_info() || !self.debug_value_labels.is_empty() {
+            vec![0..0; self.num_blocks()]
+        } else { vec![] };
 
         // The first M MachLabels are reserved for block indices.
         buffer.reserve_labels_for_blocks(self.num_blocks());
@@ -810,19 +812,8 @@ impl<I: VCodeInst> VCode<I> {
         // correctly.
         buffer.register_constants(&self.constants);
 
-        // Construct the final order we emit code in: cold blocks at the end.
-        let mut final_order: SmallVec<[BlockIndex; 16]> = smallvec![];
-        let mut cold_blocks: SmallVec<[BlockIndex; 16]> = smallvec![];
-        for block in 0..self.num_blocks() {
-            let block = BlockIndex::new(block);
-            if self.block_order.is_cold(block) {
-                cold_blocks.push(block);
-            } else {
-                final_order.push(block);
-            }
-        }
-        final_order.extend(cold_blocks.clone());
-        let aligned_loops = self.small_loop_headers(&final_order);
+        let final_order = self.block_order.emission_order();
+        let aligned_loops = self.small_loop_headers(final_order);
 
         // Compute/save info we need for the prologue: clobbers and
         // number of spillslots.
@@ -842,7 +833,6 @@ impl<I: VCodeInst> VCode<I> {
 
         // Emit blocks.
         let mut cur_srcloc = None;
-        let mut last_offset = None;
         let mut inst_offsets = vec![];
         let mut state = I::State::new(&self.abi, core::mem::take(ctrl_plane));
 
@@ -933,21 +923,7 @@ impl<I: VCodeInst> VCode<I> {
                 writeln!(&mut disasm, "block{}:", block.index()).unwrap();
             }
 
-            if flags.machine_code_cfg_info() {
-                // Track BB starts. If we have backed up due to MachBuffer
-                // branch opts, note that the removed blocks were removed.
-                let cur_offset = buffer.cur_offset();
-                if last_offset.is_some() && cur_offset <= last_offset.unwrap() {
-                    for i in (0..bb_starts.len()).rev() {
-                        if bb_starts[i].is_some() && cur_offset > bb_starts[i].unwrap() {
-                            break;
-                        }
-                        bb_starts[i] = None;
-                    }
-                }
-                bb_starts.push(Some(cur_offset));
-                last_offset = Some(cur_offset);
-            }
+            if !block_offsets.is_empty() { block_offsets[block.index()].start = buffer.cur_offset(); }
 
             if let Some(block_start) = I::gen_block_start(
                 self.block_order.is_indirect_branch_target(block),
@@ -965,16 +941,7 @@ impl<I: VCodeInst> VCode<I> {
                             // so that we can translate value-label
                             // ranges to machine-code offsets.
 
-                            // Cold blocks violate monotonicity
-                            // assumptions elsewhere (that
-                            // instructions in inst-index order are in
-                            // order in machine code), so we omit
-                            // their offsets here. Value-label range
-                            // generation below will skip empty ranges
-                            // and ranges with to-offsets of zero.
-                            if !self.block_order.is_cold(block) {
-                                inst_offsets[iix.index()] = buffer.cur_offset();
-                            }
+                            inst_offsets[iix.index()] = buffer.cur_offset();
                         }
 
                         // Update the srcloc at this point in the buffer.
@@ -1149,6 +1116,8 @@ impl<I: VCodeInst> VCode<I> {
                 cur_srcloc = None;
             }
 
+            if !block_offsets.is_empty() { block_offsets[block.index()].end = buffer.cur_offset(); }
+
             // Insert padding, if configured, to stress the `MachBuffer`'s
             // relocation and island calculations.
             //
@@ -1193,17 +1162,19 @@ impl<I: VCodeInst> VCode<I> {
         *ctrl_plane = state.take_ctrl_plane();
 
         let func_body_len = buffer.cur_offset();
+        self.finalize_offsets(&mut inst_offsets, &mut block_offsets, func_body_len,
+            |block| buffer.resolve_label_offset(MachLabel::from_block(block)));
 
         // Create `bb_edges` and final (filtered) `bb_starts`.
         let mut bb_edges = vec![];
         let mut bb_offsets = vec![];
         if flags.machine_code_cfg_info() {
             for block in 0..self.num_blocks() {
-                if bb_starts[block].is_none() {
+                if block_offsets[block].is_empty() {
                     // Block was deleted by MachBuffer; skip.
                     continue;
                 }
-                let from = bb_starts[block].unwrap();
+                let from = block_offsets[block].start;
 
                 bb_offsets.push(from);
                 // Resolve each `succ` label and add edges.
@@ -1213,11 +1184,11 @@ impl<I: VCodeInst> VCode<I> {
                     bb_edges.push((from, to));
                 }
             }
+            bb_offsets.sort_unstable();
         }
 
-        self.monotonize_inst_offsets(&mut inst_offsets[..], func_body_len);
         let value_labels_ranges =
-            self.compute_value_labels_ranges(regalloc, &inst_offsets[..], func_body_len);
+            self.compute_value_labels_ranges(regalloc, &inst_offsets[..], &block_offsets);
 
         // Store metadata about frame layout in the MachBuffer.
         buffer.set_frame_layout(self.abi.frame_slot_metadata());
@@ -1231,41 +1202,32 @@ impl<I: VCodeInst> VCode<I> {
         }
     }
 
-    fn monotonize_inst_offsets(&self, inst_offsets: &mut [CodeOffset], func_body_len: u32) {
-        if self.debug_value_labels.is_empty() {
-            return;
-        }
-
-        // During emission, branch removal can make offsets of instructions incorrect.
-        // Consider the following sequence: [insi][jmp0][jmp1][jmp2][insj]
-        // It will be recorded as (say):    [30]  [34]  [38]  [42]  [<would be 46>]
-        // When the jumps get removed we are left with (in "inst_offsets"):
-        // [insi][jmp0][jmp1][jmp2][insj][...]
-        // [30]  [34]  [38]  [42]  [34]
-        // Which violates the monotonicity invariant. This method sets offsets of these
-        // removed instructions such as to make them appear zero-sized:
-        // [insi][jmp0][jmp1][jmp2][insj][...]
-        // [30]  [34]  [34]  [34]  [34]
-        //
-        let mut next_offset = func_body_len;
-        for inst_index in (0..(inst_offsets.len() - 1)).rev() {
-            let inst_offset = inst_offsets[inst_index];
-
-            // Not all instructions get their offsets recorded.
-            if inst_offset == NO_INST_OFFSET {
+    /// Project branch removal in physical emission order, retaining block IDs.
+    /// Logical instruction indices remain unchanged for register-allocation data.
+    fn finalize_offsets(&self, inst_offsets: &mut [CodeOffset],
+        block_offsets: &mut [Range<CodeOffset>], func_body_len: u32,
+        resolve: impl Fn(BlockIndex) -> CodeOffset) {
+        if block_offsets.is_empty() { return; }
+        let mut boundary = func_body_len;
+        for block in self.block_order.emission_order().iter().rev() {
+            let bounds = &mut block_offsets[block.index()];
+            bounds.end = bounds.end.min(boundary);
+            bounds.start = bounds.start.min(bounds.end);
+            // A removed jump-only block can alias a distant target while its
+            // old bytes now belong to its predecessor's branch. It owns no
+            // physical interval and must not truncate that predecessor.
+            if bounds.start != resolve(*block) || bounds.is_empty() {
+                bounds.start = bounds.end;
                 continue;
             }
-
-            if inst_offset > next_offset {
-                trace!(
-                    "Fixing code offset of the removed Inst {}: {} -> {}",
-                    inst_index, inst_offset, next_offset
-                );
-                inst_offsets[inst_index] = next_offset;
-                continue;
+            boundary = bounds.start;
+            if inst_offsets.is_empty() { continue; }
+            let mut next = bounds.end;
+            for index in self.block_ranges.get(block.index()).rev() {
+                if inst_offsets[index] == NO_INST_OFFSET { continue; }
+                inst_offsets[index] = inst_offsets[index].min(next);
+                next = inst_offsets[index];
             }
-
-            next_offset = inst_offset;
         }
     }
 
@@ -1273,92 +1235,72 @@ impl<I: VCodeInst> VCode<I> {
         &self,
         regalloc: &regalloc2::Output,
         inst_offsets: &[CodeOffset],
-        func_body_len: u32,
+        block_offsets: &[Range<CodeOffset>],
     ) -> ValueLabelsRanges {
         if self.debug_value_labels.is_empty() {
             return ValueLabelsRanges::default();
         }
-
         if trace_log_enabled!() {
             self.log_value_labels_ranges(regalloc, inst_offsets);
         }
-
+        // One dense projection gives each logical instruction its block owner.
+        // A location interval splits only where physical placement can differ.
+        let mut owners = vec![0; self.insts.len()];
+        for (block, instructions) in self.block_ranges.iter() {
+            owners[instructions].fill(block);
+        }
         let mut value_labels_ranges: ValueLabelsRanges = HashMap::new();
         for &(label, from, to, alloc) in &regalloc.debug_locations {
-            let label = ValueLabel::from_u32(label);
-            let ranges = value_labels_ranges.entry(label).or_insert_with(|| vec![]);
-            let prog_point_to_inst = |prog_point: ProgPoint| {
-                let mut inst = prog_point.inst();
-                if prog_point.pos() == InstPosition::After {
-                    inst = inst.next();
-                }
-                inst.index()
-            };
-            let inst_to_offset = |inst_index: usize| {
-                // Skip over cold blocks.
-                for offset in &inst_offsets[inst_index..] {
-                    if *offset != NO_INST_OFFSET {
-                        return *offset;
-                    }
-                }
-                func_body_len
-            };
-            let from_inst_index = prog_point_to_inst(from);
-            let to_inst_index = prog_point_to_inst(to);
-            let from_offset = inst_to_offset(from_inst_index);
-            let to_offset = inst_to_offset(to_inst_index);
-
-            // Empty ranges or unavailable offsets can happen
-            // due to cold blocks and branch removal (see above).
-            if from_offset == to_offset {
-                continue;
-            }
-
             let loc = if let Some(preg) = alloc.as_reg() {
                 LabelValueLoc::Reg(Reg::from(preg))
             } else {
                 #[cfg(not(feature = "unwind"))]
                 continue;
-
                 #[cfg(feature = "unwind")]
                 {
                     let slot = alloc.as_stack().unwrap();
                     let slot_offset = self.abi.get_spillslot_offset(slot);
                     let slot_base_to_caller_sp_offset = self.abi.slot_base_to_caller_sp_offset();
-                    let caller_sp_to_cfa_offset =
-                        crate::isa::unwind::systemv::caller_sp_to_cfa_offset();
-                    // NOTE: this is a negative offset because it's relative to the caller's SP
+                    let caller_sp_to_cfa_offset = crate::isa::unwind::systemv::caller_sp_to_cfa_offset();
                     let cfa_to_sp_offset =
                         -((slot_base_to_caller_sp_offset + caller_sp_to_cfa_offset) as i64);
                     LabelValueLoc::CFAOffset(cfa_to_sp_offset + slot_offset)
                 }
             };
-
-            // Coalesce adjacent ranges that for the same location
-            // to minimize output size here and for the consumers.
-            if let Some(last_loc_range) = ranges.last_mut() {
-                if last_loc_range.loc == loc && last_loc_range.end == from_offset {
-                    trace!(
-                        "Extending debug range for {:?} in {:?} to Inst {} ({})",
-                        label, loc, to_inst_index, to_offset
-                    );
-                    last_loc_range.end = to_offset;
-                    continue;
+            let point_index = |point: ProgPoint| {
+                point.inst().index() + usize::from(point.pos() == InstPosition::After)
+            };
+            let mut start = point_index(from);
+            let end = point_index(to);
+            let ranges = value_labels_ranges.entry(ValueLabel::from_u32(label)).or_default();
+            while start < end {
+                let block = owners[start];
+                let instructions = self.block_ranges.get(block);
+                let segment_end = end.min(instructions.end);
+                let from_offset = inst_offsets[start];
+                let to_offset = if segment_end == instructions.end {
+                    block_offsets[block].end
+                } else { inst_offsets[segment_end] };
+                if !block_offsets[block].is_empty() && from_offset < to_offset {
+                    ranges.push(ValueLocRange { loc, start: from_offset, end: to_offset });
+                }
+                start = segment_end;
+            }
+        }
+        for ranges in value_labels_ranges.values_mut() {
+            ranges.sort_unstable_by_key(|range| (range.start, range.end));
+            let mut kept = 0;
+            for index in 0..ranges.len() {
+                let range = ranges[index];
+                if kept != 0 && ranges[kept - 1].loc == range.loc && ranges[kept - 1].end == range.start {
+                    ranges[kept - 1].end = range.end;
+                } else {
+                    ranges[kept] = range;
+                    kept += 1;
                 }
             }
-
-            trace!(
-                "Recording debug range for {:?} in {:?}: [Inst {}..Inst {}) [{}..{})",
-                label, loc, from_inst_index, to_inst_index, from_offset, to_offset
-            );
-
-            ranges.push(ValueLocRange {
-                loc,
-                start: from_offset,
-                end: to_offset,
-            });
+            ranges.truncate(kept);
         }
-
         value_labels_ranges
     }
 

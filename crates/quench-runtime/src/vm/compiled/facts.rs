@@ -27,9 +27,14 @@ pub(super) struct Facts {
     offsets: Vec<Option<NonZeroUsize>>,
     types: Vec<Type>,
     registers: usize,
+    reached: CompoundBitSet,
+    /// Join of the entry's backedge inputs, without the unknown external input.
+    backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
 }
 
 impl Facts {
+    pub(super) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
+    pub(super) fn backedge(&self) -> &[Type] { &self.backedge }
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
     /// the PC table stores element offsets, including reachable zero-register rows.
     pub(super) fn at(&self, pc: usize) -> Option<&[Type]> {
@@ -79,6 +84,12 @@ pub(super) fn immediate(constant: &Constant) -> Option<Value> {
         Constant::Undefined => Some(Value::UNDEFINED),
         _ => None,
     }
+}
+
+/// A numeric constant is a static semantic value, regardless of machine view.
+pub(super) fn constant_number(constants: &[Constant], operand: Operand) -> Option<f64> {
+    (operand.kind() == Some(OperandKind::Constant)).then_some(())?;
+    constants.get(usize::from(operand.payload())).and_then(immediate).and_then(Value::as_number)
 }
 
 /// The semantic type of an operand, independent of its selected machine view.
@@ -148,11 +159,8 @@ fn transfer(
             match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
                 Some(bitwise) => {
                     prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
-                    let result = if bitwise == super::super::operations::NumberBitwise::ShiftRightUnsigned {
-                        Type::NUMBER
-                    } else {
-                        Type::INT32
-                    };
+                    let right = constant_number(constants, instruction.operand_c());
+                    let result = if bitwise.result_is_int32(right) { Type::INT32 } else { Type::NUMBER };
                     if !instruction.returns_from_frame() {
                         set(types, instruction.result_register(), result);
                     }
@@ -197,11 +205,13 @@ fn transfer(
                 set(types, register, Type::ANY);
             }
             match op.control_flow_layout() {
-                ControlFlowLayout::Fallthrough => Flow::Next,
+                ControlFlowLayout::Fallthrough if matches!(op, Op::Nop | Op::LoadThis | Op::LoadCapture
+                    | Op::GetField | Op::GetIndex | Op::SetField | Op::SetFieldStrict
+                    | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex) => Flow::Next,
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
-                ControlFlowLayout::Call | ControlFlowLayout::BranchTable | ControlFlowLayout::Terminal => Flow::Leaves,
+                _ => Flow::Leaves,
             }
         }
     }
@@ -209,6 +219,7 @@ fn transfer(
 
 /// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
 pub(super) fn analyze(
+    entry: usize,
     initial: &[Type],
     instructions: &[WideInstruction],
     leaders: &CompoundBitSet,
@@ -216,17 +227,19 @@ pub(super) fn analyze(
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
 ) -> Facts {
-    let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len() };
+    let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len(),
+        reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new() };
     let mut pending = smallvec::SmallVec::<[usize; INLINE_ANALYSIS_ITEMS]>::new();
     let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
-    if !instructions.is_empty() && facts.merge(0, initial) {
-        pending.push(0);
+    if entry < instructions.len() && facts.merge(entry, initial) {
+        pending.push(entry);
     }
     while let Some(leader) = pending.pop() {
         types.clear();
         types.extend_from_slice(facts.at(leader).expect("a pending leader has facts"));
         let mut pc = leader;
         loop {
+            facts.reached.insert(pc);
             let instruction = instructions[pc];
             // A direct own read proves its receiver before defining its result.
             // If result and receiver alias, transfer kills that refinement.
@@ -237,6 +250,10 @@ pub(super) fn analyze(
             match transfer(&mut types, instruction, constants, written) {
                 Flow::Leaves => break,
                 Flow::To(target) => {
+                    if target == entry && target <= pc {
+                        if facts.backedge.is_empty() { facts.backedge.extend_from_slice(&types); }
+                        else { for (known, incoming) in facts.backedge.iter_mut().zip(&types) { *known = known.join(*incoming); } }
+                    }
                     if facts.merge(target, &types) { pending.push(target); }
                     if conditional && facts.merge(pc + 1, &types) { pending.push(pc + 1); }
                     break;
@@ -263,7 +280,7 @@ mod tests {
 
     #[test]
     fn joins_widen_only_the_reached_block_and_converge_after_storage_growth() {
-        let mut facts = Facts { offsets: vec![None; 4], types: Vec::new(), registers: 2 };
+        let mut facts = Facts { offsets: vec![None; 4], types: Vec::new(), registers: 2, ..Facts::default() };
         assert!(facts.merge(2, &[Type::INT32, Type::direct_object(7)]));
         assert!(facts.merge(0, &[Type::NUMBER, Type::ANY]));
         assert!(facts.merge(2, &[Type::NUMBER, Type::direct_object(8)]));
@@ -277,7 +294,7 @@ mod tests {
 
     #[test]
     fn zero_register_blocks_keep_reachability_without_allocating_type_rows() {
-        let mut facts = Facts { offsets: vec![None; 3], types: Vec::new(), registers: 0 };
+        let mut facts = Facts { offsets: vec![None; 3], types: Vec::new(), registers: 0, ..Facts::default() };
         assert!(facts.merge(2, &[]));
         assert!(facts.merge(0, &[]));
         assert!(!facts.merge(2, &[]));

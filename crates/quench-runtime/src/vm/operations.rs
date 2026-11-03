@@ -177,6 +177,15 @@ macro_rules! number_arithmetic_rows {
 pub(super) use number_arithmetic_rows;
 number_arithmetic_rows!(number_arithmetic);
 
+impl NumberArithmetic {
+    /// For signed-int32 inputs, addition and subtraction are exact binary64
+    /// integers; a following ToInt32 therefore keeps their wrapping low bits.
+    /// Multiplication can round before ToInt32 and does not have this law.
+    pub(super) const fn int32_projection_is_wrapping(self) -> bool {
+        matches!(self, Self::Add | Self::Subtract)
+    }
+}
+
 /// Sign of a non-overflowing zero product: at least one factor is zero, so
 /// the result is -0 exactly when either factor is negative. The caller must
 /// establish zero before interpreting this predicate; views supply primitives.
@@ -340,6 +349,15 @@ number_bitwise! {
     ShiftLeft => ShiftLeft, shift_left;
     ShiftRight => ShiftRight, shift_right;
     ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned;
+}
+
+impl NumberBitwise {
+    /// A nonzero effective zero-fill shift clears the sign bit. All other
+    /// bitwise operations already return signed Word32 values.
+    pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
+        self != Self::ShiftRightUnsigned || right.is_some_and(|right|
+            crate::value::number_to_u32(right) & (u32::BITS - 1) != 0)
+    }
 }
 
 struct I32BitwiseStage;
@@ -636,6 +654,20 @@ mod numeric_instruction_tests {
             NumberArithmetic::from_js_instruction(Op::Return, BinaryOperator::Addition as u32),
             None
         );
+    }
+
+    #[test]
+    fn unsigned_shift_result_range_uses_effective_ecmascript_shift_count() {
+        for (right, fits) in [(0.0, false), (-0.0, false), (1.0, true), (17.9, true),
+            (31.0, true), (32.0, false), (33.0, true), (-1.0, true), (-32.0, false),
+            (4_294_967_297.0, true), (f64::NAN, false), (f64::INFINITY, false),
+            (f64::NEG_INFINITY, false)] {
+            let operation = NumberBitwise::ShiftRightUnsigned;
+            assert_eq!(operation.result_is_int32(Some(right)), fits, "{right}");
+            let result = super::number_bitwise_f64_result(operation, -1, crate::value::number_to_u32(right) as i32);
+            assert_eq!(result <= f64::from(i32::MAX), fits, "{right}");
+        }
+        assert!(!NumberBitwise::ShiftRightUnsigned.result_is_int32(None));
     }
 
     #[test]

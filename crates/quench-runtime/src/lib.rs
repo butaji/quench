@@ -6,6 +6,8 @@
 
 mod execution_interrupt;
 pub use execution_interrupt::ExecutionInterrupt;
+#[cfg(unix)]
+pub use vm::NativeFaultHandler;
 mod bigint;
 mod bytecode;
 mod compile;

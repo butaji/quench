@@ -189,7 +189,11 @@ impl FrameFlow {
         let mut context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(native, &mut context);
         let mut blocks = SecondaryMap::<ir::Block, Option<ir::Block>>::new();
-        for (block, _) in &records { blocks[*block] = Some(builder.create_block()); }
+        for (block, _) in &records {
+            let replacement = builder.create_block();
+            if builder.func.layout.is_cold(*block) { builder.set_cold_block(replacement); }
+            blocks[*block] = Some(replacement);
+        }
         for ((block, _), parameters) in records.iter().zip(&parameters) {
             builder.func.dfg.detach_block_params(*block);
             for parameter in parameters {
@@ -447,6 +451,7 @@ mod tests {
         let header = builder.create_block();
         let body = builder.create_block();
         let done = builder.create_block();
+        builder.set_cold_block(done);
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let registers = builder.block_params(entry)[0];
@@ -475,6 +480,9 @@ mod tests {
         flow.promote(&mut native, callout, None, isa.frontend_config());
         let mut stores = 0;
         let mut loads = 0;
+        let cold: Vec<_> = native.layout.blocks().filter(|block| native.layout.is_cold(*block)).collect();
+        assert_eq!(cold.len(), 1, "SSA promotion must preserve the recovery path's cold placement");
+        assert_eq!(native.dfg.insts[native.layout.last_inst(cold[0]).unwrap()].opcode(), ir::Opcode::Return);
         for block in native.layout.blocks() {
             let mut wrote = false;
             for instruction in native.layout.block_insts(block) {

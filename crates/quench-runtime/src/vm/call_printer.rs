@@ -9,15 +9,14 @@ use oxc_ast::ast::{
     NewExpression, SimpleAssignmentTarget,
 };
 use oxc_ast_visit::Visit;
-use oxc_parser::{ParseOptions, Parser};
+use oxc_parser::{ParseOptions, Parser, Token, Kind, config::TokensParserConfig};
 use oxc_span::SourceType;
 
 use super::{Host, Vm};
 use crate::bytecode::{Op, ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
-#[cfg(feature = "aot")]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// What `CallPrinter` prints for an operand it does not render.
 const INTERMEDIATE_VALUE: &str = "(intermediate value)";
@@ -174,55 +173,32 @@ fn call_kind(instruction: WideInstruction) -> Option<bool> {
     }
 }
 
-/// Resolve only descriptions whose positions the bytecode can observe. One
-/// parse per source goal replaces reparsing the whole source for every call.
-#[cfg(feature = "aot")]
+/// Freeze source-derived descriptions without opening or compiling lazy function bodies.
+/// Compilation also calls this producer once, before admitting a dynamic source.
 pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
     let Some(source) = &program.source else { return };
     source.call_sites.get_or_init(|| {
-        let mut positions = BTreeSet::new();
-        for function in 0..program.functions.len() {
-            for (pc, instruction) in program.function(function).instructions().enumerate() {
-                if let Some(construct) = call_kind(instruction)
-                    && let Some(position) = program.source_position(function as u32, pc as u32)
-                { positions.insert((position.line, position.column, construct)); }
-            }
-        }
-        // Sorted columns share one scan of each line. Repeated scans would be
-        // quadratic for minified modules whose calls all occupy one long line.
-        let mut positions = positions.into_iter().peekable();
-        let mut requested = BTreeSet::new();
-        while let Some(&(line_number, _, _)) = positions.peek() {
-            let line = source.source_line(line_number);
-            let mut characters = line.unwrap_or("").char_indices().peekable();
-            let mut units = 0;
-            while positions.peek().is_some_and(|position| position.0 == line_number) {
-                let (_, column, construct) = positions.next().unwrap();
-                let Some(line) = line else { continue };
-                let Some(column) = column.checked_sub(1) else { continue };
-                while units < column {
-                    let Some((_, character)) = characters.next() else { break };
-                    units += character.len_utf16() as u32;
-                }
-                if units == column {
-                    let byte = characters.peek().map_or(line.len(), |(byte, _)| *byte);
-                    let line_start = line.as_ptr() as usize - source.text.as_ptr() as usize;
-                    if let Ok(offset) = u32::try_from(line_start + byte) { requested.insert((offset, construct)); }
-                }
-            }
-        }
-        let mut search = CallSearch::All { requested, found: BTreeMap::new() };
+        let mut search = CallSearch::All { found: BTreeMap::new() };
         for goal in CALL_SOURCE_GOALS.map(|goal| goal.with_typescript(source.typescript)) {
-            if search.complete() { break; }
             match parse_call_sites(source.text.as_ref(), goal, search) {
                 Ok((next, valid)) => { search = next; if valid { break; } }
                 Err(previous) => { search = previous; break; }
             }
         }
-        let CallSearch::All { found, .. } = search else { unreachable!("all-call search changes shape") };
-        found.into_iter().map(|((offset, construct), callee)| crate::bytecode::CallSiteDescription { offset, construct, callee })
-            .collect::<Vec<_>>().into()
+        let CallSearch::All { found } = search else { unreachable!("all-call search changes shape") };
+        found.into_values().collect::<Vec<_>>().into()
     });
+}
+
+/// The admitted source expression at an exact call position. Native-only execution
+/// consumes frozen facts; it never reconstructs syntax on a diagnostic path.
+pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u32) -> Option<String> {
+    let source = program.source.as_ref()?;
+    let offset = source.byte_offset(crate::bytecode::SourcePosition { pc: 0, line, column })?;
+    let sites = source.call_sites.get()?;
+    let index = sites.binary_search_by_key(&offset, |site| site.offset).ok()?;
+    let span = sites[index].expression?;
+    source.text.get(span.start as usize..span.end as usize).map(str::to_owned)
 }
 
 /// The callee of the call (or construction) at byte `offset` of `source`, rendered.
@@ -233,7 +209,6 @@ fn render_call_site(source: &str, typescript: bool, offset: usize, construct: bo
             CallSearch::One { offset, construct, found: None }).ok()?;
         let found = match search {
             CallSearch::One { found, .. } => found,
-            #[cfg(feature = "aot")]
             CallSearch::All { .. } => unreachable!("single call search changes shape"),
         };
         if found.is_some() { return found; }
@@ -247,16 +222,14 @@ fn render_call_site(source: &str, typescript: bool, offset: usize, construct: bo
 /// at its argument list's `(`.
 enum CallSearch {
     One { offset: u32, construct: bool, found: Option<String> },
-    #[cfg(feature = "aot")]
-    All { requested: BTreeSet<(u32, bool)>, found: BTreeMap<(u32, bool), String> },
+    All { found: BTreeMap<(u32, bool), crate::bytecode::CallSiteDescription> },
 }
 
 impl CallSearch {
     fn complete(&self) -> bool {
         match self {
             Self::One { found, .. } => found.is_some(),
-            #[cfg(feature = "aot")]
-            Self::All { requested, found } => found.len() == requested.len(),
+            Self::All { .. } => false,
         }
     }
 
@@ -265,9 +238,10 @@ impl CallSearch {
             Self::One { offset: target, construct: target_kind, found } if (*target, *target_kind) == (offset, construct) => {
                 *found = Some(find(callee, true));
             }
-            #[cfg(feature = "aot")]
-            Self::All { requested, found } if requested.contains(&(offset, construct)) => {
-                found.entry((offset, construct)).or_insert_with(|| find(callee, true));
+            Self::All { found } => {
+                found.entry((offset, construct)).or_insert_with(|| crate::bytecode::CallSiteDescription {
+                    offset, construct, callee: find(callee, true), expression: None,
+                });
             }
             _ => (),
         }
@@ -277,11 +251,91 @@ impl CallSearch {
 fn parse_call_sites(source: &str, goal: SourceType, search: CallSearch) -> Result<(CallSearch, bool), CallSearch> {
     let allocator = Allocator::with_capacity(source.len());
     let options = ParseOptions { allow_return_outside_function: true, ..ParseOptions::default() };
-    let parsed = Parser::new(&allocator, source, goal).with_options(options).parse();
+    let parsed = Parser::new(&allocator, source, goal).with_options(options).with_config(TokensParserConfig).parse();
     if crate::compile::stack::validate_parsed(&parsed).is_err() { return Err(search); }
     let mut finder = CallFinder { source, comments: &parsed.program.comments, search };
     finder.visit_program(&parsed.program);
-    Ok((finder.search, parsed.diagnostics.is_empty()))
+    let mut search = finder.search;
+    if let CallSearch::All { found } = &mut search {
+        freeze_expressions(source, &parsed.tokens, found);
+    }
+    Ok((search, parsed.diagnostics.is_empty()))
+}
+
+/// Acorn's `name` label includes contextual keywords, `await`, `yield` and `enum`.
+fn expression_name(kind: Kind) -> bool {
+    kind.is_identifier() || matches!(kind, Kind::Await | Kind::Yield | Kind::Enum)
+}
+
+fn member_access(kind: Kind) -> bool {
+    matches!(kind, Kind::Dot | Kind::QuestionDot | Kind::LBrack | Kind::RBrack)
+}
+
+/// Node 26's `getFirstExpression`: remember a simple member prefix before the
+/// call position, then stop at the first balanced argument list on that line.
+/// OXC owns tokenization; line prefixes and closing pairs are processed once,
+/// even when thousands of calls share a minified line.
+fn freeze_expressions(source: &str, tokens: &[Token], sites: &mut BTreeMap<(u32, bool), crate::bytecode::CallSiteDescription>) {
+    let starts: Vec<_> = crate::bytecode::source_line_starts(source).collect();
+    let mut sites = sites.values_mut().peekable();
+    let mut closes = Vec::new();
+    let mut pending = Vec::new();
+    let mut endings = Vec::new();
+    let mut semicolons = Vec::new();
+    while let Some(site) = sites.peek() {
+        let line = starts.partition_point(|start| *start <= site.offset as usize).checked_sub(1).expect("source begins at zero");
+        let start = starts[line];
+        let text = source[start..starts.get(line + 1).copied().unwrap_or(source.len())]
+            .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
+        let end = start + text.len();
+        let first = tokens.partition_point(|token| (token.start() as usize) < start);
+        let last = tokens.partition_point(|token| (token.start() as usize) < end);
+        let tokens = &tokens[first..last];
+        closes.clear();
+        closes.resize(tokens.len(), None);
+        pending.clear();
+        for (index, token) in tokens.iter().enumerate() {
+            match token.kind() {
+                Kind::LParen => pending.push(index),
+                Kind::RParen => if let Some(open) = pending.pop() { closes[open] = Some(token.end()); },
+                _ => {},
+            }
+        }
+        endings.clear();
+        endings.resize(tokens.len() + 1, None);
+        semicolons.clear();
+        semicolons.resize(tokens.len() + 1, None);
+        for index in (0..tokens.len()).rev() {
+            endings[index] = if tokens[index].kind() == Kind::LParen { closes[index] } else { endings[index + 1] };
+            semicolons[index] = if tokens[index].kind() == Kind::Semicolon { Some(tokens[index].start()) } else { semicolons[index + 1] };
+        }
+        let mut cursor = 0;
+        let mut previous_name = None;
+        let mut member_start = None;
+        while sites.peek().is_some_and(|site| (site.offset as usize) < starts.get(line + 1).copied().unwrap_or(source.len() + 1)) {
+            let site = sites.next().expect("line has a site");
+            while cursor < tokens.len() && tokens[cursor].start() < site.offset {
+                let token = tokens[cursor];
+                let kind = token.kind();
+                cursor += 1;
+                if kind == Kind::Semicolon { member_start = None; continue; }
+                if member_access(kind) && previous_name.is_some() {
+                    member_start = member_start.or(previous_name);
+                } else if !member_access(kind) && !expression_name(kind) && kind != Kind::Str && !kind.is_number() {
+                    member_start = None;
+                }
+                previous_name = expression_name(kind).then_some(token.start());
+            }
+            let finish = endings[cursor].unwrap_or(end as u32).min(end as u32);
+            // Node's semicolon terminator converts its token object to zero;
+            // that yields no source expression, rather than the following statement.
+            site.expression = if semicolons[cursor].is_some_and(|semicolon| semicolon < finish) { None }
+                else {
+                    let begin = member_start.unwrap_or(site.offset);
+                    (begin < finish).then_some(crate::bytecode::SourceSpan { start: begin, end: finish })
+                };
+        }
+    }
 }
 
 struct CallFinder<'s> {
@@ -441,6 +495,86 @@ mod tests {
     use super::*;
 
     #[test]
+    fn assertion_expression_projection_follows_node_token_boundaries() {
+        for (text, position, expected) in [
+            ("assert(false)", "assert", "assert(false)"),
+            ("assert.ok(false)", "ok(", "assert.ok(false)"),
+            ("assert['ok'](false)", "(false)", "assert['ok'](false)"),
+            ("assert?.ok(false)", "ok(", "assert?.ok(false)"),
+            ("(0, assert)(false)", "(false)", "(false)"),
+            ("assert[(() => 'ok')()](false)", "(false)", "(false)"),
+            ("assert.ok(\n  false\n)", "ok(", "assert.ok("),
+            ("const text='😀'; assert.ok(text === '')", "ok(", "assert.ok(text === '')"),
+            ("new assert(false)", "new assert", "new assert(false)"),
+            ("assert.ok(/[(;)]/.test(''))", "ok(", "assert.ok(/[(;)]/.test(''))"),
+        ] {
+            let program = crate::Engine::specialize(text, "assertion-source.js").unwrap();
+            let source = program.source.as_ref().unwrap();
+            let site = source.call_sites.get().expect("facts are admitted with source").iter()
+                .find(|site| site.offset as usize == text.find(position).unwrap())
+                .expect("assertion call");
+            let actual = site.expression.map(|span| &source.text[span.start as usize..span.end as usize]);
+            assert_eq!(actual, Some(expected), "{text}");
+        }
+        let program = crate::Engine::specialize("assert.ok((()=>{return false;})())", "semicolon-expression.js").unwrap();
+        let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
+        assert!(sites.iter().find(|site| site.callee == "assert.ok").unwrap().expression.is_none(),
+            "Node's semicolon terminator yields an empty expression");
+    }
+
+    #[test]
+    fn admitted_diagnostics_keep_lazy_records_and_never_parse_at_lookup() {
+        let mut program = crate::Engine::specialize(
+            "function cold(value) { assert.ok(value); }", "cold-diagnostics.js").unwrap();
+        let released: Vec<_> = program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect();
+        assert!(released.iter().any(|released| *released), "the fixture must keep a cold record");
+        assert!(program.source.as_ref().unwrap().call_sites.get().is_some(), "facts belong to admission");
+        program.source.as_mut().unwrap().call_sites.take();
+        freeze_call_sites(&program);
+        assert_eq!(program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect::<Vec<_>>(), released);
+        let source = program.source.as_ref().unwrap();
+        let sites = source.call_sites.get().unwrap();
+        let owner = sites.as_ptr();
+        let column = "function cold(value) { assert.".len() as u32 + 1;
+        for _ in 0..2 {
+            assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"));
+            assert_eq!(program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr(), owner);
+        }
+        program.source.as_mut().unwrap().call_sites.take();
+        assert_eq!(source_expression(&program, 1, column), None, "lookup never derives missing facts");
+        assert!(program.source.as_ref().unwrap().call_sites.get().is_none());
+    }
+
+    #[test]
+    fn frozen_expression_ranges_are_validated_by_binary_and_snapshot_readers() {
+        use crate::bytecode::SourceSpan;
+        let text = "const face='😀'; call();\nnext();";
+        let offset = text.find("call").unwrap() as u32;
+        let emoji = text.find('😀').unwrap() as u32;
+        for span in [
+            SourceSpan { start: offset + 1, end: offset + 6 },
+            SourceSpan { start: 0, end: offset - 1 },
+            SourceSpan { start: offset + 6, end: offset },
+            SourceSpan { start: emoji + 1, end: offset + 6 },
+            SourceSpan { start: offset, end: u32::MAX },
+            SourceSpan { start: offset, end: text.len() as u32 },
+        ] {
+            let mut program = crate::Engine::specialize(text, "invalid-expression.js").unwrap();
+            let source = program.source.as_mut().unwrap();
+            let mut sites = source.call_sites.take().unwrap().to_vec();
+            sites.iter_mut().find(|site| site.offset == offset).unwrap().expression = Some(span);
+            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
+            let mut writer = crate::snapshot::Writer::new();
+            source.write_snapshot(&mut writer);
+            let bytes = writer.finish();
+            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+            assert!(crate::bytecode::ProgramSource::read_snapshot(&mut reader).is_err(), "{span:?}");
+            let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(program.encode_trusted())).unwrap();
+            assert!(decoded.validate().unwrap_err().contains("call-site expression"), "{span:?}");
+        }
+    }
+
+    #[test]
     fn frozen_descriptions_match_dynamic_search_and_survive_both_encodings() {
         let body = "const marker = '😀'; function test() { missing(); new Missing(); object.deep.method(); (0, object.method)(); object['key'](); optional?.(); }";
         for (text, typescript, retained) in [
@@ -453,8 +587,7 @@ mod tests {
                 crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::compile::ReleasedRecords::Encoded).unwrap();
             if let Some((prefix, body)) = retained {
                 let source = program.source.as_mut().unwrap();
-                source.text = crate::bytecode::SourceText::Shared(body.into());
-                source.base = prefix.len() as u32;
+                source.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);
                 (source.line_offset, source.column_offset) = origin.unwrap();
             }
             let source = program.source.as_ref().unwrap();
@@ -497,7 +630,7 @@ mod tests {
         ] {
             let mut invalid = crate::Engine::specialize("42;", "invalid.js").unwrap();
             invalid.source.as_mut().unwrap().call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.into_iter()
-                .map(|(offset, callee)| crate::bytecode::CallSiteDescription { offset, construct: false, callee: callee.into() })
+                .map(|(offset, callee)| crate::bytecode::CallSiteDescription { offset, construct: false, callee: callee.into(), expression: None })
                 .collect::<Vec<_>>()));
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(invalid.encode_trusted())).unwrap();
             assert!(decoded.validate().unwrap_err().contains("frozen call-site"));

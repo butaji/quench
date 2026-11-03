@@ -10,6 +10,163 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
+    let source = r#"
+        globalThis.effects=0;
+        function pipe(){
+            globalThis.effects++;
+            function step(x){x=x|0;for(let k=0;k<1;k=(k+1)|0)x=(x^(x<<3))|0;return x;}
+            const rounds=4000;let value=7;
+            for(let i=0;i<rounds;i=(i+1)|0)value=step(value);
+            globalThis.effects++;
+            return value;
+        }
+        let result;
+        for(let pass=0;pass<96;pass++)result=pipe(4000);
+        globalThis.answer=result;
+    "#;
+    let program = Engine::specialize(source, "default-osr-calls.js").unwrap();
+    let id = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let answer = vm.intern_atom("answer");
+        let effects = vm.intern_atom("effects");
+        answers.push((vm.own_property(global, answer).unwrap(), vm.own_property(global, effects).unwrap()));
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(id)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            let report = view.body_stats.report(0).unwrap_or_else(|| panic!("default loop needs shared typed OSR; plain={}\n{}",
+                program.function(id).plain_activation(&program), program.disassemble()));
+            assert!(report.contains("\"frames\":1"), "numeric calls must share the caller's typed unit: {report}");
+            assert!(report.contains("\"compiles\":1,"), "fresh pure closures and completed loop exits must retain their definition: {report}");
+        }
+    }
+    assert_eq!(answers[0], answers[1]);
+    assert_eq!(answers[1].1, Value::integer(192), "initialization and post-loop effect each run once per call");
+}
+
+#[test]
+fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
+    let source = r#"(function(){
+        function fraction(x){x=x+0.5;return x|0;}
+        const object={calls:0,leaf:fraction,outer(x){this.calls=this.calls+1;return this.leaf(x);}};
+        let sum=0;
+        for(let i=0;i<4000;i=(i+1)|0)sum=(sum+object.outer(i))|0;
+        globalThis.answer=sum;
+        globalThis.calls=object.calls;
+    })();"#;
+    let program = Engine::specialize(source, "osr-numeric-restart.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let answer = vm.intern_atom("answer");
+        let calls = vm.intern_atom("calls");
+        answers.push((vm.own_property(global, answer).unwrap(), vm.own_property(global, calls).unwrap()));
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            let report = view.body_stats.report(0).expect("nested caller must enter shared typed OSR");
+            assert!(report.contains("\"frames\":2"), "both frames must share the unit: {report}");
+            assert!(!report.contains("\"left_inlined\":0,"), "a pure child miss must recover the effectful parent: {report}");
+        }
+    }
+    assert_eq!(answers[0], answers[1]);
+    assert_eq!(answers[1], (Value::integer(7_998_000), Value::integer(4000)));
+}
+
+#[test]
+fn typed_osr_returns_ssa_values_from_a_vm_owned_frame() {
+    let source = r#"
+        function sum(first, second, limit) {
+            let total = 0;
+            for (let index = 0; index < limit; index++) {
+                first.value = first.value + 1;
+                total += second.value;
+            }
+            return total;
+        }
+        const item = { value: 0 };
+        for (let pass = 0; pass < 3; pass++) {
+            const before = item.value;
+            const result = sum(item, item, 4000);
+            if (result !== before * 4000 + 8002000) throw 'stale SSA return';
+        }
+        globalThis.answer = item.value;
+    "#;
+    let program = Engine::specialize(source, "osr-frame-return.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_lane_methods();
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        let answer = vm.intern_atom("answer");
+        assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(12000)));
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            let report = view.body_stats.report(0).expect("the return must run in typed OSR");
+            assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
+        }
+    }
+}
+
+#[test]
+fn default_osr_proves_the_whole_inlined_guest_call_depth() {
+    const TEST_GUEST_LIMIT: usize = 64;
+    type Limit = RefCell<Option<crate::stack::GuestCallLimitGuard>>;
+    fn shrink(context: &mut crate::NativeContext<'_, TestHost>, _: crate::RootId, _: &[crate::RootId])
+        -> Result<crate::RootId, crate::RootedError> {
+        let active = TEST_GUEST_LIMIT - crate::stack::GuestCallGuard::remaining();
+        // Leave one activation for the parent; its child needs another.
+        *context.host_mut().state::<Limit>().borrow_mut() = Some(crate::stack::GuestCallLimitGuard::enter(active + 1));
+        Ok(context.undefined())
+    }
+    let source = r#"(function(){
+        function leaf(x){return (x+1)|0;}
+        const object={calls:0,leaf,outer(x){this.calls=this.calls+1;return this.leaf(x);}};
+        let error='none';
+        try{
+            for(let i=0;i<4000;i=(i+1)|0){
+                if(i===1200){shrink();continue;}
+                object.outer(i);
+            }
+        }catch(e){error=e.name;}
+        globalThis.answer=error;
+        globalThis.calls=object.calls;
+    })();"#;
+    let program = Engine::specialize(source, "osr-depth-budget.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let _limit = crate::stack::GuestCallLimitGuard::enter(TEST_GUEST_LIMIT);
+        let limit = Rc::new(Limit::new(None));
+        let host = TestHost::default().with_state(limit.clone())
+            .with_natives(crate::host_functions![global "shrink" (0) => shrink]);
+        let mut vm = Vm::new(host);
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        drop(limit.borrow_mut().take());
+        let global = vm.realm.globals;
+        let answer = vm.intern_atom("answer");
+        let calls = vm.intern_atom("calls");
+        let error = vm.own_property(global, answer).and_then(|value| vm.heap.string(value)).unwrap().to_string();
+        answers.push((error, vm.own_property(global, calls).unwrap()));
+    }
+    assert_eq!(answers[0], answers[1]);
+    assert_eq!(answers[1], ("RangeError".into(), Value::integer(1201)));
+}
+
+#[test]
 fn fresh_execution_does_not_reuse_a_capture_walk_from_the_previous_heap() {
     let program = Engine::specialize("", "capture-heap-lifetime.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
@@ -11860,6 +12017,7 @@ fn js_general_dispatch_compiles_tagged_int32_bitwise_ops_and_falls_back_exactly(
     let mut compiled = Vm::new(TestHost::default());
     compiled.programs.enable_js_general_dispatch();
     compiled.programs.compile_general_baseline_when_hot();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
 
@@ -12078,6 +12236,7 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert!(matches!(
         artifact.result,
         super::js_compiled::JsJitResultKind::NumberInterruptible
+            | super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable, _)
     ));
     let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");
@@ -14926,6 +15085,7 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
     .unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.execute(&program).unwrap();
 
@@ -15506,6 +15666,7 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
         views.get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics()
     };
     let mut vm = Vm::new(TestHost::default());
+    vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
@@ -15660,6 +15821,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
 
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
@@ -18551,6 +18713,7 @@ fn js_jit_general_dispatch_promotes_a_single_activation_hot_loop() {
 
     let mut compiled = Vm::new(TestHost::default());
     compiled.programs.enable_js_general_dispatch();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.programs.compile_general_baseline_when_hot();
     compiled.execute(&program).unwrap();
@@ -18692,6 +18855,7 @@ fn js_jit_general_dispatch_prices_work_inside_compiled_osr_regions() {
 
     let mut compiled = Vm::new(TestHost::default());
     compiled.programs.enable_js_general_dispatch();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
     let views = compiled
@@ -18765,6 +18929,7 @@ fn js_jit_general_dispatch_attributes_inlined_osr_work_to_the_loop_owner() {
     compiled.programs.enable_js_general_dispatch();
     compiled.programs.enable_js_jit_diagnostics();
     compiled.programs.compile_general_baseline_when_hot();
+    compiled.programs.disable_js_entry_specializations();
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
     compiled.execute(&program).unwrap();
     let result_atom = compiled.intern_atom("result");
@@ -21402,8 +21567,9 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
 fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
     let program = Engine::specialize(r#"
       globalThis.receiver = {
-        add(k) { return k + 1; },
-        other(k) { return k + 2; },
+        offset: 1,
+        add(k) { return k + this.offset; },
+        other(k) { return k + this.offset + 1; },
         step(k) { return this.add(k) + 3; }
       };
       for (let i = 0; i < 40; i++) receiver.step(i);

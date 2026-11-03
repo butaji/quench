@@ -142,9 +142,9 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let inline_targets = super::compiled::static_call_targets(program);
         let typed_units: Vec<_> = (0..program.function_count()).map(|id|
             if options.regions(program.function(id).code.len()).is_none() {
-                super::compiled::lower_static_typed_region(program, id as u32, &inline_targets[id], &*isa, lane_helpers)
-            } else { None }).collect();
-        if typed_units.iter().any(Option::is_some) {
+                super::compiled::lower_static_typed_regions(program, id as u32, &inline_targets[id], &*isa, lane_helpers)
+            } else { Vec::new() }).collect();
+        if typed_units.iter().any(|units| !units.is_empty()) {
             functions.push(NativeFunction::Import {
                 name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.into(),
                 signature: super::compiled::native_lane_helpers_signature(&*isa),
@@ -249,8 +249,8 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             for site in sites {
                 site.operands.append_native_bytes(&mut bytes);
             }
-            let unit = typed_units[id].as_ref().map(|unit|
-                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function });
+            let units: Vec<_> = typed_units[id].iter().map(|unit|
+                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function }).collect();
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)
                     .checked_add(program.function_count())
@@ -322,7 +322,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                             fields: &region.fields,
                             frame: &region.frame,
                         }
-                    }).collect::<Vec<_>>(), unit,
+                    }).collect::<Vec<_>>(), &units,
                 ) {
                     Ok((native, _)) => {
                         let table = program.function_count().checked_add(fallback_tables.len())
