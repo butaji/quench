@@ -1407,7 +1407,7 @@ pub(crate) fn async_dispose(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> 
 }
 
 pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamReadable"), "Readable")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamReadable"), "Readable")?;
     let prototype = get(c, constructor, "prototype")?;
     let stream_prototype = get(c, stream, "prototype")?;
     c.set_prototype_rooted(prototype, stream_prototype)?;

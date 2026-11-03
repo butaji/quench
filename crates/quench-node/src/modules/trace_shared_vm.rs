@@ -129,7 +129,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let array_prototype = get(context, array, "prototype")?;
     let join = context.startup_data_property_rooted(array_prototype, "join").map_or_else(|| get(context, array_prototype, "join"), Ok)?;
     put(context, api, "join", join)?;
-    let class = context.host_constructor_named_with_data(crate::host::shared_vm::operation("traceInitialize"), "Tracing", api)?;
+    let class = context.host_constructor_named_with_data(crate::host::shared_vm::operation!("traceInitialize"), "Tracing", api)?;
     let prototype = get(context, class, "prototype")?;
     for (name, operation) in TRACING_METHODS {
         let function = context.host_function_named_with_data(crate::host::shared_vm::operation(operation), name, api)?;
@@ -152,7 +152,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let symbol_for = get(context, symbol, "for")?;
     let inspect_name = context.string_rooted("nodejs.util.inspect.custom");
     let inspect_symbol = context.call_rooted(symbol_for, symbol, &[inspect_name])?;
-    let inspect = context.host_function_named_with_data(crate::host::shared_vm::operation("traceInspect"), "[nodejs.util.inspect.custom]", api)?;
+    let inspect = context.host_function_named_with_data(crate::host::shared_vm::operation!("traceInspect"), "[nodejs.util.inspect.custom]", api)?;
     context.define_data_property_rooted(prototype, inspect_symbol, inspect, true, false, true)?;
     put(context, api, "constructor", class)?;
     let module = context.object_rooted()?;
@@ -450,7 +450,7 @@ fn build_internal_binding(
         "cjs_lexer" => {
             let binding = context.object_rooted()?;
             let parse =
-                context.host_function(crate::host::shared_vm::operation("cjsLexerParse"))?;
+                context.host_function(crate::host::shared_vm::operation!("cjsLexerParse"))?;
             put(context, binding, "parse", parse)?;
             Ok(binding)
         }
@@ -541,9 +541,9 @@ const UV_OK: f64 = 0.0;
 /// with no terminal of its own, whose window has no size and whose mode changes succeed.
 fn tty_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
-    let is_tty = context.host_function_named(crate::host::shared_vm::operation("ttyIsatty"), "isTTY")?;
+    let is_tty = context.host_function_named(crate::host::shared_vm::operation!("ttyIsatty"), "isTTY")?;
     put(context, binding, "isTTY", is_tty)?;
-    let class = context.host_constructor_named(crate::host::shared_vm::operation("ttyWrapConstructor"), "TTY")?;
+    let class = context.host_constructor_named(crate::host::shared_vm::operation!("ttyWrapConstructor"), "TTY")?;
     let prototype = get(context, class, "prototype")?;
     for (name, operation, length) in TTY_METHODS {
         let function = context.host_function_named(crate::host::shared_vm::operation(operation), name)?;

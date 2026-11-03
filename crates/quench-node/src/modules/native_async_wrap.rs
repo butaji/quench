@@ -125,7 +125,7 @@ pub(crate) fn prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         crate::host::shared_vm::commonjs::cached_native_binding(c, "\0native:AsyncWrap", |c| {
             let owner = c.object_rooted()?;
             let constructor = c.host_constructor_named(
-                crate::host::shared_vm::operation("nativeAsyncWrapConstruct"),
+                crate::host::shared_vm::operation!("nativeAsyncWrapConstruct"),
                 "AsyncWrap",
             )?;
             let prototype = get(c, constructor, "prototype")?;

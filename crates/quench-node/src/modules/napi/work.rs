@@ -518,7 +518,7 @@ node_api! {
             }
             let constructor = super::objects::intrinsic(env, c, &["Promise"])?;
             let slots = c.array_rooted(&[]).napi(env, c)?;
-            let operation = crate::host::shared_vm::operation("napiPromiseExecutor");
+            let operation = crate::host::shared_vm::operation!("napiPromiseExecutor");
             let executor = c.host_function_with_data(operation, slots).napi(env, c)?;
             let created = c.construct_rooted(constructor, constructor, &[executor]).napi(env, c)?;
             let mut functions = [None, None];

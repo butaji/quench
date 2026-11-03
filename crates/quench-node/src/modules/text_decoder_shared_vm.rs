@@ -9,7 +9,7 @@ pub(crate) const GLOBAL_NAMES: &[&str] = &["TextDecoder"];
 /// Installs `TextDecoder` and `TextEncoder` as lazy data properties, built on first use.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let initializer =
-        context.host_function(crate::host::shared_vm::operation("textDecoderInitialize"))?;
+        context.host_function(crate::host::shared_vm::operation!("textDecoderInitialize"))?;
     let global = context.global_root()?;
     context.define_lazy_data_properties_rooted(
         global,
@@ -18,7 +18,7 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
         initializer,
     )?;
     context.release_root(initializer);
-    let initializer = context.host_function(crate::host::shared_vm::operation("textEncoderInitialize"))?;
+    let initializer = context.host_function(crate::host::shared_vm::operation!("textEncoderInitialize"))?;
     context.define_lazy_data_properties_rooted(global, &["TextEncoder"], false, initializer)?;
     context.release_root(initializer);
     Ok(())
@@ -30,9 +30,9 @@ pub(crate) fn initialize(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let operation = crate::host::shared_vm::operation;
-    let decoder = context.host_constructor_named(operation("textDecoderConstructor"), "TextDecoder")?;
+    let decoder = context.host_constructor_named(crate::host::shared_vm::operation!("textDecoderConstructor"), "TextDecoder")?;
     let decoder_prototype = context.get_named_property_rooted(decoder, "prototype")?;
-    method(context, decoder_prototype, "decode", operation("textDecoderDecodeMethod"))?;
+    method(context, decoder_prototype, "decode", crate::host::shared_vm::operation!("textDecoderDecodeMethod"))?;
     for (name, getter) in [("encoding", "textDecoderEncodingGet"), ("fatal", "textDecoderFatalGet"), ("ignoreBOM", "textDecoderIgnoreBomGet")] {
         accessor(context, decoder_prototype, name, operation(getter))?;
     }

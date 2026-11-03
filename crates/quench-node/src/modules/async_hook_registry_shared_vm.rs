@@ -96,7 +96,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     }
     let api = context.null_object_rooted()?;
     let fatal_error = context.host_function_named(
-        crate::host::shared_vm::operation("asyncHookFatalError"),
+        crate::host::shared_vm::operation!("asyncHookFatalError"),
         "asyncHookFatalError",
     )?;
     let fatal_error_key = context.string_rooted("fatalError");
@@ -287,7 +287,7 @@ pub(super) fn emit_runtime(
     if !runtime_has_hooks(runtime, kind) {
         return Ok(());
     }
-    let function = runtime.host_function(crate::host::shared_vm::operation("asyncHookDispatch"))?;
+    let function = runtime.host_function(crate::host::shared_vm::operation!("asyncHookDispatch"))?;
     let kind = runtime.root(quench_runtime::Value::number(kind.index() as f64));
     let id = runtime.root(quench_runtime::Value::number(id as f64));
     let result = runtime.call_rooted(function, function, &[kind, id]);

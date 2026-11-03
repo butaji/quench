@@ -175,7 +175,7 @@ fn create_handle(
     // transport reference state for native and public net.Socket endpoints.
     let data = context.array_rooted(&[id_root, handle, is_socket])?;
     let method = context
-        .host_function_with_data(crate::host::shared_vm::operation("netListenerHasRef"), data)?;
+        .host_function_with_data(crate::host::shared_vm::operation!("netListenerHasRef"), data)?;
     let key = context.string_rooted("name");
     let name = context.string_rooted("hasRef");
     context.define_data_property_rooted(method, key, name, false, false, true)?;
@@ -214,7 +214,7 @@ fn create_handle(
             set(context, handle, name, method)?;
         }
         let method = context
-            .host_function_with_data(crate::host::shared_vm::operation("netHandleClose"), data)?;
+            .host_function_with_data(crate::host::shared_vm::operation!("netHandleClose"), data)?;
         let key = context.string_rooted("name");
         let name = context.string_rooted("close");
         context.define_data_property_rooted(method, key, name, false, false, true)?;
@@ -571,7 +571,7 @@ fn on_connection(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Ro
         return Ok(callback);
     }
     let operation =
-        context.host_function(crate::host::shared_vm::operation("netServerOnConnection"))?;
+        context.host_function(crate::host::shared_vm::operation!("netServerOnConnection"))?;
     let callback = super::net_internal_shared_vm::method(context, operation, "onconnection")?;
     let retained = context.retain(callback)?;
     shared.borrow_mut().net_server_on_connection = Some(retained);

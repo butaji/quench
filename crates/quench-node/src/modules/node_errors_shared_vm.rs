@@ -61,14 +61,14 @@ fn coded_error_prototype(
     let base_prototype = context.prototype_rooted(base_error)?;
     let base = get(context, base_prototype, "constructor")?;
     let constructor = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("nodeErrorConstructor"),
+        crate::host::shared_vm::operation!("nodeErrorConstructor"),
         "get constructor",
         base,
     )?;
-    let brand = context.host_function_named(crate::host::shared_vm::operation("nodeErrorBrand"), "get [kIsNodeError]")?;
+    let brand = context.host_function_named(crate::host::shared_vm::operation!("nodeErrorBrand"), "get [kIsNodeError]")?;
     let code_root = context.string_rooted(code);
     let string = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("nodeErrorToString"),
+        crate::host::shared_vm::operation!("nodeErrorToString"),
         "toString",
         code_root,
     )?;
@@ -128,7 +128,7 @@ fn hide_error(
     } else {
         let constructor = get(context, base, "constructor")?;
         let constructor = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("nodeErrorConstructor"),
+            crate::host::shared_vm::operation!("nodeErrorConstructor"),
             "get constructor",
             constructor,
         )?;
@@ -277,19 +277,19 @@ pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
 fn build_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let binding = context.object_rooted()?;
     let function = context.host_function_named(
-        crate::host::shared_vm::operation("errorSourcePositions"),
+        crate::host::shared_vm::operation!("errorSourcePositions"),
         "getErrorSourcePositions",
     )?;
     let key = context.string_rooted("getErrorSourcePositions");
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
     let function = context.host_function_named(
-        crate::host::shared_vm::operation("errorSetSourceMapsEnabled"),
+        crate::host::shared_vm::operation!("errorSetSourceMapsEnabled"),
         "setSourceMapsEnabled",
     )?;
     let key = context.string_rooted("setSourceMapsEnabled");
     context.define_data_property_rooted(binding, key, function, true, true, true)?;
     let function = context.host_function_named(
-        crate::host::shared_vm::operation("errorTriggerUncaughtException"),
+        crate::host::shared_vm::operation!("errorTriggerUncaughtException"),
         "triggerUncaughtException",
     )?;
     let key = context.string_rooted("triggerUncaughtException");

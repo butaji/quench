@@ -60,14 +60,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .shared_state()
         .borrow_mut()
         .process_capture_state = Some(capture_state);
-    let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
+    let function = context.host_function(crate::host::shared_vm::operation!("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
     super::process_fatal_exception_route::install(context, process)?;
     super::report_configuration_shared_vm::install(context, process)?;
-    let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
+    let exit = context.host_function(crate::host::shared_vm::operation!("processExit"))?;
     install(context, process, "exit", exit)?;
-    let really_exit = context.host_function(crate::host::shared_vm::operation("reallyExit"))?;
+    let really_exit = context.host_function(crate::host::shared_vm::operation!("reallyExit"))?;
     install(context, process, "reallyExit", really_exit)?;
     let stdout = create_stream(context, STDOUT_FD)?;
     install(context, process, "stdout", stdout)?;
@@ -95,7 +95,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     #[cfg(unix)]
     {
         let function =
-            context.host_function(crate::host::shared_vm::operation("processGetgroups"))?;
+            context.host_function(crate::host::shared_vm::operation!("processGetgroups"))?;
         let key = context.string_rooted("name");
         let name = context.string_rooted("getgroups");
         context.define_data_property_rooted(function, key, name, false, false, true)?;
@@ -113,7 +113,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
-    let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
+    let kill = context.host_function(crate::host::shared_vm::operation!("processKillNative"))?;
     install(context, process, "_kill", kill)?;
     #[cfg(target_os = "linux")]
     {
@@ -121,14 +121,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
             super::os_shared_vm::signal_constants(context, super::process_signals_state::SIGNALS)?;
         let data = context.array_rooted(&[process, signals])?;
         let kill = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("processKill"),
+            crate::host::shared_vm::operation!("processKill"),
             "kill",
             data,
         )?;
         install(context, process, "kill", kill)?;
     }
 
-    let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
+    let raw_debug = context.host_function(crate::host::shared_vm::operation!("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
     for (name, operation) in [
         ("binding", "processBinding"),
@@ -150,10 +150,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         install(context, process, name, function)?;
     }
     let active_handles =
-        context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
+        context.host_function(crate::host::shared_vm::operation!("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
-    let hrtime = context.host_function_named(crate::host::shared_vm::operation("processHrtime"), "hrtime")?;
-    let bigint = context.host_function_named(crate::host::shared_vm::operation("processHrtimeBigint"), "bigint")?;
+    let hrtime = context.host_function_named(crate::host::shared_vm::operation!("processHrtime"), "hrtime")?;
+    let bigint = context.host_function_named(crate::host::shared_vm::operation!("processHrtimeBigint"), "bigint")?;
     install(context, hrtime, "bigint", bigint)?;
     install(context, process, "hrtime", hrtime)?;
     let exiting = context.boolean(false);
@@ -195,10 +195,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     super::child_process_ipc_shared_vm::initialize(context)?;
     // Copied from the OS environment on the first read of `process.env`: most runs never read
     // it, and every variable costs a key and a string.
-    let initializer = context.host_function(crate::host::shared_vm::operation("processEnvInitialize"))?;
+    let initializer = context.host_function(crate::host::shared_vm::operation!("processEnvInitialize"))?;
     context.define_lazy_data_properties_rooted(process, &["env"], true, initializer)?;
     let load_env_file =
-        context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
+        context.host_function(crate::host::shared_vm::operation!("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
     install_identity(context, process)?;
     let version = format!("v{}", process_state::NODE_VERSION);
@@ -323,8 +323,8 @@ fn install_exit_code(
     context: &mut NativeContext<'_, NodeHost>,
     process: RootId,
 ) -> Result<(), RootedError> {
-    let getter = context.host_function(crate::host::shared_vm::operation("processExitCodeGet"))?;
-    let setter = context.host_function(crate::host::shared_vm::operation("processExitCodeSet"))?;
+    let getter = context.host_function(crate::host::shared_vm::operation!("processExitCodeGet"))?;
+    let setter = context.host_function(crate::host::shared_vm::operation!("processExitCodeSet"))?;
     let descriptor = context.object_rooted()?;
     install(context, descriptor, "get", getter)?;
     install(context, descriptor, "set", setter)?;
@@ -362,7 +362,7 @@ fn create_stream(
     install(context, stream, "fd", fd_value)?;
     let data = context.number(fd as f64);
     let write = context.host_function_with_data(
-        crate::host::shared_vm::operation("processStreamWrite"),
+        crate::host::shared_vm::operation!("processStreamWrite"),
         data,
     )?;
     install(context, stream, "write", write)?;
@@ -371,7 +371,7 @@ fn create_stream(
     // descriptor. Quench writes synchronously, so an end callback can run in
     // the next microtask after the final write has completed.
     let end = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("processStdioEnd"),
+        crate::host::shared_vm::operation!("processStdioEnd"),
         "end",
         stream,
     )?;
@@ -379,7 +379,7 @@ fn create_stream(
     // Quench writes process stdio synchronously, so it has no native stream
     // handle whose reference state needs changing. Keep the Node stream API
     // shape available to callers which ref/unref stdio around IPC reads.
-    let reference = context.host_function(crate::host::shared_vm::operation("processStdioReference"))?;
+    let reference = context.host_function(crate::host::shared_vm::operation!("processStdioReference"))?;
     install(context, stream, "ref", reference)?;
     install(context, stream, "unref", reference)?;
     Ok(stream)
@@ -446,7 +446,7 @@ pub(crate) fn stdio_end(
         if context.is_callable_rooted(callback)? {
             let pair = context.array_rooted(&[callback, stream])?;
             let call = context.host_function_with_data(
-                crate::host::shared_vm::operation("processStdioEndCallback"),
+                crate::host::shared_vm::operation!("processStdioEndCallback"),
                 pair,
             )?;
             context.queue_microtask_rooted(call, &[])?;
@@ -492,12 +492,12 @@ fn define_global_process(
     let slot = context.null_object_rooted()?;
     install(context, slot, GLOBAL_PROCESS_SLOT, process)?;
     let getter = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("processGlobalGet"),
+        crate::host::shared_vm::operation!("processGlobalGet"),
         "get",
         slot,
     )?;
     let setter = context.host_function_named_with_data(
-        crate::host::shared_vm::operation("processGlobalSet"),
+        crate::host::shared_vm::operation!("processGlobalSet"),
         "set",
         slot,
     )?;
@@ -2490,7 +2490,7 @@ pub(crate) fn route_uncaught_exception_value(
     origin: &str,
 ) -> Result<bool, String> {
     let operation = runtime
-        .host_function(crate::host::shared_vm::operation(
+        .host_function(crate::host::shared_vm::operation!(
             "processDispatchFatalException",
         ))
         .map_err(|error| rooted_error_message(runtime, program, error))?;
@@ -2913,7 +2913,7 @@ fn call_shared_callback(
         .and_then(|e| e.optional_callback)
     {
         let resolver = runtime
-            .host_function(crate::host::shared_vm::operation(
+            .host_function(crate::host::shared_vm::operation!(
                 "nativeOptionalCallbackSlot",
             ))
             .map_err(|e| e.to_string())?;
@@ -2959,7 +2959,7 @@ fn call_shared_callback(
             execution.id == super::domain_trampoline::LEGACY_CALLBACK_ASYNC_ID
         }) {
             let dispatch =
-                runtime.host_function(crate::host::shared_vm::operation("domainTrampolineCall"))?;
+                runtime.host_function(crate::host::shared_vm::operation!("domainTrampolineCall"))?;
             let mut arguments = Vec::with_capacity(callback.args.len() + 1);
             arguments.push(actual_callback);
             arguments.extend_from_slice(&callback.args);
@@ -3195,7 +3195,7 @@ fn drain_shared_jobs(
                     && state.async_hooks.promise_resources_pruned_epoch != epoch
             };
             if prune_promises {
-                let prune = runtime.host_function(crate::host::shared_vm::operation("asyncPromisePrune"))
+                let prune = runtime.host_function(crate::host::shared_vm::operation!("asyncPromisePrune"))
                     .map_err(|error| rooted_error_message(runtime, program, error))?;
                 let result = runtime.call_rooted(prune, prune, &[]);
                 runtime.release_root(prune);
@@ -3814,7 +3814,7 @@ fn emit_exit_inner(
     }
     super::performance_binding_shared_vm::mark_loop_exit(runtime)?;
     let function = runtime
-        .host_function(crate::host::shared_vm::operation("processEmitExitEvent"))
+        .host_function(crate::host::shared_vm::operation!("processEmitExitEvent"))
         .map_err(|error| rooted_error_message(runtime, program, error))?;
     let value = runtime.root(Value::number(code as f64));
     let result = runtime.call_rooted(function, function, &[value]);
@@ -4236,7 +4236,7 @@ pub(crate) fn initialize_warning_policy(
         }
     }
     // `process.emitWarning` is made on its first read.
-    let initializer = context.host_function(crate::host::shared_vm::operation(
+    let initializer = context.host_function(crate::host::shared_vm::operation!(
         "processEmitWarningInitialize",
     ))?;
     context.define_lazy_data_properties_rooted(process, &["emitWarning"], true, initializer)?;
@@ -4247,7 +4247,7 @@ pub(crate) fn initialize_warning_policy(
         // more event type) but made on the first read of that entry: by an emitted
         // warning or a look at the listeners. Most runs never warn.
         let events = get(context, process, "_events")?;
-        let initializer = context.host_function(crate::host::shared_vm::operation("processWarningListenerInitialize"))?;
+        let initializer = context.host_function(crate::host::shared_vm::operation!("processWarningListenerInitialize"))?;
         context.define_lazy_data_properties_rooted(events, &[WARNING_EVENT], true, initializer)?;
         let count = get(context, process, "_eventsCount")?;
         let count = context.to_number(count)? + 1.0;

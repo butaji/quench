@@ -325,15 +325,15 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
         }
         if let Some(&(_, index)) = STREAM_ACCESSORS.iter().find(|(stream, _)| *stream == name) {
             let data = c.number(index as f64);
-            let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("fsStreamClassGet"), "get", data)?;
-            let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("fsStreamClassSet"), "set", data)?;
+            let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStreamClassGet"), "get", data)?;
+            let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsStreamClassSet"), "set", data)?;
             return classes::accessor(c, module, name, getter, Some(setter), true);
         }
         let value = match name {
             "createReadStream" | "createWriteStream" => {
                 let (_, index) = STREAM_ACCESSORS[usize::from(name == "createWriteStream")];
                 let index = c.number(index as f64);
-                c.host_function_named_with_data(crate::host::shared_vm::operation("fsCreateStream"), name, index)?
+                c.host_function_named_with_data(crate::host::shared_vm::operation!("fsCreateStream"), name, index)?
             }
             "lchmod" | "lchmodSync" => c.undefined(),
             "watch" => super::fs_watch_shared_vm::watch_function(c)?,
@@ -341,13 +341,13 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
             "Dirent" => classes::root(c, classes::Root::Dirent)?,
             "Stats" => classes::root(c, classes::Root::DeprecatedStats)?,
             "Dir" => classes::root(c, classes::Root::Dir)?,
-            "_toUnixTimestamp" => c.host_function_named(crate::host::shared_vm::operation("fsToUnixTimestamp"), "toUnixTimestamp")?,
+            "_toUnixTimestamp" => c.host_function_named(crate::host::shared_vm::operation!("fsToUnixTimestamp"), "toUnixTimestamp")?,
             "constants" => {
                 let constants = fs_constants(c)?;
                 return define(c, module, name, constants, false, false);
             }
             "promises" => {
-                let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("fsPromisesGet"), "get promises", promises)?;
+                let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsPromisesGet"), "get promises", promises)?;
                 return classes::accessor(c, module, name, getter, None, true);
             }
             _ => return Err(RootedError::host(format!("fs member {name} has no builder"))),
@@ -380,7 +380,7 @@ fn promises_module(c: &mut Context<'_>) -> Outcome {
         let value = match name {
             "watch" => super::fs_watch_shared_vm::promise_watch_function(c)?,
             "glob" => {
-                let glob = c.host_function_named(crate::host::shared_vm::operation("fsPromisesGlob"), "glob")?;
+                let glob = c.host_function_named(crate::host::shared_vm::operation!("fsPromisesGlob"), "glob")?;
                 let key = c.string_rooted("length");
                 let length = c.number(PROMISES_GLOB_LENGTH);
                 c.define_data_property_rooted(glob, key, length, false, false, true)?;

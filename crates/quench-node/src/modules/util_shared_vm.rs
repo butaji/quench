@@ -745,7 +745,7 @@ fn build_types_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<Root
             .expect("native type predicate brand");
         let data = context.number(index as f64);
         let predicate = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("utilTypeCheck"),
+            crate::host::shared_vm::operation!("utilTypeCheck"),
             "",
             data,
         )?;
@@ -941,7 +941,7 @@ fn define_lazy_export(
     let flag = context.boolean(enumerable);
     let data = context.array_rooted(&[target, id, property, flag, export])?;
     let initializer = context.host_function_with_data(
-        crate::host::shared_vm::operation("utilLazyPropertyInitialize"), data,
+        crate::host::shared_vm::operation!("utilLazyPropertyInitialize"), data,
     )?;
     context.define_lazy_data_properties_rooted(target, &[&name], enumerable, initializer)
 }

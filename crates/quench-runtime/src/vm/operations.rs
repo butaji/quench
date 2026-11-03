@@ -413,7 +413,7 @@ pub(super) fn number_bitwise_result(operation: NumberBitwise, left: i32, right: 
     }
 }
 
-struct NumberF64Stage;
+pub(super) struct NumberF64Stage;
 
 impl NumberUnaryStage<f64> for NumberF64Stage {
     type Output = f64;
@@ -468,7 +468,7 @@ fn number_arithmetic_result(operation: NumberArithmetic, left: f64, right: f64) 
     operation.apply(&mut NumberF64Stage, left, right)
 }
 
-struct PartialOrderStage;
+pub(super) struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     type Output = bool;

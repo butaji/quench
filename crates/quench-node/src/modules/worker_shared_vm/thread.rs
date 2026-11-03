@@ -201,7 +201,7 @@ pub(crate) fn capture_fatal(runtime: &mut quench_runtime::Runtime<NodeHost>, exc
     if runtime.host_mut().shared_state().borrow().messaging.context.is_none() {
         return;
     }
-    let Ok(operation) = runtime.host_function(crate::host::shared_vm::operation("workerCaptureError")) else {
+    let Ok(operation) = runtime.host_function(crate::host::shared_vm::operation!("workerCaptureError")) else {
         return;
     };
     let receiver = runtime.root(Value::UNDEFINED);

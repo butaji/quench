@@ -171,7 +171,7 @@ pub(crate) fn check_server_identity(
         let for_each = get(context, names, "forEach")?;
         let data = context.array_rooted(&[dns_array, ip_array])?;
         let collect = context.host_function_with_data(
-            crate::host::shared_vm::operation("tlsCollectAltName"),
+            crate::host::shared_vm::operation!("tlsCollectAltName"),
             data,
         )?;
         context.call_rooted(for_each, names, &[collect])?;
@@ -231,7 +231,7 @@ pub(crate) fn check_server_identity(
             let host = context.string_rooted(&host);
             let data = context.array_rooted(&[host])?;
             let matcher = context
-                .host_function_with_data(crate::host::shared_vm::operation("tlsMatchName"), data)?;
+                .host_function_with_data(crate::host::shared_vm::operation!("tlsMatchName"), data)?;
             if has_dns {
                 let some = get(context, dns_array, "some")?;
                 let valid = context.call_rooted(some, dns_array, &[matcher])?;

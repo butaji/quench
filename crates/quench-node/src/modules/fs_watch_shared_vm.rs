@@ -131,7 +131,7 @@ fn api(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError>
     set(context, api, "regexpExec", exec)?;
     set(context, api, "regexpConstructor", regexp)?;
     let api = context.retain(api)?;
-    let dispatch = context.host_function(crate::host::shared_vm::operation("fsWatchDispatch"))?;
+    let dispatch = context.host_function(crate::host::shared_vm::operation!("fsWatchDispatch"))?;
     let dispatch = context.retain(dispatch)?;
     let state = context.host_mut().shared_state();
     let mut state = state.borrow_mut();
@@ -149,7 +149,7 @@ pub(crate) fn watch_function(context: &mut NativeContext<'_, NodeHost>) -> Resul
 /// `fs.promises.watch`.
 pub(crate) fn promise_watch_function(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     api(context)?;
-    let watch = context.host_function_named(crate::host::shared_vm::operation("fsRecursivePromiseWatch"), "_watch")?;
+    let watch = context.host_function_named(crate::host::shared_vm::operation!("fsRecursivePromiseWatch"), "_watch")?;
     let key = context.string_rooted("length");
     let length = context.number(1.0);
     context.define_data_property_rooted(watch, key, length, false, false, true)?;
@@ -321,13 +321,13 @@ fn ignore_matcher(
             let dot = context.boolean(pattern.starts_with('.'));
             set(context, data, "dot", dot)?;
             let native = context.host_function_with_data(
-                crate::host::shared_vm::operation("fsWatchIgnorePattern"),
+                crate::host::shared_vm::operation!("fsWatchIgnorePattern"),
                 data,
             )?;
             compiled.push(native);
         } else if context.has_builtin_brand_rooted(value, BuiltinBrand::RegExp)? {
             let native = context.host_function_with_data(
-                crate::host::shared_vm::operation("fsWatchIgnoreRegExp"),
+                crate::host::shared_vm::operation!("fsWatchIgnoreRegExp"),
                 value,
             )?;
             compiled.push(native);
@@ -349,7 +349,7 @@ fn ignore_matcher(
     }
     let array = context.array_rooted(&compiled)?;
     let native = context
-        .host_function_with_data(crate::host::shared_vm::operation("fsWatchIgnore"), array)?;
+        .host_function_with_data(crate::host::shared_vm::operation!("fsWatchIgnore"), array)?;
     Ok(native)
 }
 pub(crate) fn ignore(
@@ -681,7 +681,7 @@ fn attach_signal(
     if !nullish(context, signal) && context.truthy_rooted(signal)? {
         let aborted = get(context, signal, "aborted")?;
         let abort = context
-            .host_function_with_data(crate::host::shared_vm::operation("fsWatchAbort"), watcher)?;
+            .host_function_with_data(crate::host::shared_vm::operation!("fsWatchAbort"), watcher)?;
         if context.truthy_rooted(aborted)? {
             super::shared_event_loop::queue_next_tick(context, abort, undefined, &[])?;
         } else {
@@ -701,7 +701,7 @@ fn attach_signal(
             set(context, data, "signal", signal)?;
             set(context, data, "listener", abort)?;
             let detach = context.host_function_with_data(
-                crate::host::shared_vm::operation("fsWatchDetachAbort"),
+                crate::host::shared_vm::operation!("fsWatchDetachAbort"),
                 data,
             )?;
             let once = get(context, watcher, "once")?;
@@ -851,7 +851,7 @@ pub(crate) fn close(
     handle_close(context, handle, &[handle])?;
     let null = context.null();
     set(context, watcher, "_handle", null)?;
-    let callback = context.host_function(crate::host::shared_vm::operation("fsWatchCloseNT"))?;
+    let callback = context.host_function(crate::host::shared_vm::operation!("fsWatchCloseNT"))?;
     let undefined = context.undefined();
     super::shared_event_loop::queue_next_tick(context, callback, undefined, &[watcher])?;
     Ok(undefined)

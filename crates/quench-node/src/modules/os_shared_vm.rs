@@ -14,7 +14,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     ] {
         let data = context.string_rooted(name);
         let function =
-            context.host_function_with_data(crate::host::shared_vm::operation("osString"), data)?;
+            context.host_function_with_data(crate::host::shared_vm::operation!("osString"), data)?;
         set(context, module, name, function)?;
     }
     for (name, operation) in [
@@ -337,7 +337,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             }
             Export::Fact { name, primitive, .. } => {
                 let data = context.number(index as f64);
-                let operation = crate::host::shared_vm::operation("osFact");
+                let operation = crate::host::shared_vm::operation!("osFact");
                 let function = context.host_function_named_with_data(operation, name, data)?;
                 if primitive {
                     let converter = context.host_function_named_with_data(operation, "", data)?;

@@ -244,7 +244,7 @@ pub(crate) fn queue(
 ) -> Result<(), String> {
     for completion in callbacks {
         let callback = runtime
-            .host_function(crate::host::shared_vm::operation(
+            .host_function(crate::host::shared_vm::operation!(
                 "childProcessInputComplete",
             ))
             .map_err(|error| runtime.format_error(program, &error.error))?;

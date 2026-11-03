@@ -275,7 +275,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     put(c, api, api::CHANNEL_CLASS, channel_class)?;
     let symbol = intrinsic(c, global, "Symbol")?;
     let has_instance = intrinsic(c, symbol, "hasInstance")?;
-    let is_channel = c.host_function_named(operation("diagnosticsChannelHasInstance"), "[Symbol.hasInstance]")?;
+    let is_channel = c.host_function_named(crate::host::shared_vm::operation!("diagnosticsChannelHasInstance"), "[Symbol.hasInstance]")?;
     c.define_data_property_rooted(channel_class, has_instance, is_channel, true, false, true)?;
     let active_class = class(c, "ActiveChannel", "diagnosticsInertConstructor", 0.0)?;
     let active = channel_prototype(c, active_class, &ACTIVE_CHANNEL_METHODS, true)?;
@@ -614,7 +614,7 @@ fn run_stores_from(c: &mut Context<'_>, run: RootId, remaining: usize) -> Outcom
     };
     let remaining = c.number(entered as f64);
     let step = c.record_rooted(&STORE_STEP, &[run, remaining])?;
-    let next = c.host_function_named_with_data(operation("diagnosticsRunStoresNext"), "", step)?;
+    let next = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsRunStoresNext"), "", step)?;
     call_method(c, store, "run", &[context, next])
 }
 
@@ -898,8 +898,8 @@ pub(crate) fn trace_promise_body(c: &mut Context<'_>, _: RootId, _: &[RootId]) -
             let resolve = api_member(c, api::PROMISE_RESOLVE)?;
             promise = c.call_rooted(resolve, constructor, &[promise])?;
         }
-        let fulfilled = c.host_function_named_with_data(operation("diagnosticsTraceResolve"), "resolve", frame)?;
-        let rejected = c.host_function_named_with_data(operation("diagnosticsTraceReject"), "reject", frame)?;
+        let fulfilled = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceResolve"), "resolve", frame)?;
+        let rejected = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceReject"), "reject", frame)?;
         let then = api_member(c, api::PROMISE_THEN)?;
         c.call_rooted(then, promise, &[fulfilled, rejected])
     })
@@ -959,7 +959,7 @@ pub(crate) fn trace_callback(c: &mut Context<'_>, receiver: RootId, args: &[Root
     let mut rest = rest.to_vec();
     let frame = trace_frame(c, receiver, function, context, this, &[])?;
     let wrapper_data = c.record_rooted(&WRAPPED_CALLBACK, &[frame, callback])?;
-    rest[index] = c.host_function_named_with_data(operation("diagnosticsTraceWrappedCallback"), "wrappedCallback", wrapper_data)?;
+    rest[index] = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceWrappedCallback"), "wrappedCallback", wrapper_data)?;
     let rest = c.array_rooted(&rest)?;
     put(c, frame, "arguments", rest)?;
     run_traced(c, frame, "diagnosticsTraceCallbackBody")
@@ -987,7 +987,7 @@ pub(crate) fn trace_wrapped_callback(c: &mut Context<'_>, receiver: RootId, args
     }
     let arguments = c.array_rooted(args)?;
     let call = c.record_rooted(&CALLBACK_CALL, &[frame, callback, receiver, arguments])?;
-    let body = c.host_function_named_with_data(operation("diagnosticsTraceCallbackContinue"), "", call)?;
+    let body = c.host_function_named_with_data(crate::host::shared_vm::operation!("diagnosticsTraceCallbackContinue"), "", call)?;
     let async_start = get(c, frame, "asyncStart")?;
     let context = get(c, frame, "context")?;
     call_method(c, async_start, "runStores", &[context, body])?;

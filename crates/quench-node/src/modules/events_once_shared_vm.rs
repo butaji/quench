@@ -129,10 +129,9 @@ fn start_once(c: &mut Context<'_>, promise: RootId, args: &[RootId]) -> Result<(
         put(c, state, key, value)?;
     }
     put_flag(c, state, field::SETTLED, false)?;
-    let operation = crate::host::shared_vm::operation;
-    let resolver = c.host_function_with_data(operation("eventsOnceResolve"), state)?;
-    let error_listener = c.host_function_with_data(operation("eventsOnceError"), state)?;
-    let abort_listener = c.host_function_named_with_data(operation("eventsOnceAbort"), "abortListener", state)?;
+    let resolver = c.host_function_with_data(crate::host::shared_vm::operation!("eventsOnceResolve"), state)?;
+    let error_listener = c.host_function_with_data(crate::host::shared_vm::operation!("eventsOnceError"), state)?;
+    let abort_listener = c.host_function_named_with_data(crate::host::shared_vm::operation!("eventsOnceAbort"), "abortListener", state)?;
     put(c, state, field::RESOLVER, resolver)?;
     put(c, state, field::ERROR_LISTENER, error_listener)?;
     put(c, state, field::ABORT_LISTENER, abort_listener)?;
@@ -284,25 +283,25 @@ pub(crate) fn on(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<Root
     let global = c.global_root()?;
     let symbol = get(c, global, "Symbol")?;
     let key = get(c, symbol, "asyncIterator")?;
-    let identity = c.host_function_named(operation("timersIntervalIterator"), "[Symbol.asyncIterator]")?;
+    let identity = c.host_function_named(crate::host::shared_vm::operation!("timersIntervalIterator"), "[Symbol.asyncIterator]")?;
     c.define_data_property_rooted(iterator, key, identity, true, true, true)?;
-    let handler = c.host_function_with_data(operation("eventsOnEvent"), state)?;
+    let handler = c.host_function_with_data(crate::host::shared_vm::operation!("eventsOnEvent"), state)?;
     track_listener(c, state, emitter, name, handler)?;
     let error_name = c.string_text(name)?.is_some_and(|text| text == ERROR_EVENT);
     if !error_name && callable(c, emitter, "on")?.is_some() {
-        let error_handler = c.host_function_with_data(operation("eventsOnError"), state)?;
+        let error_handler = c.host_function_with_data(crate::host::shared_vm::operation!("eventsOnError"), state)?;
         let event = string(c, ERROR_EVENT);
         track_listener(c, state, emitter, event, error_handler)?;
     }
     let close_events = if is_undefined(c, options) { options } else { get(c, options, "close")? };
     if !is_nullish(c, close_events) && flag(c, close_events, "length")? {
-        let close = c.host_function_with_data(operation("eventsOnClose"), state)?;
+        let close = c.host_function_with_data(crate::host::shared_vm::operation!("eventsOnClose"), state)?;
         for event in c.array_like_values_rooted(close_events)? {
             track_listener(c, state, emitter, event, close)?;
         }
     }
     if !is_nullish(c, signal) {
-        let abort = c.host_function_with_data(operation("eventsOnAbort"), state)?;
+        let abort = c.host_function_with_data(crate::host::shared_vm::operation!("eventsOnAbort"), state)?;
         let undefined = c.undefined();
         let disposable = super::events_shared_vm::add_abort_listener(c, undefined, &[signal, abort])?;
         put(c, state, field::DISPOSABLE, disposable)?;

@@ -605,7 +605,7 @@ pub(crate) fn poll(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &qu
 
 fn apply(runtime: &mut quench_runtime::Runtime<NodeHost>, program: &quench_runtime::ResidualProgram, path: &Path) -> Result<bool, String> {
     let operation = runtime
-        .host_function(crate::host::shared_vm::operation("hmrApply"))
+        .host_function(crate::host::shared_vm::operation!("hmrApply"))
         .map_err(|error| runtime.format_error(program, &error.error))?;
     let receiver = runtime.root(quench_runtime::Value::UNDEFINED);
     let path = runtime.string_rooted(&path.to_string_lossy());

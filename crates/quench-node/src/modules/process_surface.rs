@@ -352,7 +352,7 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
             c.delete_property_rooted(object_prototype, proto_key)?;
         }
         Some("throw") => {
-            let accessor = c.host_function(crate::host::shared_vm::operation("processProtoAccess"))?;
+            let accessor = c.host_function(crate::host::shared_vm::operation!("processProtoAccess"))?;
             let descriptor = c.null_object_rooted()?;
             for name in ["get", "set"] {
                 c.assign_named_property_rooted(descriptor, name, accessor)?;
@@ -377,14 +377,14 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
         let emitter_prototype = get(c, emitter, "prototype")?;
         // `process`'s constructor is a function named `process` whose prototype inherits
         // from `EventEmitter.prototype`.
-        let constructor = c.host_constructor_named(crate::host::shared_vm::operation("processConstructor"), "process")?;
+        let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("processConstructor"), "process")?;
         let prototype = get(c, constructor, "prototype")?;
         c.set_prototype_rooted(prototype, emitter_prototype)?;
         c.set_prototype_rooted(process, prototype)?;
     }
     let kill = get(c, process, "kill")?;
     if !c.truthy_rooted(kill)? {
-        let kill = c.host_function_named(crate::host::shared_vm::operation("processKillPortable"), "kill")?;
+        let kill = c.host_function_named(crate::host::shared_vm::operation!("processKillPortable"), "kill")?;
         c.assign_named_property_rooted(process, "kill", kill)?;
     }
     let argv = get(c, process, "execArgv")?;
@@ -435,7 +435,7 @@ pub(crate) fn initialize(c: &mut Context<'_>) -> Result<(), RootedError> {
     c.delete_property_rooted(global, cli_title_key)?;
     let load_env_file = get(c, process, "loadEnvFile")?;
     if !c.truthy_rooted(load_env_file)? {
-        let function = c.host_function_named(crate::host::shared_vm::operation("processLoadEnvFileNone"), "")?;
+        let function = c.host_function_named(crate::host::shared_vm::operation!("processLoadEnvFileNone"), "")?;
         c.assign_named_property_rooted(process, "loadEnvFile", function)?;
     }
     Ok(())

@@ -56,10 +56,9 @@ const CONTROLLER_MEMBERS: [Member; 2] = [
 
 /// Builds both classes and records them in the event group's data.
 pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
-    let operation = crate::host::shared_vm::operation;
     let target = get(c, data, "eventTargetCtor")?;
     let target_prototype = get(c, target, "prototype")?;
-    let signal = c.host_constructor_named(operation("abortSignalConstructor"), "AbortSignal")?;
+    let signal = c.host_constructor_named(crate::host::shared_vm::operation!("abortSignalConstructor"), "AbortSignal")?;
     c.set_prototype_rooted(signal, target)?;
     let prototype = get(c, signal, "prototype")?;
     c.set_prototype_rooted(prototype, target_prototype)?;
@@ -69,12 +68,12 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
     install_members(c, signal, &SIGNAL_STATICS, false)?;
     install_tag_and_inspect(c, prototype, "AbortSignal", Some("abortSignalInspect"))?;
     put(c, data, "abortSignalCtor", signal)?;
-    let controller = c.host_constructor_named(operation("abortControllerConstructor"), "AbortController")?;
+    let controller = c.host_constructor_named(crate::host::shared_vm::operation!("abortControllerConstructor"), "AbortController")?;
     let prototype = get(c, controller, "prototype")?;
     install_members(c, prototype, &CONTROLLER_MEMBERS, true)?;
     install_tag_and_inspect(c, prototype, "AbortController", Some("abortControllerInspect"))?;
     put(c, data, "abortControllerCtor", controller)?;
-    let abort = c.host_function_named(operation("abortSignalAbort"), "abortSignal")?;
+    let abort = c.host_function_named(crate::host::shared_vm::operation!("abortSignalAbort"), "abortSignal")?;
     put(c, data, "abortSignal", abort)?;
     Ok(())
 }
@@ -234,7 +233,7 @@ pub(crate) fn static_timeout(c: &mut Context<'_>, _: RootId, args: &[RootId]) ->
     let maximum = c.number(MAX_TIMEOUT_DELAY);
     super::util_shared_vm::validate_integer(c, delay, "delay", 0.0, maximum)?;
     let signal = create_signal(c, None, false)?;
-    let fire = c.host_function_with_data(crate::host::shared_vm::operation("abortSignalTimeoutFire"), signal)?;
+    let fire = c.host_function_with_data(crate::host::shared_vm::operation!("abortSignalTimeoutFire"), signal)?;
     super::timers_shared_vm::schedule_timer(c, &[fire, delay], false, false)?;
     Ok(signal)
 }

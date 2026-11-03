@@ -74,6 +74,14 @@ pub(crate) struct Frame {
 }
 
 impl Frame {
+    /// The physical parameter homes initialized by the passed arguments.
+    pub(crate) fn passed_registers(self, callee: &Function) -> impl Iterator<Item = (Register, Register)> + '_ {
+        (0..self.arguments.min(callee.params)).filter_map(move |argument|
+            callee.parameter_registers.map(|base| base + argument)
+                .or_else(|| callee.promoted_register(argument))
+                .map(|register| (self.base + register, self.window + argument)))
+    }
+
     /// The parent's register 0: the caller's, or the enclosing callee's.
     pub(crate) fn parent_base(&self, frames: &[Frame]) -> Register {
         self.parent.map_or(0, |parent| frames[parent].base)

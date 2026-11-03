@@ -75,8 +75,8 @@ pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
     // `Buffer`'s accessor pair shares one slot: unbound, the getter builds the class; a set
     // replaces it.
     let slot = c.null_object_rooted()?;
-    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("bufferGlobalGet"), "get", slot)?;
-    let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("bufferGlobalSet"), "set", slot)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("bufferGlobalGet"), "get", slot)?;
+    let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("bufferGlobalSet"), "set", slot)?;
     let no = c.boolean(false);
     let yes = c.boolean(true);
     let descriptor = c.null_object_rooted()?;
@@ -86,7 +86,7 @@ pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
     c.assign_named_property_rooted(descriptor, "configurable", yes)?;
     let key = c.string_rooted("Buffer");
     c.define_property_descriptor_rooted(global, key, descriptor)?;
-    let load = c.host_function_named(crate::host::shared_vm::operation("bufferConstructor"), "get")?;
+    let load = c.host_function_named(crate::host::shared_vm::operation!("bufferConstructor"), "get")?;
     let descriptor = c.null_object_rooted()?;
     c.assign_named_property_rooted(descriptor, "get", load)?;
     c.assign_named_property_rooted(descriptor, "enumerable", no)?;

@@ -375,7 +375,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
         put(c, binding, name, constructor)?;
     }
     let function = c.host_function_named(
-        crate::host::shared_vm::operation("cryptoNativeOneShotDigest"),
+        crate::host::shared_vm::operation!("cryptoNativeOneShotDigest"),
         "oneShotDigest",
     )?;
     put(c, binding, "oneShotDigest", function)

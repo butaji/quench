@@ -275,8 +275,7 @@ pub(super) fn custom_inspect(c: &mut Context<'_>, receiver: RootId, body: RootId
 
 /// Builds the classes and defines `Event`, `CustomEvent` and `EventTarget` on `api`.
 pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
-    let operation = crate::host::shared_vm::operation;
-    let event = c.host_constructor_named(operation("eventConstructor"), "Event")?;
+    let event = c.host_constructor_named(crate::host::shared_vm::operation!("eventConstructor"), "Event")?;
     let length = c.number(1.0);
     c.define_named_data_property_rooted(event, "length", length, false, false, true)?;
     for (name, phase) in PHASES {
@@ -285,7 +284,7 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
     }
     let prototype = get(c, event, "prototype")?;
     install_members(c, prototype, &EVENT_MEMBERS, true)?;
-    let trusted = c.host_function_named(operation("eventIsTrusted"), "isTrusted")?;
+    let trusted = c.host_function_named(crate::host::shared_vm::operation!("eventIsTrusted"), "isTrusted")?;
     let key = c.string_rooted("isTrusted");
     let undefined = c.undefined();
     c.define_property_fields_rooted(
@@ -296,7 +295,7 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
     install_tag_and_inspect(c, prototype, "Event", Some("eventInspect"))?;
     put(c, data, "eventCtor", event)?;
 
-    let custom = c.host_constructor_named(operation("customEventConstructor"), "CustomEvent")?;
+    let custom = c.host_constructor_named(crate::host::shared_vm::operation!("customEventConstructor"), "CustomEvent")?;
     c.define_named_data_property_rooted(custom, "length", length, false, false, true)?;
     c.set_prototype_rooted(custom, event)?;
     let custom_prototype = get(c, custom, "prototype")?;
@@ -305,7 +304,7 @@ pub(crate) fn install(c: &mut Context<'_>, data: RootId) -> Result<(), RootedErr
     install_tag_and_inspect(c, custom_prototype, "CustomEvent", None)?;
     put(c, data, "customEventCtor", custom)?;
 
-    let target = c.host_constructor_named(operation("eventTargetConstructor"), "EventTarget")?;
+    let target = c.host_constructor_named(crate::host::shared_vm::operation!("eventTargetConstructor"), "EventTarget")?;
     let target_prototype = get(c, target, "prototype")?;
     install_members(c, target_prototype, &TARGET_MEMBERS, true)?;
     install_tag_and_inspect(c, target_prototype, "EventTarget", Some("eventTargetInspect"))?;
@@ -844,7 +843,7 @@ pub(crate) fn add_event_listener(c: &mut Context<'_>, receiver: RootId, args: &[
         }
         let capture = c.boolean(options.capture);
         let registration = c.array_rooted(&[receiver, kind, listener, capture])?;
-        let remover = c.host_function_with_data(crate::host::shared_vm::operation("eventTargetSignalRemove"), registration)?;
+        let remover = c.host_function_with_data(crate::host::shared_vm::operation!("eventTargetSignalRemove"), registration)?;
         let signal_options = ListenerOptions { once: true, capture: false, passive: false, resist: true, signal: c.undefined(), node_style: false };
         let signal_table = target_table(c, options.signal)?;
         let abort = c.string_rooted("abort");
@@ -991,7 +990,7 @@ fn report_rejection(c: &mut Context<'_>, result: RootId) -> Result<(), RootedErr
     }
     let then = get(c, result, "then")?;
     if c.is_callable_rooted(then)? {
-        let report = c.host_function(crate::host::shared_vm::operation("eventTargetQueueError"))?;
+        let report = c.host_function(crate::host::shared_vm::operation!("eventTargetQueueError"))?;
         let undefined = c.undefined();
         c.call_rooted(then, result, &[undefined, report])?;
     }
@@ -1000,7 +999,7 @@ fn report_rejection(c: &mut Context<'_>, result: RootId) -> Result<(), RootedErr
 
 /// `process.nextTick(() => { throw reason; })`: `reason` reaches the uncaught-exception path.
 pub(super) fn queue_uncaught(c: &mut Context<'_>, reason: RootId) -> Result<(), RootedError> {
-    let callback = c.host_function_named_with_data(crate::host::shared_vm::operation("eventTargetRethrow"), "", reason)?;
+    let callback = c.host_function_named_with_data(crate::host::shared_vm::operation!("eventTargetRethrow"), "", reason)?;
     let undefined = c.undefined();
     super::shared_event_loop::queue_next_tick(c, callback, undefined, &[])
 }
@@ -1044,7 +1043,7 @@ pub(super) fn set_event_handler(c: &mut Context<'_>, target: RootId, container: 
         let holder = c.null_object_rooted()?;
         put(c, holder, HANDLER, value)?;
         put(c, container, field, holder)?;
-        let wrapper = c.host_function_named_with_data(crate::host::shared_vm::operation("eventHandlerInvoke"), "eventHandler", holder)?;
+        let wrapper = c.host_function_named_with_data(crate::host::shared_vm::operation!("eventHandlerInvoke"), "eventHandler", holder)?;
         return add_host_listener(c, target, kind, wrapper, false, false);
     }
     let previous = get(c, holder, HANDLER)?;
@@ -1102,7 +1101,7 @@ pub(crate) fn node_event_target(c: &mut Context<'_>) -> Result<RootId, RootedErr
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0builtin:NodeEventTarget", |c| {
         let data = super::events_shared_vm::event_family(c)?;
         let base = get(c, data, "eventTargetCtor")?;
-        let class = c.host_constructor_named(crate::host::shared_vm::operation("nodeEventTargetConstructor"), "NodeEventTarget")?;
+        let class = c.host_constructor_named(crate::host::shared_vm::operation!("nodeEventTargetConstructor"), "NodeEventTarget")?;
         c.set_prototype_rooted(class, base)?;
         let prototype = get(c, class, "prototype")?;
         let base_prototype = get(c, base, "prototype")?;

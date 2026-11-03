@@ -237,7 +237,7 @@ fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<(), RootedErro
 
 fn assertion_function(c: &mut Context<'_>, assertion: Assertion) -> Result<RootId, RootedError> {
     let data = c.number(assertion.code());
-    let function = c.host_function_named_with_data(crate::host::shared_vm::operation("assertCall"), assertion.name(), data)?;
+    let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("assertCall"), assertion.name(), data)?;
     let length = c.number(assertion.length());
     c.define_named_data_property_rooted(function, "length", length, false, false, true)?;
     Ok(function)
@@ -279,7 +279,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// `Assert`, whose prototype carries the module's assertions (and an `ok` of its own).
 fn assert_class(c: &mut Context<'_>, functions: &[(Assertion, RootId)]) -> Result<RootId, RootedError> {
-    let class = c.host_constructor_named(crate::host::shared_vm::operation("assertAssert"), ASSERT_CLASS)?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("assertAssert"), ASSERT_CLASS)?;
     let length = c.number(1.0);
     c.define_named_data_property_rooted(class, "length", length, false, false, true)?;
     let prototype = get(c, class, "prototype")?;
@@ -365,14 +365,14 @@ fn error_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(class) = cached(c, ERROR_CLASS_KEY) {
         return Ok(class);
     }
-    let class = c.host_constructor_named(crate::host::shared_vm::operation("assertAssertionError"), ERROR_NAME)?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("assertAssertionError"), ERROR_NAME)?;
     let global = c.global_root()?;
     let error = get(c, global, "Error")?;
     c.set_prototype_rooted(class, error)?;
     let prototype = get(c, class, "prototype")?;
     let error_prototype = get(c, error, "prototype")?;
     c.set_prototype_rooted(prototype, error_prototype)?;
-    let to_string = c.host_function_named(crate::host::shared_vm::operation("assertErrorToString"), "toString")?;
+    let to_string = c.host_function_named(crate::host::shared_vm::operation!("assertErrorToString"), "toString")?;
     c.define_named_data_property_rooted(prototype, "toString", to_string, true, false, true)?;
     c.define_named_data_property_rooted(class, "prototype", prototype, false, false, false)?;
     cache(c, ERROR_CLASS_KEY, class)?;
@@ -1108,7 +1108,7 @@ fn comparison(c: &mut Context<'_>, object: RootId, keys: &[RootId], actual: Opti
     let class = match cached(c, class_key) {
         Some(class) => class,
         None => {
-            let class = c.host_constructor_named(crate::host::shared_vm::operation("consoleNoop"), "Comparison")?;
+            let class = c.host_constructor_named(crate::host::shared_vm::operation!("consoleNoop"), "Comparison")?;
             cache(c, class_key, class)?;
             class
         }
@@ -1255,8 +1255,8 @@ fn awaiting(c: &mut Context<'_>, call: Invocation, args: &[RootId]) -> Result<Ro
     let rest = c.array_rooted(args.get(1..).unwrap_or_default())?;
     let code = c.number(assertion.code());
     let state = c.array_rooted(&[promise, rest, code, call.diff])?;
-    let fulfilled = c.host_function_with_data(crate::host::shared_vm::operation("assertSettled"), state)?;
-    let rejected = c.host_function_with_data(crate::host::shared_vm::operation("assertRejected"), state)?;
+    let fulfilled = c.host_function_with_data(crate::host::shared_vm::operation!("assertSettled"), state)?;
+    let rejected = c.host_function_with_data(crate::host::shared_vm::operation!("assertRejected"), state)?;
     let then = get(c, target, "then")?;
     c.call_rooted(then, target, &[fulfilled, rejected])?;
     Ok(promise)

@@ -817,14 +817,14 @@ pub(crate) const PROTOTYPE_METHODS: &[(Key, &str, &str)] = &[
 ];
 
 pub(crate) fn build(c: &mut Context<'_>, stream: RootId, state_class: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamWritable"), "Writable")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamWritable"), "Writable")?;
     let prototype = get(c, constructor, "prototype")?;
     let stream_prototype = get(c, stream, "prototype")?;
     c.set_prototype_rooted(prototype, stream_prototype)?;
     c.set_prototype_rooted(constructor, stream)?;
     let key = c.string_rooted("WritableState");
     c.define_data_property_rooted(constructor, key, state_class, true, true, true)?;
-    let has_instance = c.host_function_named(crate::host::shared_vm::operation("streamWritableHasInstance"), "value")?;
+    let has_instance = c.host_function_named(crate::host::shared_vm::operation!("streamWritableHasInstance"), "value")?;
     let key = intrinsics(c)?.slot(Slot::HasInstance);
     c.define_data_property_rooted(constructor, key, has_instance, false, false, false)?;
     define_methods(c, prototype, PROTOTYPE_METHODS)?;

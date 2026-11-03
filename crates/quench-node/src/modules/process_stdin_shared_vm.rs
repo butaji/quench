@@ -36,12 +36,12 @@ mod platform {
         process: RootId,
     ) -> Result<(), RootedError> {
         let open = context.host_function_named_with_data(
-            crate::host::shared_vm::operation("processOpenStdin"),
+            crate::host::shared_vm::operation!("processOpenStdin"),
             "openStdin",
             process,
         )?;
         set(context, process, "openStdin", open)?;
-        let getter = context.host_function(crate::host::shared_vm::operation("processStdin"))?;
+        let getter = context.host_function(crate::host::shared_vm::operation!("processStdin"))?;
         let global = context.global_root()?;
         let key = context.string_rooted("Object");
         let object = context.get_property_rooted(global, key)?;
@@ -85,10 +85,10 @@ mod platform {
         let key = context.string_rooted("Readable");
         let readable = context.get_property_rooted(module, key)?;
         let options = context.object_rooted()?;
-        let read = context.host_function(crate::host::shared_vm::operation("processStdinRead"))?;
+        let read = context.host_function(crate::host::shared_vm::operation!("processStdinRead"))?;
         set(context, options, "read", read)?;
         let destroy =
-            context.host_function(crate::host::shared_vm::operation("processStdinDestroy"))?;
+            context.host_function(crate::host::shared_vm::operation!("processStdinDestroy"))?;
         set(context, options, "destroy", destroy)?;
         let stream = context.construct_rooted(readable, readable, &[options])?;
         let fd = context.number(f64::from(STDIN_FD));
@@ -96,20 +96,20 @@ mod platform {
         let key = context.string_rooted("pause");
         let pause = context.get_property_rooted(stream, key)?;
         let pause = context.host_function_with_data(
-            crate::host::shared_vm::operation("processStdinPause"),
+            crate::host::shared_vm::operation!("processStdinPause"),
             pause,
         )?;
         set(context, stream, "pause", pause)?;
         for (name, reference) in [("ref", true), ("unref", false)] {
             let data = context.boolean(reference);
             let function = context.host_function_with_data(
-                crate::host::shared_vm::operation("processStdinRef"),
+                crate::host::shared_vm::operation!("processStdinRef"),
                 data,
             )?;
             set(context, stream, name, function)?;
         }
         let pump = context.host_function_with_data(
-            crate::host::shared_vm::operation("processStdinPump"),
+            crate::host::shared_vm::operation!("processStdinPump"),
             stream,
         )?;
         let stream = context.retain(stream)?;

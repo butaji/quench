@@ -109,7 +109,7 @@ fn type_error(c: &mut Context<'_>, message: &str) -> RootedError {
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:contextify", |c| {
         let binding = c.object_rooted()?;
-        let constructor = c.host_constructor_named(crate::host::shared_vm::operation("contextifyScript"), "ContextifyScript")?;
+        let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("contextifyScript"), "ContextifyScript")?;
         let prototype = get(c, constructor, "prototype")?;
         for (name, operation) in [("createCachedData", "contextifyCreateCachedData"), ("runInContext", "contextifyRunInContext")] {
             let method = c.host_function_named(crate::host::shared_vm::operation(operation), name)?;
@@ -435,7 +435,7 @@ fn install_console(c: &mut Context<'_>, global: RootId) -> Result<(), RootedErro
     let object = get(c, global, "Object")?;
     let console = c.construct_rooted(object, object, &[])?;
     for name in CONSOLE_METHODS {
-        let method = c.host_function_named(crate::host::shared_vm::operation("contextifyConsoleMethod"), name)?;
+        let method = c.host_function_named(crate::host::shared_vm::operation!("contextifyConsoleMethod"), name)?;
         c.assign_named_property_rooted(console, name, method)?;
     }
     let symbol = get(c, global, "Symbol")?;
@@ -454,7 +454,7 @@ pub(crate) fn console_method(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Re
 /// `codeGeneration: { strings: false }`: the realm's `eval` and `Function` throw its EvalError.
 fn disallow_code_generation(c: &mut Context<'_>, global: RootId) -> Result<(), RootedError> {
     let eval_error = get(c, global, "EvalError")?;
-    let operation = crate::host::shared_vm::operation("contextifyRejectCodeGeneration");
+    let operation = crate::host::shared_vm::operation!("contextifyRejectCodeGeneration");
     let eval = c.host_function_named_with_data(operation, "eval", eval_error)?;
     let function = c.host_constructor_named_with_data(operation, "Function", eval_error)?;
     for (name, reject) in [("eval", eval), ("Function", function)] {

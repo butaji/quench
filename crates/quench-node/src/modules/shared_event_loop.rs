@@ -59,7 +59,7 @@ pub(crate) fn queue_next_tick(
     let invocation = match cached {
         Some(invocation) => invocation,
         None => {
-            let invocation = context.host_function_with_data(crate::host::shared_vm::operation("asyncTickInvoke"), receiver)?;
+            let invocation = context.host_function_with_data(crate::host::shared_vm::operation!("asyncTickInvoke"), receiver)?;
             if receiverless {
                 shared.borrow_mut().tick_invocation = Some(context.retain(invocation)?);
             }

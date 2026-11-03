@@ -673,10 +673,10 @@ pub(crate) fn construct(
         method(context, socket, "setTimeout", &[timeout, handler])?;
     }
     let secure = context.string_rooted("secure");
-    let callback = context.host_function(crate::host::shared_vm::operation("tlsSocketSecure"))?;
+    let callback = context.host_function(crate::host::shared_vm::operation!("tlsSocketSecure"))?;
     method(context, socket, "on", &[secure, callback])?;
     let connect = context.string_rooted("connect");
-    let callback = context.host_function(crate::host::shared_vm::operation("tlsSocketUpgrade"))?;
+    let callback = context.host_function(crate::host::shared_vm::operation!("tlsSocketUpgrade"))?;
     method(context, socket, "once", &[connect, callback])?;
     if context.truthy_rooted(wrapped)? {
         // Node allows construction around an unconnected net.Socket or a
@@ -699,7 +699,7 @@ pub(crate) fn construct(
     }
     let global = context.global_root()?;
     let process = get(context, global, "process")?;
-    let init = context.host_function(crate::host::shared_vm::operation("tlsSocketInitRead"))?;
+    let init = context.host_function(crate::host::shared_vm::operation!("tlsSocketInitRead"))?;
     method(context, process, "nextTick", &[init, socket, wrapped])?;
     Ok(socket)
 }

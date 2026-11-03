@@ -148,11 +148,11 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let map = get(c, global, "Map")?;
     let environment = c.construct_rooted(map, map, &[])?;
     put(c, api, member::ENVIRONMENT, environment)?;
-    let hook = c.host_function_named(operation("messagingPortListenerHook"), "kNewListener")?;
+    let hook = c.host_function_named(crate::host::shared_vm::operation!("messagingPortListenerHook"), "kNewListener")?;
     put(c, api, member::PORT_HOOK, hook)?;
 
     let node_target = events::node_event_target(c)?;
-    let port = c.host_constructor_named(operation("messagingPortConstructor"), member::MESSAGE_PORT)?;
+    let port = c.host_constructor_named(crate::host::shared_vm::operation!("messagingPortConstructor"), member::MESSAGE_PORT)?;
     let prototype = extend(c, port, node_target)?;
     let key = c.string_rooted("constructor");
     c.delete_property_rooted(prototype, key)?;
@@ -166,13 +166,13 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     methods(c, prototype, &[("close", "messagingPortClose")], true)?;
     put(c, api, member::MESSAGE_PORT, port)?;
 
-    let channel = c.host_constructor_named(operation("messagingChannelConstructor"), member::MESSAGE_CHANNEL)?;
+    let channel = c.host_constructor_named(crate::host::shared_vm::operation!("messagingChannelConstructor"), member::MESSAGE_CHANNEL)?;
     put(c, api, member::MESSAGE_CHANNEL, channel)?;
 
     let data = events_api(c)?;
     let event = get(c, data, "eventCtor")?;
     let target = get(c, data, "eventTargetCtor")?;
-    let message_event = c.host_constructor_named(operation("messagingMessageEventConstructor"), member::MESSAGE_EVENT)?;
+    let message_event = c.host_constructor_named(crate::host::shared_vm::operation!("messagingMessageEventConstructor"), member::MESSAGE_EVENT)?;
     let prototype = extend(c, message_event, event)?;
     for (index, name) in MESSAGE_EVENT_FIELDS.iter().enumerate() {
         let data = c.number(index as f64);
@@ -180,7 +180,7 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     put(c, api, member::MESSAGE_EVENT, message_event)?;
 
-    let channel = c.host_constructor_named(operation("messagingBroadcastConstructor"), member::BROADCAST_CHANNEL)?;
+    let channel = c.host_constructor_named(crate::host::shared_vm::operation!("messagingBroadcastConstructor"), member::BROADCAST_CHANNEL)?;
     let prototype = extend(c, channel, target)?;
     let undefined = c.undefined();
     accessor(c, prototype, "name", "messagingBroadcastName", None, undefined)?;
@@ -203,12 +203,12 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let registry = get(c, symbol, "for")?;
     let description = c.string_rooted(INSPECT_CUSTOM);
     let inspect_key = c.call_rooted(registry, symbol, &[description])?;
-    let inspect = c.host_function_named(operation("messagingBroadcastInspect"), &format!("[{INSPECT_CUSTOM}]"))?;
+    let inspect = c.host_function_named(crate::host::shared_vm::operation!("messagingBroadcastInspect"), &format!("[{INSPECT_CUSTOM}]"))?;
     c.define_data_property_rooted(prototype, inspect_key, inspect, true, false, true)?;
     put(c, api, member::BROADCAST_CHANNEL, channel)?;
 
     let emitter = crate::host::shared_vm::commonjs::events_module(c)?;
-    let worker_class = c.host_constructor_named(operation("workerConstructor"), member::WORKER)?;
+    let worker_class = c.host_constructor_named(crate::host::shared_vm::operation!("workerConstructor"), member::WORKER)?;
     let prototype = extend(c, worker_class, emitter)?;
     methods(
         c,
@@ -223,14 +223,14 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     )?;
     for (index, name) in WORKER_GETTERS.iter().enumerate() {
         let data = c.number(index as f64);
-        let get = c.host_function_named_with_data(operation("workerGetter"), &format!("get {name}"), data)?;
+        let get = c.host_function_named_with_data(crate::host::shared_vm::operation!("workerGetter"), &format!("get {name}"), data)?;
         let key = c.string_rooted(name);
         let undefined = c.undefined();
         let fields = DescriptorFields { get: Some(get), set: Some(undefined), enumerable: Some(false), configurable: Some(true), ..Default::default() };
         c.define_property_fields_rooted(prototype, key, fields)?;
     }
     for name in ["getHeapSnapshot", "getHeapStatistics", "cpuUsage", "startCpuProfile"] {
-        let function = c.host_function_named(operation("workerNotRunning"), name)?;
+        let function = c.host_function_named(crate::host::shared_vm::operation!("workerNotRunning"), name)?;
         let key = c.string_rooted(name);
         c.define_data_property_rooted(prototype, key, function, true, false, true)?;
     }
@@ -475,7 +475,7 @@ pub(crate) fn handler_set(c: &mut Context<'_>, receiver: RootId, args: &[RootId]
     let holder = c.null_object_rooted()?;
     put(c, holder, "handler", value)?;
     put(c, table, &kind_text, holder)?;
-    let wrapper = c.host_function_named_with_data(operation("eventHandlerInvoke"), "eventHandler", holder)?;
+    let wrapper = c.host_function_named_with_data(crate::host::shared_vm::operation!("eventHandlerInvoke"), "eventHandler", holder)?;
     let add = get(c, receiver, "addEventListener")?;
     c.call_rooted(add, receiver, &[kind, wrapper])?;
     Ok(c.undefined())
@@ -785,7 +785,7 @@ fn output_stream(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let stream = crate::host::shared_vm::commonjs::stream_module(c)?;
     let readable = get(c, stream, "Readable")?;
     let options = c.object_rooted()?;
-    let read = c.host_function_named(operation("streamNop"), "read")?;
+    let read = c.host_function_named(crate::host::shared_vm::operation!("streamNop"), "read")?;
     put(c, options, "read", read)?;
     c.construct_rooted(readable, readable, &[options])
 }
@@ -832,13 +832,13 @@ pub(crate) fn worker_constructor(c: &mut Context<'_>, receiver: RootId, args: &[
     }
     set_slot(c, receiver, record)?;
     let resource = c.object_rooted()?;
-    let has_ref = c.host_function_named_with_data(operation("workerResourceHasRef"), "hasRef", record)?;
+    let has_ref = c.host_function_named_with_data(crate::host::shared_vm::operation!("workerResourceHasRef"), "hasRef", record)?;
     put(c, resource, "hasRef", has_ref)?;
     emit_init(c, resource, WORKER_RESOURCE)?;
     for event in ["message", "messageerror"] {
         let event_name = c.string_rooted(event);
         let data = c.array_rooted(&[receiver, event_name])?;
-        let forward = c.host_function_named_with_data(operation("workerForward"), "", data)?;
+        let forward = c.host_function_named_with_data(crate::host::shared_vm::operation!("workerForward"), "", data)?;
         crate::modules::stream_shared_vm::on(c, port, event, forward)?;
     }
     port_unref(c, port, &[])?;
@@ -892,7 +892,7 @@ pub(crate) fn worker_terminate(c: &mut Context<'_>, receiver: RootId, args: &[Ro
             let undefined = c.undefined();
             c.resolve_promise_rooted(promise, undefined)?;
         } else {
-            let resolve = c.host_function_named_with_data(operation("workerResolveExit"), "", promise)?;
+            let resolve = c.host_function_named_with_data(crate::host::shared_vm::operation!("workerResolveExit"), "", promise)?;
             crate::modules::stream_shared_vm::once(c, receiver, "exit", resolve)?;
         }
         promise
@@ -902,7 +902,7 @@ pub(crate) fn worker_terminate(c: &mut Context<'_>, receiver: RootId, args: &[Ro
     super::terminate_worker(c, receiver)?;
     let callback = argument(c, args, 0);
     if c.is_callable_rooted(callback)? {
-        let report = c.host_function_named_with_data(operation("workerTerminateCallback"), "", callback)?;
+        let report = c.host_function_named_with_data(crate::host::shared_vm::operation!("workerTerminateCallback"), "", callback)?;
         call_method(c, exit, "then", &[report])?;
     }
     Ok(exit)

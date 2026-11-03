@@ -65,7 +65,7 @@ pub(crate) fn function(
             let api = super::fs_watch_shared_vm::facade::stat_watch_api(context)?;
             let api = context.retain(api)?;
             let dispatcher =
-                context.host_function(crate::host::shared_vm::operation("fsStatWatchDispatch"))?;
+                context.host_function(crate::host::shared_vm::operation!("fsStatWatchDispatch"))?;
             let dispatcher = context.retain(dispatcher)?;
             let mut state = shared.borrow_mut();
             state.fs_stat_watch.api = Some(api);
@@ -271,7 +271,7 @@ pub(crate) fn stop(
             .take();
         if let Some(active) = active {
             let callback =
-                context.host_function(crate::host::shared_vm::operation("fsStatWatchStopNT"))?;
+                context.host_function(crate::host::shared_vm::operation!("fsStatWatchStopNT"))?;
             let undefined = context.undefined();
             super::shared_event_loop::queue_next_tick(context, callback, undefined, &[watcher])?;
             let null = context.null();

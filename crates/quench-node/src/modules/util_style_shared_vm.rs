@@ -12,7 +12,7 @@ pub(crate) fn function(
 ) -> Result<RootId, RootedError> {
     let null = context.null();
     let data = context.array_rooted(&[inspect, null])?;
-    context.host_function_named_with_data(crate::host::shared_vm::operation("styleText"), "styleText", data)
+    context.host_function_named_with_data(crate::host::shared_vm::operation!("styleText"), "styleText", data)
 }
 
 #[derive(Clone)]

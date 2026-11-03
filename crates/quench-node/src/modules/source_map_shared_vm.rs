@@ -294,7 +294,7 @@ pub(crate) fn find_source_map(c: &mut Context<'_>, _: RootId, args: &[RootId]) -
 /// `module.SourceMap`.
 pub(crate) fn source_map_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     commonjs::cached_native_binding(c, "\0native:SourceMap", |c| {
-        let class = c.host_constructor_named(operation("sourceMapConstruct"), "SourceMap")?;
+        let class = c.host_constructor_named(crate::host::shared_vm::operation!("sourceMapConstruct"), "SourceMap")?;
         let prototype = get(c, class, "prototype")?;
         for (name, operation_name) in [("payload", "sourceMapPayload"), ("lineLengths", "sourceMapLineLengths")] {
             let getter = c.host_function_named(operation(operation_name), &format!("get {name}"))?;

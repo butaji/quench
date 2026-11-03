@@ -235,7 +235,7 @@ fn build(c: &mut Context<'_>) -> Outcome {
     let warned = c.boolean(false);
     put(c, holder, "warned", warned)?;
 
-    let base = c.host_constructor_named(crate::host::shared_vm::operation("dnsResolverBase"), "ResolverBase")?;
+    let base = c.host_constructor_named(crate::host::shared_vm::operation!("dnsResolverBase"), "ResolverBase")?;
     let prototype = get(c, base, "prototype")?;
     let undefined = c.undefined();
     for (name, operation) in [
@@ -249,14 +249,14 @@ fn build(c: &mut Context<'_>) -> Outcome {
     put(c, holder, "ResolverBase", base)?;
     for delivery in [Delivery::Callback, Delivery::Promise] {
         let promise = c.boolean(delivery.tag());
-        let resolver = c.host_constructor_named_with_data(crate::host::shared_vm::operation("dnsResolverConstruct"), "Resolver", promise)?;
+        let resolver = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("dnsResolverConstruct"), "Resolver", promise)?;
         c.set_prototype_rooted(resolver, base)?;
         let resolver_prototype = get(c, resolver, "prototype")?;
         c.set_prototype_rooted(resolver_prototype, prototype)?;
         for (name, binding_name, _) in QUERIES {
             let binding_name_root = c.string_rooted(binding_name);
             let data = c.array_rooted(&[promise, binding_name_root])?;
-            let function = c.host_function_named_with_data(crate::host::shared_vm::operation("dnsResolverQuery"), binding_name, data)?;
+            let function = c.host_function_named_with_data(crate::host::shared_vm::operation!("dnsResolverQuery"), binding_name, data)?;
             let key = c.string_rooted(name);
             c.define_data_property_rooted(resolver_prototype, key, function, true, false, true)?;
         }
@@ -547,7 +547,7 @@ pub(crate) fn resolver_query(c: &mut Context<'_>, this: RootId, args: &[RootId])
     let (request, result) = request(c, "QueryReqWrap", delivery, callback)?;
     put(c, request, "bindingName", binding_name)?;
     put(c, request, "hostname", name)?;
-    let complete = c.host_function_named(crate::host::shared_vm::operation("dnsOnResolve"), "onresolve")?;
+    let complete = c.host_function_named(crate::host::shared_vm::operation!("dnsOnResolve"), "onresolve")?;
     put(c, request, "oncomplete", complete)?;
     let ttl = c.boolean(ttl);
     put(c, request, "ttl", ttl)?;
@@ -801,7 +801,7 @@ fn lookup(c: &mut Context<'_>, delivery: Delivery, args: &[RootId]) -> Outcome {
     put(c, request, "hostname", hostname)?;
     let all = c.boolean(settings.all);
     hide(c, request, "all", all)?;
-    let complete = c.host_function_named(crate::host::shared_vm::operation("dnsOnLookup"), if settings.all { "onlookupall" } else { "onlookup" })?;
+    let complete = c.host_function_named(crate::host::shared_vm::operation!("dnsOnLookup"), if settings.all { "onlookupall" } else { "onlookup" })?;
     put(c, request, "oncomplete", complete)?;
     let binding = intrinsics(c)?.binding;
     let order_constant = ORDERS.iter().find(|(name, _)| *name == settings.order).map_or(ORDERS[0].1, |(_, constant)| constant);
@@ -884,7 +884,7 @@ fn lookup_service(c: &mut Context<'_>, delivery: Delivery, args: &[RootId]) -> O
     put(c, request, "hostname", address)?;
     let port = c.number(port_number);
     put(c, request, "port", port)?;
-    let complete = c.host_function_named(crate::host::shared_vm::operation("dnsOnLookupService"), "onlookupservice")?;
+    let complete = c.host_function_named(crate::host::shared_vm::operation!("dnsOnLookupService"), "onlookupservice")?;
     put(c, request, "oncomplete", complete)?;
     let binding = intrinsics(c)?.binding;
     let status = call_method(c, binding, "getnameinfo", &[request, address, port])?;

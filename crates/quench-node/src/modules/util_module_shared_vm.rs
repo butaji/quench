@@ -555,7 +555,7 @@ pub(crate) fn deprecated_wrapper(c: &mut Context<'_>, target: RootId, message: R
     for (name, value) in [("target", target), ("message", message), ("code", code)] {
         put(c, state, name, value)?;
     }
-    let wrapper = c.host_constructor_named_with_data(operation("utilDeprecated"), "deprecated", state)?;
+    let wrapper = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("utilDeprecated"), "deprecated", state)?;
     put(c, state, "wrapper", wrapper)?;
     c.set_prototype_rooted(wrapper, target)?;
     let length = get(c, target, "length")?;
@@ -813,7 +813,7 @@ pub(crate) fn promisify(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resu
     let names_key = inspect::primordial(c, "promisifyArgs")?;
     let names = c.get_property_rooted(original, names_key)?;
     let data = c.array_rooted(&[original, names])?;
-    let promisified = c.host_function_named_with_data(operation("utilPromisified"), "fn", data)?;
+    let promisified = c.host_function_named_with_data(crate::host::shared_vm::operation!("utilPromisified"), "fn", data)?;
     let prototype = c.prototype_rooted(original)?;
     c.set_prototype_rooted(promisified, prototype)?;
     let descriptor = custom_descriptor(c, promisified)?;
@@ -845,7 +845,7 @@ pub(crate) fn promisified(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
     let names = get(c, data, "1")?;
     let promise = c.pending_promise_rooted()?;
     let settle_data = c.array_rooted(&[promise, names])?;
-    let settle = c.host_function_with_data(operation("utilPromisifySettle"), settle_data)?;
+    let settle = c.host_function_with_data(crate::host::shared_vm::operation!("utilPromisifySettle"), settle_data)?;
     let mut arguments = args.to_vec();
     arguments.push(settle);
     if let Err(error) = c.call_rooted(original, this, &arguments) {
@@ -887,7 +887,7 @@ pub(crate) fn close_promise(c: &mut Context<'_>, target: RootId) -> Result<RootI
     let promise = c.pending_promise_rooted()?;
     let undefined = c.undefined();
     let data = c.array_rooted(&[promise, undefined])?;
-    let settle = c.host_function_with_data(operation("utilPromisifySettle"), data)?;
+    let settle = c.host_function_with_data(crate::host::shared_vm::operation!("utilPromisifySettle"), data)?;
     let close = get(c, target, "close")?;
     if let Err(error) = c.call_rooted(close, target, &[settle]) {
         let Some(exception) = error.exception else { return Err(error) };
@@ -932,8 +932,8 @@ pub(crate) fn debuglog(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Resul
     let state = c.null_object_rooted()?;
     put(c, state, "set", set)?;
     put(c, state, "callback", callback)?;
-    let logger = c.host_function_named_with_data(operation("utilDebugLogger"), "logger", state)?;
-    let getter = c.host_function_named_with_data(operation("utilDebugEnabled"), "get", state)?;
+    let logger = c.host_function_named_with_data(crate::host::shared_vm::operation!("utilDebugLogger"), "logger", state)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("utilDebugEnabled"), "get", state)?;
     let descriptor = c.null_object_rooted()?;
     put(c, descriptor, "get", getter)?;
     let yes = c.boolean(true);
@@ -981,9 +981,9 @@ pub(crate) fn debug_logger(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
     if type_of(c, implementation) == ValueType::Undefined {
         let set_root = c.string_rooted(&set);
         implementation = if debug_enabled(&set) {
-            c.host_function_named_with_data(operation("utilDebugWrite"), "debug", set_root)?
+            c.host_function_named_with_data(crate::host::shared_vm::operation!("utilDebugWrite"), "debug", set_root)?
         } else {
-            c.host_function_named(operation("utilNoop"), "noop")?
+            c.host_function_named(crate::host::shared_vm::operation!("utilNoop"), "noop")?
         };
         put(c, implementations, &set, implementation)?;
     }
@@ -1078,7 +1078,7 @@ fn settle_aborted(c: &mut Context<'_>, promise: RootId, args: &[RootId]) -> Resu
         let undefined = c.undefined();
         return c.resolve_promise_rooted(promise, undefined).map(drop);
     }
-    let resolve = c.host_function_with_data(operation("utilAbortedResolve"), promise)?;
+    let resolve = c.host_function_with_data(crate::host::shared_vm::operation!("utilAbortedResolve"), promise)?;
     let api = c
         .host_mut()
         .shared_state()

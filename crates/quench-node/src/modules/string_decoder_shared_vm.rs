@@ -142,7 +142,7 @@ fn state_symbol(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 /// `node:string_decoder` (lib/string_decoder.js): `{ StringDecoder }`.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let operation = crate::host::shared_vm::operation;
-    let class = c.host_constructor_named(operation("stringDecoderConstruct"), "StringDecoder")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("stringDecoderConstruct"), "StringDecoder")?;
     let length = c.number(1.0);
     let key = c.string_rooted("length");
     c.define_data_property_rooted(class, key, length, false, false, true)?;
@@ -161,7 +161,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     for (index, name) in ["lastChar", "lastNeed", "lastTotal"].into_iter().enumerate() {
         let data = c.number(index as f64);
-        let getter = c.host_function_named_with_data(operation("stringDecoderField"), "get", data)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("stringDecoderField"), "get", data)?;
         let descriptor = c.null_object_rooted()?;
         c.assign_named_property_rooted(descriptor, "get", getter)?;
         let yes = c.boolean(true);
