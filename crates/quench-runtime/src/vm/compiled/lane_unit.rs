@@ -438,7 +438,8 @@ impl Planner<'_, '_> {
         {
             return None;
         }
-        let recovery = if target.callee == CalleeBinding::Function && restartable(self.program, callee, &code) {
+        let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)
+            || (target.callee == CalleeBinding::Function && restartable(self.program, callee, &code)) {
             CallRecovery::RestartCall
         } else { CallRecovery::Materialize };
         // The callee's registers and budget are reserved before its own calls plan, and given

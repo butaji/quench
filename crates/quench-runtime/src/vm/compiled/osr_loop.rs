@@ -284,13 +284,6 @@ impl LoopRegion {
             .collect()
     }
 
-    pub(crate) fn has_captured_call(&self) -> bool {
-        self.instructions.iter().enumerate().any(|(offset, instruction)| {
-            instruction.op() == Op::Call && self.instructions[..offset].iter().rev()
-                .find(|definition| definition.defined_register() == Some(instruction.register_b()))
-                .is_some_and(|definition| definition.op() == Op::LoadCapture && definition.capture_depth() == 0)
-        })
-    }
 }
 
 /// Why a backward jump was excluded from OSR before native code generation.
