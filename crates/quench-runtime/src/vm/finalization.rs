@@ -1,7 +1,7 @@
 use super::*;
 use crate::heap::{FinalizationEntries, FinalizationEntry};
 
-pub(super) fn finalization_native_length(native: Native) -> Option<f64> {
+pub(super) const fn finalization_native_length(native: Native) -> Option<f64> {
     Some(match native {
         Native::FinalizationRegistry => 1.0,
         Native::FinalizationRegistryRegister => 2.0,

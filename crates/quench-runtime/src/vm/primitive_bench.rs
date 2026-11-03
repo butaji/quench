@@ -22,6 +22,30 @@ use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
+fn native_arity<const DERIVED: bool>(b: &mut Bencher) {
+    use crate::heap::Native;
+    let natives: Vec<_> = (0..Native::COUNT)
+        .map(|index| Native::from_discriminant(index).unwrap())
+        .collect();
+    b.iter(|| {
+        for &native in &natives {
+            let native = black_box(native);
+            black_box(if DERIVED {
+                super::promise::native_length(native)
+            } else {
+                super::promise::native_length_definition(native)
+            });
+        }
+    });
+}
+
+// Each iteration visits every Native once, including kinds with no own length.
+#[bench]
+fn primitive_native_arity_derived_all(b: &mut Bencher) { native_arity::<true>(b); }
+
+#[bench]
+fn primitive_native_arity_definition_all(b: &mut Bencher) { native_arity::<false>(b); }
+
 fn capture_read<const REMEMBERED: bool>(b: &mut Bencher, depth: u16) {
     let mut vm = super::Vm::new(crate::test_host::TestHost::default());
     let expected = Value::integer(42);

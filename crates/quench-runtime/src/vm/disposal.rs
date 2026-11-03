@@ -19,7 +19,7 @@ const DISPOSAL_AWAIT_MODE: i32 = 3;
 const DISPOSAL_ASYNC_FROM_SYNC_MODE: i32 = 4;
 const DISPOSAL_INVALID_MODE: i32 = -1;
 
-pub(super) fn disposal_native_length(native: Native) -> Option<f64> {
+pub(super) const fn disposal_native_length(native: Native) -> Option<f64> {
     Some(match native {
         Native::DisposableStack | Native::AsyncDisposableStack => 0.0,
         Native::DisposableStackUse | Native::DisposableStackDefer => 1.0,
