@@ -17568,6 +17568,72 @@ mod tests {
     }
 
     #[test]
+    fn signed_shift_pairs_preserve_width_masking_and_shared_inputs() {
+        use cranelift_codegen::settings::Configurable;
+        let mut flags = cranelift_codegen::settings::builder();
+        // Exercise instruction selection directly, including widths for which
+        // the middle-end can otherwise replace the pair with an IR extension.
+        flags.set("opt_level", "none").unwrap();
+        flags.set("enable_verifier", "true").unwrap();
+        let isa = cranelift_native::builder().unwrap().finish(cranelift_codegen::settings::Flags::new(flags)).unwrap();
+        for ty in [types::I8, types::I16, types::I32, types::I64] {
+            let width = ty.bits();
+            let mask = u64::MAX >> (u64::BITS - width);
+            for amount in 0..width { for delta in [0, 1] { for shared in [false, true] { for masked in [false, true] {
+                let mut signature = Signature::new(isa.default_call_conv());
+                signature.params.push(AbiParam::new(types::I64));
+                signature.params.push(AbiParam::new(types::I64));
+                signature.returns.push(AbiParam::new(types::I64));
+                let mut function = ir::Function::with_name_signature(UserFuncName::testcase("signed_shift_pair"), signature);
+                let mut context = FunctionBuilderContext::new();
+                let mut builder = FunctionBuilder::new(&mut function, &mut context);
+                let entry = builder.create_block();
+                builder.append_block_params_for_function_params(entry);
+                builder.switch_to_block(entry);
+                let input = builder.block_params(entry)[0];
+                let filter = builder.block_params(entry)[1];
+                let filter = if ty == types::I64 { filter } else { builder.ins().ireduce(ty, filter) };
+                let input = if ty == types::I64 { input } else { builder.ins().ireduce(ty, input) };
+                let left = builder.ins().ishl_imm_u(input, i64::from(amount) - i64::from(width));
+                let right = builder.ins().sshr_imm_u(left, i64::from(amount + width + delta));
+                let result = if shared { builder.ins().bxor(left, right) } else { right };
+                let result = if masked { builder.ins().band(result, filter) } else { result };
+                let result = if ty == types::I64 { result } else { builder.ins().uextend(types::I64, result) };
+                builder.ins().return_(&[result]);
+                builder.seal_all_blocks(); builder.finalize(isa.frontend_config());
+                let mut compiler = cranelift_codegen::Context::for_function(function);
+                compiler.compile(&*isa, &mut Default::default()).unwrap();
+                let code = compiler.compiled_code().unwrap().buffer.data();
+                #[cfg(target_arch = "aarch64")]
+                if ty == types::I64 && amount != 0 && delta == 0 && !shared {
+                    // A64 Bitfield class, ignoring sf/opc and operand fields.
+                    const BITFIELD_CLASS_MASK: u32 = 0x1f80_0000;
+                    const BITFIELD_CLASS: u32 = 0x1300_0000;
+                    const SIGNED_BITFIELD_MASK: u32 = 0x7f80_0000;
+                    let bitfields = code.chunks_exact(std::mem::size_of::<u32>())
+                        .filter(|word| u32::from_le_bytes((*word).try_into().unwrap()) & BITFIELD_CLASS_MASK == BITFIELD_CLASS).count();
+                    assert_eq!(bitfields, 1, "one signed extract replaces both shifts, amount={amount}");
+                    assert!(code.chunks_exact(std::mem::size_of::<u32>()).any(|word|
+                        u32::from_le_bytes(word.try_into().unwrap()) & SIGNED_BITFIELD_MASK == BITFIELD_CLASS),
+                        "logical consumers must retain the signed extract, amount={amount} masked={masked}");
+                }
+                let memory = CodeMemory::new(code).unwrap();
+                // SAFETY: verified two-word argument/one-word result ABI and live code.
+                let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64) -> u64>(memory.pointer()) };
+                let retained_sign = 1_u64 << (width - amount - 1);
+                for value in (0_u64..=255).chain([retained_sign, retained_sign - 1, mask, mask >> 1, !mask, u64::MAX]) { for filter in [0, 1, mask, !mask] {
+                    let left = value.wrapping_shl(amount) & mask;
+                    let signed = (left << (u64::BITS - width)) as i64 >> (u64::BITS - width);
+                    let right = (signed >> ((amount + delta) & (width - 1))) as u64 & mask;
+                    let expected = if shared { left ^ right } else { right };
+                    let expected = if masked { expected & filter } else { expected };
+                    assert_eq!(unsafe { run(value, filter) }, expected, "{ty} shift={amount} delta={delta} shared={shared} masked={masked} value={value}");
+                }}
+            }}}}
+        }
+    }
+
+    #[test]
     fn masked_integer_conditions_preserve_width_polarity_and_other_uses() {
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         for ty in [types::I8, types::I16, types::I32, types::I64] {

@@ -1683,6 +1683,18 @@
 
 ;;;; Rules for `sshr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; Matching masked shifts sign-extend the retained low bits. Unlike an IR
+;; integer type, the machine bitfield width may be any positive bit count.
+(rule sshr_ishl_sign_extract 2
+      (lower (sshr (fits_in_64 (ty_int ty))
+                   (ishl ty x (iconst _ (u64_from_imm64 left)))
+                   (iconst _ (u64_from_imm64 right))))
+      (if-let width (sign_extract_width ty left right))
+      (extend x true width (ty_bits ty)))
+
+(decl pure partial sign_extract_width (Type u64 u64) u8)
+(extern constructor sign_extract_width sign_extract_width)
+
 ;; Shift for i8/i16/i32.
 (rule sshr_fits_in_32 -4 (lower (sshr (fits_in_32 ty) x y))
       (do_shift (ALUOp.Asr) ty (put_in_reg_sext32 x) y))

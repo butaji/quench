@@ -837,6 +837,12 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
         (imm as u8) & ((ty.lane_bits() - 1) as u8)
     }
 
+    fn sign_extract_width(&mut self, ty: Type, left: u64, right: u64) -> Option<u8> {
+        let shift = self.shift_masked_imm(ty, left);
+        (shift != 0 && shift == self.shift_masked_imm(ty, right))
+            .then(|| ty.lane_bits() as u8 - shift)
+    }
+
     fn simm7_scaled_from_i64(&mut self, val: i64, ty: Type) -> Option<SImm7Scaled> {
         SImm7Scaled::maybe_from_i64(val, ty)
     }

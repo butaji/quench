@@ -3852,6 +3852,19 @@
 (attr alu_rs_imm_logic_commutative (veri chain))
 (decl alu_rs_imm_logic_commutative (ALUOp Type Value Value) Reg)
 
+;; Do not absorb the final shift of a signed extract into the logical op:
+;; that leaves its first shift alive. Materialize the extract as one SBFX.
+(rule 3 (alu_rs_imm_logic_commutative op (fits_in_64 (ty_int ty)) x
+         (sshr ty (ishl ty source (iconst _ (u64_from_imm64 left)))
+                  (iconst _ (u64_from_imm64 right))))
+      (if-let width (sign_extract_width ty left right))
+      (alu_rrr op ty x (extend source true width (ty_bits ty))))
+(rule 4 (alu_rs_imm_logic_commutative op (fits_in_64 (ty_int ty))
+         (sshr ty (ishl ty source (iconst _ (u64_from_imm64 left)))
+                  (iconst _ (u64_from_imm64 right))) y)
+      (if-let width (sign_extract_width ty left right))
+      (alu_rrr op ty (extend source true width (ty_bits ty)) y))
+
 ;; Base case of operating on registers.
 (rule -1 (alu_rs_imm_logic_commutative op ty x y)
       (alu_rrr op ty x y))
