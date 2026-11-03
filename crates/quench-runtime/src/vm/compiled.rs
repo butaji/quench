@@ -582,7 +582,7 @@ pub(super) fn compile_js_numeric_region(
 pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
     -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
+    let unit = lane_unit::unit(program, function_id, function, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
         LaneHelpers::Process([0; LaneHelper::COUNT]), &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
@@ -2300,7 +2300,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // root calls of leaves; the same unit owns all origins and recovery masks.
     let leaf = |function: u32| program.function_get(function as usize)
         .is_some_and(|body| body.instructions().all(|instruction| instruction.op() != Op::Call));
-    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
+    let Some(unit) = lane_unit::unit(program, function_id, function, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|caller, pc| (caller == function_id)
         .then(|| targets.get(pc as usize).copied().flatten()).flatten().filter(|callee| leaf(*callee))
         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
@@ -7440,44 +7440,87 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
             let body = program.function_get(function as usize)?;
-            // A pure numeric body observes neither closure environment nor identity.
-            // Bind its definition at the edge, as AOT does, so fresh closures share
-            // the same residual while recovery retries the actual caller value.
-            let valid_bindings = std::cell::Cell::new(true);
-            let bindings = |caller, pc| {
-                let mut bound = targets(caller, pc);
-                for target in &mut bound {
-                    let numeric = program.function_get(target.function as usize).is_some_and(|body|
-                        body.plain_activation(program) && lane_region::restartable_numeric_function(program, body,
-                            &body.instructions().collect::<Vec<_>>()));
-                    if numeric {
-                        if let Some(callee) = target.identity()
-                            && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
-                                owner == self.active_program && function == target.function) {
-                            valid_bindings.set(false);
+            // The calls a unit still makes (none it inlines) whose callees have bodies.
+            let mut direct = direct;
+            // A unit whose code exceeds the lane body budget is planned again with half the
+            // inlining, down to the function alone.
+            let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
+            let (unit, region, fields, direct, direct_sites) = loop {
+                // A pure numeric body observes neither closure environment nor identity.
+                // Bind its definition at the edge, as AOT does, so fresh closures share
+                // the same residual while recovery retries the actual caller value.
+                let valid_bindings = std::cell::Cell::new(true);
+                let bindings = |caller, pc| {
+                    let mut bound = targets(caller, pc);
+                    for target in &mut bound {
+                        let numeric = program.function_get(target.function as usize).is_some_and(|body|
+                            body.plain_activation(program) && lane_region::restartable_numeric_function(program, body,
+                                &body.instructions().collect::<Vec<_>>()));
+                        if numeric {
+                            if let Some(callee) = target.identity()
+                                && !self.same_realm_user_target(callee).is_some_and(|(owner, function, _)|
+                                    owner == self.active_program && function == target.function) {
+                                valid_bindings.set(false);
+                            }
+                            target.callee = CalleeBinding::Function;
                         }
-                        target.callee = CalleeBinding::Function;
                     }
+                    // Different closures of the same pure definition are one case.
+                    let mut kept = 0;
+                    for index in 0..bound.len() {
+                        let target = bound[index];
+                        if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
+                    }
+                    bound.truncate(kept);
+                    bound
+                };
+                // Captured stores already use the shared frameless kernel.
+                let unit = lane_unit::unit(program, function, body, budget, &bindings, &|callee| program.function_get(callee as usize)
+                    .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
+                if !valid_bindings.get() { return None; }
+                if !unit.frames.iter().all(|frame| match frame.target.callee {
+                    CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
+                    CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
+                        && program.function_get(frame.target.function as usize).is_some_and(|body|
+                            lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>())),
+                }) {
+                    return None;
                 }
-                // Different closures of the same pure definition are one case.
-                let mut kept = 0;
-                for index in 0..bound.len() {
-                    let target = bound[index];
-                    if !bound[..kept].contains(&target) { bound[kept] = target; kept += 1; }
+                let loop_entry = match loop_header {
+                    Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
+                    None => None,
+                };
+                let fields = self.lane_unit_fields(program, &unit);
+                // The code names each callee by its address in this boxed slice, which never
+                // moves; an attempt over the budget gives its callees back to the next.
+                let (origins, callees): (Vec<(usize, usize)>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
+                    .filter(|(_, instruction)| instruction.op() == Op::Call)
+                    .filter_map(|(pc, _)| match unit.origins[pc] {
+                        lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take()
+                            .map(|callee| ((pc, origin as usize), callee)),
+                        lane_unit::Origin::Inlined { .. } => None,
+                    })
+                    .unzip();
+                let callees: Box<[DirectCallee]> = callees.into_boxed_slice();
+                let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
+                    origins.iter().zip(callees.iter()).map(|((pc, _), callee)| (*pc, std::ptr::from_ref(callee))).collect();
+                let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
+                    .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
+                let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
+                match lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites,
+                    &frame_captures, loop_entry, allow_first_entry) {
+                    Ok(region) => break (unit, region, fields, callees, direct_sites),
+                    Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
+                        if !unit.frames.is_empty() => {
+                        for ((_, origin), callee) in origins.into_iter().zip(callees.into_vec()) {
+                            direct[origin] = Some(callee);
+                        }
+                        budget /= 2;
+                    }
+                    Err(_) => return None,
                 }
-                bound.truncate(kept);
-                bound
             };
-            // Captured stores already use the shared frameless kernel.
-            let unit = lane_unit::unit(program, function, body, &bindings, &|callee| program.function_get(callee as usize)
-                .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
-            if !valid_bindings.get() { return None; }
-            if !unit.frames.iter().all(|frame| match frame.target.callee {
-                CalleeBinding::Identity(callee) => self.lane_inlined_target_admitted(program, callee, frame.target.function),
-                CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
-                    && program.function_get(frame.target.function as usize).is_some_and(|body|
-                        lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>())),
-            }) {
+            if region.native == 0 {
                 return None;
             }
             let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)| {
@@ -7485,33 +7528,6 @@ impl<H: Host> Vm<H> {
                     && (instruction.imm() as usize) <= pc
             });
             let amortizes = loops || !unit.frames.is_empty() || unit.instructions.len() >= LANE_BODY_MIN_INSTRUCTIONS;
-            let loop_entry = match loop_header {
-                Some(header) => Some(unit.origins.iter().position(|origin| *origin == lane_unit::Origin::Caller(header))?),
-                None => None,
-            };
-            let fields = self.lane_unit_fields(program, &unit);
-            // The calls the unit still makes (none it inlines) whose callees have bodies.
-            let mut direct = direct;
-            // The code names each callee by its address in this boxed slice, which never moves.
-            let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-                .filter(|(_, instruction)| instruction.op() == Op::Call)
-                .filter_map(|(pc, _)| match unit.origins[pc] {
-                    lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take().map(|callee| (pc, callee)),
-                    lane_unit::Origin::Inlined { .. } => None,
-                })
-                .unzip();
-            let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
-            let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
-                pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
-            let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
-                .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-            let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-            let region = lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites,
-                &frame_captures, loop_entry, allow_first_entry);
-            let region = region?;
-            if region.native == 0 {
-                return None;
-            }
             let code = CodeMemory::new(&region.code)?;
             if let (Some(directory), Some(clif)) = (native_dump_directory(), region.clif.as_deref()) {
                 dump_native_code(directory, function, &code, clif);
@@ -17942,7 +17958,7 @@ mod tests {
             let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
                 instruction.op() == Op::Call && targets[id][*pc].is_some()).count();
             assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
-            let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
+            let unit = lane_unit::unit(&program, id as u32, body, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|caller, pc|
                 (caller == id as u32).then(|| targets[id][pc as usize]).flatten()
                     .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
@@ -17988,7 +18004,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18166,7 +18182,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18206,7 +18222,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18226,7 +18242,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18515,9 +18531,20 @@ mod tests {
                     "n={count} seed={seed}");
             }
         }
-        for value in [1.5, f64::NAN, f64::INFINITY, 4294967295.0] {
+        // `n|0` is ToInt32 natively: 1.5 runs once, 2^32 - 1 (-1) not at all.
+        for (value, count) in [(1.5, 1), (4294967295.0, 0)] {
+            let mut word: u32 = 1;
+            for _ in 0..count {
+                word ^= word << 13;
+                word ^= word >> 17;
+                word ^= word << 5;
+            }
+            assert!(matches!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt),
+                Some(CompiledJsCallResult::Value(result)) if result == Value::number(f64::from(word as i32))), "n={value}");
+        }
+        for value in [f64::NAN, f64::INFINITY] {
             assert!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt).is_none(),
-                "unproved word32 input must decline exactly");
+                "a ToInt32 beyond 2^63 declines exactly");
         }
         let effectful = crate::Engine::specialize("function f(n,o){for(let i=0;i<n;i++)o.x++;return n;}", "numeric-effects.js").unwrap();
         assert!(compile_js_typed_numeric_region(&effectful, 1).is_none());

@@ -1567,6 +1567,14 @@ impl ShapeFacts {
         self.0 & Self::SLOT_GETTERS != 0
     }
 }
+/// Each shape's storage length and its parent's id and length, in table order (a parent
+/// precedes its children): the table as the heap registers slot owners from it.
+fn shape_layouts(shapes: &[Shape]) -> Vec<(usize, Option<(u32, usize)>)> {
+    shapes.iter()
+        .map(|shape| (shape.storage_len(), shape.parent().map(|parent| (parent, shapes[parent as usize].storage_len()))))
+        .collect()
+}
+
 struct Shape {
     /// The shape this one extends; `NO_PARENT_SHAPE` for the root.
     parent: u32,
@@ -3056,10 +3064,22 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
+        // A host's bootstrap may run the entry itself, so its realm keeps them from here.
+        self.keep_slot_representations();
         self.initialize_host()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())
+    }
+
+    /// Only native code reads slot representations, so only a runtime that runs lane bodies
+    /// keeps them, from its shape table and what its live objects hold: once its builtins
+    /// exist or its realm is restored.
+    pub(super) fn keep_slot_representations(&mut self) {
+        if self.programs.js_jit_lane_methods_enabled() {
+            let layouts = self.shape_layouts();
+            self.heap.track_slot_representations(&layouts);
+        }
     }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {

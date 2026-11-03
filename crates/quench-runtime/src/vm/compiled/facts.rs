@@ -128,12 +128,14 @@ fn set(types: &mut [Type], register: Register, ty: Type) {
     }
 }
 
-/// Applies `instruction` to `types`; returns where control goes next.
+/// Applies `instruction` to `types`; returns where control goes next. A call continues where
+/// the region makes native calls (`native_calls`), past which no object keeps its shape.
 fn transfer(
     types: &mut [Type],
     instruction: WideInstruction,
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    native_calls: bool,
 ) -> Flow {
     let op = instruction.op();
     match op {
@@ -158,7 +160,8 @@ fn transfer(
             let operator = instruction.binary_operator();
             match super::super::operations::NumberBitwise::from_js_instruction(op, operator) {
                 Some(bitwise) => {
-                    prove_int32(types, [instruction.operand_b(), instruction.operand_c()]);
+                    // ToInt32 of any Number runs natively; anything else leaves.
+                    prove_number(types, [instruction.operand_b(), instruction.operand_c()]);
                     let right = constant_number(constants, instruction.operand_c());
                     let result = if bitwise.result_is_int32(right) { Type::INT32 } else { Type::NUMBER };
                     if !instruction.returns_from_frame() {
@@ -200,6 +203,13 @@ fn transfer(
             set(types, instruction.result_register(), Type::ANY);
             Flow::Next
         }
+        Op::Call if native_calls => {
+            for ty in types.iter_mut().filter(|ty| ty.object_shape().is_some()) {
+                *ty = Type::language(crate::ValueType::Object);
+            }
+            set(types, instruction.result_register(), Type::ANY);
+            Flow::Next
+        }
         _ => {
             for register in written(instruction) {
                 set(types, register, Type::ANY);
@@ -226,6 +236,7 @@ pub(super) fn analyze(
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
+    native_calls: bool,
 ) -> Facts {
     let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len(),
         reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new() };
@@ -247,7 +258,7 @@ pub(super) fn analyze(
                 set(&mut types, register, Type::direct_object(shape));
             }
             let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
-            match transfer(&mut types, instruction, constants, written) {
+            match transfer(&mut types, instruction, constants, written, native_calls) {
                 Flow::Leaves => break,
                 Flow::To(target) => {
                     if target == entry && target <= pc {

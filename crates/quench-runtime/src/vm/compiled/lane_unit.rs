@@ -585,17 +585,18 @@ impl Emitter {
 }
 
 /// `function` (`function_id`) with each call `targets` names (by function and PC), whose
-/// callee `body` gives and qualifies, spliced in, transitively. A unit with no inlined call
-/// is the function itself.
+/// callee `body` gives and qualifies, spliced in, transitively, up to `budget` inlined
+/// instructions. A unit with no inlined call is the function itself.
 pub(crate) fn unit<'f>(
     program: &crate::ResidualProgram,
     function_id: u32,
     function: &Function,
+    budget: usize,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget: MAX_UNIT_INLINED_INSTRUCTIONS };
+    let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {
@@ -628,7 +629,7 @@ mod tests {
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
             let original_terminal = program.function(caller).code.len() - 1;
-            let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            let unit = unit(&program, caller as u32, program.function(caller), MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
                 .get(pc as usize).copied().flatten()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
@@ -662,7 +663,7 @@ mod tests {
             let caller = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
-            let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            let unit = unit(&program, caller as u32, program.function(caller), MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
                 .get(pc as usize).copied().flatten()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
@@ -691,7 +692,7 @@ mod tests {
                 body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
             let targets = static_call_targets(&program);
             assert!(targets[caller].iter().any(Option::is_some), "the hint must reach admission");
-            let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+            let unit = unit(&program, caller as u32, program.function(caller), MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
                 .get(pc as usize).copied().flatten()
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
@@ -714,7 +715,7 @@ mod tests {
         let call = body.instructions().position(|instruction| instruction.op() == Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
-        let mut unit = unit(&program, caller, body, &|function, pc| if function == caller {
+        let mut unit = unit(&program, caller, body, MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| if function == caller {
             targets.get(pc as usize).copied().flatten().into_iter().collect()
         } else { Vec::new() }, &|function| program.function_get(function as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
