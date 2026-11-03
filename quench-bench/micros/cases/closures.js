@@ -44,6 +44,24 @@ registerMicro({
       for (var i = 0; i < s.n; i++) t += f(i);
       return t;
     },
+    nested_mutable: function (s) {
+      var outer = s.seed;
+      function makeMiddle() {
+        var middle = outer + 1;
+        return function makeInner() {
+          var inner = middle + 1;
+          return function () {
+            return ++outer + ++middle + ++inner;
+          };
+        };
+      }
+      var makeInner = makeMiddle();
+      var first = makeInner();
+      var second = makeInner();
+      var t = 0;
+      for (var i = 0; i < s.n; i++) t += (i % 2 === 0 ? first : second)();
+      return t;
+    },
     escaping: function (s) {
       var a = [];
       function make(x) {
