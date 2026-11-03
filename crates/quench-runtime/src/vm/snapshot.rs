@@ -680,7 +680,7 @@ impl<H: Host> Vm<H> {
         }
         self.shape_constructors = Snap::unsnap(reader)?;
         self.shape_accessors = Snap::unsnap(reader)?;
-        let children = reader.u32s()?;
+        let children = reader.u32_iter()?;
         self.transitions = shape_transitions::ShapeTransitionIndex::with_capacity(children.len());
         for child in children {
             if !self.transitions.try_insert_child(&self.shapes, child) {

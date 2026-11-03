@@ -303,14 +303,20 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn u32s(&mut self) -> SnapshotResult<Vec<u32>> {
+        Ok(self.u32_iter()?.collect())
+    }
+
+    /// Admit the entire word span once, then decode directly from the snapshot.
+    /// Borrow the reader until consumption so later reads cannot release these pages.
+    /// Decoding requires no aligned loads.
+    pub(crate) fn u32_iter(&mut self) -> SnapshotResult<impl ExactSizeIterator<Item = u32> + '_> {
         let len = self.len()?;
-        let bytes = self.take(len.checked_mul(4).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
+        let bytes = self.take(len.checked_mul(size_of::<u32>()).ok_or_else(|| SnapshotError("snapshot overflow".into()))?)?;
         Ok(bytes
-            .as_chunks::<4>()
+            .as_chunks::<{ size_of::<u32>() }>()
             .0
             .iter()
-            .map(|word| u32::from_le_bytes(*word))
-            .collect())
+            .map(|word| u32::from_le_bytes(*word)))
     }
 
     fn remaining(&self) -> usize {
@@ -389,8 +395,35 @@ macro_rules! snap_struct {
 pub(crate) use snap_struct;
 
 #[cfg(test)]
-mod flag_tests {
+mod tests {
     use super::*;
+
+    #[test]
+    fn word_span_is_admitted_before_iteration() {
+        let words = [0, 1, 0x0102_0304, u32::MAX];
+        let mut writer = Writer::new();
+        writer.u8(1); // The word payload need not be aligned.
+        writer.u32s(&words);
+        writer.u32s(&[]);
+        let bytes = writer.finish();
+        let mut reader = Reader::new(&bytes, None).unwrap();
+        assert_eq!(reader.u8().unwrap(), 1);
+        let mut span = reader.u32_iter().unwrap();
+        assert_eq!(span.len(), words.len());
+        assert_eq!(span.next(), Some(words[0]));
+        assert_eq!(span.len(), words.len() - 1);
+        assert_eq!(span.collect::<Vec<_>>(), words[1..]);
+        assert_eq!(reader.u32_iter().unwrap().len(), 0);
+        reader.finish().unwrap();
+
+        for available in 0..size_of_val(&words) {
+            let mut writer = Writer::new();
+            writer.u32(words.len() as u32);
+            for _ in 0..available { writer.u8(0); }
+            let bytes = writer.finish();
+            assert!(Reader::new(&bytes, None).unwrap().u32_iter().is_err());
+        }
+    }
 
     #[test]
     fn batched_flags_match_scalar_encoding_and_reject_invalid_bytes() {
