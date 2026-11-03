@@ -21557,6 +21557,33 @@ fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
 }
 
 #[test]
+fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
+    // A bitwise operand only its tag types is its int where the tag says so, else its
+    // Number's ToInt32: doubles, NaN, infinities and values past 2^31 and 2^63.
+    let source = r#"(function () {
+      var MASK = 4, SHIFT = 3;
+      function held(o) { return ((o.state & MASK) != 0 ? 1 : 0) + ((o.state | 0) >> SHIFT) + (o.state ^ MASK); }
+      var vals = [5, 4, 0, 2.5, -7.75, NaN, Infinity, -Infinity, 2147483648.5, -2147483649, 1e19, 9007199254740993, -0];
+      var total = 0;
+      for (var k = 0; k < 4000; k++) total = (total * 3 + held({ state: vals[k % vals.length] })) % 1000003;
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-tagged-bitwise.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(-558229.0); 2]);
+}
+
+#[test]
 fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpreter() {
     // Operands only their tags type compare as int32 where both are ints, else as Numbers:
     // NaN, -0, the int32 bounds and doubles take the Number path.
