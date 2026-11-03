@@ -446,28 +446,24 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    /// The lane's store of `value` into a hole inside a record array's dense elements, as
-    /// [[Set]] makes it: where the array may gain the index (extensible, nothing indexed
-    /// on its own or held by its chain, `inherited_index_unclaimed`) and owns its elements, so
-    /// the store neither runs guest code nor allocates; anything else changes nothing.
-    pub(super) fn try_fill_record_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+    /// The lane's store of `value` at an index a record array does not hold, as [[Set]] adds
+    /// it: a hole inside its dense elements, or the index just past them, where the array may
+    /// gain the index (extensible, nothing indexed on its own or held by its chain,
+    /// `inherited_index_unclaimed`, a writable length) and owns its elements, so the store
+    /// runs no guest code; anything else changes nothing. Growing the elements charges the
+    /// heap, whose collection waits for a safepoint.
+    pub(super) fn try_add_record_element(&mut self, object: Value, key: Value, value: Value) -> bool {
         let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
-        let fills = self.heap.record_array(object).is_some_and(|array| {
-            !array.has_indexed_descriptors() && array.arguments_map().is_none()
-                && array.elements().owner_count() == 1
-                && array.elements().get(index).is_some_and(|element| element.is_deleted())
+        let adds = self.heap.record_array(object).is_some_and(|array| {
+            let elements = array.elements();
+            !array.has_indexed_descriptors() && array.arguments_map().is_none() && elements.owner_count() == 1
+                && (index == elements.len() || elements.get(index).is_some_and(|element| element.is_deleted()))
         }) && self.object_data(object).is_some_and(|data| data.is_extensible() && !data.is_frozen())
+            && self.property_attributes(object, PropertyKey::string(self.length_atom)).is_none_or(|attributes| attributes.writable)
             && self.inherited_index_unclaimed(object, index);
-        if !fills {
-            return false;
-        }
-        let Some(array) = crate::heap::Heap::record_array_store_mut_unlogged(&mut self.heap, object, value) else {
-            return false;
-        };
-        mutable_array_elements(array.elements_mut()).set(index, value);
-        true
+        adds && self.store_validated_array_element(object, index, value)
     }
 
     /// `try_replace_dense_element` of the array `array` finds for `object`; with `DETACH`, also

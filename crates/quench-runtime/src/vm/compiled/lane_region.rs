@@ -110,6 +110,8 @@ struct Lowering<'a, 'f> {
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
+    global_reads: &'a BTreeSet<usize>,
     /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
     direct: &'a BTreeMap<usize, *const DirectCallee>,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
@@ -612,12 +614,13 @@ pub(super) fn compile(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    global_reads: &BTreeSet<usize>,
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
 ) -> Result<LaneRegion, LaneDecline> {
     let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, direct, frame_captures, loop_entry, &*isa)
+    let (native, count) = lower(program, function_id, unit, helpers, fields, global_reads, direct, frame_captures, loop_entry, &*isa)
         .ok_or(LaneDecline::Unlowered)?;
     let clif = native_dump_directory().map(|_| native.to_string());
     let code = compile_native_function(native, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
@@ -632,6 +635,7 @@ fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    global_reads: &BTreeSet<usize>,
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
@@ -687,6 +691,7 @@ fn lower(
         unit,
         helpers,
         fields,
+        global_reads,
         direct,
         frame_captures,
         context,
@@ -1103,6 +1108,44 @@ impl Lowering<'_, '_> {
             Op::Call if (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval() => Some(self.call(state, pc, instruction)),
+            // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
+            // and an untyped one is taken for an int, tested once, which leaves where it is not.
+            Op::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
+                let source = instruction.register_b();
+                if !state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER) {
+                    let exit = self.guard_exit(state, pc as u32);
+                    self.int(state, source, exit);
+                }
+                self.copy(state, instruction.result_register(), source);
+                Some(true)
+            }
+            // Anything but `null` and `undefined` is coercible; those take the lane's TypeError.
+            Op::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers => {
+                let exit = self.guard_exit(state, pc as u32);
+                let bits = self.tagged(state, instruction.register_b());
+                let null = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+                let undefined = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+                let nullish = self.ins().bor(null, undefined);
+                let coercible = self.ins().icmp_imm_u(IntCC::Equal, nullish, 0);
+                emit_js_guard(&mut self.builder, coercible, exit);
+                Some(true)
+            }
+            Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains(&pc) => {
+                let exit = self.guard_exit(state, pc as u32);
+                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
+                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
+                let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.global_get, &[atom, site]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, hit, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+                // A call's receiver is `undefined` for a binding of the global scope.
+                if instruction.op() == Op::LoadNameCall {
+                    let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+                    self.define(state, instruction.register_b(), undefined,
+                        RegisterFact::definition(Type::immediate(Value::UNDEFINED), Representation::Tagged));
+                }
+                Some(true)
+            }
             Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
@@ -2276,7 +2319,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &fields, &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0, global_get: 0 }, &fields, &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -2299,7 +2342,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0, global_get: 0 }, &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
