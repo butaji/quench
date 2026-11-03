@@ -221,6 +221,10 @@ pub(crate) struct ValueArena {
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
+    /// The shapes every slot of which is `Tagged`, the lattice's top, so no write to their
+    /// objects can widen anything: a bit per shape, set once a construction's joins find it
+    /// so (`note_shape_values`), and cleared only with the shapes or tracking.
+    saturated: Vec<u64>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -237,6 +241,7 @@ impl Default for ValueArena {
             chain_owners: Vec::new(),
             owner_reps: vec![SlotRepresentation::None],
             tracking: false,
+            saturated: Vec::new(),
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -258,7 +263,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_reps: _, tracking: _, dictionaries, free_dictionaries, next_dictionary } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_reps: _, tracking: _, saturated: _, dictionaries, free_dictionaries, next_dictionary } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -333,6 +338,7 @@ impl ValueArena {
 
     pub(crate) fn reset_shapes(&mut self) {
         self.tracking = false;
+        self.saturated.clear();
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
         self.shape_chains.clear();
@@ -391,17 +397,41 @@ impl ValueArena {
         }
     }
 
-    /// `note_shape_value` of an object's initial `values`, slot by slot.
+    /// `note_shape_value` of an object's initial `values`, slot by slot; a shape these leave
+    /// with every slot `Tagged` is saturated from then on.
     pub(crate) fn note_shape_values(&mut self, shape: u32, values: &[Value]) {
-        if !self.tracking { return; }
-        for (slot, value) in values.iter().copied().enumerate() {
-            self.note_shape_value(shape, slot, value);
+        if !self.tracking || self.is_saturated(shape) { return; }
+        let length = self.shape_length(shape);
+        let mut saturated = values.len() == length && length > 0;
+        for (slot, value) in values.iter().copied().enumerate().take(length) {
+            let owner = self.slot_owner(shape, slot) as usize;
+            let mut held = self.owner_reps[owner];
+            if held != SlotRepresentation::Tagged && !value.is_deleted() {
+                let class = SlotRepresentation::of(value);
+                if class > held {
+                    self.owner_reps[owner] = class;
+                    held = class;
+                }
+            }
+            saturated &= held == SlotRepresentation::Tagged;
         }
+        if saturated {
+            let (word, bit) = (shape as usize / u64::BITS as usize, shape % u64::BITS);
+            if self.saturated.len() <= word { self.saturated.resize(word + 1, 0); }
+            self.saturated[word] |= 1 << bit;
+        }
+    }
+
+    /// Whether every slot of `shape` is `Tagged` (`ValueArena::saturated`).
+    #[inline(always)]
+    fn is_saturated(&self, shape: u32) -> bool {
+        self.saturated.get(shape as usize / u64::BITS as usize).is_some_and(|word| word & (1 << (shape % u64::BITS)) != 0)
     }
 
     /// Starts joining writes' classes from none: the caller joins what live objects hold.
     pub(crate) fn track(&mut self) {
         self.tracking = true;
+        self.saturated.clear();
         self.owner_reps.fill(SlotRepresentation::None);
     }
 
@@ -430,7 +460,7 @@ impl ValueArena {
     /// Joins `value`'s class into `slot` of `shape`'s representation; whether it widened.
     #[inline(always)]
     pub(crate) fn note_slot_value(&mut self, shape: u32, slot: usize, value: Value) -> bool {
-        if !self.tracking { return false; }
+        if !self.tracking || self.is_saturated(shape) { return false; }
         self.join_slot_value(shape, slot, value)
     }
 
