@@ -6457,8 +6457,8 @@ impl<'a, 'b> Lowering<'a, 'b> {
     }
 
     /// The exact `i32` sum or difference of `left` and `right`, computed on their sign
-    /// extensions: its 64 bits are the result's own sign extension, which the views it is
-    /// written to store (`Body::read`) and an element access keyed by it scales.
+    /// extensions: its 64 bits are the result's own sign extension, reusable by
+    /// an immediate element access without widening the stored arithmetic view.
     fn exact_int32(&mut self, operator: NumberArithmetic, left: ir::Value, right: ir::Value) -> ir::Value {
         let (left, right) = (self.sign_extended(left), self.sign_extended(right));
         let wide = match operator {

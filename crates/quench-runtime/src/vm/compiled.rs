@@ -4006,13 +4006,13 @@ fn view(ty: crate::WasmType) -> usize {
         .expect("compiled values are numeric scalars")
 }
 
-/// The machine type of a register's view as `ty`. An i32 view holds its value extended to 64
-/// bits as the body's reads use it (`Int32Extension`), so an access can use it as an address
-/// offset as it is: Cranelift elides the extension of the results of x64's 32-bit operations,
-/// but not across the block parameters a loop carries.
-fn view_ir(ty: crate::WasmType) -> ir::Type {
+/// The machine type of a register's view. Unsigned address offsets stay extended
+/// across loop parameters: Cranelift elides extension of x64 arithmetic results,
+/// but not loop parameters. Signed arithmetic stays i32 and widens at consumers,
+/// so loop-carried values do not require a sign extension on every definition.
+fn view_ir(ty: crate::WasmType, extension: Int32Extension) -> ir::Type {
     match ty {
-        crate::WasmType::I32 => types::I64,
+        crate::WasmType::I32 if extension == Int32Extension::Zero => types::I64,
         _ => scalar_ir(ty),
     }
 }
@@ -11081,19 +11081,18 @@ struct Body<'b> {
     core: RegionCore<'b>,
     /// Per register, its views, declared on first use.
     variables: Vec<Option<[Variable; VIEW_TYPES.len()]>>,
-    /// How each register's i32 view extends its value to the 64 bits it is stored in.
+    /// Whether i32 views retain an unsigned address offset or a signed scalar.
     int32_extension: Int32Extension,
     /// Each i32 read from a register's view, by the extended value it was read from.
     extended: SecondaryMap<ir::Value, PackedOption<ir::Value>>,
 }
 
-/// How a register's i32 view holds its value in 64 bits (`view_ir`): as the operations
-/// that read the view use it, so each takes the stored value as it is.
+/// The interpretation of a register's i32 view and its widening at consumers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Int32Extension {
     /// A Wasm i32 is an unsigned address offset.
     Zero,
-    /// A JS Number held as an i32 is signed, and an element access scales its sign extension.
+    /// A JS Number held as an i32 stays narrow; an element access sign-extends it.
     Sign,
 }
 
@@ -11120,7 +11119,8 @@ impl<'b> Body<'b> {
         if let Some(views) = self.variables[index] {
             return views;
         }
-        let views = VIEW_TYPES.map(|ty| self.builder.declare_var(view_ir(ty)));
+        let extension = self.int32_extension;
+        let views = VIEW_TYPES.map(|ty| self.builder.declare_var(view_ir(ty, extension)));
         self.variables[index] = Some(views);
         views
     }
@@ -11129,7 +11129,7 @@ impl<'b> Body<'b> {
     fn read(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
         let variable = self.views(register)[view(ty)];
         let stored = self.builder.use_var(variable);
-        if ty != crate::WasmType::I32 {
+        if ty != crate::WasmType::I32 || self.int32_extension == Int32Extension::Sign {
             return stored;
         }
         let value = self.builder.ins().ireduce(types::I32, stored);
@@ -11157,7 +11157,7 @@ impl<'b> Body<'b> {
     /// The stored form of `value` in the register's view as `ty` (`view_ir`).
     fn view_value(&mut self, ty: crate::WasmType, value: ir::Value) -> ir::Value {
         match ty {
-            crate::WasmType::I32 => self.extend(value, self.int32_extension),
+            crate::WasmType::I32 if self.int32_extension == Int32Extension::Zero => self.zero_extend(value),
             _ => value,
         }
     }
