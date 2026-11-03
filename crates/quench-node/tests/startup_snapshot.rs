@@ -146,3 +146,29 @@ fn off_never_schedules_a_snapshot() {
     std::thread::sleep(POLL * 10);
     assert_eq!(case.snapshot_files(), Vec::<PathBuf>::new());
 }
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn small_entries_restore_bootstrap_and_fall_back_after_corruption() {
+    for (name, source, expected) in [
+        ("small-quiet", "const x={value:42};if(Object.getOwnPropertyDescriptor(x,'value').value!==42)throw new Error('bad value');", ""),
+        ("small-console", "console.log('a/b');", EXPECTED),
+    ] {
+        let case = Case::new(name);
+        std::fs::write(case.root.join("app/main.cjs"), source).unwrap();
+        let assert_output = |output: Output| {
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(output.stdout, expected.as_bytes());
+            output
+        };
+        assert_output(case.run(None));
+        let snapshot = case.await_built();
+        assert!(snapshot.to_string_lossy().ends_with(".bootstrap.qss"));
+        let restored = assert_output(case.run(Some("trace")));
+        assert!(String::from_utf8_lossy(&restored.stderr).contains("startup snapshot restored (bootstrap)"));
+        assert_output(case.run(None));
+        std::fs::write(&snapshot, b"not a snapshot").unwrap();
+        let fallback = assert_output(case.run(Some("trace")));
+        assert!(String::from_utf8_lossy(&fallback.stderr).contains("not restored"));
+    }
+}
