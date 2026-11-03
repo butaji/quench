@@ -75,7 +75,7 @@ const SHARED_WRITABLE_ACCESSORS: &[&str] = &[
 ];
 
 pub(crate) fn build_duplex(c: &mut Context<'_>, readable: RootId, writable: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamDuplex"), "Duplex")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamDuplex"), "Duplex")?;
     let prototype = get(c, constructor, "prototype")?;
     let readable_prototype = get(c, readable, "prototype")?;
     c.set_prototype_rooted(prototype, readable_prototype)?;
@@ -138,7 +138,7 @@ fn initialize_transform(c: &mut Context<'_>, this: RootId, options: RootId) -> R
     if c.truthy_rooted(options)? {
         adopt_options(c, this, options, &[("transform", "_transform"), ("flush", "_flush")])?;
     }
-    let prefinish = c.host_function_named(crate::host::shared_vm::operation("streamTransformPrefinish"), "prefinish")?;
+    let prefinish = c.host_function_named(crate::host::shared_vm::operation!("streamTransformPrefinish"), "prefinish")?;
     on(c, this, "prefinish", prefinish)
 }
 
@@ -256,7 +256,7 @@ pub(crate) fn transform_read(c: &mut Context<'_>, this: RootId, _: &[RootId]) ->
 }
 
 pub(crate) fn build_transform(c: &mut Context<'_>, duplex: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamTransform"), "Transform")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamTransform"), "Transform")?;
     let prototype = get(c, constructor, "prototype")?;
     let duplex_prototype = get(c, duplex, "prototype")?;
     c.set_prototype_rooted(prototype, duplex_prototype)?;
@@ -294,7 +294,7 @@ pub(crate) fn pass_through_transform(c: &mut Context<'_>, _: RootId, args: &[Roo
 }
 
 pub(crate) fn build_pass_through(c: &mut Context<'_>, transform: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamPassThrough"), "PassThrough")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamPassThrough"), "PassThrough")?;
     let prototype = get(c, constructor, "prototype")?;
     let transform_prototype = get(c, transform, "prototype")?;
     c.set_prototype_rooted(prototype, transform_prototype)?;
@@ -350,7 +350,7 @@ pub(crate) fn side_final(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> 
 }
 
 pub(crate) fn build_duplex_side(c: &mut Context<'_>, duplex: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamDuplexSide"), "DuplexSide")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamDuplexSide"), "DuplexSide")?;
     let prototype = get(c, constructor, "prototype")?;
     let duplex_prototype = get(c, duplex, "prototype")?;
     c.set_prototype_rooted(prototype, duplex_prototype)?;

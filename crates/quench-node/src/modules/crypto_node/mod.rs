@@ -706,7 +706,7 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
         }
         put(c, module, name, constructor)?;
     }
-    let secure_heap_used = c.host_function_named(crate::host::shared_vm::operation("cryptoSecureHeapUsed"), "secureHeapUsed")?;
+    let secure_heap_used = c.host_function_named(crate::host::shared_vm::operation!("cryptoSecureHeapUsed"), "secureHeapUsed")?;
     put(c, module, "secureHeapUsed", secure_heap_used)?;
     let get_fips = get(c, module, "getFips")?;
     let set_fips = get(c, module, "setFips")?;
@@ -737,8 +737,8 @@ fn build(c: &mut Context<'_>, module: RootId) -> Result<(), RootedError> {
     let random_bytes = get(c, module, "randomBytes")?;
     for alias in RANDOM_BYTES_ALIASES {
         let name = c.string_rooted(alias);
-        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoAliasGet"), "get", random_bytes)?;
-        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation("cryptoAliasSet"), "set", name)?;
+        let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoAliasGet"), "get", random_bytes)?;
+        let setter = c.host_function_named_with_data(crate::host::shared_vm::operation!("cryptoAliasSet"), "set", name)?;
         let fields = DescriptorFields {
             get: Some(getter),
             set: Some(setter),
@@ -784,7 +784,7 @@ pub(crate) fn subtle_getter(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Out
 
 /// `crypto.getRandomValues`: a function that needs no `Crypto` receiver.
 pub(crate) fn get_random_values_getter(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Outcome {
-    c.host_function_named(crate::host::shared_vm::operation("cryptoGetRandomValuesUnbound"), "getRandomValues")
+    c.host_function_named(crate::host::shared_vm::operation!("cryptoGetRandomValuesUnbound"), "getRandomValues")
 }
 
 /// `crypto.secureHeapUsed()`: no secure heap is configured.
@@ -829,11 +829,11 @@ pub(crate) fn set_engine(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Out
 /// Installs `globalThis.crypto` and the lazy WebCrypto class globals.
 pub(crate) fn install_global(c: &mut Context<'_>) -> Result<(), RootedError> {
     let global = c.global_root()?;
-    let exceptions = c.host_function(crate::host::shared_vm::operation("webDomExceptionInitialize"))?;
+    let exceptions = c.host_function(crate::host::shared_vm::operation!("webDomExceptionInitialize"))?;
     c.define_lazy_data_properties_rooted(global, &["DOMException"], false, exceptions)?;
-    let initialize = c.host_function(crate::host::shared_vm::operation("cryptoWebClassGlobals"))?;
+    let initialize = c.host_function(crate::host::shared_vm::operation!("cryptoWebClassGlobals"))?;
     c.define_lazy_data_properties_rooted(global, &["Crypto", "SubtleCrypto", "CryptoKey"], false, initialize)?;
-    let getter = c.host_function_named(crate::host::shared_vm::operation("get crypto"), "get crypto")?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("get crypto"), "get crypto")?;
     let key = c.string_rooted("crypto");
     let fields = DescriptorFields {
         get: Some(getter),

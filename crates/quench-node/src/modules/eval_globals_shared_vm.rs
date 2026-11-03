@@ -54,7 +54,7 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
         put(c, binding, "key", key)?;
         put(c, binding, "delete", delete)?;
         let setter = c.host_function_with_data(
-            crate::host::shared_vm::operation("nodeEvalBuiltinSet"),
+            crate::host::shared_vm::operation!("nodeEvalBuiltinSet"),
             binding,
         )?;
         named(c, setter, "setReal")?;
@@ -63,7 +63,7 @@ pub(crate) fn install(c: &mut Context<'_>) -> Result<(), RootedError> {
         put(c, data, "binding", binding)?;
         put(c, data, "module", dummy)?;
         let getter = c.host_function_with_data(
-            crate::host::shared_vm::operation("nodeEvalBuiltinGet"),
+            crate::host::shared_vm::operation!("nodeEvalBuiltinGet"),
             data,
         )?;
         named(c, getter, "get")?;
@@ -81,7 +81,7 @@ pub(crate) fn load(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
     let require = get(c, module, "require")?;
     let value = c.call_rooted(require, module, &[key])?;
     let getter = c.host_function_with_data(
-        crate::host::shared_vm::operation("nodeEvalBuiltinCachedGet"),
+        crate::host::shared_vm::operation!("nodeEvalBuiltinCachedGet"),
         value,
     )?;
     named(c, getter, "get")?;
@@ -166,7 +166,7 @@ pub(crate) fn print(c: &mut Context<'_>, source: &str, name: &str) -> Result<(),
         get(c, console, "log")
     })?;
     let data = c.array_rooted(&[log, result])?;
-    let listener = c.host_function_with_data(crate::host::shared_vm::operation("nodePrintEvalResult"), data)?;
+    let listener = c.host_function_with_data(crate::host::shared_vm::operation!("nodePrintEvalResult"), data)?;
     let process = c
         .host_mut()
         .shared_state()

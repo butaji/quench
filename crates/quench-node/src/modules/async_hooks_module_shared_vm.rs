@@ -87,7 +87,7 @@ pub(crate) fn build(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     put(c, module, "AsyncResource", resource)?;
     put(c, api, "resourceClass", resource)?;
     let registry = get(c, global, "FinalizationRegistry")?;
-    let collected = c.host_function(crate::host::shared_vm::operation("asyncResourceCollected"))?;
+    let collected = c.host_function(crate::host::shared_vm::operation!("asyncResourceCollected"))?;
     let finalizer = c.construct_rooted(registry, registry, &[collected])?;
     put(c, api, "resourceFinalizer", finalizer)?;
     Ok(module)
@@ -115,7 +115,7 @@ pub(crate) fn storage_bind(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
 
 /// `AsyncLocalStorage.snapshot()`: `(fn, ...args) => fn(...args)` in the current context.
 pub(crate) fn storage_snapshot(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
-    let runner = c.host_function_named(crate::host::shared_vm::operation("asyncLocalStorageSnapshotRun"), "")?;
+    let runner = c.host_function_named(crate::host::shared_vm::operation!("asyncLocalStorageSnapshotRun"), "")?;
     let kind = c.string_rooted(SNAPSHOT_TYPE);
     static_bind(c, runner, Some(kind))
 }
@@ -189,7 +189,7 @@ pub(crate) fn resource_bind(c: &mut Context<'_>, receiver: RootId, args: &[RootI
     }
     let this = argument(c, args, 1);
     let binding = c.array_rooted(&[receiver, function, this])?;
-    let bound = c.host_function_named_with_data(crate::host::shared_vm::operation("asyncResourceBound"), "bound", binding)?;
+    let bound = c.host_function_named_with_data(crate::host::shared_vm::operation!("asyncResourceBound"), "bound", binding)?;
     let length = get(c, function, "length")?;
     c.define_named_data_property_rooted(bound, "length", length, false, false, true)?;
     c.define_named_data_property_rooted(bound, "asyncResource", receiver, true, true, true)?;

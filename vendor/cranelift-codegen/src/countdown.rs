@@ -153,7 +153,6 @@ impl Plan {
                     if next.is_some_and(|old| old != value) { return None; }
                     next = Some(value);
                 } else {
-                    integer(f, value)?;
                     if start.is_some_and(|old| !same(f, old, value)) { return None; }
                     start = Some(value);
                 }
@@ -177,8 +176,9 @@ impl Plan {
             }
         })?;
         if f.dfg.value_type(bound) != ty { return None; }
-        if integer(f, bound).is_none() {
-            let block = match f.dfg.value_def(bound) {
+        for invariant in [start, bound] {
+            if integer(f, invariant).is_some() { continue; }
+            let block = match f.dfg.value_def(invariant) {
                 ValueDef::Param(block, _) => block,
                 ValueDef::Result(inst, _) => f.layout.inst_block(inst)?,
                 _ => return None,
@@ -332,9 +332,9 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Shape { Guarded, Unchecked, Reconverged, EntrySelf, Bypassed, StepTwo, NonStrict, HotUse, StaticBound }
 
-    fn candidate(shape: Shape) -> bool {
+    fn candidate(shape: Shape, dynamic_start: bool) -> bool {
         let mut signature = Signature::new(crate::isa::CallConv::SystemV);
-        signature.params.extend([AbiParam::new(types::I32), AbiParam::new(types::I64)]);
+        signature.params.extend([AbiParam::new(types::I32), AbiParam::new(types::I64), AbiParam::new(types::I32)]);
         signature.returns.push(AbiParam::new(types::I32));
         let mut f = Function::with_name_signature(UserFuncName::testcase("countdown_edges"), signature);
         let entry = f.dfg.make_block();
@@ -346,10 +346,11 @@ mod tests {
         let exit = f.dfg.make_block();
         let bound = f.dfg.append_block_param(entry, types::I32);
         let pointer = f.dfg.append_block_param(entry, types::I64);
+        let start = f.dfg.append_block_param(entry, types::I32);
         let counter = f.dfg.append_block_param(header, types::I32);
         let mut cursor = FuncCursor::new(&mut f);
         cursor.insert_block(entry);
-        let start = cursor.ins().iconst(types::I32, 0);
+        let start = if dynamic_start { start } else { cursor.ins().iconst(types::I32, 0) };
         let bound = if matches!(shape, Shape::StaticBound) { cursor.ins().iconst(types::I32, 17) } else { bound };
         if matches!(shape, Shape::Unchecked | Shape::StaticBound) {
             cursor.ins().jump(preheader, &[]);
@@ -387,9 +388,11 @@ mod tests {
 
     #[test]
     fn entry_and_every_backedge_need_strict_unit_stride_proofs() {
-        assert!(candidate(Shape::Guarded));
-        assert!(candidate(Shape::StaticBound));
-        for shape in [Shape::Unchecked, Shape::Reconverged, Shape::EntrySelf, Shape::Bypassed,
-            Shape::StepTwo, Shape::NonStrict, Shape::HotUse] { assert!(!candidate(shape)); }
+        for dynamic in [false, true] {
+            assert!(candidate(Shape::Guarded, dynamic));
+            assert_eq!(candidate(Shape::StaticBound, dynamic), !dynamic);
+            for shape in [Shape::Unchecked, Shape::Reconverged, Shape::EntrySelf, Shape::Bypassed,
+                Shape::StepTwo, Shape::NonStrict, Shape::HotUse] { assert!(!candidate(shape, dynamic)); }
+        }
     }
 }

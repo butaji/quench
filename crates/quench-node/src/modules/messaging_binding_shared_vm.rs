@@ -32,7 +32,7 @@ fn build(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         context.define_data_property_rooted(binding, key, function, true, true, true)?;
     }
     let setter = context.host_function_with_data(
-        crate::host::shared_vm::operation("messagingSetDeserializer"),
+        crate::host::shared_vm::operation!("messagingSetDeserializer"),
         binding,
     )?;
     let key = context.string_rooted("setDeserializerCreateObjectFunction");

@@ -436,7 +436,7 @@ pub(crate) fn complete_runtime_context(runtime: &mut Runtime<NodeHost>, id: u64)
         return;
     }
     let callback = runtime
-        .host_function(crate::host::shared_vm::operation("asyncDestroyDispatch"))
+        .host_function(crate::host::shared_vm::operation!("asyncDestroyDispatch"))
         .expect("registered async destruction callback");
     let receiver = runtime.root(quench_runtime::Value::UNDEFINED);
     let id = runtime.root(quench_runtime::Value::number(id as f64));
@@ -567,7 +567,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         return Ok(module);
     }
     let module = super::async_hooks_module_shared_vm::build(context)?;
-    let queue_destroy = context.host_function(crate::host::shared_vm::operation(
+    let queue_destroy = context.host_function(crate::host::shared_vm::operation!(
         "asyncQueueDestroyAsyncId",
     ))?;
     let queue_destroy_key = context.string_rooted("\0quench:async_hooks:queueDestroyAsyncId");
@@ -579,7 +579,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         false,
         false,
     )?;
-    let set_promise_hooks = context.host_function(crate::host::shared_vm::operation("asyncSetPromiseHooks"))?;
+    let set_promise_hooks = context.host_function(crate::host::shared_vm::operation!("asyncSetPromiseHooks"))?;
     let set_promise_hooks_key = context.string_rooted("\0quench:async_hooks:setPromiseHooks");
     context.define_data_property_rooted(module, set_promise_hooks_key, set_promise_hooks, false, false, false)?;
     let retained = context.retain(module)?;
@@ -892,7 +892,7 @@ fn queue_destroy(context: &mut NativeContext<'_, NodeHost>, id: u64) -> Result<(
     }
     let data = context.number(id as f64);
     let callback =
-        context.host_function(crate::host::shared_vm::operation("asyncDestroyDispatch"))?;
+        context.host_function(crate::host::shared_vm::operation!("asyncDestroyDispatch"))?;
     let callback = context.retain(callback)?;
     let undefined = context.undefined();
     let receiver = context.retain(undefined)?;

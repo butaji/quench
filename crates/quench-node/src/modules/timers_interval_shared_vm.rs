@@ -103,7 +103,7 @@ pub(crate) fn set_interval(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> R
     let symbol = get(c, global, "Symbol")?;
     let key = get(c, symbol, "asyncIterator")?;
     let identity =
-        c.host_function_named(crate::host::shared_vm::operation("timersIntervalIterator"), "[Symbol.asyncIterator]")?;
+        c.host_function_named(crate::host::shared_vm::operation!("timersIntervalIterator"), "[Symbol.asyncIterator]")?;
     c.define_data_property_rooted(iterator, key, identity, true, false, true)?;
     Ok(iterator)
 }
@@ -146,12 +146,12 @@ fn start(c: &mut Context<'_>, state: RootId) -> Result<Option<RootId>, RootedErr
     if !is_undefined(c, signal) && aborted(c, signal)? {
         return super::timers_shared_vm::abort_error(c, signal).map(Some);
     }
-    let tick = c.host_function_with_data(crate::host::shared_vm::operation("timersIntervalTick"), state)?;
+    let tick = c.host_function_with_data(crate::host::shared_vm::operation!("timersIntervalTick"), state)?;
     let delay = get(c, state, DELAY)?;
     let handle = super::timers_shared_vm::schedule_timer(c, &[tick, delay], true, referenced)?;
     put(c, state, HANDLE, handle)?;
     if !is_undefined(c, signal) {
-        let listener = c.host_function_with_data(crate::host::shared_vm::operation("timersIntervalAbort"), state)?;
+        let listener = c.host_function_with_data(crate::host::shared_vm::operation!("timersIntervalAbort"), state)?;
         put(c, state, LISTENER, listener)?;
         let add = get(c, signal, "addEventListener")?;
         let event = c.string_rooted(ABORT_EVENT);

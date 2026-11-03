@@ -9,7 +9,7 @@ use super::event_target_shared_vm::{argument, get, is_undefined, put};
 use super::hdr_histogram::{buffer_len, Histogram, FIGURES};
 use super::perf_hooks::{
     api, api_member, attach_slot, class, define_getter, define_inspect, define_methods, illegal_constructor, inspect_as,
-    invalid_this, operation, out_of_range, plain_object, slot, type_error_arg, validate_number, validate_object,
+    invalid_this, out_of_range, plain_object, slot, type_error_arg, validate_number, validate_object,
     Context, Method, Outcome,
 };
 use quench_runtime::{RootId, RootedError, ValueType};
@@ -71,8 +71,8 @@ pub(super) fn build(c: &mut Context<'_>) -> Result<(RootId, RootId), RootedError
     define_methods(c, eld_prototype, &ELD_METHODS, false)?;
     put(c, shared, api::ELD_PROTOTYPE, eld_prototype)?;
 
-    let create = c.host_function_named(operation("perfCreateHistogram"), "createHistogram")?;
-    let monitor = c.host_function_named(operation("perfMonitorEventLoopDelay"), "monitorEventLoopDelay")?;
+    let create = c.host_function_named(crate::host::shared_vm::operation!("perfCreateHistogram"), "createHistogram")?;
+    let monitor = c.host_function_named(crate::host::shared_vm::operation!("perfMonitorEventLoopDelay"), "monitorEventLoopDelay")?;
     for function in [create, monitor] {
         let zero = c.number(0.0);
         c.define_named_data_property_rooted(function, "length", zero, false, false, true)?;
@@ -400,7 +400,7 @@ pub(crate) fn eld_enable(c: &mut Context<'_>, receiver: RootId, _: &[RootId]) ->
     }
     let yes = c.boolean(true);
     put(c, record, "enabled", yes)?;
-    let tick = c.host_function_with_data(operation("perfEldTick"), record)?;
+    let tick = c.host_function_with_data(crate::host::shared_vm::operation!("perfEldTick"), record)?;
     let resolution = get(c, record, "resolution")?;
     let timer = super::timers_shared_vm::schedule_timer(c, &[tick, resolution], true, false)?;
     put(c, record, "timer", timer)?;

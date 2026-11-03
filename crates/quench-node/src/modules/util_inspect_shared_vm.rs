@@ -458,7 +458,7 @@ impl Options {
             Stylize::User(function) => function,
             Stylize::Plain | Stylize::Colors => {
                 let colors = c.boolean(self.colors);
-                c.host_function_named_with_data(crate::host::shared_vm::operation("utilInspectStylize"), "stylize", colors)?
+                c.host_function_named_with_data(crate::host::shared_vm::operation!("utilInspectStylize"), "stylize", colors)?
             }
         };
         c.assign_named_property_rooted(object, "stylize", stylize)?;

@@ -193,7 +193,7 @@ pub(super) fn write_text(c: &mut Context<'_>, console: RootId, stream: Stream, t
     }
     // Node guards the write with a no-op `error` listener while the stream has none, and
     // ignores what the write throws; removing the guard can still throw.
-    let noop = c.host_function_named(crate::host::shared_vm::operation("consoleNoop"), "noop")?;
+    let noop = c.host_function_named(crate::host::shared_vm::operation!("consoleNoop"), "noop")?;
     let error_event = c.string_rooted("error");
     let _ = guarded_write(c, target, text, noop, error_event);
     let remove = get(c, target, "removeListener")?;
@@ -231,7 +231,7 @@ fn method_function(c: &mut Context<'_>, name: &str, method: Method, console: Opt
     if let Some(console) = console {
         put(c, data, "console", console)?;
     }
-    c.host_function_named_with_data(crate::host::shared_vm::operation("consoleMethod"), name, data)
+    c.host_function_named_with_data(crate::host::shared_vm::operation!("consoleMethod"), name, data)
 }
 
 /// Every console method: the bound console's, else the receiver's.
@@ -590,7 +590,7 @@ pub(super) fn install_global_members(c: &mut Context<'_>, console: RootId, keys:
             "_stdout" => get(c, process, "stdout")?,
             "_stderr" => get(c, process, "stderr")?,
             "_stdoutErrorHandler" | "_stderrErrorHandler" => {
-                c.host_function_named(crate::host::shared_vm::operation("consoleNoop"), "")?
+                c.host_function_named(crate::host::shared_vm::operation!("consoleNoop"), "")?
             }
             "_ignoreErrors" => c.boolean(true),
             "_times" => {
@@ -600,8 +600,8 @@ pub(super) fn install_global_members(c: &mut Context<'_>, console: RootId, keys:
             }
             "Console" => class(c)?,
             "profile" | "profileEnd" | "timeStamp" => noop_named(c, key)?,
-            "context" => c.host_function_named(crate::host::shared_vm::operation("consoleContext"), key)?,
-            "createTask" => c.host_function_named(crate::host::shared_vm::operation("consoleCreateTask"), key)?,
+            "context" => c.host_function_named(crate::host::shared_vm::operation!("consoleContext"), key)?,
+            "createTask" => c.host_function_named(crate::host::shared_vm::operation!("consoleCreateTask"), key)?,
             name => {
                 let method = PROTOTYPE_KEYS
                     .iter()
@@ -624,7 +624,7 @@ pub(crate) fn noop(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootI
 }
 
 fn noop_named(c: &mut Context<'_>, name: &str) -> Result<RootId, RootedError> {
-    c.host_function_named(crate::host::shared_vm::operation("consoleNoop"), name)
+    c.host_function_named(crate::host::shared_vm::operation!("consoleNoop"), name)
 }
 
 /// The members of an inspector console context, which write only to an inspector session.
@@ -646,7 +646,7 @@ pub(crate) fn context(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<Ro
 /// `console.createTask(name)`: a task whose `run(fn)` calls `fn`.
 pub(crate) fn create_task(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let task = c.object_rooted()?;
-    let run = c.host_function_named(crate::host::shared_vm::operation("consoleTaskRun"), "run")?;
+    let run = c.host_function_named(crate::host::shared_vm::operation!("consoleTaskRun"), "run")?;
     put(c, task, "run", run)?;
     Ok(task)
 }
@@ -664,7 +664,7 @@ pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if let Some(class) = shared.borrow().builtin_cache.get(CLASS_KEY).copied() {
         return Ok(class);
     }
-    let class = c.host_constructor_named(crate::host::shared_vm::operation("consoleConstructor"), "Console")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("consoleConstructor"), "Console")?;
     let prototype = get(c, class, "prototype")?;
     for &(key, name, method, length) in &PROTOTYPE_KEYS {
         let function = method_function(c, name, method, None)?;
@@ -735,7 +735,7 @@ pub(crate) fn constructor(c: &mut Context<'_>, receiver: RootId, args: &[RootId]
     hidden(c, receiver, "_stdout", stdout)?;
     hidden(c, receiver, "_stderr", stderr)?;
     for name in ["_stdoutErrorHandler", "_stderrErrorHandler"] {
-        let handler = c.host_function_named(crate::host::shared_vm::operation("consoleNoop"), "")?;
+        let handler = c.host_function_named(crate::host::shared_vm::operation!("consoleNoop"), "")?;
         hidden(c, receiver, name, handler)?;
     }
     let ignore = c.boolean(ignore_errors);

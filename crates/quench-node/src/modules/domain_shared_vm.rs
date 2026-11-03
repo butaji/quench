@@ -211,7 +211,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
     let emitter = crate::host::shared_vm::commonjs::events_module(c)?;
     let emitter_prototype = get(c, emitter, "prototype")?;
-    let class = c.host_constructor_named(operation("domainConstruct"), "Domain")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("domainConstruct"), "Domain")?;
     c.set_prototype_rooted(class, emitter)?;
     let prototype = get(c, class, "prototype")?;
     c.set_prototype_rooted(prototype, emitter_prototype)?;
@@ -223,7 +223,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     }
     put(c, state, STATE_CLASS, class)?;
     put(c, exports, "Domain", class)?;
-    let create = c.host_function_named(operation("domainCreate"), "createDomain")?;
+    let create = c.host_function_named(crate::host::shared_vm::operation!("domainCreate"), "createDomain")?;
     put(c, exports, "createDomain", create)?;
     put(c, exports, "create", create)?;
     let null = c.null();
@@ -262,7 +262,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     put(c, state, STATE_REQUIRE_STACK, require_stack)?;
     let set_capture = get(c, process, "setUncaughtExceptionCaptureCallback")?;
     put(c, state, STATE_SET_CAPTURE, set_capture)?;
-    let refuse = c.host_function_named(operation("domainRefuseCapture"), "")?;
+    let refuse = c.host_function_named(crate::host::shared_vm::operation!("domainRefuseCapture"), "")?;
     assign(c, process, "setUncaughtExceptionCaptureCallback", refuse)?;
     let no = c.boolean(false);
     put(c, state, STATE_DEPRECATED, no)?;
@@ -271,13 +271,13 @@ pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     assign(c, emitter, "usingDomains", yes)?;
     let init = get(c, emitter, "init")?;
     put(c, state, STATE_INIT, init)?;
-    let init = c.host_function_named(operation("domainEmitterInit"), "")?;
+    let init = c.host_function_named(crate::host::shared_vm::operation!("domainEmitterInit"), "")?;
     assign(c, emitter, "init", init)?;
     let emit = get(c, emitter_prototype, "emit")?;
     put(c, state, STATE_EMIT, emit)?;
-    let emit = c.host_function_named(operation("domainEmitterEmit"), "emit")?;
+    let emit = c.host_function_named(crate::host::shared_vm::operation!("domainEmitterEmit"), "emit")?;
     assign(c, emitter_prototype, "emit", emit)?;
-    let trampoline = c.host_function_named(operation("domainTopLevelCallback"), "topLevelDomainCallback")?;
+    let trampoline = c.host_function_named(crate::host::shared_vm::operation!("domainTopLevelCallback"), "topLevelDomainCallback")?;
     super::domain_trampoline::register(c, trampoline)?;
     Ok(exports)
 }

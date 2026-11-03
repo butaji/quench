@@ -132,7 +132,7 @@ pub(crate) fn settle_later(c: &mut Context<'_>, promise: RootId, outcome: Result
 }
 
 fn settle_guarded(c: &mut Context<'_>, promise: RootId, outcome: Result<RootId, RootId>, signal: Option<RootId>) -> Result<(), RootedError> {
-    let settle = c.host_function_with_data(crate::host::shared_vm::operation("fsSettle"), promise)?;
+    let settle = c.host_function_with_data(crate::host::shared_vm::operation!("fsSettle"), promise)?;
     let settle = guarded(c, settle, signal, true)?;
     let (rejected, value) = match outcome {
         Ok(value) => (false, value),

@@ -79,7 +79,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let weak_map = get(context, global, "WeakMap")?;
     let parents = context.construct_rooted(weak_map, weak_map, &[])?;
     let module = context.host_constructor_with_data(
-        crate::host::shared_vm::operation("moduleConstruct"),
+        crate::host::shared_vm::operation!("moduleConstruct"),
         parents,
     )?;
     name_function(context, module, "Module")?;
@@ -89,17 +89,17 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "_extensions", module_extensions)?;
     let prototype = get(context, module, "prototype")?;
     let constructor = context.host_function_with_data(
-        crate::host::shared_vm::operation("moduleConstructorGet"),
+        crate::host::shared_vm::operation!("moduleConstructorGet"),
         module,
     )?;
     name_function(context, constructor, "get")?;
     accessor(context, prototype, "constructor", constructor, None)?;
     let parent_get = context.host_function_with_data(
-        crate::host::shared_vm::operation("moduleParentGet"),
+        crate::host::shared_vm::operation!("moduleParentGet"),
         parents,
     )?;
     let parent_set = context.host_function_with_data(
-        crate::host::shared_vm::operation("moduleParentSet"),
+        crate::host::shared_vm::operation!("moduleParentSet"),
         parents,
     )?;
     let native_parent_set = parent_set;
@@ -111,7 +111,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         set(context, data, "target", target)?;
         set(context, data, "warned", warned)?;
         deprecated.push(context.host_function_named_with_data(
-            crate::host::shared_vm::operation("moduleParentDeprecated"),
+            crate::host::shared_vm::operation!("moduleParentDeprecated"),
             "deprecated",
             data,
         )?);
@@ -142,12 +142,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .collect::<Vec<_>>();
     let names = context.array_rooted(&names)?;
     set(context, module, "builtinModules", names)?;
-    let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
+    let is_builtin = context.host_function(crate::host::shared_vm::operation!("isBuiltin"))?;
     set(context, module, "isBuiltin", is_builtin)?;
     let create_require =
-        context.host_function_named(crate::host::shared_vm::operation("createRequire"), "createRequire")?;
-    let paths = context.host_function_named(crate::host::shared_vm::operation("moduleNodePaths"), "")?;
-    let stat = context.host_function(crate::host::shared_vm::operation(
+        context.host_function_named(crate::host::shared_vm::operation!("createRequire"), "createRequire")?;
+    let paths = context.host_function_named(crate::host::shared_vm::operation!("moduleNodePaths"), "")?;
+    let stat = context.host_function(crate::host::shared_vm::operation!(
         "fsBindingInternalModuleStat",
     ))?;
     set(context, module, "createRequire", create_require)?;
@@ -158,7 +158,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .collect::<Vec<_>>();
     let global_paths = context.array_rooted(&global_paths)?;
     set(context, module, "globalPaths", global_paths)?;
-    let run_main = context.host_function(crate::host::shared_vm::operation("moduleRunMain"))?;
+    let run_main = context.host_function(crate::host::shared_vm::operation!("moduleRunMain"))?;
     set(context, module, "runMain", run_main)?;
     set(context, module, "_stat", stat)?;
     let constants = context.object_rooted()?;
@@ -186,10 +186,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         set(context, module, name, function)?;
     }
     let resolve_filename =
-        context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
+        context.host_function(crate::host::shared_vm::operation!("_resolveFilename"))?;
     set(context, module, "_resolveFilename", resolve_filename)?;
     let find_package_json =
-        context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
+        context.host_function(crate::host::shared_vm::operation!("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
     super::source_map_shared_vm::install(context, module, true)?;
     Ok(module)
@@ -221,7 +221,7 @@ pub(crate) fn extensions(context: &mut NativeContext<'_, NodeHost>) -> Result<Ro
     }
     let extensions = context.null_object_rooted()?;
     for extension in DEFAULT_EXTENSIONS {
-        let handler = context.host_function_named(crate::host::shared_vm::operation("moduleExtensionDefault"), "")?;
+        let handler = context.host_function_named(crate::host::shared_vm::operation!("moduleExtensionDefault"), "")?;
         set(context, extensions, extension, handler)?;
         cache(context, format!("{EXTENSIONS_KEY}{extension}"), handler)?;
     }

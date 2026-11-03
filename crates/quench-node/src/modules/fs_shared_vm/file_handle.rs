@@ -61,7 +61,7 @@ pub(crate) fn define_prototype(c: &mut Context<'_>, prototype: RootId) -> Result
                 classes::method(c, prototype, key, operation, name, None)?;
             }
             Member::Fd => {
-                let getter = c.host_function_named(crate::host::shared_vm::operation("fsHandleFd"), "get fd")?;
+                let getter = c.host_function_named(crate::host::shared_vm::operation!("fsHandleFd"), "get fd")?;
                 classes::accessor(c, prototype, "fd", getter, None, false)?;
             }
         }
@@ -76,7 +76,7 @@ pub(crate) fn create(c: &mut Context<'_>, fd: i32) -> Outcome {
     let emitter = get(c, global, "__nodeEventEmitter")?;
     c.call_rooted(emitter, handle, &[])?;
     // `close = () => ...`: a class field, bound to its handle.
-    let close = c.host_function_named_with_data(crate::host::shared_vm::operation("fsHandleClose"), "close", handle)?;
+    let close = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsHandleClose"), "close", handle)?;
     put(c, handle, "close", close)?;
     let key = classes::root(c, Root::HandleFd)?;
     let fd = c.number(f64::from(fd));

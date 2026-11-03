@@ -184,7 +184,7 @@ pub(super) fn create(
     let phase = context.string_rooted("watching");
     set(context, data, "phase", phase)?;
     let callback = context.host_function_with_data(
-        crate::host::shared_vm::operation("fsPromiseWatchEvent"),
+        crate::host::shared_vm::operation!("fsPromiseWatchEvent"),
         data,
     )?;
     let persistent = get(context, saved, "persistent")?;
@@ -193,7 +193,7 @@ pub(super) fn create(
     set(context, data, "handle", handle)?;
     if !nullish(context, signal) {
         let cancel = context.host_function_with_data(
-            crate::host::shared_vm::operation("fsPromiseWatchCancel"),
+            crate::host::shared_vm::operation!("fsPromiseWatchCancel"),
             data,
         )?;
         set(context, data, "cancel", cancel)?;
@@ -312,7 +312,7 @@ pub(crate) fn next(
 ) -> Result<RootId, RootedError> {
     let data = args.first().copied().unwrap_or_else(|| context.undefined());
     let executor = context.host_function_with_data(
-        crate::host::shared_vm::operation("fsPromiseWatchExecutor"),
+        crate::host::shared_vm::operation!("fsPromiseWatchExecutor"),
         data,
     )?;
     let api = api(context)?;

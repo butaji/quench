@@ -451,7 +451,7 @@ pub(crate) fn read(c: &mut Context<'_>, this: RootId, _: &[RootId]) -> Outcome {
     // SAFETY: poll reads and writes the one pollfd it is given.
     let count = unsafe { libc::poll(&mut ready, 1, 0) };
     if count <= 0 {
-        let retry = c.host_function_named_with_data(crate::host::shared_vm::operation("ttyReadRetry"), "", this)?;
+        let retry = c.host_function_named_with_data(crate::host::shared_vm::operation!("ttyReadRetry"), "", this)?;
         let global = c.global_root()?;
         let delay = c.number(READ_POLL_INTERVAL_MS);
         call_method(c, global, "setTimeout", &[retry, delay])?;
@@ -590,7 +590,7 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     let read_prototype = get(c, read_class, "prototype")?;
     method(c, read_prototype, "setRawMode", "ttySetRawMode", None)?;
     let key = c.string_rooted("_read");
-    let reader = c.host_function_named(crate::host::shared_vm::operation("ttyRead"), "_read")?;
+    let reader = c.host_function_named(crate::host::shared_vm::operation!("ttyRead"), "_read")?;
     c.define_data_property_rooted(read_prototype, key, reader, true, false, true)?;
     let write_prototype = get(c, write_class, "prototype")?;
     let yes = c.boolean(true);
@@ -605,10 +605,10 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     }
     method(c, write_prototype, "getWindowSize", "ttyGetWindowSize", None)?;
     let key = c.string_rooted("_write");
-    let writer = c.host_function_named(crate::host::shared_vm::operation("ttyWrite"), "_write")?;
+    let writer = c.host_function_named(crate::host::shared_vm::operation!("ttyWrite"), "_write")?;
     c.define_data_property_rooted(write_prototype, key, writer, true, false, true)?;
     let module = c.object_rooted()?;
-    let isatty = c.host_function_named(crate::host::shared_vm::operation("ttyIsatty"), "isatty")?;
+    let isatty = c.host_function_named(crate::host::shared_vm::operation!("ttyIsatty"), "isatty")?;
     for (name, value) in [("isatty", isatty), ("ReadStream", read_class), ("WriteStream", write_class)] {
         let key = c.string_rooted(name);
         c.define_data_property_rooted(module, key, value, true, true, true)?;

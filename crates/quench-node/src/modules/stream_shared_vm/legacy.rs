@@ -15,7 +15,7 @@ pub(crate) fn constructor(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
 }
 
 pub(crate) fn build(c: &mut Context<'_>, emitter: RootId) -> Outcome {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("streamLegacy"), "Stream")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("streamLegacy"), "Stream")?;
     let prototype = get(c, constructor, "prototype")?;
     let emitter_prototype = get(c, emitter, "prototype")?;
     c.set_prototype_rooted(prototype, emitter_prototype)?;

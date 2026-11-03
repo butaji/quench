@@ -32,7 +32,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     crate::host::shared_vm::commonjs::cached_native_binding(c, "\0binding:tcp_wrap", |c| {
         let b = c.object_rooted()?;
         let tcp = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeTcpConstruct"),
+            crate::host::shared_vm::operation!("nativeTcpConstruct"),
             "TCP",
         )?;
         crate::host::shared_vm::commonjs::cached_native_binding(
@@ -42,12 +42,12 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         )?;
         let tp = get(c, tcp, "prototype")?;
         let libuv = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeAsyncWrapConstruct"),
+            crate::host::shared_vm::operation!("nativeAsyncWrapConstruct"),
             "LibuvStreamWrap",
         )?;
         let lp = get(c, libuv, "prototype")?;
         let handle = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeAsyncWrapConstruct"),
+            crate::host::shared_vm::operation!("nativeAsyncWrapConstruct"),
             "HandleWrap",
         )?;
         let hp = get(c, handle, "prototype")?;
@@ -77,14 +77,14 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
             let f = c.host_function_named(crate::host::shared_vm::operation(op), n)?;
             put(c, p, n, f)?;
         }
-        let getter = c.host_function(crate::host::shared_vm::operation("nativeTcpFd"))?;
+        let getter = c.host_function(crate::host::shared_vm::operation!("nativeTcpFd"))?;
         let descriptor = c.null_object_rooted()?;
         put(c, descriptor, "get", getter)?;
         let yes = c.boolean(true);
         put(c, descriptor, "enumerable", yes)?;
         let key = c.string_rooted("fd");
         c.define_property_descriptor_rooted(tp, key, descriptor)?;
-        let getter = c.host_function(crate::host::shared_vm::operation("nativeTcpQueue"))?;
+        let getter = c.host_function(crate::host::shared_vm::operation!("nativeTcpQueue"))?;
         let d = c.null_object_rooted()?;
         put(c, d, "get", getter)?;
         let yes = c.boolean(true);
@@ -93,7 +93,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         c.define_property_descriptor_rooted(lp, k, d)?;
         put(c, b, "TCP", tcp)?;
         let connect = c.host_constructor_named(
-            crate::host::shared_vm::operation("nativeStreamConnectWrap"),
+            crate::host::shared_vm::operation!("nativeStreamConnectWrap"),
             "TCPConnectWrap",
         )?;
         let connect_prototype = get(c, connect, "prototype")?;

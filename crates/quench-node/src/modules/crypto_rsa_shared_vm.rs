@@ -84,7 +84,7 @@ pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), Rooted
     ] {
         let data = c.string_rooted(name);
         let function =
-            c.host_function_with_data(crate::host::shared_vm::operation("cryptoRsaNative"), data)?;
+            c.host_function_with_data(crate::host::shared_vm::operation!("cryptoRsaNative"), data)?;
         let property = c.string_rooted("name");
         c.define_data_property_rooted(function, property, data, false, false, true)?;
         let property = c.string_rooted(name);

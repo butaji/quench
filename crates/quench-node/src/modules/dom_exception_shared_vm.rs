@@ -76,7 +76,7 @@ pub(crate) fn class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     if c.is_callable_rooted(cached)? {
         return Ok(cached);
     }
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("domExceptionConstructor"), "DOMException")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("domExceptionConstructor"), "DOMException")?;
     let prototype = get(c, constructor, "prototype")?;
     let global = c.global_root()?;
     let error = get(c, global, "Error")?;

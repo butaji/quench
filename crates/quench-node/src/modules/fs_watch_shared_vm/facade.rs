@@ -38,7 +38,7 @@ fn bound(c: &mut Context<'_>, native: RootId, values: &[RootId], name: &str) -> 
     let mut captured = vec![native];
     captured.extend_from_slice(values);
     let environment = c.array_rooted(&captured)?;
-    c.host_function_named_with_data(operation("fsWatchBoundCall"), name, environment)
+    c.host_function_named_with_data(crate::host::shared_vm::operation!("fsWatchBoundCall"), name, environment)
 }
 
 /// `(...values) => (...args) => native(...values, ...args)`: a callback factory.
@@ -57,7 +57,7 @@ pub(crate) fn make_iterator(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> 
         put(c, iterator, name, function)?;
     }
     let key = crate::modules::fs_shared_vm::classes::well_known_symbol(c, "asyncIterator", "Symbol.asyncIterator")?;
-    let identity = c.host_function_named(operation("fsDirIteratorSelf"), "[Symbol.asyncIterator]")?;
+    let identity = c.host_function_named(crate::host::shared_vm::operation!("fsDirIteratorSelf"), "[Symbol.asyncIterator]")?;
     c.set_property_rooted(iterator, key, identity, iterator)?;
     Ok(iterator)
 }
@@ -68,7 +68,7 @@ fn receiver_method(c: &mut Context<'_>, prototype: RootId, key: &str, native: &s
     let mut captured = vec![native];
     captured.extend_from_slice(bound);
     let environment = c.array_rooted(&captured)?;
-    let method = c.host_function_named_with_data(operation("fsWatchReceiverCall"), key, environment)?;
+    let method = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsWatchReceiverCall"), key, environment)?;
     put(c, prototype, key, method)
 }
 
@@ -123,18 +123,18 @@ pub(crate) fn watch_api(c: &mut Context<'_>) -> Outcome {
     receiver_method(c, prototype, "ref", "fsWatchRef", &[yes])?;
     receiver_method(c, prototype, "unref", "fsWatchRef", &[no])?;
     put(c, api, "FSWatcher", watcher)?;
-    let event = c.host_constructor_named(operation("fsEventConstruct"), "FSEvent")?;
+    let event = c.host_constructor_named(crate::host::shared_vm::operation!("fsEventConstruct"), "FSEvent")?;
     let prototype = get(c, event, "prototype")?;
     receiver_method(c, prototype, "close", "fsWatchHandleClose", &[])?;
     receiver_method(c, prototype, "ref", "fsWatchHandleRef", &[yes])?;
     receiver_method(c, prototype, "unref", "fsWatchHandleRef", &[no])?;
     receiver_method(c, prototype, "hasRef", "fsWatchHandleHasRef", &[])?;
-    let native = c.host_function(operation("fsWatchHandleInitialized"))?;
+    let native = c.host_function(crate::host::shared_vm::operation!("fsWatchHandleInitialized"))?;
     let environment = c.array_rooted(&[native])?;
-    let getter = c.host_function_named_with_data(operation("fsWatchReceiverCall"), "get initialized", environment)?;
+    let getter = c.host_function_named_with_data(crate::host::shared_vm::operation!("fsWatchReceiverCall"), "get initialized", environment)?;
     crate::modules::fs_shared_vm::classes::accessor(c, prototype, "initialized", getter, None, false)?;
     put(c, api, "FSEvent", event)?;
-    let watch = c.host_function_named(operation("fsWatch"), "watch")?;
+    let watch = c.host_function_named(crate::host::shared_vm::operation!("fsWatch"), "watch")?;
     put(c, api, "watch", watch)?;
     let recursive = recursive_api(c)?;
     put(c, api, "recursive", recursive)?;
@@ -204,18 +204,18 @@ fn recursive_api(c: &mut Context<'_>) -> Outcome {
         let mut captured = vec![native, with_receiver];
         captured.extend(bound);
         let environment = c.array_rooted(&captured)?;
-        let method = c.host_function_with_data(operation("fsRecursiveMethod"), environment)?;
+        let method = c.host_function_with_data(crate::host::shared_vm::operation!("fsRecursiveMethod"), environment)?;
         c.set_property_rooted(prototype, key, method, prototype)?;
     }
     put(c, api, "FSWatcher", watcher)?;
     put(c, api, "startSymbol", start)?;
-    let notify = c.host_function(operation("fsRecursiveNotify"))?;
-    let make_callback = c.host_function_with_data(operation("fsWatchBind"), notify)?;
+    let notify = c.host_function(crate::host::shared_vm::operation!("fsRecursiveNotify"))?;
+    let make_callback = c.host_function_with_data(crate::host::shared_vm::operation!("fsWatchBind"), notify)?;
     put(c, api, "makeCallback", make_callback)?;
-    let next = c.host_function(operation("fsRecursiveNext"))?;
-    let finish = c.host_function(operation("fsRecursiveReturn"))?;
+    let next = c.host_function(crate::host::shared_vm::operation!("fsRecursiveNext"))?;
+    let finish = c.host_function(crate::host::shared_vm::operation!("fsRecursiveReturn"))?;
     let natives = c.array_rooted(&[next, finish])?;
-    let make_iterator = c.host_function_with_data(operation("fsWatchMakeIterator"), natives)?;
+    let make_iterator = c.host_function_with_data(crate::host::shared_vm::operation!("fsWatchMakeIterator"), natives)?;
     put(c, api, "makeIterator", make_iterator)?;
     let global = c.global_root()?;
     let map = get(c, global, "Map")?;
@@ -245,16 +245,16 @@ fn promise_api(c: &mut Context<'_>) -> Outcome {
         put(c, api, name, function)?;
     }
     let error = get(c, global, "Error")?;
-    let abort = c.host_constructor_named(operation("fsEventConstruct"), "AbortError")?;
+    let abort = c.host_constructor_named(crate::host::shared_vm::operation!("fsEventConstruct"), "AbortError")?;
     let prototype = get(c, abort, "prototype")?;
     let parent = get(c, error, "prototype")?;
     c.set_prototype_rooted(prototype, parent)?;
     c.set_prototype_rooted(abort, error)?;
     put(c, api, "AbortError", abort)?;
-    let next = c.host_function(operation("fsPromiseWatchNext"))?;
-    let finish = c.host_function(operation("fsPromiseWatchReturn"))?;
+    let next = c.host_function(crate::host::shared_vm::operation!("fsPromiseWatchNext"))?;
+    let finish = c.host_function(crate::host::shared_vm::operation!("fsPromiseWatchReturn"))?;
     let natives = c.array_rooted(&[next, finish])?;
-    let make_iterator = c.host_function_with_data(operation("fsWatchMakeIterator"), natives)?;
+    let make_iterator = c.host_function_with_data(crate::host::shared_vm::operation!("fsWatchMakeIterator"), natives)?;
     put(c, api, "makeIterator", make_iterator)?;
     Ok(api)
 }
@@ -263,7 +263,7 @@ fn promise_api(c: &mut Context<'_>) -> Outcome {
 pub(crate) fn stat_watch_api(c: &mut Context<'_>) -> Outcome {
     let api = c.object_rooted()?;
     let (watcher, prototype) = emitter_class(c, "fsStatWatcherConstruct", "StatWatcher")?;
-    let start = c.host_function_named(operation("fsWatchNoop"), "start")?;
+    let start = c.host_function_named(crate::host::shared_vm::operation!("fsWatchNoop"), "start")?;
     put(c, prototype, "start", start)?;
     let yes = c.boolean(true);
     let no = c.boolean(false);
@@ -271,9 +271,9 @@ pub(crate) fn stat_watch_api(c: &mut Context<'_>) -> Outcome {
     receiver_method(c, prototype, "ref", "fsStatWatchRef", &[yes])?;
     receiver_method(c, prototype, "unref", "fsStatWatchRef", &[no])?;
     put(c, api, "StatWatcher", watcher)?;
-    let watch = c.host_function_named(operation("fsStatWatch"), "watchFile")?;
+    let watch = c.host_function_named(crate::host::shared_vm::operation!("fsStatWatch"), "watchFile")?;
     put(c, api, "watchFile", watch)?;
-    let unwatch = c.host_function_named(operation("fsStatUnwatch"), "unwatchFile")?;
+    let unwatch = c.host_function_named(crate::host::shared_vm::operation!("fsStatUnwatch"), "unwatchFile")?;
     put(c, api, "unwatchFile", unwatch)?;
     Ok(api)
 }

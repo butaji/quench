@@ -111,7 +111,7 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     // Bound to the console, as the SDK binds every method of its global console, and to the
     // writer's index. Called directly: compiling a helper would fault the compiler back in
     // after the entry's compilation released it.
-    let write = context.host_function(crate::host::shared_vm::operation("consoleWrite"))?;
+    let write = context.host_function(crate::host::shared_vm::operation!("consoleWrite"))?;
     let global = context.global_root()?;
     let function_key = context.string_rooted("Function");
     let function = context.get_property_rooted(global, function_key)?;
@@ -130,7 +130,7 @@ pub(crate) fn facade(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.define_data_property_rooted(method, name, key, false, false, true)?;
         context.define_data_property_rooted(method, length, variadic, false, false, true)?;
     }
-    let initializer = context.host_function(crate::host::shared_vm::operation("consoleLoad"))?;
+    let initializer = context.host_function(crate::host::shared_vm::operation!("consoleLoad"))?;
     context.define_lazy_holder_keys_rooted(console, &CONSOLE_KEYS[WRITERS.len()..], initializer)?;
     let symbol_key = context.string_rooted("Symbol");
     let symbol = context.get_property_rooted(global, symbol_key)?;

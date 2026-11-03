@@ -154,7 +154,7 @@ const SHARED_METHODS: [(&str, &str); 4] = [
 
 /// Node's `internal/cluster/worker`: an EventEmitter over its process.
 fn worker_class(c: &mut Context<'_>, events: RootId) -> Result<RootId, RootedError> {
-    let constructor = c.host_constructor_named(crate::host::shared_vm::operation("clusterWorker"), "Worker")?;
+    let constructor = c.host_constructor_named(crate::host::shared_vm::operation!("clusterWorker"), "Worker")?;
     let prototype = get(c, constructor, "prototype")?;
     let emitter_prototype = get(c, events, "prototype")?;
     c.set_prototype_rooted(prototype, emitter_prototype)?;

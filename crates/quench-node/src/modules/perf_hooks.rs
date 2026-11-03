@@ -410,8 +410,8 @@ fn performance_class(c: &mut Context<'_>, global: RootId) -> Outcome {
     c.define_named_data_property_rooted(prototype, "nodeTiming", node_timing, true, false, true)?;
     define_methods(c, prototype, resource_and_timerify, false)?;
     let key = c.string_rooted(BUFFER_FULL_HANDLER);
-    let getter = c.host_function_named(operation("perfGetBufferFullHandler"), &format!("get {BUFFER_FULL_HANDLER}"))?;
-    let setter = c.host_function_named(operation("perfSetBufferFullHandler"), &format!("set {BUFFER_FULL_HANDLER}"))?;
+    let getter = c.host_function_named(crate::host::shared_vm::operation!("perfGetBufferFullHandler"), &format!("get {BUFFER_FULL_HANDLER}"))?;
+    let setter = c.host_function_named(crate::host::shared_vm::operation!("perfSetBufferFullHandler"), &format!("set {BUFFER_FULL_HANDLER}"))?;
     let fields = DescriptorFields { get: Some(getter), set: Some(setter), enumerable: Some(true), configurable: Some(true), ..DescriptorFields::default() };
     c.define_property_fields_rooted(prototype, key, fields)?;
     define_inspect(c, prototype, "perfInspect")?;
@@ -625,7 +625,7 @@ pub(crate) fn event_loop_utilization(c: &mut Context<'_>, _: RootId, args: &[Roo
 /// `performance.nodeTiming`: an entry named `node` whose milestones read the clock, its
 /// class's prototype under `PerformanceEntry.prototype`.
 fn node_timing(c: &mut Context<'_>) -> Outcome {
-    let class = c.host_constructor_named(operation("perfNodeTimingConstructor"), "PerformanceNodeTiming")?;
+    let class = c.host_constructor_named(crate::host::shared_vm::operation!("perfNodeTimingConstructor"), "PerformanceNodeTiming")?;
     let prototype = get(c, class, "prototype")?;
     let entry_prototype = api_member(c, api::ENTRY_PROTOTYPE)?;
     c.set_prototype_rooted(prototype, entry_prototype)?;
@@ -710,7 +710,7 @@ pub(crate) fn timerify(c: &mut Context<'_>, _: RootId, args: &[RootId]) -> Outco
         }
     }
     let data = c.record_rooted(&TIMERIFIED, &[function, histogram])?;
-    let timerified = c.host_constructor_named_with_data(operation("perfTimerified"), "", data)?;
+    let timerified = c.host_constructor_named_with_data(crate::host::shared_vm::operation!("perfTimerified"), "", data)?;
     let length = get(c, function, "length")?;
     c.define_named_data_property_rooted(timerified, "length", length, false, true, false)?;
     let name = get(c, function, "name")?;
@@ -737,7 +737,7 @@ pub(crate) fn timerified(c: &mut Context<'_>, receiver: RootId, args: &[RootId])
     if !constructing && !is_nullish(c, result) {
         let finally = get(c, result, "finally")?;
         if c.is_callable_rooted(finally)? {
-            let complete = c.host_function_named_with_data(operation("perfTimedComplete"), "bound processComplete", call)?;
+            let complete = c.host_function_named_with_data(crate::host::shared_vm::operation!("perfTimedComplete"), "bound processComplete", call)?;
             return c.call_rooted(finally, result, &[complete]);
         }
     }

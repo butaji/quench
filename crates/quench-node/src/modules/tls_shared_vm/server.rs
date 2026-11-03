@@ -120,7 +120,7 @@ pub(crate) fn construct(
     let net = get(context, api, "identityNet")?;
     let base = get(context, net, "Server")?;
     let connection =
-        context.host_function(crate::host::shared_vm::operation("tlsServerConnection"))?;
+        context.host_function(crate::host::shared_vm::operation!("tlsServerConnection"))?;
     context.call_rooted(base, receiver, &[options, connection])?;
     if context.truthy_rooted(listener)? {
         let secure = context.string_rooted("secureConnection");
@@ -173,7 +173,7 @@ pub(crate) fn connection(
         let event = context.string_rooted(event);
         let controlled = context.boolean(controlled);
         let callback = context
-            .host_function_with_data(crate::host::shared_vm::operation("tlsServerSocketError"), controlled)?;
+            .host_function_with_data(crate::host::shared_vm::operation!("tlsServerSocketError"), controlled)?;
         method(context, socket, "on", &[event, callback])?;
     }
     let event = context.string_rooted("keylog");

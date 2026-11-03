@@ -399,10 +399,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let process = context.get_property_rooted(global, process_key)?;
     // `process.release` is its own group: Node's warning listener reads it, and it needs
     // none of the surface script.
-    let release = context.host_function(super::operation("processReleaseInitialize"))?;
+    let release = context.host_function(crate::host::shared_vm::operation!("processReleaseInitialize"))?;
     context.define_lazy_data_properties_rooted(process, &[PROCESS_RELEASE], true, release)?;
     context.release_root(release);
-    let initializer = context.host_function(super::operation("processSurfaceInitialize"))?;
+    let initializer = context.host_function(crate::host::shared_vm::operation!("processSurfaceInitialize"))?;
     context.define_lazy_data_properties_rooted(
         process,
         crate::modules::process_surface::LAZY_MEMBERS,
@@ -439,10 +439,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let task_queues = context.call_rooted(require, undefined, &[task_queues_name])?;
     let queue_microtask = get(context, task_queues, "queueMicrotask")?;
     set(context, global, "queueMicrotask", queue_microtask)?;
-    let export_values = context.host_function(crate::host::shared_vm::operation("builtinExportValues"))?;
+    let export_values = context.host_function(crate::host::shared_vm::operation!("builtinExportValues"))?;
     let key = context.string_rooted(BUILTIN_EXPORT_VALUES);
     context.define_data_property_rooted(global, key, export_values, false, false, false)?;
-    let instantiate_wasm = context.host_function(crate::host::shared_vm::operation("esmWasmInstantiate"))?;
+    let instantiate_wasm = context.host_function(crate::host::shared_vm::operation!("esmWasmInstantiate"))?;
     let key = context.string_rooted(super::esm_wasm::INSTANTIATE);
     context.define_data_property_rooted(global, key, instantiate_wasm, false, false, false)?;
     context.scoped(install_performance_global)?;
@@ -456,7 +456,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // The SDK console reads its primordial snapshot. It loads on the first read of
     // `console`, inside the startup intrinsics, so it sees the original globals whatever a
     // preload or the entry script has done; most of a run that never logs never loads it.
-    let initializer = context.host_function(crate::host::shared_vm::operation("consoleGlobalInitialize"))?;
+    let initializer = context.host_function(crate::host::shared_vm::operation!("consoleGlobalInitialize"))?;
     context.define_lazy_data_properties_rooted(global, &["console"], false, initializer)?;
     context.seal_startup_intrinsics();
     #[cfg(feature = "profile-memory")]
@@ -1828,7 +1828,7 @@ fn task_queues_module(context: &mut Context<'_>) -> Result<RootId, RootedError> 
     let state = context.null_object_rooted()?;
     set(context, state, "enqueue", raw_enqueue)?;
     set(context, state, "require", require)?;
-    let queue = context.host_function_named_with_data(super::operation("taskQueueMicrotask"), "queueMicrotask", state)?;
+    let queue = context.host_function_named_with_data(crate::host::shared_vm::operation!("taskQueueMicrotask"), "queueMicrotask", state)?;
     let module = context.object_rooted()?;
     set(context, module, "queueMicrotask", queue)?;
     Ok(module)
@@ -1860,7 +1860,7 @@ fn install_global_descriptors(context: &mut Context<'_>) -> Result<(), RootedErr
     let key = context.string_rooted("navigator");
     let existing = context.own_property_descriptor_rooted(global, key)?;
     if !context.is_object_rooted(existing)? {
-        let getter = context.host_function_named(super::operation("navigatorGet"), "get navigator")?;
+        let getter = context.host_function_named(crate::host::shared_vm::operation!("navigatorGet"), "get navigator")?;
         let descriptor = context.null_object_rooted()?;
         set(context, descriptor, "get", getter)?;
         set(context, descriptor, "enumerable", yes)?;
@@ -1907,8 +1907,8 @@ pub(crate) fn install_lazy_global(
     set(context, slot, "module", module_name)?;
     let export_name = context.string_rooted(export);
     set(context, slot, "export", export_name)?;
-    let getter = context.host_function_named_with_data(super::operation("lazyGlobalGet"), &format!("get {name}"), slot)?;
-    let setter = context.host_function_named_with_data(super::operation("lazyGlobalSet"), &format!("set {name}"), slot)?;
+    let getter = context.host_function_named_with_data(crate::host::shared_vm::operation!("lazyGlobalGet"), &format!("get {name}"), slot)?;
+    let setter = context.host_function_named_with_data(crate::host::shared_vm::operation!("lazyGlobalSet"), &format!("set {name}"), slot)?;
     let descriptor = context.null_object_rooted()?;
     set(context, descriptor, "get", getter)?;
     set(context, descriptor, "set", setter)?;
@@ -1978,14 +1978,14 @@ pub(crate) fn queue_microtask(context: &mut Context<'_>, _: RootId, args: &[Root
     let kind = context.string_rooted("Microtask");
     let resource = context.construct_rooted(resource_class, resource_class, &[kind, options])?;
     set(context, resource, "callback", callback)?;
-    let job = context.host_function_with_data(super::operation("taskQueueMicrotaskJob"), resource)?;
+    let job = context.host_function_with_data(crate::host::shared_vm::operation!("taskQueueMicrotaskJob"), resource)?;
     context.call_rooted(enqueue, undefined, &[job])
 }
 
 /// A queued microtask: runs its callback in its resource's scope.
 pub(crate) fn queue_microtask_job(context: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
     let resource = context.host_function_data()?;
-    let run = context.host_function_with_data(super::operation("taskQueueMicrotaskRun"), resource)?;
+    let run = context.host_function_with_data(crate::host::shared_vm::operation!("taskQueueMicrotaskRun"), resource)?;
     let scope = get(context, resource, "runInAsyncScope")?;
     context.call_rooted(scope, resource, &[run])
 }
@@ -2604,7 +2604,7 @@ fn module_record(
     {
         set(context, process, "mainModule", module)?;
     }
-    let require = context.host_function_with_data(super::operation("require"), module)?;
+    let require = context.host_function_with_data(crate::host::shared_vm::operation!("require"), module)?;
     install_resolve(context, require, module)?;
     let main = get(context, process, "mainModule")?;
     set(context, require, "main", main)?;
@@ -2618,8 +2618,8 @@ fn module_record(
 
 /// `require.resolve` and `require.resolve.paths` for `module` (`makeRequireFunction`).
 fn install_resolve(context: &mut Context<'_>, require: RootId, module: RootId) -> Result<(), RootedError> {
-    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
-    let paths = context.host_function_named_with_data(super::operation("resolvePaths"), "paths", module)?;
+    let resolve = context.host_function_with_data(crate::host::shared_vm::operation!("resolve"), module)?;
+    let paths = context.host_function_named_with_data(crate::host::shared_vm::operation!("resolvePaths"), "paths", module)?;
     set(context, resolve, "paths", paths)?;
     set(context, require, "resolve", resolve)
 }
@@ -3227,7 +3227,7 @@ pub(crate) fn compile_public(
     let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false, false)?;
     let exports = get(context, module, "exports")?;
-    let require = context.host_function_with_data(super::operation("require"), module)?;
+    let require = context.host_function_with_data(crate::host::shared_vm::operation!("require"), module)?;
     install_resolve(context, require, module)?;
     let global = context.global_root()?;
     let process = get(context, global, "process")?;

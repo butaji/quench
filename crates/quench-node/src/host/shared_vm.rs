@@ -25,6 +25,34 @@ macro_rules! node_bindings {
     };
 }
 
+macro_rules! literal_operation {
+    ($name:literal $(,)?) => {
+        const { $crate::host::shared_vm::static_operation($name) }
+    };
+}
+pub(crate) use literal_operation as operation;
+
+/// Resolve host-owned literal names at Rust binding time, before any VM exists.
+pub(crate) const fn static_operation(name: &str) -> HostFunctionId {
+    let name = name.as_bytes();
+    let mut position = 0;
+    while position < OPERATION_NAMES.len() {
+        let candidate = OPERATION_NAMES[position].as_bytes();
+        if candidate.len() == name.len() {
+            let mut byte = 0;
+            while byte < name.len() && candidate[byte] == name[byte] {
+                byte += 1;
+            }
+            if byte == name.len() {
+                assert!(position <= u32::MAX as usize);
+                return HostFunctionId(position as u32);
+            }
+        }
+        position += 1;
+    }
+    panic!("unregistered Node operation")
+}
+
 node_bindings! {
         method "streamConstant" (0) => crate::modules::stream_shared_vm::constant,
         method "streamNop" (0) => crate::modules::stream_shared_vm::nop,
@@ -2818,7 +2846,7 @@ fn install_gc_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), Ro
     drop(shared);
     if expose_gc {
         // `gc()` collects at once; Node's `{ execution: 'async' }` form is not implemented.
-        let gc = context.host_function(operation("gc"))?;
+        let gc = context.host_function(crate::host::shared_vm::operation!("gc"))?;
         let key = context.string_rooted("gc");
         let global = context.global_root()?;
         context.define_data_property_rooted(global, key, gc, true, true, false)?;
@@ -3136,6 +3164,10 @@ mod tests {
         for (index, binding) in super::bindings().iter().enumerate() {
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
             assert_eq!(super::OPERATION_NAMES[index], binding.name);
+            assert_eq!(super::static_operation(binding.name), super::HostFunctionId(index as u32));
+            assert_eq!(super::operation(binding.name), super::static_operation(binding.name));
         }
+        const FIRST: super::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
+        assert_eq!(FIRST, super::HostFunctionId(0));
     }
 }
