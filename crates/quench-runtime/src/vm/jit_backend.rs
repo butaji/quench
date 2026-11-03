@@ -12,6 +12,9 @@ use std::sync::Arc;
 #[cfg(any(feature = "jit", feature = "aot"))]
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(any(feature = "jit", feature = "aot"))]
+mod select;
+
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
 /// Reuse immutable host target configuration across JS function tiers and
@@ -134,7 +137,7 @@ impl NativeCompileRejection {
 /// A missing size limit preserves the Wasm compiler's existing admission policy.
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn compile_function<T>(
-    function: cranelift_codegen::ir::Function,
+    mut function: cranelift_codegen::ir::Function,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     max_code_bytes: Option<usize>,
     consume: impl FnOnce(
@@ -142,6 +145,7 @@ pub(super) fn compile_function<T>(
         &cranelift_codegen::ir::Function,
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
+    select::convert(&mut function);
     let mut context = cranelift_codegen::Context::for_function(function);
     let compiled = context
         .compile(
