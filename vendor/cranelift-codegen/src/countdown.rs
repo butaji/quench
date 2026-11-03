@@ -132,6 +132,7 @@ struct Plan {
     update: Inst,
     comparisons: SmallVec<[(Inst, bool); INLINE_EDGES]>,
     edges: SmallVec<[Edge; INLINE_EDGES]>,
+    exits: SmallVec<[(Inst, usize); INLINE_EDGES]>,
 }
 
 impl Plan {
@@ -191,6 +192,7 @@ impl Plan {
             if !proves_less(f, cfg, dom, pred, header, left, bound) { return None; }
         }
         let mut comparisons = SmallVec::new();
+        let mut exits = SmallVec::new();
         for (value, advancing) in [(parameter, false), (next, true)] {
             for &inst in uses.at(value) {
                 let block = f.layout.inst_block(inst)?;
@@ -204,10 +206,15 @@ impl Plan {
                 // Other hot uses would require computing the source counter.
                 if f.dfg.inst_args(inst).iter().any(|arg| same(f, *arg, value)) { return None; }
                 let mut carried = false;
-                for branch in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables) {
+                for (edge_index, branch) in f.dfg.insts[inst].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables).iter().enumerate() {
                     for (index, arg) in branch.args(&f.dfg.value_lists).enumerate() {
                         if arg.as_value().is_some_and(|arg| same(f, arg, value)) {
-                            if !advancing || index != slot || branch.block(&f.dfg.value_lists) != header { return None; }
+                            let target = branch.block(&f.dfg.value_lists);
+                            if !loops.is_in_loop(target, lp) {
+                                if f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty())
+                                    || branch.args(&f.dfg.value_lists).any(|arg| arg.as_value().is_none()) { return None; }
+                                if !exits.contains(&(inst, edge_index)) { exits.push((inst, edge_index)); }
+                            } else if !advancing || index != slot || target != header { return None; }
                             carried = true;
                         }
                     }
@@ -215,7 +222,7 @@ impl Plan {
                 if !carried { return None; }
             }
         }
-        Some(Self { header, parameter, slot, start, bound, update, comparisons, edges })
+        Some(Self { header, parameter, slot, start, bound, update, comparisons, edges, exits })
     }
 
     fn apply(self, f: &mut Function, uses: &Uses, loops: &LoopAnalysis) {
@@ -259,6 +266,31 @@ impl Plan {
                 value
             });
         }
+        // Exit phi arguments also need semantic projections. Split only those
+        // edges, so reconstruction never executes on the repeating path.
+        for (inst, index) in self.exits {
+            let branch = cursor.func.dfg.insts[inst].branch_destination(&cursor.func.dfg.jump_tables, &cursor.func.dfg.exception_tables)[index];
+            let target = branch.block(&cursor.func.dfg.value_lists);
+            let args: Vec<_> = branch.args(&cursor.func.dfg.value_lists).map(|arg| arg.as_value().expect("verified value edge")).collect();
+            let bridge = cursor.func.dfg.make_block();
+            cursor.func.layout.append_block(bridge);
+            let parameters: Vec<_> = args.iter().map(|&value| {
+                let ty = cursor.func.dfg.value_type(value);
+                cursor.func.dfg.append_block_param(bridge, ty)
+            }).collect();
+            let dfg = &mut cursor.func.dfg;
+            let edge = &mut dfg.insts[inst].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables)[index];
+            edge.set_block(bridge, &mut dfg.value_lists);
+            edge.update_args(&mut dfg.value_lists, |arg| {
+                if arg.as_value() == Some(self.parameter) { remaining.into() } else { arg }
+            });
+            cursor.goto_bottom(bridge);
+            let forwarded: Vec<BlockArg> = args.iter().zip(parameters).map(|(&source, parameter)| {
+                if source == self.parameter || source == source_next { cursor.ins().isub(self.bound, parameter).into() }
+                else { parameter.into() }
+            }).collect();
+            cursor.ins().jump(target, &forwarded);
+        }
         // Emit semantic projections only in exit blocks that actually use
         // them. Labels follow those exact values, never the countdown bits.
         for (source, distance) in [(self.parameter, remaining), (source_next, source_next)] {
@@ -299,8 +331,10 @@ impl Plan {
     }
 }
 
-pub(crate) fn run(f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis) {
-    if loops.loops().next().is_none() { return; }
+/// Returns whether exit reconstruction added control-flow edges.
+pub(crate) fn run(f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree, loops: &LoopAnalysis) -> bool {
+    if loops.loops().next().is_none() { return false; }
+    let mut changed_cfg = false;
     let uses = Uses::new(f);
     let mut plans = Vec::new();
     for lp in loops.loops() {
@@ -319,9 +353,11 @@ pub(crate) fn run(f: &mut Function, cfg: &ControlFlowGraph, dom: &DominatorTree,
                 || inputs.contains(plan.parameter.index()) || inputs.contains(next.index()) { continue; }
             outputs.insert(plan.parameter.index()); outputs.insert(next.index());
             inputs.insert(plan.bound.index()); inputs.insert(plan.start.index());
+            changed_cfg |= !plan.exits.is_empty();
             plan.apply(f, &uses, loops);
         }
     }
+    changed_cfg
 }
 
 #[cfg(test)]

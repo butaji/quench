@@ -377,11 +377,22 @@ impl Context {
         log::debug!("egraph stats: {:?}", pass.stats);
         trace!("After egraph optimization:\n{}", self.func.display());
 
+        if crate::loop_rotate::run(&mut self.func) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.remove_constant_phis(fisa)?;
+            self.func.dfg.resolve_all_aliases();
+        }
+
         // Branch optimizations can invalidate these; recompute them.
         self.compute_cfg();
         self.compute_domtree();
         self.compute_loop_analysis();
-        crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis);
+        if crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.compute_loop_analysis();
+        }
         if crate::poll_unswitch::run(&mut self.func) {
             self.compute_cfg();
             self.compute_domtree();
@@ -394,7 +405,11 @@ impl Context {
             // Splitting and phi repair expose additional induction proofs.
             // Retain the pre-split conversion above: coupled-loop bounds can
             // lose their common definition when the graph is duplicated.
-            crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis);
+            if crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis) {
+                self.compute_cfg();
+                self.compute_domtree();
+                self.compute_loop_analysis();
+            }
         }
 
         self.verify_if(fisa)?;

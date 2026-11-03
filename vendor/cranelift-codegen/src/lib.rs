@@ -87,6 +87,7 @@ mod branch_to_trap;
 mod constant_hash;
 mod context;
 mod countdown;
+mod loop_rotate;
 mod poll_unswitch;
 mod ctxhash;
 mod egraph;

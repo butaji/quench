@@ -17604,6 +17604,85 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rotated_countdown_preserves_empty_loops_and_early_exit_values() {
+        let isa = super::super::jit_backend::target_isa("speed").unwrap();
+        for ty in [types::I8, types::I16, types::I32, types::I64] {
+          for observe_counter in [false, true] {
+            let mut signature = Signature::new(isa.default_call_conv());
+            signature.params.extend([AbiParam::new(types::I64); 3]);
+            signature.returns.push(AbiParam::new(types::I64));
+            let mut function = ir::Function::with_name_signature(UserFuncName::testcase("rotated_counter"), signature);
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let entry = builder.create_block();
+            let header = builder.create_block();
+            let body = builder.create_block();
+            let advance = builder.create_block();
+            let exit = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.append_block_param(header, ty);
+            builder.append_block_param(header, ty);
+            builder.switch_to_block(entry);
+            let args = builder.block_params(entry).to_vec();
+            let mut words = Vec::new();
+            for value in args { words.push(if ty == types::I64 { value } else { builder.ins().ireduce(ty, value) }); }
+            let zero = builder.ins().iconst(ty, 0);
+            builder.ins().jump(header, &[words[0].into(), zero.into()]);
+            builder.switch_to_block(header);
+            let counter = builder.block_params(header)[0];
+            let checksum = builder.block_params(header)[1];
+            let more = builder.ins().icmp(IntCC::SignedLessThan, counter, words[1]);
+            builder.ins().brif(more, body, &[], exit, &[]);
+            builder.switch_to_block(body);
+            let stopped = builder.ins().icmp(IntCC::Equal, if observe_counter { counter } else { checksum }, words[2]);
+            builder.ins().brif(stopped, exit, &[], advance, &[]);
+            builder.switch_to_block(advance);
+            let updated = if observe_counter { builder.ins().bxor(checksum, counter) }
+                else { builder.ins().iadd_imm_u(checksum, 1) };
+            let next = builder.ins().iadd_imm_u(counter, 1);
+            builder.ins().jump(header, &[next.into(), updated.into()]);
+            builder.switch_to_block(exit);
+            let result = builder.ins().iadd(counter, checksum);
+            let result = if ty == types::I64 { result } else { builder.ins().uextend(types::I64, result) };
+            builder.ins().return_(&[result]);
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            if !observe_counter {
+                let converted = super::super::jit_backend::compile_function(function.clone(), &*isa, None, |_, native| {
+                    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
+                    let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
+                    let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+                    loops.compute(native, &cfg, &dom);
+                    Ok(native.layout.blocks().filter(|&block| loops.innermost_loop(block).is_some())
+                        .flat_map(|block| native.layout.block_insts(block))
+                        .any(|inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub))
+                }).unwrap();
+                assert!(converted, "{ty}: rotated loop must use shared countdown lowering");
+            }
+            let code = compile_native_function(function, isa.as_ref(), usize::MAX, CodeMemory::new).unwrap();
+            let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, u64) -> u64>(code.pointer()) };
+            let sign_bit = 1_u64 << (ty.bits() - 1);
+            let mask = u64::MAX >> (u64::BITS - ty.bits());
+            let signed = |value:u64| ((value << (u64::BITS - ty.bits())) as i64) >> (u64::BITS - ty.bits());
+            for start in [0, 1, sign_bit - 1, sign_bit, sign_bit + 1, mask] {
+                for bound in [0, 1, sign_bit - 1, sign_bit, mask] {
+                    for distance in [0, 1, 17, mask.min(257)] {
+                        let stop = if observe_counter { start.wrapping_add(distance) & mask } else { distance & mask };
+                        let (mut counter, mut checksum) = (start, 0);
+                        while signed(counter) < signed(bound) && (if observe_counter { counter } else { checksum }) != stop {
+                            checksum = if observe_counter { checksum ^ counter } else { checksum.wrapping_add(1) & mask };
+                            counter = counter.wrapping_add(1) & mask;
+                        }
+                        assert_eq!(unsafe { run(start, bound, stop) }, counter.wrapping_add(checksum) & mask,
+                            "{ty}: start={start:x} bound={bound:x} stop={stop:x}");
+                    }
+                }
+            }
+          }
+        }
+    }
+
     #[cfg(feature = "aot")]
     #[test]
     fn countdown_induction_preserves_words_checkpoints_and_labels() {
