@@ -1721,6 +1721,8 @@ impl<H: Host> Vm<H> {
             ));
         }
         let (slots, root) = self.environment_capture_slots(env, captured, depth)?;
+        #[cfg(feature = "profile-lane-exits")]
+        eprintln!("capture-resolved {:p} {epoch} {} {depth} {captured}", self.capture_walks.as_ptr(), env.to_bits());
         let slots: *const crate::heap::EnvironmentSlots = slots;
         self.capture_walks[index] = CaptureWalk {
             depth,

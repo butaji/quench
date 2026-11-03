@@ -2924,6 +2924,8 @@ impl<H: Host> Vm<H> {
         // Reset reuses environment locators and collection counters. Retire raw
         // capture views at this boundary before either identity can appear again.
         self.capture_walks.fill(CaptureWalk::default());
+        #[cfg(feature = "profile-lane-exits")]
+        eprintln!("capture-reset {:p}", self.capture_walks.as_ptr());
         // SAFETY: initialization runs outside any native body, before reuse.
         unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();
