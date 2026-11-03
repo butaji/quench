@@ -13175,11 +13175,8 @@ fn lane_call_native<H: Host>(
     }
     // A unary Math function of a Number runs no guest code and observes no frame, so it
     // runs from any activation.
-    if native.is_math_function()
-        && let Some(value) = args.first().and_then(|value| value.as_number())
-        && let Some(result) = super::number::math_unary(native, value)
-    {
-        return Some(Value::number(result));
+    if let Some(value) = super::number::math_unary_call(native, args) {
+        return Some(value);
     }
     // So do `Math.max` and its kin of Numbers (`math_numbers`).
     if native.is_math_function()

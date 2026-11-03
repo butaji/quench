@@ -612,6 +612,11 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
 
 /// The value of a Math function of one Number argument (`Math.sqrt` and its kin); `None`
 /// for any other native. Such a function reads only its first argument.
+pub(super) fn math_unary_call(native: Native, args: &[Value]) -> Option<Value> {
+    math_unary(native, args.first()?.as_number()?).map(Value::number)
+}
+
+/// The shared numeric operation after argument conversion or a Number-only guard.
 pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
     Some(match native {
         Native::MathFloor => value.floor(),

@@ -65,7 +65,7 @@ fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(
     validate(&mut vm);
 }
 
-// The native body includes its receiver/argument roots and interrupt check. It omits
+// The native body includes its rooting policy and interrupt check. It omits
 // callee lookup, realm/native activation and stack guarding of the full call.
 #[bench]
 fn primitive_call_native_abs_batch(b: &mut Bencher) { call_boundary::<true, false, false>(b); }
