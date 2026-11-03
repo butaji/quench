@@ -219,11 +219,18 @@ impl<'a> Reader<'a> {
 
     #[inline]
     pub(crate) fn bool(&mut self) -> SnapshotResult<bool> {
-        match self.u8()? {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(SnapshotError("invalid snapshot flag".into())),
+        Ok(self.bools::<1>()?[0])
+    }
+
+    /// Read contiguous flags with one bounds check and one validity check.
+    /// The wire representation remains one zero-or-one byte per flag.
+    #[inline]
+    pub(crate) fn bools<const N: usize>(&mut self) -> SnapshotResult<[bool; N]> {
+        let bytes = self.array::<N>()?;
+        if bytes.iter().fold(0, |bits, byte| bits | byte) > u8::from(true) {
+            return Err(SnapshotError("invalid snapshot flag".into()));
         }
+        Ok(bytes.map(|byte| byte != 0))
     }
 
     #[inline]
@@ -362,21 +369,72 @@ pub(crate) trait Snap: Sized {
 }
 
 /// `Snap` for a struct, field by field; every field must be listed.
+/// A contiguous boolean prefix can be read as one validated batch.
 macro_rules! snap_struct {
-    ($ty:ty { $($field:ident),* $(,)? }) => {
+    ($ty:ty { $([$($flag:ident),+];)? $($field:ident),* $(,)? }) => {
         impl $crate::snapshot::Snap for $ty {
             fn snap(&self, writer: &mut $crate::snapshot::Writer) -> $crate::snapshot::SnapshotResult<()> {
-                let Self { $($field),* } = self;
+                let Self { $($($flag,)*)? $($field),* } = self;
+                $($( writer.bool(*$flag); )*)?
                 $( $crate::snapshot::Snap::snap($field, writer)?; )*
                 Ok(())
             }
             fn unsnap(reader: &mut $crate::snapshot::Reader<'_>) -> $crate::snapshot::SnapshotResult<Self> {
-                Ok(Self { $($field: $crate::snapshot::Snap::unsnap(reader)?),* })
+                $(let [$($flag),*] = reader.bools()?;)?
+                Ok(Self { $($($flag,)*)? $($field: $crate::snapshot::Snap::unsnap(reader)?),* })
             }
         }
     };
 }
 pub(crate) use snap_struct;
+
+#[cfg(test)]
+mod flag_tests {
+    use super::*;
+
+    #[test]
+    fn batched_flags_match_scalar_encoding_and_reject_invalid_bytes() {
+        const FLAGS: usize = 4;
+        for bits in 0..(1 << FLAGS) {
+            let expected = std::array::from_fn::<_, FLAGS, _>(|i| bits & (1 << i) != 0);
+            let mut writer = Writer::new();
+            for flag in expected { writer.bool(flag); }
+            let bytes = writer.finish();
+            let mut reader = Reader::new(&bytes, None).unwrap();
+            assert_eq!(reader.bools::<FLAGS>().unwrap(), expected);
+            reader.finish().unwrap();
+        }
+        for position in 0..FLAGS {
+            for invalid in 2..=u8::MAX {
+                let mut writer = Writer::new();
+                for i in 0..FLAGS { writer.u8(if i == position { invalid } else { 0 }); }
+                let bytes = writer.finish();
+                assert_eq!(Reader::new(&bytes, None).unwrap().bools::<FLAGS>(),
+                    Err(SnapshotError("invalid snapshot flag".into())));
+            }
+        }
+        for length in 0..FLAGS {
+            let mut writer = Writer::new();
+            for _ in 0..length { writer.bool(false); }
+            let bytes = writer.finish();
+            assert_eq!(Reader::new(&bytes, None).unwrap().bools::<FLAGS>(),
+                Err(SnapshotError("truncated snapshot".into())));
+        }
+    }
+
+    #[test]
+    fn batched_flags_cross_the_release_boundary() {
+        let mut bytes = vec![0; RELEASE_STRIDE];
+        bytes.extend_from_slice(&[0, 1, 0, 1]);
+        let mut reader = Reader {
+            bytes: &bytes, cursor: RELEASE_STRIDE, released: 0,
+            release: Some(|read| assert!(!read.is_empty())),
+        };
+        assert_eq!(reader.bools::<4>().unwrap(), [false, true, false, true]);
+        assert_eq!(reader.released, RELEASE_STRIDE);
+        reader.finish().unwrap();
+    }
+}
 
 macro_rules! snap_primitive {
     ($($ty:ty: $write:ident, $read:ident;)*) => {$(

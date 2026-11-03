@@ -106,9 +106,9 @@ impl Snap for property_key::PropertyKey {
     }
 }
 
-crate::snapshot::snap_struct!(PropertyAttributes { writable, enumerable, configurable, accessor, getter, setter });
-crate::snapshot::snap_struct!(ShapeAttributes { writable, enumerable, configurable, accessor, accessors });
-crate::snapshot::snap_struct!(DataAttributes { writable, enumerable, configurable });
+crate::snapshot::snap_struct!(PropertyAttributes { [writable, enumerable, configurable, accessor]; getter, setter });
+crate::snapshot::snap_struct!(ShapeAttributes { [writable, enumerable, configurable, accessor]; accessors });
+crate::snapshot::snap_struct!(DataAttributes { [writable, enumerable, configurable]; });
 crate::snapshot::snap_struct!(GlobalLexicalState { declarations, bindings, immutable_bindings });
 crate::snapshot::snap_struct!(ParkedRealm { global, state, prototypes });
 crate::snapshot::snap_struct!(ArgumentsObjectTemplate { anchor, length_slot, callee_slot, iterator_slot });
