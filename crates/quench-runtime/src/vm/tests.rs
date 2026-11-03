@@ -21459,6 +21459,39 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
 }
 
 #[test]
+fn lane_element_stores_fill_holes_like_the_interpreter() {
+    // A lane store fills a hole of an extensible array that owns its elements when no
+    // prototype claims the index; a prototype setter, a non-extensible array and shared
+    // elements take the interpreter's [[Set]].
+    let source = r#"(function () {
+      function fill(a, n, v) { for (var i = 0; i < n; i++) a[i] = v + i; return a[n - 1]; }
+      var total = 0, seen = 0, last = 0;
+      for (var k = 0; k < 3000; k++) total = (total + fill(new Array(8), 8, k)) | 0;
+      Object.defineProperty(Array.prototype, 3, { set(v) { seen++; last = v; }, get() { return -1; }, configurable: true });
+      for (var k = 0; k < 50; k++) total = (total + fill(new Array(8), 8, k)) | 0;
+      delete Array.prototype[3];
+      var sealed = Object.preventExtensions(new Array(8));
+      for (var k = 0; k < 50; k++) total = (total + (fill(sealed, 8, k) | 0)) | 0;
+      var shared = new Array(8); var copy = shared;
+      for (var k = 0; k < 50; k++) total = (total + fill(shared, 8, k)) | 0;
+      globalThis.answer = (total + seen * 7 + last + (sealed[2] === undefined ? 1 : 2) + copy[7] + Object.keys(sealed).length);
+    })();"#;
+    let program = Engine::specialize(source, "lane-hole-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(4523109.0); 2]);
+}
+
+#[test]
 fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
     // A loop that stores keeps reading each atom it stores, on whichever object: one object
     // under two names, a method beside a stored field, a prototype's field under a getter.

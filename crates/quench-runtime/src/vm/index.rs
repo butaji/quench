@@ -446,6 +446,30 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// The lane's store of `value` into a hole inside a record array's dense elements, as
+    /// [[Set]] makes it: where the array may gain the index (extensible, nothing indexed
+    /// on its own or held by its chain, `inherited_index_unclaimed`) and owns its elements, so
+    /// the store neither runs guest code nor allocates; anything else changes nothing.
+    pub(super) fn try_fill_record_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+            return false;
+        };
+        let fills = self.heap.record_array(object).is_some_and(|array| {
+            !array.has_indexed_descriptors() && array.arguments_map().is_none()
+                && array.elements().owner_count() == 1
+                && array.elements().get(index).is_some_and(|element| element.is_deleted())
+        }) && self.object_data(object).is_some_and(|data| data.is_extensible() && !data.is_frozen())
+            && self.inherited_index_unclaimed(object, index);
+        if !fills {
+            return false;
+        }
+        let Some(array) = crate::heap::Heap::record_array_store_mut_unlogged(&mut self.heap, object, value) else {
+            return false;
+        };
+        mutable_array_elements(array.elements_mut()).set(index, value);
+        true
+    }
+
     /// `try_replace_dense_element` of the array `array` finds for `object`; with `DETACH`, also
     /// of shared elements, which the write first copies.
     #[inline(always)]
