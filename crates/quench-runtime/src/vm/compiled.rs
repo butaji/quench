@@ -6890,6 +6890,11 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    // A read native code has no descriptor for is mostly an inherited method's: its proved
+    // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
+    if let Some(value) = vm.proved_inherited_field_hit(residual, Value::from_bits(receiver), site as u16) {
+        return value.to_bits();
+    }
     match vm.cached_field_hit(residual, Value::from_bits(receiver), site as u16) {
         super::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         _ => Value::DELETED.to_bits(),
