@@ -144,6 +144,10 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, (Variable, bool)>,
     /// The PC being lowered, whose edges to a header enter its loop or close it.
     at: usize,
+    /// Per block leader, its forward edges (`forward_edges`), and the states the lowered
+    /// ones arrived with: a block they all reach keeps the object proofs they share.
+    forward: Vec<Option<usize>>,
+    arrived: BTreeMap<usize, Vec<State>>,
     /// The one epilogue every stop shares: it returns its status parameter.
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
@@ -318,10 +322,32 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 if self.at < pc { self.hoist_reads(state, pc); }
                 self.conform(state, pc);
+                if self.at < pc { self.arrive(state, pc); }
                 self.ins().jump(block, &[]);
             }
             None => self.exit(state, pc as u32),
         }
+    }
+
+    /// Record `state` arriving at block leader `pc` by one of its forward edges.
+    fn arrive(&mut self, state: &State, pc: usize) {
+        if self.forward.get(pc).copied().flatten().is_some() {
+            self.arrived.entry(pc).or_default().push(state.clone());
+        }
+    }
+
+    /// The object proofs every forward edge into `pc` arrived with, as the same values, for
+    /// a block no other edge enters: each was made in a block over all of them, so over this.
+    fn keep_shared_proofs(&mut self, state: &mut State, pc: usize) {
+        let Some(edges) = self.forward.get(pc).copied().flatten() else { return };
+        let Some(arrived) = self.arrived.remove(&pc) else { return };
+        let Some((first, rest)) = arrived.split_first().filter(|_| arrived.len() == edges) else { return };
+        state.shapes = first.shapes.iter().filter(|(owner, proof)| rest.iter()
+            .all(|other| other.shapes.get(owner) == Some(proof))).map(|(owner, proof)| (*owner, *proof)).collect();
+        state.layouts = first.layouts.iter().filter(|(key, projection)| rest.iter()
+            .all(|other| other.layouts.get(key) == Some(projection))).map(|(key, projection)| (*key, *projection)).collect();
+        state.receivers = first.receivers.iter().filter(|register| rest.iter()
+            .all(|other| other.receivers.contains(register))).copied().collect();
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -544,6 +570,24 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
     hoists
 }
 
+/// Per block leader, the edges into it, all from before it; `None` for one an entry
+/// (`starts`) or a later PC enters, whose proofs no earlier edge can give.
+fn forward_edges(instructions: &[WideInstruction], leaders: &[bool], starts: &[usize]) -> Vec<Option<usize>> {
+    let mut edges: Vec<Option<usize>> = leaders.iter().map(|leader| leader.then_some(0)).collect();
+    for start in starts { if let Some(slot) = edges.get_mut(*start) { *slot = None; } }
+    for (pc, instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        let falls = !matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
+        let jumps = matches!(layout, ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
+            .then(|| instruction.jump_target() as usize);
+        for target in [falls.then_some(pc + 1), jumps].into_iter().flatten() {
+            let Some(slot) = edges.get_mut(target) else { continue };
+            *slot = if target > pc { slot.map(|count| count + 1) } else { None };
+        }
+    }
+    edges
+}
+
 /// Why a unit has no lane body: it does not lower, or its machine code is rejected.
 pub(super) enum LaneDecline {
     Unlowered,
@@ -654,6 +698,8 @@ fn lower(
         hoists: BTreeMap::new(),
         hoisted: BTreeMap::new(),
         at: 0,
+        forward: Vec::new(),
+        arrived: BTreeMap::new(),
         leave,
         stop,
     };
@@ -703,6 +749,7 @@ fn lower(
     // from the registers live there, each proved to its header facts or leaving at it.
     let starts: Vec<usize> = std::iter::once(0).chain(loop_entry).collect();
     lowering.hoists = invariant_reads(&instructions, &program.constants, &starts);
+    lowering.forward = forward_edges(&instructions, &leaders, &starts);
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
     if let [at_first, at_header] = start_blocks[..] {
         let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
@@ -738,10 +785,12 @@ fn lower(
             if reachable {
                 lowering.hoist_reads(&mut state, pc);
                 lowering.conform(&mut state, pc);
+                lowering.arrive(&state, pc);
                 lowering.builder.ins().jump(block, &[]);
             }
             lowering.builder.switch_to_block(block);
             state = lowering.entry_state(pc, count);
+            lowering.keep_shared_proofs(&mut state, pc);
             reachable = true;
         }
         if !reachable {

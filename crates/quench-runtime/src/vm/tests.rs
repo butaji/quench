@@ -21427,6 +21427,38 @@ fn lane_int_stores_to_packed_objects_keep_their_narrow_form_like_the_interpreter
 }
 
 #[test]
+fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter() {
+    // A block that only earlier blocks enter keeps the proofs every edge into it carries:
+    // an object proved before a branch is not proved again after it, while one redefined
+    // or changed on any path is.
+    let source = r#"(function () {
+      function T(s) { this.state = s; this.a = 1; this.b = 2; this.c = 3; }
+      function U() { this.pad = 0; this.state = 1; this.a = 4; this.b = 5; this.c = 6; }
+      function step(t, u, k) {
+        var x = t.a;
+        if (t.state == 0) { t.state = 1; x = x + t.b; } else if (k & 1) { t = u; x = x + t.c; } else { t.state = 0; }
+        return x + t.a + t.c + t.state;
+      }
+      var t = new T(0), u = new U(), total = 0;
+      for (var k = 0; k < 4000; k++) total = (total + step(k % 5 ? t : u, k % 3 ? u : t, k)) | 0;
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-shared-proofs.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(40930.0); 2]);
+}
+
+#[test]
 fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
     // A loop that stores keeps reading each atom it stores, on whichever object: one object
     // under two names, a method beside a stored field, a prototype's field under a getter.
