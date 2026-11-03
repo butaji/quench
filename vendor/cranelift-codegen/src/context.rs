@@ -382,6 +382,16 @@ impl Context {
         self.compute_domtree();
         self.compute_loop_analysis();
         crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis);
+        if crate::poll_unswitch::run(&mut self.func) {
+            self.compute_cfg();
+            self.compute_domtree();
+            self.eliminate_unreachable_code(fisa)?;
+            self.remove_constant_phis(fisa)?;
+            self.func.dfg.resolve_all_aliases();
+            self.compute_cfg();
+            self.compute_domtree();
+            self.compute_loop_analysis();
+        }
 
         self.verify_if(fisa)?;
 

@@ -1,4 +1,16 @@
 use crate::test_host::TestHost;
+
+#[test]
+fn exclusive_owner_proof_follows_handle_lifetimes_and_pending_termination() {
+    let owner = crate::ExecutionInterrupt::default();
+    assert!(owner.exclusive_and_clear());
+    let external = owner.clone();
+    assert!(!owner.exclusive_and_clear());
+    drop(external);
+    assert!(owner.exclusive_and_clear());
+    owner.request_termination();
+    assert!(!owner.exclusive_and_clear());
+}
 use crate::{Engine, NativeContext, RootId, RootedError, Runtime};
 use std::{
     sync::{

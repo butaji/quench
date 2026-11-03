@@ -12307,7 +12307,8 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
         !compiled.uses_leaf_entry(),
         "an interruptible loop must retain the resumable native entry"
     );
-    let interrupt = std::sync::atomic::AtomicBool::new(true);
+    let interrupt = crate::ExecutionInterrupt::default();
+    interrupt.request_termination();
 
     let result = compiled.call(&[1_000_000.0], &interrupt, None);
 
