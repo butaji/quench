@@ -42,11 +42,40 @@ const fn bootstrap_abi(words: &[u64]) -> u64 {
     hash
 }
 
+const fn operation_bits<const WORDS: usize>(policies: &[bool]) -> [u64; WORDS] {
+    let mut words = [0; WORDS];
+    let mut index = 0;
+    while index < policies.len() {
+        if policies[index] { words[index / u64::BITS as usize] |= 1 << (index % u64::BITS as usize); }
+        index += 1;
+    }
+    words
+}
+
+const fn operation_beside_activations(name: &str) -> bool {
+    let name = name.as_bytes();
+    let mut index = 0;
+    while index < BESIDE_ACTIVATIONS.len() {
+        let candidate = BESIDE_ACTIVATIONS[index].as_bytes();
+        if candidate.len() == name.len() {
+            let mut byte = 0;
+            while byte < name.len() && candidate[byte] == name[byte] { byte += 1; }
+            if byte == name.len() { return true; }
+        }
+        index += 1;
+    }
+    false
+}
+
 // Operation identities must remain available without retaining callback addresses.
 // Both projections preserve declaration order and platform-specific entries.
 macro_rules! node_bindings {
     ($( $(#[$attribute:meta])* $scope:ident $name:literal ($length:literal) => $callback:path ),* $(,)?) => {
         const OPERATION_NAMES: &[&str] = &[$($(#[$attribute])* $name),*];
+        const BESIDE_OPERATION_WORDS: usize = OPERATION_NAMES.len().div_ceil(u64::BITS as usize);
+        const BESIDE_OPERATIONS: [u64; BESIDE_OPERATION_WORDS] = operation_bits(&[
+            $($(#[$attribute])* const { operation_beside_activations($name) }),*
+        ]);
         pub(crate) const BOOTSTRAP_ABI: u64 = bootstrap_abi(&[
             crate::host::startup_snapshot::BOOTSTRAP_SCHEMA_VERSION,
             cfg!(quench_icu) as u64, cfg!(quench_openssl_provider) as u64,
@@ -2777,7 +2806,8 @@ impl quench_runtime::Host for NodeHost {
     /// frame, only argument values and host state, and enters guest code, if at all, through
     /// the runtime's calls (`Host::host_function_runs_beside_activations`).
     fn host_function_runs_beside_activations(&self, index: usize) -> bool {
-        OPERATION_NAMES.get(index).is_some_and(|name| BESIDE_ACTIVATIONS.contains(name))
+        BESIDE_OPERATIONS.get(index / u64::BITS as usize)
+            .is_some_and(|word| word & (1 << (index % u64::BITS as usize)) != 0)
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
@@ -3200,12 +3230,18 @@ mod tests {
     #[test]
     fn operation_names_are_unique() {
         let mut names = std::collections::HashSet::new();
+        let host = super::NodeHost::new(Vec::new());
         assert_eq!(super::OPERATION_NAMES.len(), super::bindings().len());
         for (index, binding) in super::bindings().iter().enumerate() {
             assert!(names.insert(binding.name), "Node operation {} is registered twice", binding.name);
             assert_eq!(super::OPERATION_NAMES[index], binding.name);
             assert_eq!(super::static_operation(binding.name), super::HostFunctionId(index as u32));
             assert_eq!(super::operation(binding.name), super::static_operation(binding.name));
+            assert_eq!(quench_runtime::Host::host_function_runs_beside_activations(&host, index),
+                super::BESIDE_ACTIVATIONS.contains(&binding.name), "{}", binding.name);
+        }
+        for index in [super::OPERATION_NAMES.len(), usize::MAX] {
+            assert!(!quench_runtime::Host::host_function_runs_beside_activations(&host, index));
         }
         const FIRST: super::HostFunctionId = crate::host::shared_vm::operation!("streamConstant");
         assert_eq!(FIRST, super::HostFunctionId(0));

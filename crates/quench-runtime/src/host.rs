@@ -125,6 +125,8 @@ pub trait Host {
     /// may call it while its frameless activations stay frameless: each of those first makes
     /// them frames (`Vm::materialize_deferred_lane`). A host function that reads frames any
     /// other way (source positions, callers) must answer `false`, as the default does.
+    /// Read this proof from operation metadata in constant time; the VM keeps no separate
+    /// per-instance copy of the host's declared policy.
     fn host_function_runs_beside_activations(&self, _index: usize) -> bool {
         false
     }

@@ -426,7 +426,6 @@ impl<H: Host> Vm<H> {
             // Resolutions are the process's (its files), not the snapshot's.
             resolved_module_requests: _,
             resolved_module_names: _,
-            host_beside_activations: _,
         } = self;
         let Realm {
             globals,

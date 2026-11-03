@@ -1919,8 +1919,6 @@ pub(crate) struct Vm<H> {
     /// name, and resolving it again after a collection read its file anew. typescript.js
     /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
-    /// Per host function, `Host::host_function_runs_beside_activations`, derived on first use.
-    host_beside_activations: std::cell::OnceCell<Box<[bool]>>,
     /// The completion a frame's own call record returns, made by a lane activation
     /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
     /// at that instruction once the lane exits there.

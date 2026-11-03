@@ -101,7 +101,6 @@ impl<H: Host> Vm<H> {
             lane_deferred: None,
             resolved_module_requests: Default::default(),
             resolved_module_names: Default::default(),
-            host_beside_activations: std::cell::OnceCell::new(),
             lane_returned: None,
             lane_native: None,
             lane_native_returned: None,

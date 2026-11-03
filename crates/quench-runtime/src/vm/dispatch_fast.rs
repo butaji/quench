@@ -10694,11 +10694,7 @@ impl<H: Host> Vm<H> {
         let Some(index) = self.heap.function(callee).and_then(|function| self.host_operation_index(function.env)) else {
             return false;
         };
-        self.host_beside_activations
-            .get_or_init(|| (0..self.host.functions().len()).map(|index| self.host.host_function_runs_beside_activations(index)).collect())
-            .get(index as usize)
-            .copied()
-            .unwrap_or(false)
+        self.host.host_function_runs_beside_activations(index as usize)
     }
 
     /// Whether `native` called on `receiver` runs beside activations as the natives of
