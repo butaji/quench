@@ -22,11 +22,11 @@ const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
 
 impl<H: Host> Vm<H> {
     /// A native function's private environment: traced slots outside any scope chain.
-    pub(super) fn native_environment(&mut self, slots: Vec<Value>) -> Value {
+    pub(super) fn native_environment(&mut self, slots: &[Value]) -> Value {
         self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
             function: NATIVE_ENVIRONMENT_FUNCTION,
-            slots: slots.into(),
+            slots: crate::heap::EnvironmentSlots::from_values(slots.iter().copied()),
             scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,
@@ -120,13 +120,13 @@ impl<H: Host> Vm<H> {
                 } else {
                     HostEnvironmentSlot::COUNT
                 };
-                let mut slots = vec![Value::UNDEFINED; count];
+                let mut slots = [Value::UNDEFINED; HostEnvironmentSlot::CONSTRUCTOR_COUNT];
                 slots[HostEnvironmentSlot::Operation as usize] = Value::number(f64::from(id.0));
                 slots[HostEnvironmentSlot::Data as usize] = data.unwrap_or(Value::UNDEFINED);
                 if constructible {
                     slots[HostEnvironmentSlot::Constructible as usize] = Value::TRUE;
                 }
-                self.native_environment(slots)
+                self.native_environment(&slots[..count])
             }
         };
         let function = self.native_with_env(Native::HostFunction, environment);
