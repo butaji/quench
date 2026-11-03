@@ -57,10 +57,10 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
 #[test]
 fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
     let source = r#"(function(){
-        function fraction(x){return ((x+0.5)*18446744073709551616|0)+x;}
+        function fraction(x){for(let k=0;k<1;k=(k+1)|0)x=x+1.5;return x|0;}
         const object={calls:0,leaf:fraction,outer(x){this.calls=this.calls+1;return this.leaf(x);}};
         let sum=0;
-        for(let i=0;i<4000;i=(i+1)|0)sum=(sum+object.outer(i))|0;
+        for(let i=0;i<4000;i=(i+1)|0)sum=(sum+object.outer(i===3000?1e100:i))|0;
         globalThis.answer=sum;
         globalThis.calls=object.calls;
     })();"#;
@@ -86,7 +86,7 @@ fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
         }
     }
     assert_eq!(answers[0], answers[1]);
-    assert_eq!(answers[1], (Value::integer(7_998_000), Value::integer(4000)));
+    assert_eq!(answers[1], (Value::integer(8_002_000 - 3001), Value::integer(4000)));
 }
 
 #[test]
@@ -22507,7 +22507,7 @@ fn typed_lane_nullish_branches_share_semantics_without_number_guards() {
 #[cfg(not(quench_profiled))]
 fn typed_lane_recovery_preserves_observable_parameter_updates() {
     let program = Engine::specialize(r#"
-      function exposed(value) { value=123; return globalThis.probe.value; }
+      function exposed(value, done) { value=123; if (done) return 0; return globalThis.probe.value; }
       globalThis.probe={ get value() { return exposed.arguments[0]; } };
     "#, "typed-lane-reflected-parameter.js").unwrap();
     let mut vm = Vm::new(TestHost::default());

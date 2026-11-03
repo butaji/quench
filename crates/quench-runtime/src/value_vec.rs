@@ -247,9 +247,9 @@ impl Default for ValueArena {
             free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
             shape_lengths: vec![0],
-            shape_chains: vec![0],
+            shape_chains: Vec::new(),
             chain_owners: Vec::new(),
-            owner_reps: vec![SlotRepresentation::None],
+            owner_reps: Vec::new(),
             tracking: false,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -351,10 +351,8 @@ impl ValueArena {
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
         self.shape_chains.clear();
-        self.shape_chains.push(0);
         self.chain_owners.clear();
         self.owner_reps.clear();
-        self.owner_reps.push(SlotRepresentation::None);
     }
 
     /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot

@@ -209,7 +209,7 @@ mod tests {
         let callee = program.functions.iter().position(|body| body.header().name
             .is_some_and(|atom| &program.atoms[atom as usize] == "step")).unwrap();
         let body = program.function(caller);
-        let unit = lane_unit::unit(&program, caller as u32, body, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|owner, pc|
+        let unit = lane_unit::unit(&program, caller as u32, body, &|owner, pc|
             (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| op.op() == Op::Call))
                 .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -257,7 +257,7 @@ mod tests {
     fn polymorphic_call_results_join_before_proving_control() {
         let program = crate::Engine::specialize("function one(){return 1;}function two(){return 2;}function pipe(fn){let count=fn();let value=0;for(let i=0;i<count;i=(i+1)|0)value=(value+1)|0;return value;}", "static-alternatives.js").unwrap();
         let body = program.function(3);
-        let unit = lane_unit::unit(&program, 3, body, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|owner, pc| {
+        let unit = lane_unit::unit(&program, 3, body, &|owner, pc| {
             if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| op.op() == Op::Call) {
                 [1, 2].map(|function| CallTarget { function, callee: CalleeBinding::Function }).to_vec()
             } else { Vec::new() }

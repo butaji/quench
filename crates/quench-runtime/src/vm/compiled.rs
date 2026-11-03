@@ -584,7 +584,7 @@ pub(super) fn compile_js_numeric_region(
 pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
     -> Option<super::js_compiled::JsJitArtifact> {
     let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::unit(program, function_id, function, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|_, _| Vec::new(), &|_| None)?;
+    let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
         LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
@@ -2314,7 +2314,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
     // root calls of leaves; the same unit owns all origins and recovery masks.
     let leaf = |function: u32| program.function_get(function as usize)
         .is_some_and(|body| body.instructions().all(|instruction| instruction.op() != Op::Call));
-    let Some(unit) = lane_unit::unit(program, function_id, function, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|caller, pc| (caller == function_id)
+    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc| (caller == function_id)
         .then(|| targets.get(pc as usize).copied().flatten()).flatten().filter(|callee| leaf(*callee))
         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
         &|id| program.function_get(id as usize)) else { return Vec::new(); };
@@ -7460,10 +7460,6 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             let helpers = LaneHelpers::Process((*LaneHelper::addresses::<H>()).map(|address| address as usize));
             let body = program.function_get(function as usize)?;
-            // The calls a unit still makes (none it inlines) whose callees have bodies.
-            let mut direct = direct;
-            // A unit whose code exceeds the lane body budget is planned again with half the
-            // inlining, down to the function alone.
             let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
             let (unit, region, fields, direct, direct_sites) = loop {
                 // A pure numeric body observes neither closure environment nor identity.
@@ -7495,7 +7491,7 @@ impl<H: Host> Vm<H> {
                     bound
                 };
                 // Captured stores already use the shared frameless kernel.
-                let unit = lane_unit::unit(program, function, body, budget, &bindings, &|callee| program.function_get(callee as usize)
+                let unit = lane_unit::with_budget(program, function, body, budget, &bindings, &|callee| program.function_get(callee as usize)
                     .filter(|callee| super::js_compiled::captured_field_store_candidate(program, callee).is_none()))?;
                 if !valid_bindings.get() { return None; }
                 if !unit.frames.iter().all(|frame| match frame.target.callee {
@@ -7511,32 +7507,27 @@ impl<H: Host> Vm<H> {
                     None => None,
                 };
                 let fields = self.lane_unit_fields(program, &unit);
-                // The code names each callee by its address in this boxed slice, which never
-                // moves; an attempt over the budget gives its callees back to the next.
-                let (origins, callees): (Vec<(usize, usize)>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
+                // The calls the unit still makes (none it inlines) whose callees have bodies.
+                // Each candidate owns one contiguous stable slice. A rejected candidate
+                // releases it; replanning keeps the original targets available.
+                let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
                     .filter(|(_, instruction)| instruction.op() == Op::Call)
                     .filter_map(|(pc, _)| match unit.origins[pc] {
-                        lane_unit::Origin::Caller(origin) => direct.get_mut(origin as usize)?.take()
-                            .map(|callee| ((pc, origin as usize), callee)),
+                        lane_unit::Origin::Caller(origin) => direct.get(origin as usize)?.as_ref().cloned().map(|callee| (pc, callee)),
                         lane_unit::Origin::Inlined { .. } => None,
                     })
                     .unzip();
-                let callees: Box<[DirectCallee]> = callees.into_boxed_slice();
+                let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
                 let direct_sites: std::collections::BTreeMap<usize, *const DirectCallee> =
-                    origins.iter().zip(callees.iter()).map(|((pc, _), callee)| (*pc, std::ptr::from_ref(callee))).collect();
+                    pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
                 let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
                     .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
                 let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
                 match lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites,
                     &frame_captures, loop_entry, allow_first_entry) {
-                    Ok(region) => break (unit, region, fields, callees, direct_sites),
-                    Err(lane_region::LaneDecline::Rejected(super::jit_backend::NativeCompileRejection::CodeSizeBudget))
-                        if !unit.frames.is_empty() => {
-                        for ((_, origin), callee) in origins.into_iter().zip(callees.into_vec()) {
-                            direct[origin] = Some(callee);
-                        }
-                        budget /= 2;
-                    }
+                    Ok(region) => break (unit, region, fields, direct, direct_sites),
+                    Err(lane_region::LaneDecline::Rejected(reason))
+                        if reason.exceeds_code_budget() && !unit.frames.is_empty() && budget > 0 => budget /= 2,
                     Err(_) => return None,
                 }
             };
@@ -7736,6 +7727,7 @@ impl<H: Host> Vm<H> {
 /// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
 /// target the lane would activate, fixed by the callee's identity, which the call guards,
 /// and its specialized body. The caller's body owns it.
+#[derive(Clone)]
 pub(super) struct DirectCallee {
     pub(super) target: super::dispatch_fast::ScriptCallTarget,
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
@@ -18018,7 +18010,7 @@ mod tests {
             let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
                 instruction.op() == Op::Call && targets[id][*pc].is_some()).count();
             assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
-            let unit = lane_unit::unit(&program, id as u32, body, lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|caller, pc|
+            let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
                 (caller == id as u32).then(|| targets[id][pc as usize]).flatten()
                     .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
@@ -18064,7 +18056,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18242,7 +18234,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18282,7 +18274,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18302,7 +18294,7 @@ mod tests {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, &|function, pc| targets[function as usize]
+        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).copied().flatten()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -18591,20 +18583,20 @@ mod tests {
                     "n={count} seed={seed}");
             }
         }
-        // `n|0` is ToInt32 natively: 1.5 runs once, 2^32 - 1 (-1) not at all.
-        for (value, count) in [(1.5, 1), (4294967295.0, 0)] {
-            let mut word: u32 = 1;
-            for _ in 0..count {
-                word ^= word << 13;
-                word ^= word >> 17;
-                word ^= word << 5;
+        for value in [1.5, -1.5, -0.0, 4294967295.0, 4294967297.0] {
+            let mut expected = 1_u32;
+            for _ in 0..(crate::value::number_to_u32(value) as i32) {
+                expected ^= expected << 13;
+                expected ^= expected >> 17;
+                expected ^= expected << 5;
             }
-            assert!(matches!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt),
-                Some(CompiledJsCallResult::Value(result)) if result == Value::number(f64::from(word as i32))), "n={value}");
+            assert!(matches!(direct_call(&compiled, &[Value::number(value), Value::integer(1)], &interrupt),
+                Some(CompiledJsCallResult::Value(actual)) if actual == Value::integer(expected as i32)),
+                "explicit ToInt32 accepts {value:?}");
         }
-        for value in [f64::NAN, f64::INFINITY] {
+        for value in [f64::NAN, f64::INFINITY, crate::value::EXACT_I64_TRUNCATION_LIMIT] {
             assert!(direct_call(&compiled, &[Value::number(value), Value::number(1.0)], &interrupt).is_none(),
-                "a ToInt32 beyond 2^63 declines exactly");
+                "unsupported ToInt32 input must decline exactly");
         }
         let inputs = [Value::integer(257), Value::integer(123456789)];
         let Some(CompiledJsCallResult::Value(expected)) = direct_call(&compiled, &inputs, &interrupt) else { panic!("private result") };

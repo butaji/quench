@@ -374,6 +374,23 @@ impl CliOptions {
         })
     }
 
+    /// Serialize effective values; string-list declarations own repeated values.
+    pub(crate) fn flags(&self) -> impl Iterator<Item = String> + '_ {
+        let booleans = BOOLEAN_OPTIONS.iter().enumerate().filter_map(|(index, &(name, default))| {
+            let enabled = option_bit(&self.booleans, index);
+            (enabled != default).then(|| if enabled { name.to_owned() }
+                else { format!("--no-{}", name.strip_prefix("--").expect("long option")) })
+        });
+        let strings = self.strings().filter(|(name, value)| repeated_index(name).is_none() && !value.is_empty())
+            .map(|(name, value)| format!("{name}={value}"));
+        let numbers = self.numbers().map(|(name, value)| format!("{name}={value}"));
+        let lists = self.repeated_values().flat_map(|(name, values)| values.iter().map(move |value| format!("{name}={value}")));
+        let benches = self.enabled("--experimental-bench");
+        booleans.chain(strings).chain(numbers).chain(lists).filter(move |flag| {
+            benches || !flag.starts_with("--bench-")
+        })
+    }
+
     fn set_boolean(&mut self, name: &str, value: bool) -> bool {
         if let Some(index) = boolean_index(name) { set_option_bit(&mut self.booleans, index, value); return true; }
         let Ok(index) = self.extra_booleans.binary_search_by_key(&name, |&(name, _)| name) else { return false };
