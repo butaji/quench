@@ -137,6 +137,13 @@ struct Lowering<'a, 'f> {
     live: Option<&'a crate::compile::liveness::RegisterMasks>,
     frame_live: Vec<Option<&'a crate::compile::liveness::RegisterMasks>>,
     valid: bool,
+    /// Per loop header, the reads its loop repeats unchanged (`invariant_reads`), made once
+    /// on the loop's one entry edge; each read's PC names the value it made there and
+    /// whether its int tag was tested.
+    hoists: BTreeMap<usize, Vec<usize>>,
+    hoisted: BTreeMap<usize, (Variable, bool)>,
+    /// The PC being lowered, whose edges to a header enter its loop or close it.
+    at: usize,
     /// The one epilogue every stop shares: it returns its status parameter.
     leave: ir::Block,
     /// The stop at a record: it writes its result word parameter and leaves stopped.
@@ -309,6 +316,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn continue_at(&mut self, state: &mut State, pc: usize) {
         match self.blocks.get(pc).copied().flatten() {
             Some(block) => {
+                if self.at < pc { self.hoist_reads(state, pc); }
                 self.conform(state, pc);
                 self.ins().jump(block, &[]);
             }
@@ -464,6 +472,67 @@ fn leaders(instructions: &[WideInstruction]) -> Vec<bool> {
     leaders
 }
 
+/// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): a lookup with no
+/// sink or completion whose last read's slots have only held int32 values, its value's tag
+/// tested at the read.
+fn int32_read(program: &ResidualProgram, fields: &BTreeMap<u16, Vec<NativeFieldLoad>>, instruction: WideInstruction) -> bool {
+    if instruction.op() != Op::GetField || instruction.returns_from_frame() || instruction.writes_current_this() {
+        return false;
+    }
+    let last = match instruction.field_lookup() {
+        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
+        Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
+            Some(site) => site.second.unwrap_or(site.first).1,
+            None => return false,
+        },
+        None => return false,
+    };
+    fields.get(&last).is_some_and(|shapes| !shapes.is_empty()
+        && shapes.iter().all(|field| field.representation == SlotRepresentation::Int32))
+}
+
+/// Whether `instruction` can change no heap value natively: anything else it would do (a
+/// non-Number operand, a missed cache) leaves the body first.
+fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
+    match instruction.op() {
+        Op::Move | Op::Nop | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => true,
+        Op::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
+        Op::IncDec => instruction.numeric_local_target().is_none(),
+        Op::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+        op => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
+    }
+}
+
+/// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
+/// entered by one edge from before it and no other, of instructions that only read
+/// (`reads_only`), whose reads of a register it never writes, by one cached atom, see the
+/// same object and value every iteration. Entries (`starts`) enter no such loop.
+fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
+    -> BTreeMap<usize, Vec<usize>> {
+    let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
+        ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump).then(|| instruction.jump_target() as usize);
+    let falls = |instruction: &WideInstruction| !matches!(instruction.op().control_flow_layout(),
+        ControlFlowLayout::Jump | ControlFlowLayout::Terminal | ControlFlowLayout::BranchTable);
+    let mut hoists = BTreeMap::new();
+    for (back, instruction) in instructions.iter().enumerate() {
+        let Some(header) = target(instruction).filter(|header| *header <= back && !starts.contains(header)) else { continue };
+        let body = &instructions[header..=back];
+        let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
+            + instructions[..header].iter().filter(|candidate| target(candidate) == Some(header)).count();
+        let side = instructions.iter().enumerate().any(|(pc, candidate)| !(header..=back).contains(&pc)
+            && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
+        if entries != 1 || side || !body.iter().all(|candidate| reads_only(constants, *candidate)) { continue }
+        let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
+        let reads: Vec<usize> = body.iter().enumerate().filter_map(|(offset, candidate)| match candidate.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) if candidate.op() == Op::GetField
+                && base.register_index().is_some_and(|register| !written.contains(&register)) => Some(header + offset),
+            _ => None,
+        }).collect();
+        if !reads.is_empty() { hoists.insert(header, reads); }
+    }
+    hoists
+}
+
 /// Why a unit has no lane body: it does not lower, or its machine code is rejected.
 pub(super) enum LaneDecline {
     Unlowered,
@@ -571,6 +640,9 @@ fn lower(
         live,
         frame_live,
         valid: true,
+        hoists: BTreeMap::new(),
+        hoisted: BTreeMap::new(),
+        at: 0,
         leave,
         stop,
     };
@@ -619,6 +691,7 @@ fn lower(
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     let starts: Vec<usize> = std::iter::once(0).chain(loop_entry).collect();
+    lowering.hoists = invariant_reads(&instructions, &program.constants, &starts);
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
     if let [at_first, at_header] = start_blocks[..] {
         let from_header = lowering.builder.ins().icmp_imm_u(IntCC::NotEqual, start, 0);
@@ -652,6 +725,7 @@ fn lower(
     for (pc, instruction) in instructions.iter().copied().enumerate() {
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
+                lowering.hoist_reads(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.builder.ins().jump(block, &[]);
             }
@@ -662,6 +736,7 @@ fn lower(
         if !reachable {
             continue;
         }
+        lowering.at = pc;
         reachable = lowering.instruction(&mut state, pc, instruction);
     }
     if reachable {
@@ -1431,7 +1506,43 @@ impl Lowering<'_, '_> {
         self.continue_at(&mut fall_state, pc + 1);
     }
 
+    /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
+    /// guard that fails there leaves at the header, before the loop runs.
+    fn hoist_reads(&mut self, state: &mut State, header: usize) {
+        let Some(reads) = self.hoists.get(&header).cloned() else { return };
+        for pc in reads {
+            let instruction = self.unit.instructions[pc];
+            let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
+            let register = base.register_index();
+            let exit = self.guard_exit(state, header as u32);
+            let receiver = !self.native_calls
+                && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.receivers.contains(&register)));
+            let value = self.base_field_read(state, register, receiver, cache_site, exit);
+            let int32 = int32_read(self.program, self.fields, instruction);
+            if int32 {
+                let integer = is_int_tagged(&mut self.builder, value);
+                emit_js_guard(&mut self.builder, integer, exit);
+            }
+            let variable = self.builder.declare_var(types::I64);
+            self.builder.def_var(variable, value);
+            self.hoisted.insert(pc, (variable, int32));
+        }
+    }
+
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        if let Some((variable, int32)) = self.hoisted.get(&pc).copied() {
+            let value = self.builder.use_var(variable);
+            let destination = instruction.result_register();
+            self.set_tagged(state, destination, value);
+            if int32 {
+                let int = self.ins().ireduce(types::I32, value);
+                let variable = self.int_var(usize::from(destination));
+                self.builder.def_var(variable, int);
+                state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
+                    ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+            }
+            return Some(true);
+        }
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
@@ -1491,10 +1602,7 @@ impl Lowering<'_, '_> {
         }
         // A slot that has only held int32 values is read as one: its value's tag is tested
         // here, once, and a value it no longer holds leaves before the read is defined.
-        let last = *rest.last().unwrap_or(first);
-        let int32 = sink.is_none() && self.fields.get(&last).is_some_and(|shapes| !shapes.is_empty()
-            && shapes.iter().all(|field| field.representation == SlotRepresentation::Int32));
-        if !int32 {
+        if !int32_read(self.program, self.fields, instruction) {
             self.set_tagged(state, destination, value);
             return Some(true);
         }

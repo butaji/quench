@@ -21394,6 +21394,39 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
 }
 
 #[test]
+fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
+    // A loop that only reads takes its invariant fields on its entry edge: the field may
+    // change between runs, another shape or a non-object leaves at the header, a loop that
+    // never runs reads nothing the interpreter would not, and a widened slot reads anew.
+    let source = r#"(function () {
+      function P(x, y) { this.x = x; this.y = y; }
+      function Q(x, y) { this.z = 0; this.x = x; this.y = y; }
+      function sum(p, n) { var s = 0; for (var i = 0; i < n; i++) s = (s + p.x + p.y) | 0; return s; }
+      var p = new P(3, 4), q = new Q(5, 6), total = 0;
+      for (var k = 0; k < 3000; k++) { p.x = k & 15; total = (total + sum(k % 7 ? p : q, k & 31)) | 0; }
+      total = (total + sum(undefined, 0)) | 0;
+      p.y = 0.5;
+      for (var k = 0; k < 300; k++) total = (total + sum(p, 9)) | 0;
+      p.y = "2";
+      for (var k = 0; k < 300; k++) total = (total + sum(p, 3)) | 0;
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-invariant-reads.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(3000684.0); 2]);
+}
+
+#[test]
 fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpreter() {
     // Operands only their tags type compare as int32 where both are ints, else as Numbers:
     // NaN, -0, the int32 bounds and doubles take the Number path.
