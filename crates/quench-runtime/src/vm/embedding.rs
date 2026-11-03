@@ -448,6 +448,17 @@ impl<H: Host> Vm<H> {
         }).collect()
     }
 
+    pub(crate) fn embedding_caller_source_expression(&mut self) -> Option<String> {
+        self.materialize_deferred_lane();
+        let (program, line, column) = self.frames.iter().rev().find_map(|frame| {
+            let (record, _) = self.source_call_site_record(frame, false)?;
+            let CallSiteLocation::Source { line, column, .. } = record.location else { return None };
+            Some((frame.program, line, column))
+        })?;
+        let program = self.programs.get(program)?;
+        super::call_printer::source_expression(&program, line, column)
+    }
+
     pub(crate) fn embedding_error_source_position(
         &mut self,
         error: RootId,

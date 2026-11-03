@@ -791,6 +791,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.embedding_source_stack_frames(limit)
     }
 
+    /// The genuine caller's first-line expression from admitted source metadata.
+    /// This neither reads source files nor invokes guest stack accessors.
+    pub fn caller_source_expression(&mut self) -> Option<String> {
+        self.vm.embedding_caller_source_expression()
+    }
+
     /// Read captured source without invoking properties, getters or proxy traps.
     /// With no unformatted capture, project the current genuine source activation.
     pub fn error_source_position_rooted(

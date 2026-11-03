@@ -12,6 +12,8 @@ pub(crate) mod specialize;
 #[cfg(feature = "native-execution")]
 pub(crate) mod native_program;
 mod compiled;
+#[cfg(unix)]
+pub use compiled::NativeFaultHandler;
 #[cfg(feature = "profile-native-ops")]
 mod native_op_profile;
 mod js_compiled;
@@ -117,7 +119,6 @@ mod boolean;
 mod builtins;
 mod call_arguments;
 mod call_printer;
-#[cfg(feature = "aot")]
 pub(crate) use call_printer::freeze_call_sites;
 mod coercion;
 mod collections;

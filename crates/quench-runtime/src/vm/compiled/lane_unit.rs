@@ -179,29 +179,9 @@ impl Unit {
         let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
-
-    /// A closed suffix entered with the caller's canonical homes at `header`.
-    /// Source origins survive rebasing, including entry misses and liveness.
-    #[cfg(feature = "aot")]
-    pub(super) fn suffix(mut self, header: usize) -> Option<Self> {
-        if header >= self.instructions.len() { return None; }
-        if header == 0 { return Some(self); }
-        if self.markers.iter().any(|marker| *marker < header) { return None; }
-        for marker in &mut self.markers { *marker -= header; }
-        for alternative in self.frames.iter_mut().filter_map(|frame| frame.alternative.as_mut()) { *alternative -= header; }
-        self.instructions.drain(..header);
-        self.origins.drain(..header);
-        for instruction in &mut self.instructions {
-            if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
-                let target = instruction.jump_target().checked_sub(u32::try_from(header).ok()?)?;
-                instruction.set_jump_target(target);
-            }
-        }
-        Some(self)
-    }
 }
 
-/// Static method-name hints, resolved once per module into flat per-PC targets.
+/// Static method-name and local-closure hints, resolved into flat per-PC targets.
 /// A hint is never a proof: replacement/aliasing is handled by call-edge admission.
 #[cfg(feature = "aot")]
 pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<Option<u32>>> {
@@ -235,11 +215,14 @@ pub(crate) fn static_call_targets(program: &crate::ResidualProgram) -> Vec<Vec<O
                     Some(FieldLookup::Atom { atom, .. }) => methods.get(atom as usize).copied().flatten().flatten(),
                     _ => None,
                 },
+                Op::MakeClosure => Some(instruction.closure_function_index()),
                 Op::Move => methods_by_register[usize::from(instruction.register_b())],
                 _ => None,
             };
             if let Some(register) = instruction.defined_register() { methods_by_register[usize::from(register)] = method; }
-            if instruction.op().control_flow_layout() != crate::bytecode::ControlFlowLayout::Fallthrough { methods_by_register.fill(None); }
+            // Hints survive control-flow edges, including loops around a local
+            // closure. They are hypotheses only: inline admission checks the
+            // actual closure/program/body before any callee effect.
             target
         }).collect()
     })).collect()
@@ -287,6 +270,7 @@ fn inlinable(instruction: WideInstruction) -> bool {
 /// leaf. A miss may restart that call without replaying effects. Captured stores
 /// additionally allow one final write with an infallible tail.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
+    if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
     if super::super::js_compiled::captured_field_store_candidate(program, function).is_some() { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
         Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict | Op::SetIndex | Op::Call => false,
@@ -301,12 +285,16 @@ fn returns_or_keeps(instruction: WideInstruction) -> bool {
     matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER)
 }
 
-/// The unit PCs an inlined call takes past its marker and its callee's: in the caller, a
-/// returning call's completion is a `Return` of its register; an inlined callee's returning
-/// call completes the callee itself.
-fn call_length(instruction: WideInstruction, root: bool, alternatives: &[InlinedPlan]) -> u32 {
-    alternatives.iter().map(|callee| 1 + callee.plan.length(false)).sum::<u32>()
-        + u32::from(root && instruction.returns_from_frame())
+/// The unit PCs occupied by a call's alternatives, including each admission marker.
+/// Returning calls continue at an existing completion; they add no synthetic `Return`.
+fn call_length(alternatives: &[InlinedPlan]) -> u32 {
+    alternatives.iter().map(|callee| 1 + callee.plan.length(false)).sum()
+}
+
+/// The canonical caller completion a terminal call may use without replaying the call.
+fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
+    code.len().checked_sub(1).filter(|pc|
+        code[*pc].op() == Op::Return && code[*pc].result_flags() == 0)
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers
@@ -372,7 +360,7 @@ impl Plan {
             .map(|(instruction, calls)| match calls.as_slice() {
                 [] if root => 1,
                 [] => completion_length(*instruction),
-                alternatives => call_length(*instruction, root, alternatives),
+                alternatives => call_length(alternatives),
             })
             .sum()
     }
@@ -389,13 +377,18 @@ struct Planner<'t, 'f> {
 impl Planner<'_, '_> {
     /// The plan of `function`'s `code`, its calls inlined where the budget allows. A callee
     /// is inlined only whole: every call of its own inlined too.
-    fn plan(&mut self, function: u32, code: Vec<WideInstruction>, depth: usize) -> Plan {
+    fn plan(&mut self, function: u32, code: Vec<WideInstruction>, strict: bool, depth: usize) -> Plan {
         let mut blocked = false;
         let calls = code
             .iter()
             .enumerate()
             .map(|(pc, instruction)| {
-                let (calls, ran) = self.inline(function, pc as u32, *instruction, depth);
+                // Strict terminal calls retain the VM's proper-tail-call policy.
+                // A root completion must name a real Return, never the completed Call.
+                let (calls, ran) = if instruction.op() == Op::Call && instruction.returns_from_frame()
+                    && (strict || (depth == 0 && terminal_return(&code).is_none())) {
+                    (Vec::new(), true)
+                } else { self.inline(function, pc as u32, *instruction, depth) };
                 blocked |= calls.is_empty() && ran;
                 calls
             })
@@ -445,7 +438,8 @@ impl Planner<'_, '_> {
         {
             return None;
         }
-        let recovery = if target.callee == CalleeBinding::Function && restartable(self.program, callee, &code) {
+        let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)
+            || (target.callee == CalleeBinding::Function && restartable(self.program, callee, &code)) {
             CallRecovery::RestartCall
         } else { CallRecovery::Materialize };
         // The callee's registers and budget are reserved before its own calls plan, and given
@@ -454,7 +448,7 @@ impl Planner<'_, '_> {
         let base = self.registers;
         self.registers += u32::from(callee.registers);
         self.budget -= code.len();
-        let plan = self.plan(target.function, code, depth + 1);
+        let plan = self.plan(target.function, code, callee.strict, depth + 1);
         if plan.blocked {
             (self.registers, self.budget) = (registers, budget);
             return None;
@@ -491,7 +485,7 @@ impl Emitter {
             at += match calls.as_slice() {
                 [] if root => 1,
                 [] => completion_length(*instruction),
-                alternatives => call_length(*instruction, root, alternatives),
+                alternatives => call_length(alternatives),
             };
         }
         flat.push(at);
@@ -505,11 +499,15 @@ impl Emitter {
             if !calls.is_empty() {
                 // A returning call's callee completes what makes the call: an inlined callee
                 // completes the call that inlined it, so its result and continuation pass
-                // through; the caller completes with a `Return` of the call's register.
+                // through; the caller uses its original final Return so SourcePc recovery
+                // can never execute an already-completed Call again.
                 let returns = instruction.returns_from_frame();
                 let (call_result, call_continuation) = match (returns, root) {
                     (true, false) => (result, continuation),
-                    (true, true) => (register(instruction.result_register()), flat[pc + 1] - 1),
+                    (true, true) => {
+                        let terminal = terminal_return(&plan.code)?;
+                        (register(plan.code[terminal].register_a()), flat[terminal])
+                    }
                     (false, _) => (register(instruction.result_register()), flat[pc + 1]),
                 };
                 for (alternative, call) in calls.iter().enumerate() {
@@ -538,10 +536,6 @@ impl Emitter {
                     self.unit.instructions.push(WideInstruction::new(Op::Nop, 0, 0, 0, 0));
                     self.unit.origins.push(origin);
                     self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
-                }
-                if returns && root {
-                    self.unit.instructions.push(WideInstruction::new(Op::Return, instruction.result_register(), 0, 0, 0));
-                    self.unit.origins.push(origin);
                 }
                 continue;
             }
@@ -602,7 +596,7 @@ pub(crate) fn unit<'f>(
 ) -> Option<Unit> {
     let caller_registers = function.registers;
     let mut planner = Planner { program, targets, body, registers: u32::from(caller_registers), budget: MAX_UNIT_INLINED_INSTRUCTIONS };
-    let plan = planner.plan(function_id, decoded(function), 0);
+    let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {
         unit: Unit {
@@ -625,9 +619,72 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn function_binding_materializes_effectful_prefixes_and_backward_branches() {
-        for body in ["this.state=1;return this.next+1;", "let x=0;while(x<4)x++;return x;",
-            "this.next.value=1;return this.other+1;"] {
+    fn terminal_leaf_uses_the_existing_caller_return_and_strict_calls_residualize() {
+        for strict in [false, true] {
+            let directive = if strict { "'use strict';" } else { "" };
+            let source = format!("let p={{}};p.leaf=function(x){{this.count=this.count+1;return x+this.count;}};function run(o,x){{{directive}return o.leaf(x);}}");
+            let program = crate::Engine::specialize(&source, "terminal-inline.js").unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+            let targets = static_call_targets(&program);
+            let original_terminal = program.function(caller).code.len() - 1;
+            let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+                .get(pc as usize).copied().flatten()
+                .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                &|id| program.function_get(id as usize)).unwrap();
+            if strict {
+                assert!(unit.frames.is_empty(), "strict terminal calls preserve VM tail-call policy");
+                continue;
+            }
+            assert_eq!(unit.frames.len(), 1);
+            assert!(!unit.instructions.iter().any(|instruction| instruction.op() == Op::Call));
+            let terminal = unit.instructions.len() - 1;
+            let returned = unit.instructions[terminal];
+            assert_eq!(returned.op(), Op::Return);
+            assert_eq!(unit.origins[terminal], Origin::Caller(original_terminal as u32),
+                "completion must recover at the original Return, never the Call");
+            assert!(unit.instructions.iter().any(|instruction| instruction.op() == Op::Move
+                && instruction.result_register() == returned.register_a()));
+            assert!(unit.instructions.iter().any(|instruction| instruction.op() == Op::Jump
+                && instruction.jump_target() as usize == terminal));
+            let live = unit.register_masks(&program, caller as u32).expect("terminal splice liveness");
+            assert!(live.is_live(terminal, returned.register_a()));
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn nested_strict_terminal_calls_residualize_in_their_own_caller() {
+        for strict in [false, true] {
+            let directive = if strict { "'use strict';" } else { "" };
+            let source = format!("let p={{}};p.leaf=function(x){{return x+1;}};p.middle=function(o,x){{{directive}return o.leaf(x);}};function run(o,x){{let r=o.middle(o,x);return r+1;}}");
+            let program = crate::Engine::specialize(&source, "nested-terminal-inline.js").unwrap();
+            let caller = program.functions.iter().position(|body|
+                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
+            let targets = static_call_targets(&program);
+            let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+                .get(pc as usize).copied().flatten()
+                .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
+                &|id| program.function_get(id as usize)).unwrap();
+            if strict {
+                assert!(unit.frames.is_empty(), "a nested strict terminal call must keep its VM tail-call policy");
+            } else {
+                assert_eq!(unit.frames.len(), 2, "ordinary nested terminal calls retain recursive expansion");
+                assert_eq!(unit.frames[0].parent, None);
+                assert_eq!(unit.frames[1].parent, Some(0));
+                assert!(!unit.instructions.iter().any(|instruction| instruction.op() == Op::Call));
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn function_binding_distinguishes_effectful_prefixes_from_pure_numeric_loops() {
+        for (body, recovery) in [
+            ("this.state=1;return this.next+1;", CallRecovery::Materialize),
+            ("let x=0;while(x<4)x++;return x;", CallRecovery::RestartCall),
+            ("let x=0;while(x<4)x++;this.state=x;return this.next+1;", CallRecovery::Materialize),
+            ("this.next.value=1;return this.other+1;", CallRecovery::Materialize)] {
             let source = format!("let o={{}};o.unsafeProbe=function(){{{body}}};function run(o){{let r=o.unsafeProbe();if(r)return 11;return 12;}}");
             let program = crate::Engine::specialize(&source, "non-restartable.js").unwrap();
             let caller = program.functions.iter().position(|body|
@@ -639,7 +696,7 @@ mod tests {
                 .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                 &|id| program.function_get(id as usize)).unwrap();
             assert_eq!(unit.frames.len(), 1, "exact recovery admits {body}");
-            assert_eq!(unit.frames[0].recovery, CallRecovery::Materialize);
+            assert_eq!(unit.frames[0].recovery, recovery, "{body}");
         }
     }
 

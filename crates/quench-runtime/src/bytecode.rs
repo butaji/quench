@@ -759,7 +759,7 @@ macro_rules! opcodes {
     ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
-        #[quench_macros::native_operation_exports(17, "quench_js_op_")]
+        #[quench_macros::native_operation_exports(18, "quench_js_op_")]
         pub enum Op { $($name),+ }
 
         opcodes!(@table $d; $($name),+);
@@ -3813,6 +3813,8 @@ pub(crate) struct CallSiteDescription {
     pub(crate) offset: u32,
     pub(crate) construct: bool,
     pub(crate) callee: String,
+    /// Node's first-line expression, as a range in the admitted source snapshot.
+    pub(crate) expression: Option<SourceSpan>,
 }
 
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
@@ -3889,6 +3891,24 @@ impl SourceText {
 }
 
 impl ProgramSource {
+    /// Project admitted facts with a retained wrapper body, without reparsing it.
+    #[cfg(feature = "aot")]
+    pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
+        self.text = text;
+        self.base = base;
+        self.line_starts.take();
+        if let Some(sites) = self.call_sites.take() {
+            self.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.iter().filter_map(|site| {
+                let offset = site.offset.checked_sub(base)?;
+                if offset as usize >= self.text.len() { return None; }
+                let expression = site.expression.and_then(|span| Some(SourceSpan {
+                    start: span.start.checked_sub(base)?, end: span.end.checked_sub(base)?,
+                })).filter(|span| span.end as usize <= self.text.len());
+                Some(CallSiteDescription { offset, construct: site.construct, callee: site.callee.clone(), expression })
+            }).collect::<Vec<_>>()));
+        }
+    }
+
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
         let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
@@ -3904,6 +3924,11 @@ impl ProgramSource {
                 writer.u32(site.offset);
                 writer.bool(site.construct);
                 writer.str(&site.callee);
+                writer.bool(site.expression.is_some());
+                if let Some(span) = site.expression {
+                    writer.u32(span.start);
+                    writer.u32(span.end);
+                }
             }
         }
     }
@@ -3922,7 +3947,12 @@ impl ProgramSource {
             let count = reader.len()?;
             let mut sites = Vec::with_capacity(count);
             for _ in 0..count {
-                sites.push(CallSiteDescription { offset: reader.u32()?, construct: reader.bool()?, callee: reader.str()?.into() });
+                sites.push(CallSiteDescription {
+                    offset: reader.u32()?, construct: reader.bool()?, callee: reader.str()?.into(),
+                    expression: if reader.bool()? {
+                        Some(SourceSpan { start: reader.u32()?, end: reader.u32()? })
+                    } else { None },
+                });
             }
             source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
             source.validate_call_sites().map_err(crate::snapshot::SnapshotError)?;
@@ -3938,6 +3968,12 @@ impl ProgramSource {
                 if previous.is_some_and(|old| old >= key) || !self.text.is_char_boundary(site.offset as usize) || site.callee.is_empty() {
                     return Err("invalid frozen call-site descriptions".into());
                 }
+                if let Some(span) = site.expression
+                    && (span.start > site.offset || span.end < site.offset || span.start >= span.end
+                        || !self.text.is_char_boundary(span.start as usize)
+                        || !self.text.is_char_boundary(span.end as usize)
+                        || self.text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}']))
+                    { return Err("invalid frozen call-site expression".into()); }
                 previous = Some(key);
             }
         }
@@ -4343,7 +4379,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 115;
+    pub const FORMAT_VERSION: u8 = 116;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

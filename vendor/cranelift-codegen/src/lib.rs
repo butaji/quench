@@ -86,6 +86,7 @@ mod alias_analysis;
 mod branch_to_trap;
 mod constant_hash;
 mod context;
+mod countdown;
 mod ctxhash;
 mod egraph;
 mod inst_predicates;

@@ -59,6 +59,9 @@ pub(crate) struct Elaborator<'a> {
     /// in every block they are used (e.g., immediates or other
     /// "cheap-to-compute" ops).
     remat_values: &'a FxHashSet<Value>,
+    /// Quench: recurrence results already needed at the next loop header.
+    /// Recomputing these in a successor does not shorten the carried lifetime.
+    loop_carried_values: EntitySet<Value>,
     /// Explicitly-unrolled value elaboration stack.
     elab_stack: Vec<ElabStackEntry>,
     /// Results from the elab stack.
@@ -82,16 +85,29 @@ pub(crate) struct Elaborator<'a> {
 /// disturb; a recurrence such as SHA-256's round function leads by more.
 const CRITICAL_LEAD: u32 = 4;
 
+/// A pure clone keeps its source origin and aliases the original label names.
+fn clone_pure_debug_info(func: &mut Function, original: Inst, cloned: Inst) {
+    let source = func.srclocs[original];
+    func.srclocs[cloned] = source;
+    let value = func.dfg.first_result(original);
+    if func.dfg.values_labels.as_ref().is_some_and(|labels| labels.contains_key(&value)) {
+        let result = func.dfg.first_result(cloned);
+        func.dfg.add_value_label_alias(result, source, value);
+    }
+}
+
 /// Quench: whether `value` is rematerialized where it is used: a value the
 /// remat rules chose, or a clone of one (placed for another dominator
 /// subtree), which shares its best value.
 fn is_rematerialized(
     remat_values: &FxHashSet<Value>,
+    loop_carried_values: &EntitySet<Value>,
     value_to_best_value: &SecondaryMap<Value, BestEntry>,
     value: Value,
 ) -> bool {
     let BestEntry(_, best) = value_to_best_value[value];
-    remat_values.contains(&value) || remat_values.contains(&best)
+    !loop_carried_values.contains(best)
+        && (remat_values.contains(&value) || remat_values.contains(&best))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +205,7 @@ impl<'a> Elaborator<'a> {
             loop_stack: smallvec![],
             cur_block: Block::reserved_value(),
             remat_values,
+            loop_carried_values: EntitySet::new(),
             elab_stack: vec![],
             elab_result_stack: vec![],
             block_stack: vec![],
@@ -444,6 +461,7 @@ impl<'a> Elaborator<'a> {
     /// `true` if a rewrite occurred.
     fn maybe_remat_arg(
         remat_values: &FxHashSet<Value>,
+        loop_carried_values: &EntitySet<Value>,
         value_to_best_value: &SecondaryMap<Value, BestEntry>,
         func: &mut Function,
         remat_copies: &mut FxHashMap<(Block, Value), Value>,
@@ -459,7 +477,7 @@ impl<'a> Elaborator<'a> {
         // currently rematerialized. Right now we don't do this, to
         // avoid the need for another fixpoint loop here.
         if arg.in_block != insert_block
-            && is_rematerialized(remat_values, value_to_best_value, arg.value)
+            && is_rematerialized(remat_values, loop_carried_values, value_to_best_value, arg.value)
         {
             let new_value = match remat_copies.entry((insert_block, arg.value)) {
                 HashEntry::Occupied(o) => *o.get(),
@@ -467,6 +485,7 @@ impl<'a> Elaborator<'a> {
                     let inst = func.dfg.value_def(arg.value).inst().unwrap();
                     debug_assert_eq!(func.dfg.inst_results(inst).len(), 1);
                     let new_inst = func.dfg.clone_inst(inst);
+                    clone_pure_debug_info(func, inst, new_inst);
                     func.layout.insert_inst(new_inst, before);
                     let new_result = func.dfg.inst_results(new_inst)[0];
                     *v.insert(new_result)
@@ -639,6 +658,7 @@ impl<'a> Elaborator<'a> {
                                 && constant
                                 && is_rematerialized(
                                     self.remat_values,
+                                    &self.loop_carried_values,
                                     &self.value_to_best_value,
                                     value.value,
                                 ))
@@ -718,6 +738,7 @@ impl<'a> Elaborator<'a> {
                     for arg_value in arg_values.iter_mut() {
                         if Self::maybe_remat_arg(
                             &self.remat_values,
+                            &self.loop_carried_values,
                             &self.value_to_best_value,
                             &mut self.func,
                             &mut self.remat_copies,
@@ -778,6 +799,7 @@ impl<'a> Elaborator<'a> {
                                 new_result, result
                             );
                         }
+                        clone_pure_debug_info(self.func, inst, new_inst);
                         new_inst
                     } else {
                         trace!(" -> no location; using original inst");
@@ -866,6 +888,7 @@ impl<'a> Elaborator<'a> {
                 let mut new_arg = self.elaborate_eclass_use(*arg, before);
                 Self::maybe_remat_arg(
                     &self.remat_values,
+                    &self.loop_carried_values,
                     &self.value_to_best_value,
                     &mut self.func,
                     &mut self.remat_copies,
@@ -976,10 +999,40 @@ impl<'a> Elaborator<'a> {
         }
     }
 
+    /// Quench: identify scalar recurrences from SSA backedge bindings once.
+    /// Constants and unrelated address expressions retain the normal policy.
+    fn retain_loop_carried_values(&mut self) {
+        for block in self.func.layout.blocks() {
+            let Some(terminator) = self.func.layout.last_inst(block) else { continue; };
+            for edge in self.func.dfg.insts[terminator].branch_destination(
+                &self.func.dfg.jump_tables, &self.func.dfg.exception_tables,
+            ) {
+                let header = edge.block(&self.func.dfg.value_lists);
+                if self.loop_analysis.is_loop_header(header).is_none()
+                    || !self.domtree.block_dominates(header, block) {
+                    continue;
+                }
+                for (&parameter, argument) in self.func.dfg.block_params(header).iter()
+                    .zip(edge.args(&self.func.dfg.value_lists)) {
+                    let Some(argument) = argument.as_value() else { continue; };
+                    if !is_rematerialized(self.remat_values, &self.loop_carried_values,
+                        &self.value_to_best_value, argument) { continue; }
+                    let best = self.value_to_best_value[argument].1;
+                    let ValueDef::Result(inst, _) = self.func.dfg.value_def(best) else { continue; };
+                    if self.func.dfg.inst_values(inst)
+                        .any(|input| self.value_to_best_value[input].1 == parameter) {
+                        self.loop_carried_values.insert(best);
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn elaborate(&mut self) {
         self.stats.elaborate_func += 1;
         self.stats.elaborate_func_pre_insts += self.func.dfg.num_insts() as u64;
         self.compute_best_values();
+        self.retain_loop_carried_values();
         self.compute_heights();
         self.elaborate_domtree(&self.domtree);
         self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;

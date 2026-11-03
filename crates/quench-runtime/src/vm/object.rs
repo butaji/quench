@@ -2,6 +2,72 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::value::HeapReference;
 
+#[cfg(all(test, feature = "aot"))]
+mod tests {
+    use super::*;
+    use crate::test_host::TestHost;
+
+    #[test]
+    fn native_only_field_probes_use_semantic_specialization_permission() {
+        let program = crate::Engine::specialize(r#"
+            var own={value:7};
+            function Static(){}
+            Static.value=8;
+            var inherited=Object.create({value:9});
+            var getterCalls=0;
+            var accessor={get value(){getterCalls++;return 11;}};
+            function readOwn(object){return object.value;}
+            function readCell(object){return object.value;}
+            function readInherited(object){return object.value;}
+            for(let i=0;i<4;i++){
+                if(readOwn(own)!==7||readCell(Static)!==8||readInherited(inherited)!==9)throw 'data';
+            }
+        "#, "native-field-permission.js").unwrap();
+        let native = crate::NativeJsProgram::<TestHost>::compile_eager(program).unwrap();
+        let program = native.residual();
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
+        vm.execute_native_program(&native, true).unwrap();
+        assert!(vm.specialized_operations_enabled(program));
+        assert!(!vm.lane_admits(program), "native semantics do not admit interpreter lane dispatch");
+        let site = |name: &str| {
+            let function = program.functions.iter().position(|body| body.header().name
+                .is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+            program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
+                Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, .. })
+                    if &program.atoms[atom as usize] == "value" => Some(cache_site),
+                _ => None,
+            }).unwrap()
+        };
+        let mut global = |name| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        let own = global("own");
+        let function = global("Static");
+        let inherited = global("inherited");
+        let accessor = global("accessor");
+        let own_site = site("readOwn");
+        let cell_site = site("readCell");
+        let inherited_site = site("readInherited");
+        assert_eq!(vm.primary_own_field_hit(program, own, own_site), Some(Value::integer(7)));
+        assert_eq!(vm.cell_own_field_hit(program, function, cell_site), Some(Value::integer(8)));
+        assert_eq!(vm.primary_holder_field_hit(program, inherited, inherited_site), Some(Value::integer(9)));
+        assert_eq!(vm.primary_record_holder_field_hit(program, inherited, inherited_site), Some(Value::integer(9)));
+        assert!(matches!(vm.cached_field_hit(program, function, cell_site), FieldCacheProbe::Hit(value)
+            if value == Value::integer(8)));
+        assert_eq!(vm.cell_own_field_hit(program, accessor, own_site), None,
+            "a data probe must leave accessor semantics untouched");
+        let value = vm.intern_atom("value");
+        assert_eq!(vm.get_field_cached(program, accessor, value, own_site).unwrap(), Value::integer(11));
+        let calls = vm.intern_atom("getterCalls");
+        assert_eq!(vm.own_property(vm.realm.globals, calls), Some(Value::integer(1)));
+        vm.specialized = false;
+        assert!(!vm.specialized_operations_enabled(program));
+        assert!(matches!(vm.cached_field_hit(program, own, own_site), FieldCacheProbe::Ineligible));
+    }
+}
+
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
@@ -1453,7 +1519,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER {
@@ -1631,7 +1697,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: u16,
     ) -> Option<FieldCache> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         if self.method_caches_may_name(atom) {
             return None;
         }
@@ -1783,7 +1849,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
@@ -1801,7 +1867,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let cache = self.field_cache_entry(site);
         if cache.holder == NO_FIELD_HOLDER {
             return None;
@@ -1820,7 +1886,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object(object)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
@@ -1842,7 +1908,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let receiver = self.heap.object(object)?;
         let hit = self.ordinary_holder_entry_value(self.field_cache_entry(site), receiver)?;
         self.profile
@@ -1860,7 +1926,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let (receiver, function_receiver) = self.inherited_receiver(object)?;
         let (hit, proof) =
             self.cached_inherited_field_value(self.field_cache_index(site), receiver, function_receiver)?;
@@ -1883,7 +1949,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         site: u16,
     ) -> Option<Value> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         let (receiver, function_receiver) = self.inherited_receiver(object)?;
         // SAFETY: as for `cached_inherited_field_value`.
         let index = unsafe { self.inherited_field_indices.get_unchecked(self.field_cache_index(site)) };
@@ -1989,7 +2055,7 @@ impl<H: Host> Vm<H> {
         site: u16,
         hint: FieldCache,
     ) -> Option<(Value, PolymorphicHit)> {
-        debug_assert!(self.lane_admits(p));
+        debug_assert!(self.specialized_operations_enabled(p));
         debug_assert!(hint.holder == NO_FIELD_HOLDER);
         // Any record receiver, an array's too: entries name only shape slots, which an
         // array's length and elements are not.

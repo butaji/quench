@@ -102,7 +102,10 @@ mod platform {
             .find_map(|(candidate, number)| (*candidate == name).then_some(*number))
     }
 
-    extern "C" fn receive(signal: libc::c_int) {
+    extern "C" fn receive(signal: libc::c_int, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+        // Owned native poll/guard faults resume before ordinary Node delivery.
+        // SAFETY: these are the original kernel-supplied SA_SIGINFO arguments.
+        if unsafe { quench_runtime::NativeFaultHandler::resume(signal, info, context) } { return; }
         ACTIVE_HANDLERS.fetch_add(1, Ordering::AcqRel);
         // No allocation, lock, VM access, or guest callback occurs in this handler.
         unsafe {
@@ -195,15 +198,22 @@ mod platform {
                 return Ok(());
             }
             let sequence = next_sequence()?;
+            // Keep restoration order sound: our saved predecessor owns native
+            // faults even when a listener is registered before the first tier-up.
+            quench_runtime::NativeFaultHandler::prepare(signal);
             if let std::collections::hash_map::Entry::Vacant(e) = self.previous.entry(signal) {
                 let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
                 let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+                if unsafe { libc::sigaction(signal, std::ptr::null(), &mut previous) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
                 action.sa_sigaction = receive as *const () as usize;
-                action.sa_flags = libc::SA_RESTART;
+                // Composed native faults retain their alternate-stack capability.
+                action.sa_flags = libc::SA_RESTART | libc::SA_SIGINFO | (previous.sa_flags & libc::SA_ONSTACK);
                 unsafe {
                     libc::sigemptyset(&mut action.sa_mask);
                 }
-                if unsafe { libc::sigaction(signal, &action, &mut previous) } != 0 {
+                if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
                 e.insert(previous);
