@@ -10,6 +10,64 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[test]
+fn deferred_math_joins_startup_intrinsics_before_guest_mutation() {
+    let program = Engine::specialize(r#"
+        function mutate() {
+            Math.abs = () => 99;
+            globalThis.Math = { abs: () => 123 };
+        }
+        function read() { return Math.abs(-7); }
+    "#, "deferred-math-intrinsics.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        vm.seal_startup_intrinsics();
+        let mutate = vm.lookup_atom("mutate").unwrap();
+        let mutate = vm.own_property(vm.realm.globals, mutate).unwrap();
+        let read = vm.lookup_atom("read").unwrap();
+        let read = vm.own_property(vm.realm.globals, read).unwrap();
+        vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
+        vm.enter_startup_intrinsics(&program).unwrap();
+        assert_eq!(vm.call_value(&program, read, Value::UNDEFINED, &[]).unwrap(), Value::integer(7));
+        vm.leave_startup_intrinsics(&program).unwrap();
+        assert_eq!(vm.call_value(&program, read, Value::UNDEFINED, &[]).unwrap(), Value::integer(123));
+    }
+}
+
+#[test]
+fn deferred_builtin_namespaces_preserve_reflection_replacements_and_identity() {
+    let program = Engine::specialize(r#"
+        function check(ok, message) { if (!ok) throw new Error(message); }
+        const keys = Object.getOwnPropertyNames(globalThis);
+        const mathIndex = keys.indexOf('Math');
+        check(keys.indexOf('JSON') < keys.indexOf('Reflect') && keys.indexOf('Reflect') < mathIndex, 'namespace order');
+        const replacement = { own: true };
+        globalThis.JSON = replacement;
+        delete globalThis.Reflect;
+        Object.defineProperty(Object.prototype, 'abs', { configurable: true, get() { throw new Error('prototype getter'); } });
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Math');
+        check(descriptor.writable && !descriptor.enumerable && descriptor.configurable, 'global data attributes');
+        check(descriptor.value === Math && Math === globalThis.Math, 'stable identity');
+        check(Object.getPrototypeOf(Math) === Object.prototype, 'namespace prototype');
+        check(Object.getPrototypeOf(Math.abs) === Function.prototype, 'function prototype');
+        check(Math.abs(-7) === 7 && Math.sin(0) === 0, 'canonical operations');
+        const abs = Object.getOwnPropertyDescriptor(Math, 'abs');
+        check(abs.writable && !abs.enumerable && abs.configurable && abs.value.name === 'abs' && abs.value.length === 1, 'method descriptor');
+        check(Math[Symbol.toStringTag] === 'Math', 'toStringTag');
+        check(globalThis.JSON === replacement && !('Reflect' in globalThis), 'other replacements survive');
+        check(Object.getOwnPropertyNames(globalThis).indexOf('Math') === mathIndex - 1, 'position after delete');
+        delete Object.prototype.abs;
+        check(Object.freeze(Math) === Math && Object.isFrozen(Math), 'integrity');
+    "#, "namespace-observation.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+    }
+}
+
+#[test]
 fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
     let source = r#"
         globalThis.effects=0;
@@ -6866,10 +6924,14 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
                     let target_handle = vm.heap.weak_handle(target).unwrap();
-                    let proto = vm.object();
-                    vm.set_named(&program, proto, "rank", Value::number(42.0))
-                        .unwrap();
-                    let proto_handle = vm.heap.weak_handle(proto).unwrap();
+                    let proto = if prototype {
+                        let proto = vm.object();
+                        vm.set_named(&program, proto, "rank", Value::number(42.0)).unwrap();
+                        proto
+                    } else {
+                        Value::NULL
+                    };
+                    let proto_handle = vm.heap.weak_handle(proto);
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
                     let native = match (reflect, prototype) {
@@ -6912,7 +6974,7 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                                 "reflect={reflect} prototype={prototype} {phase}"
                             );
                             if prototype {
-                                assert_eq!(vm.heap.weak_value(proto_handle), Some(proto));
+                                assert_eq!(vm.heap.weak_value(proto_handle.unwrap()), Some(proto));
                                 let rank = vm.intern_atom("rank");
                                 assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
                                 if success {
@@ -6939,7 +7001,9 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                     }
                     vm.collect_now(&program);
                     assert!(vm.heap.weak_value(target_handle).is_none());
-                    assert!(vm.heap.weak_value(proto_handle).is_none());
+                    if let Some(proto_handle) = proto_handle {
+                        assert!(vm.heap.weak_value(proto_handle).is_none(), "reflect={reflect} prototype={prototype} {phase}");
+                    }
                 }
             }
         }

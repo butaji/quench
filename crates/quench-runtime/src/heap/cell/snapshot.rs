@@ -55,7 +55,7 @@ mod tag {
 
 impl Native {
     /// One past the last native's discriminant.
-    pub(crate) const COUNT: u16 = Native::CallSiteGetFunction as u16 + 1;
+    pub(crate) const COUNT: u16 = Native::MathInitialize as u16 + 1;
 
     pub(crate) fn write_snapshot(self, writer: &mut Writer) {
         writer.u16(self as u16);

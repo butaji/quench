@@ -676,6 +676,7 @@ pub(crate) enum Native {
     HostFunction,
     CallSiteConstructor,
     CallSiteGetFunction,
+    MathInitialize,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
