@@ -86,7 +86,6 @@ mod alias_analysis;
 mod branch_to_trap;
 mod constant_hash;
 mod context;
-mod conditional_xor;
 mod countdown;
 mod poll_unswitch;
 mod ctxhash;

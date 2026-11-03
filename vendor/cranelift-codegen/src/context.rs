@@ -376,7 +376,6 @@ impl Context {
         pass.run();
         log::debug!("egraph stats: {:?}", pass.stats);
         trace!("After egraph optimization:\n{}", self.func.display());
-        crate::conditional_xor::run(&mut self.func);
 
         // Branch optimizations can invalidate these; recompute them.
         self.compute_cfg();
