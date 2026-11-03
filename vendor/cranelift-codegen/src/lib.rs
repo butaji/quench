@@ -85,6 +85,7 @@ pub use crate::machinst::{
 mod alias_analysis;
 mod branch_to_trap;
 mod constant_hash;
+mod conditional_xor;
 mod context;
 mod countdown;
 mod loop_rotate;

@@ -376,6 +376,7 @@ impl Context {
         pass.run();
         log::debug!("egraph stats: {:?}", pass.stats);
         trace!("After egraph optimization:\n{}", self.func.display());
+        crate::conditional_xor::run(&mut self.func);
 
         if crate::loop_rotate::run(&mut self.func) {
             self.compute_cfg();
