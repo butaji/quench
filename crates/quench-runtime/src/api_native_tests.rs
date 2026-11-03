@@ -953,6 +953,56 @@ fn snapshot_metadata_host() -> TestHost {
         .with_natives(crate::host_functions![global "nativeSnapshotMetadata" (1) => native_snapshot_metadata, global "nativeCollectionPreview" (1) => native_collection_preview])
         .with_install(|context: &mut NativeContext<'_, TestHost>| { context.seal_startup_intrinsics(); Ok(()) })
 }
+
+fn captured_slots_host() -> TestHost {
+    TestHost::default()
+        .with_natives(crate::host_functions![global "capturedSlots" (1) => captured_slots])
+        .with_install(|context: &mut NativeContext<'_, TestHost>| {
+            context.evaluate_script_rooted(r#"
+                globalThis.holder = { gone: 0, first: 1, tail: 2, void: undefined };
+                delete holder.gone;
+                Object.defineProperty(holder, 'first', { value: 3 });
+                Object.defineProperty(holder, 'access', { get() { throw Error('captured getter ran'); }, configurable: true });
+            "#, "captured-slots-bootstrap.js")?;
+            context.seal_startup_intrinsics();
+            Ok(())
+        })
+}
+
+fn captured_slots(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let mut values = Vec::new();
+    for name in ["first", "tail", "gone", "access", "absent", "void"] {
+        let captured = context.startup_data_property_rooted(args[0], name);
+        values.push(context.boolean(captured.is_some()));
+        values.push(captured.unwrap_or_else(|| context.undefined()));
+    }
+    context.array_rooted(&values)
+}
+
+#[test]
+fn startup_captured_slots_preserve_deleted_keys_accessors_and_original_values_after_restore() {
+    let source = r#"
+        Object.defineProperty(holder, 'first', { get() { throw Error('replacement getter ran'); } });
+        delete holder.tail; holder.tail = 99;
+        Object.defineProperty(holder, 'access', { value: 77 });
+        const values = capturedSlots(holder);
+        if (JSON.stringify(values) !== '[true,3,true,2,false,null,false,null,false,null,true,null]') throw Error('captured slots changed');
+    "#;
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let program = Engine::specialize(source, "captured-slots.js").unwrap();
+        let mut runtime = Runtime::new(captured_slots_host());
+        runtime.set_execution_mode(mode);
+        runtime.execute(&program).unwrap();
+        let mut builder = Runtime::new(captured_slots_host());
+        let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+        let mut restored = Runtime::new(captured_slots_host());
+        restored.set_execution_mode(mode);
+        restored.restore_snapshot(std::rc::Rc::new(bytes), &program, |_, _| Ok(())).unwrap();
+        restored.execute_restored(&program).unwrap();
+    }
+}
+
 fn native_collection_preview(context: &mut NativeContext<'_, TestHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(preview) = context.collection_preview_rooted(value)? else { return Ok(context.undefined()); };
