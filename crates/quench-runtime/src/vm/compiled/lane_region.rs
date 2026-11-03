@@ -368,6 +368,9 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
         let index = usize::from(register);
+        // Residual definitions include synthetic destinations, such as the
+        // canonical Return home of a fused returning arithmetic operation.
+        self.written.insert(index);
         let variable = match fact.value.representation {
             Representation::Tagged => self.registers.tagged[index],
             Representation::Int32 => self.int_var(index),

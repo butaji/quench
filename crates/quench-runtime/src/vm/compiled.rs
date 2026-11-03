@@ -17924,6 +17924,41 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
+    #[test]
+    fn linked_integer_loop_preserves_call_results() {
+        let source = r#"
+            const feedback = 0xD008;
+            function state(n, seed) {
+                n |= 0; let x = seed | 0;
+                for (let i = 0; i < n; i = (i + 1) | 0) {
+                    if ((x & 1) === 0) x = x >> 1;
+                    else x = (x >> 1) ^ feedback;
+                }
+                return x | 0;
+            }
+            for (let warm = 0; warm < 64; warm++) state(1, warm);
+            print(state(0, 123456789));
+            print(state(17, 123456789));
+            print(state(-1, -2147483648));
+            print(state(1, -1));
+        "#;
+        for result in ["x | 0", "x >>> 0", "x + 0.5", "x < 0"] {
+            let body = source.replace("x | 0;", &format!("{result};"));
+            for source in [body.clone(), format!("(function () {{ {body} }})();")] {
+                let program = crate::Engine::specialize(&source, "integer-loop-result.js").unwrap();
+                let mut expected = Vm::new(crate::test_host::TestHost::default());
+                expected.set_execution_mode(ExecutionMode::Interpreted);
+                expected.execute(&program).unwrap();
+                let native = linked_optimized_test_program(program);
+                let mut vm = Vm::new(crate::test_host::TestHost::default());
+                vm.set_execution_mode(ExecutionMode::NativeOnly);
+                vm.execute_native_program(&native, true).unwrap();
+                assert_eq!(*vm.host.lines(), *expected.host.lines(), "{source}");
+            }
+        }
+    }
+
+    #[cfg(feature = "aot")]
     fn linked_optimized_test_program(program: ResidualProgram) -> crate::NativeJsProgram<crate::test_host::TestHost> {
         let targets = static_call_targets(&program);
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
