@@ -39,6 +39,43 @@ fn primitive_record_array_shared_construct_batch(b: &mut Bencher) {
     assert_eq!(elements.owner_count(), 1);
 }
 
+// The source lives outside timing; each iteration owns and destroys the clone.
+// This measures clone + drop, including extras allocation, not either operation alone.
+fn clone_drop<T: Clone>(b: &mut Bencher, source: &T) {
+    b.iter(|| {
+        for _ in 0..BATCH_RECORDS {
+            drop(black_box(black_box(source).clone()));
+        }
+    });
+}
+
+#[bench]
+fn primitive_record_object_clone_drop_batch(b: &mut Bencher) {
+    let source = empty_object();
+    assert_eq!(source.allocated_extra_bytes(), 0);
+    clone_drop(b, &source);
+}
+
+#[bench]
+fn primitive_record_object_extras_clone_drop_batch(b: &mut Bencher) {
+    let mut source = empty_object();
+    source.set_arguments_object();
+    assert!(source.allocated_extra_bytes() > 0);
+    clone_drop(b, &source);
+    assert!(source.is_arguments_object());
+}
+
+#[bench]
+fn primitive_record_array_clone_drop_batch(b: &mut Bencher) {
+    let source = ArrayObject::new(
+        empty_object(),
+        ArrayElements::from_fn(BATCH_RECORDS, |index| Value::integer(index as i32)),
+    );
+    assert_eq!(source.elements().owner_count(), 1);
+    clone_drop(b, &source);
+    assert_eq!(source.elements().owner_count(), 1);
+}
+
 fn recycle<T: std::fmt::Debug>(b: &mut Bencher, mut make: impl FnMut() -> T) {
     let mut records: RecordSpace<T> = RecordSpace::default();
     for _ in 0..BATCH_RECORDS {
@@ -64,6 +101,18 @@ fn primitive_record_array_shared_recycle_batch(b: &mut Bencher) {
     let elements = ArrayElements::from_fn(BATCH_RECORDS, |index| Value::integer(index as i32));
     recycle(b, || shared_array(&elements));
     assert_eq!(elements.owner_count(), 1);
+}
+
+#[bench]
+fn primitive_record_array_owned_recycle_batch(b: &mut Bencher) {
+    // Unlike shared recycle, each record allocates and releases its own backing.
+    // Element initialization, allocation and sweep are all inside timing.
+    recycle(b, || {
+        ArrayObject::new(
+            empty_object(),
+            ArrayElements::from_fn(black_box(BATCH_RECORDS), |index| Value::integer(index as i32)),
+        )
+    });
 }
 
 #[bench]
