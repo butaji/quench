@@ -712,6 +712,7 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         Op::Move | Op::Nop | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse => true,
         Op::LoadConst => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         Op::IncDec => instruction.numeric_local_target().is_none(),
+        Op::LoadCapture => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         Op::GetField => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         op => op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     }
@@ -724,13 +725,15 @@ fn stores_own(instruction: WideInstruction) -> bool {
         && !instruction.returns_from_frame()
 }
 
-/// Per loop header, the field reads its loop repeats unchanged: a loop `[header, back]`
+/// Per loop header, the reads its loop repeats unchanged: a loop `[header, back]`
 /// entered by one edge from before it and no other, of instructions that only read
 /// (`reads_only`) or store their own atom (`stores_own`), whose reads of a register it never
 /// writes, by one cached atom it stores to no object, see the same object and value every
-/// iteration. Entries (`starts`) enter no such loop.
-fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecode::Constant], starts: &[usize])
+/// iteration. Caller captures also stay fixed: these native operations cannot write an
+/// environment or run guest code. Entries (`starts`) enter no such loop.
+fn invariant_reads(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], starts: &[usize])
     -> BTreeMap<usize, Vec<usize>> {
+    let instructions = &unit.instructions;
     let target = |instruction: &WideInstruction| matches!(instruction.op().control_flow_layout(),
         ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump).then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| !matches!(instruction.op().control_flow_layout(),
@@ -749,6 +752,10 @@ fn invariant_reads(instructions: &[WideInstruction], constants: &[crate::bytecod
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
         let reads: Vec<usize> = body.iter().enumerate().filter_map(|(offset, candidate)| {
+            if candidate.op() == Op::LoadCapture
+                && matches!(unit.origins[header + offset], super::lane_unit::Origin::Caller(_)) {
+                return Some(header + offset);
+            }
             if candidate.op() != Op::GetField { return None; }
             match candidate.field_lookup() {
             Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom)
@@ -1053,7 +1060,7 @@ pub(super) fn lower(
     // An entry at a loop header (`loop_entry`, the entry's `start` word nonzero) starts
     // from the registers live there, each proved to its header facts or leaving at it.
     let starts: Vec<usize> = std::iter::once(entry_pc).chain(loop_entry).collect();
-    lowering.hoists = invariant_reads(&instructions, &program.constants, &starts);
+    lowering.hoists = invariant_reads(unit, &program.constants, &starts);
     lowering.forward = forward_edges(&instructions, &leaders, &starts);
     for start in &starts { lowering.entered.insert(*start); }
     let mut start_blocks: Vec<ir::Block> = starts.iter().map(|_| lowering.builder.create_block()).collect();
@@ -1771,6 +1778,20 @@ impl Lowering<'_, '_> {
         if self.consumed.contains(pc) {
             return true;
         }
+        if let Some((variable, int32)) = self.hoisted.get(&pc).copied() {
+            let value = self.builder.use_var(variable);
+            let destination = instruction.result_register();
+            self.set_tagged(state, destination, value);
+            if int32 {
+                let int = self.ins().ireduce(types::I32, value);
+                let variable = self.int_var(usize::from(destination));
+                self.builder.def_var(variable, int);
+                state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
+                    ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+            }
+            self.native += 1;
+            return true;
+        }
         let instructions = &self.unit.instructions;
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
@@ -1878,7 +1899,10 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             Op::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
-                Some(self.load_capture(state, pc, instruction))
+                let exit = self.guard_exit(state, pc as u32);
+                let value = self.load_capture(state, pc, instruction, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+                Some(true)
             }
             Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
@@ -2029,13 +2053,12 @@ impl Lowering<'_, '_> {
     /// the call bound (`lane_function_capture_read`), which also resolves shared and
     /// statically bound callees' slots; any other miss leaves at the read. Each read loads
     /// where it runs, after any call that may have stored to the slot.
-    fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block) -> ir::Value {
         let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
         let frame = match self.unit.origins.get(pc).copied() {
             Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame),
             _ => None,
         };
-        let exit = self.guard_exit(state, pc as u32);
         let callee = frame.map(|frame| self.tagged(state, self.unit.frames[frame].callee_register));
         let dense = match frame {
             None => {
@@ -2079,8 +2102,7 @@ impl Lowering<'_, '_> {
             None => { self.ins().jump(exit, &[]); }
         }
         self.builder.switch_to_block(join);
-        self.set_tagged(state, instruction.result_register(), value);
-        true
+        value
     }
 
     /// Whether the numeric relation `operator` holds of `left` and `right`, as an `i8`: in
@@ -2467,13 +2489,21 @@ impl Lowering<'_, '_> {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         for pc in reads {
             let instruction = self.unit.instructions[pc];
-            let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
-            let register = base.register_index();
             let exit = self.guard_exit(state, header as u32);
-            let receiver = !self.native_calls
-                && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.objects.receivers.contains(&register)));
-            let value = self.base_field_read(state, register, receiver, cache_site, exit);
-            let int32 = int32_read(self.program, self.fields, instruction);
+            let (value, int32) = if instruction.op() == Op::LoadCapture {
+                let value = self.load_capture(state, pc, instruction, exit);
+                let int32 = self.unit.instructions.get(pc + 1).is_some_and(|next|
+                    super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator()).is_some()
+                        && [next.operand_b(), next.operand_c()].iter().any(|operand|
+                            operand.register_index() == Some(instruction.result_register())));
+                (value, int32)
+            } else {
+                let Some(FieldLookup::Atom { base, cache_site, .. }) = instruction.field_lookup() else { continue };
+                let register = base.register_index();
+                let receiver = !self.native_calls
+                    && (base == crate::bytecode::FieldBase::THIS || register.is_some_and(|register| state.objects.receivers.contains(&register)));
+                (self.base_field_read(state, register, receiver, cache_site, exit), int32_read(self.program, self.fields, instruction))
+            };
             if int32 {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
@@ -2485,19 +2515,6 @@ impl Lowering<'_, '_> {
     }
 
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        if let Some((variable, int32)) = self.hoisted.get(&pc).copied() {
-            let value = self.builder.use_var(variable);
-            let destination = instruction.result_register();
-            self.set_tagged(state, destination, value);
-            if int32 {
-                let int = self.ins().ireduce(types::I32, value);
-                let variable = self.int_var(usize::from(destination));
-                self.builder.def_var(variable, int);
-                state.values[usize::from(destination)] = RegisterFact { tagged_current: true,
-                    ..RegisterFact::definition(Type::INT32, Representation::Int32) };
-            }
-            return Some(true);
-        }
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
