@@ -22,6 +22,46 @@ use number_inputs::{BATCH_VALUES, INPUT_SEED, Inputs};
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
+fn capture_read<const REMEMBERED: bool>(b: &mut Bencher, depth: u16) {
+    let mut vm = super::Vm::new(crate::test_host::TestHost::default());
+    let expected = Value::integer(42);
+    let mut env = Value::NULL;
+    for _ in 0..=depth {
+        env = vm.heap.alloc_environment(
+            env, 1, vec![expected].into(),
+            crate::heap::EnvironmentScopeRef::of_program(0),
+        ).0;
+    }
+    vm.walked_capture_slots(env, false, depth).unwrap();
+    let read = |vm: &super::Vm<crate::test_host::TestHost>, env, depth| {
+        if REMEMBERED {
+            vm.remembered_capture(env, false, depth, 0)
+        } else {
+            vm.environment_capture_slots(env, false, depth)
+                .and_then(|(slots, root)| {
+                    assert!(root.is_none());
+                    slots.dense()?.dense_plain(0)
+                })
+        }
+    };
+    assert_eq!(read(&vm, env, depth), Some(expected));
+    b.iter(|| {
+        for _ in 0..BATCH_VALUES {
+            black_box(read(black_box(&vm), black_box(env), black_box(depth)));
+        }
+    });
+    assert_eq!(read(&vm, env, depth), Some(expected));
+}
+
+#[bench]
+fn primitive_capture_walk_depth_one_batch(b: &mut Bencher) { capture_read::<false>(b, 1); }
+#[bench]
+fn primitive_capture_walk_depth_four_batch(b: &mut Bencher) { capture_read::<false>(b, 4); }
+#[bench]
+fn primitive_capture_remembered_depth_one_batch(b: &mut Bencher) { capture_read::<true>(b, 1); }
+#[bench]
+fn primitive_capture_remembered_depth_four_batch(b: &mut Bencher) { capture_read::<true>(b, 4); }
+
 fn property_store(b: &mut Bencher, tracking: bool, initial: Value) {
     let mut arena = crate::value_vec::ValueArena::default();
     if tracking { arena.track(); }
