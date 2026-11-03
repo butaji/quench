@@ -3533,14 +3533,17 @@ fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bo
 /// Return `value` from the running function at the record `ip`, as `Return` would: the
 /// innermost activation completes (`lane_complete_activation`); a script frame the lane
 /// pushed returns in place (`lane_return_script_frame`); any other VM frame returns the value
-/// from this record (`lane_frame_return`).
+/// from this record (`lane_frame_return`). A record a lane body `ran` computed the value
+/// from registers it did not write back, so the loop's own frame returns the value there
+/// rather than running the record again.
 macro_rules! lane_return_value {
-    ($cx:expr, $ip:expr, $value:expr) => {{
+    ($cx:expr, $ip:expr, $value:expr) => { lane_return_value!($cx, $ip, $value, false) };
+    ($cx:expr, $ip:expr, $value:expr, $ran:expr) => {{
         let (cx, ip, value): (*mut LaneContext<H>, Ip, Value) = ($cx, $ip, $value);
         if let Some(resumed) = lane_complete_plain_activation(cx, value) {
             resume!(cx, resumed)
         }
-        return lane_return_value_general(cx, ip, value);
+        return lane_return_value_general(cx, ip, value, $ran);
     }};
 }
 
@@ -3548,7 +3551,7 @@ macro_rules! lane_return_value {
 /// other activation's completion, or the frame's return. Out of line, so the returning
 /// handlers keep their registers.
 #[inline(never)]
-fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Ip {
+fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value, ran: bool) -> Ip {
     // As `lane_return_general`: a run of returning calls, then another program's activation.
     if let Some(resumed) = lane_complete_plain_chain(cx, value) {
         resume!(cx, resumed)
@@ -3560,7 +3563,7 @@ fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Va
         resume!(cx, resumed)
     }
     if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
-        return lane_return_script_frame(cx, ip, value, false);
+        return lane_return_script_frame(cx, ip, value, ran);
     }
     lane_frame_return(unsafe { vm(cx) }, ip, value)
 }
@@ -4692,48 +4695,62 @@ script_handler! {
             *binding = r.get(i.a);
             next!(cx, r, following(ip), view)
         }
-        let vm = unsafe { vm(cx) };
-        let env = unsafe { (*cx).env };
-        // A frame run's first depth-0 store finds its slots, tagged when they admit every
-        // store (reads leave them untagged: most frame runs store none), then stores through
-        // them.
-        if depth == 0
-            && env.is_deleted()
-            && let Some(capture) = lane_frame_capture(cx)
-        {
-            unsafe { (*cx).capture = capture };
-            if let Some(slots) = capture_stores(capture)
-                // SAFETY: as for the stores above.
-                && let Some(binding) = unsafe { &mut *slots }.dense_plain_mut(usize::from(ImmediateLayout::capture_slot(imm)))
-            {
-                *binding = r.get(i.a);
-                next!(cx, r, following(ip), view)
-            }
-        }
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let program = unsafe { (*cx).program };
-        // A frameless activation's function has no environment of its own: its depth-0
-        // capture is the environment it runs in, stored with one lookup.
-        if depth == 0
-            && !env.is_deleted()
-            && vm.direct_store_own_environment(code, program, env, ImmediateLayout::capture_slot(imm), r.get(i.a))
-        {
-            next!(cx, r, following(ip), view)
-        }
-        let target = if env.is_deleted() {
-            vm.capture_env(unsafe { (*cx).frame }, depth)
-        } else {
-            vm.environment_capture_env(env, false, depth)
-        };
-        let stored = target.is_some_and(|target| {
-            vm.direct_store_environment(code, program, target, ImmediateLayout::capture_slot(imm), r.get(i.a))
-        });
-        if !stored {
+        if !lane_capture_store(cx, depth, ImmediateLayout::capture_slot(imm), r.get(i.a)) {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
     }
+}
+
+/// The lane's store of `value` to the capture at `depth` and `slot` past the running
+/// function's dense slots (`lane_store_capture`): whether it stored, which a binding the
+/// direct store does not take (a `const`, an uninitialized `let`) does not.
+fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, value: Value) -> bool {
+    let vm = unsafe { vm(cx) };
+    let env = unsafe { (*cx).env };
+    // A frame run's first depth-0 store finds its slots, tagged when they admit every
+    // store (reads leave them untagged: most frame runs store none), then stores through
+    // them.
+    if depth == 0
+        && env.is_deleted()
+        && let Some(capture) = lane_frame_capture(cx)
+    {
+        unsafe { (*cx).capture = capture };
+        if let Some(slots) = capture_stores(capture)
+            // SAFETY: the running function's dense capture slots, which admit this write
+            // (`CAPTURE_STORES`); no collection runs in the lane.
+            && let Some(binding) = unsafe { &mut *slots }.dense_plain_mut(usize::from(slot))
+        {
+            *binding = value;
+            return true;
+        }
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let program = unsafe { (*cx).program };
+    // A frameless activation's function has no environment of its own: its depth-0
+    // capture is the environment it runs in, stored with one lookup.
+    if env.is_deleted() {
+        return vm.capture_env(unsafe { (*cx).frame }, depth)
+            .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value));
+    }
+    lane_environment_store(vm, code, program, env, depth, slot, value)
+}
+
+/// `lane_capture_store` of a function running in environment `env` without a frame: its
+/// depth-0 capture is `env` itself, stored with one lookup.
+fn lane_environment_store<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, program: ProgramId, env: Value, depth: u16, slot: u16, value: Value) -> bool {
+    if depth == 0 && vm.direct_store_own_environment(code, program, env, slot, value) {
+        return true;
+    }
+    vm.environment_capture_env(env, false, depth)
+        .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value))
+}
+
+/// The environment a running lane body's captures resolve in when it runs as a direct
+/// callee (`Vm::innermost_direct_callee`): its closure's, which no lane activation holds.
+fn lane_body_callee_env<H: Host>() -> Option<Value> {
+    Vm::<H>::innermost_direct_callee().map(|callee| callee.target.env)
 }
 
 script_handler! {
@@ -7352,7 +7369,7 @@ script_handler! {
         own.note_lane_body_end(exit);
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
-            LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
+            LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value, true),
         }
     }
 }
@@ -14163,7 +14180,7 @@ script_handler! {
         own.note_lane_body_end(exit);
         match resumed {
             LaneBodyLeft::Resume(registers, resume, carried) => next!(cx, registers, resume, carried),
-            LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value),
+            LaneBodyLeft::Completed(record, value) => lane_return_value!(cx, record, value, true),
         }
     }
 }
@@ -14311,8 +14328,8 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, body: &crate::bytec
             let record = unsafe { &*view.records.get(pc)?.get() };
             let target = *vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get()))?;
             let sloppy = match target.this_binding {
-                ThisBinding::Sloppy => true,
-                ThisBinding::Strict => false,
+                ThisBinding::Sloppy => Some(vm.realm.globals),
+                ThisBinding::Strict => None,
                 _ => return None,
             };
             (target.generation == vm.lane_stack.generation
@@ -14464,6 +14481,46 @@ fn lane_body_inlined_activation<H: Host>(
 /// # Safety
 /// `context` is the running lane's context, whose activation's registers hold the caller's
 /// state; nothing the call runs allocates or collects.
+/// A lane body's read of a capture `packed` names (depth in its high half, slot in its low),
+/// by the lane's own non-effectful lookup (`lane_capture_value`): its value, or
+/// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
+pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
+    let value = match lane_body_callee_env::<H>() {
+        Some(env) => {
+            let vm = unsafe { vm(cx) };
+            // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.owned_capture(unsafe { &*slots }, root, slot))
+        }
+        None => lane_capture_value(cx, depth, slot),
+    };
+    value
+        .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
+        .unwrap_or(Value::DELETED)
+        .to_bits()
+}
+
+/// A lane body's store of `value` to the capture `packed` names (depth in its high half,
+/// slot in its low), by the lane's own store (`lane_capture_store`): 1 where it stored, else
+/// 0, which leaves the body at the store, before it.
+///
+/// # Safety
+/// As `lane_body_capture`.
+pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
+    let stored = match lane_body_callee_env::<H>() {
+        Some(env) => {
+            // SAFETY: the context's program outlives the lane run.
+            let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
+            lane_environment_store(unsafe { vm(cx) }, code, program, env, depth, slot, value)
+        }
+        None => lane_capture_store(cx, depth, slot, value),
+    };
+    u64::from(stored)
+}
+
 pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     use super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
@@ -15053,14 +15110,39 @@ fn lane_planned_construction<H: Host>(
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
+    planned_construction(vm, callee, lane_construct_argument(r, i))
+}
+
+/// `lane_planned_construction` from the parameters' values `argument` gives.
+#[inline(always)]
+fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
-        return lane_defaulted_construction(vm, index, r, i);
+        return lane_defaulted_construction(vm, index, argument);
     }
-    let argument = lane_construct_argument(r, i);
     Some(plan.allocate(&mut vm.heap, |field| argument(plan.parameters[field])))
+}
+
+/// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, by the callee's
+/// construct plan (`planned_construction`): the finished receiver, or `None` (no plan, a
+/// construction the lane makes otherwise, or a collection due, which the lane runs) to
+/// leave the body at the construction, before any effect.
+///
+/// # Safety
+/// `context` is the running lane's context and `arguments` the body's `argc` registers.
+pub(super) unsafe fn lane_body_construction<H: Host>(context: *mut (), callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+    let cx = context.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() || vm.heap.should_collect() {
+        return None;
+    }
+    // SAFETY: the caller passes the body's argument registers.
+    let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
+    let this = planned_construction(vm, callee, argument)?;
+    note_allocation(vm);
+    Some(this)
 }
 
 /// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
@@ -15068,12 +15150,12 @@ fn lane_planned_construction<H: Host>(
 /// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
 /// code.
 #[inline(never)]
-fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, r: Registers, i: &LaneInstruction) -> Option<Value> {
+fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let plan = vm.lane_stack.construct_plans[index];
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
     }
-    let values = plan.values(vm, lane_construct_argument(r, i));
+    let values = plan.values(vm, argument);
     Some(plan.allocate(&mut vm.heap, |field| values[field]))
 }
 

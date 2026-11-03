@@ -272,6 +272,8 @@ impl ValueLayout {
     /// Tag and family bits that distinguish a direct ordinary-object record.
     pub(crate) const DIRECT_OBJECT_TAG: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
     pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
+    /// Tag and family bits that distinguish a direct string record.
+    pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
     pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
     /// A tag field is the bits at and above this shift.
     pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;

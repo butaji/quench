@@ -150,10 +150,17 @@ fn transfer(
             Flow::To(vec![instruction.jump_target() as usize])
         }
         Op::JumpBinaryFalse => {
+            // Strict equality and `instanceof` decide operands of any type
+            // (`lane_region::relation`) and prove nothing of them; every other relation
+            // compares Numbers.
             let operands = [instruction.operand_b(), instruction.operand_c()];
-            let integer = operands.iter().all(|operand| operand_type(constants, *operand,
-                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_subtype(Type::INT32));
-            if integer { prove_int32(types, operands); } else { prove_number(types, operands); }
+            let operand_types = operands.map(|operand| operand_type(constants, operand,
+                |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
+            let operator = instruction.binary_operator_field();
+            let numeric = super::operations::NumberRelation::from_operator(operator).is_some()
+                && !matches!(super::operations::equality_operator(operator), Some((true, _)));
+            if operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_int32(types, operands); }
+            else if numeric { prove_number(types, operands); }
             Flow::To(vec![instruction.jump_target() as usize])
         }
         _ => {

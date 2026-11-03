@@ -1940,9 +1940,10 @@ fn emit_js_interrupt_requested(builder: &mut RegionCore<'_>) -> ir::Value {
     builder.interrupt_requested()
 }
 
-/// What a lane body knows of its receiver from entry on: nothing in a body's run allocates
-/// or changes a shape (calls and stores that add properties leave it), so the record, exact
-/// shape and storage mode found at entry hold for the whole run.
+/// What a lane body knows of its receiver from entry on: nothing in a body's run changes a
+/// shape (calls and stores that add properties leave it), so the record, exact shape and
+/// storage mode found at entry hold for the whole run. Only a construction allocates, after
+/// which the body reloads the property arena (`Lowering::construct`).
 struct LaneReceiver {
     object: Variable,
     shape: Variable,
@@ -2044,7 +2045,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, rec
 /// The host-specific semantic helpers a lane body calls where its native path does not
 /// apply: the VM's own field-cache read and its logged own-field store, each the rule the
 /// lane's handlers run (`Vm::cached_field_hit`, `Vm::primary_own_field_store_hit`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct LaneHelpers {
     field_get: usize,
     field_set: usize,
@@ -2054,6 +2055,18 @@ pub(super) struct LaneHelpers {
     index_set: usize,
     /// A global name's read (`Vm::lane_global_read`).
     global_get: usize,
+    /// An outer capture's read (`dispatch_fast::lane_body_capture`).
+    capture_get: usize,
+    /// Strict equality of two distinct strings or BigInts (`lane_strict_equal_cells`).
+    strict_equal: usize,
+    /// `instanceof` by its steady case (`lane_instance_of`).
+    instance_of: usize,
+    /// A fused `typeof` test of a heap value (`lane_typeof_is`).
+    typeof_is: usize,
+    /// A planned construction (`lane_construct`).
+    construct: usize,
+    /// A capture's store (`dispatch_fast::lane_body_capture_store`).
+    capture_set: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -6924,6 +6937,47 @@ unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64,
     vm.lane_global_read(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
 }
 
+/// A lane body's strict equality of two distinct heap values of one content-compared family
+/// (`Vm::heap_values_strictly_equal`): 1 for equal strings or BigInts, else 0.
+unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, left: u64, right: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the comparison reads the heap and allocates nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
+}
+
+/// A lane body's `value instanceof constructor` (`Vm::steady_instanceof`): 1 or 0, or
+/// `Value::DELETED` where the full algorithm decides, which leaves the body at the test.
+unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
+        .map_or(Value::DELETED.to_bits(), u64::from)
+}
+
+/// A lane body's fused `typeof` test of a heap value (`Vm::typeof_test_value`): 1 where its
+/// name is the one at `index` of `bytecode::TYPEOF_NAMES`, else 0.
+unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the test reads the value's cell and allocates nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
+}
+
+/// A lane body's `new callee(...)` of the `argc` registers at `arguments`
+/// (`dispatch_fast::lane_body_construction`): the receiver, or `Value::DELETED`, which leaves
+/// the body at the construction. The allocation may have grown the heap's arenas, whose bases
+/// the dispatch then holds again for the body to reload (`JsStepDispatch::refresh_allocation_bases`).
+unsafe extern "C" fn lane_construct<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64, arguments: u64, argc: u64) -> u64 {
+    let dispatch = payload as *mut JsStepDispatch;
+    // SAFETY: the body passes its own dispatch and argument registers; the construction runs
+    // no guest code and collects nothing.
+    let built = unsafe {
+        super::dispatch_fast::lane_body_construction::<H>((*dispatch).lane_context as *mut (), Value::from_bits(callee), arguments as *const Value, argc as u16)
+    };
+    // SAFETY: as above; nothing else borrows the VM while the helper runs.
+    unsafe { (*dispatch).refresh_allocation_bases(&*(vm as *const Vm<H>)) };
+    built.unwrap_or(Value::DELETED).to_bits()
+}
+
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
@@ -7014,6 +7068,12 @@ impl<H: Host> Vm<H> {
             call: super::dispatch_fast::lane_body_call::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
             index_set: lane_index_set::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
             global_get: lane_global_get::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            capture_get: super::dispatch_fast::lane_body_capture::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            strict_equal: lane_strict_equal_cells::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            instance_of: lane_instance_of::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            typeof_is: lane_typeof_is::<H> as unsafe extern "C" fn(u64, u64, u64, u64) -> u64 as usize,
+            construct: lane_construct::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,
+            capture_set: super::dispatch_fast::lane_body_capture_store::<H> as unsafe extern "C" fn(u64, u64, u64, u64, u64) -> u64 as usize,
         };
         let body = program.function_get(function as usize)?;
         // The calls a unit still makes (none it inlines) whose callees have bodies; a body
@@ -7167,6 +7227,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
+    /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
+    pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
+        let frame = lane_frame();
+        // SAFETY: as `lane_shadow_active`; a pushed frame names the caller-owned callee.
+        unsafe {
+            let base = (*frame).shadow.as_mut_ptr();
+            let top = (*frame).dispatch.shadow_top as *const ShadowFrame;
+            (!top.is_null() && top != base.cast_const()).then(|| &*(*top.sub(1)).callee)
+        }
+    }
+
     /// Whether a running body has native frames below the innermost: a helper's activation
     /// would sit under them, so a call from one takes the body's exit instead
     /// (`dispatch_fast::lane_body_call`).
@@ -7230,8 +7302,10 @@ pub(super) struct DirectCallee {
     /// The values past its registers a leave inside a call it inlines takes
     /// (`LaneView::lane_body_room`), which the call proves free with its own.
     pub(super) reserve: u16,
-    /// The callee binds a sloppy receiver: the call takes only a direct object one directly.
-    pub(super) sloppy: bool,
+    /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
+    /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
+    /// takes any receiver as it is.
+    pub(super) sloppy: Option<Value>,
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(super) capture_values: *const Value,
     pub(super) capture_len: usize,
@@ -7503,6 +7577,14 @@ impl JsStepDispatch {
         }
     }
 
+    /// The bases an allocation may move: the object mark blocks and the property arena.
+    fn refresh_allocation_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        let (blocks, count) = vm.heap.native_object_mark_blocks();
+        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        let (values, len) = vm.heap.native_property_values();
+        (self.property_values, self.property_len) = (values as usize, len);
+    }
+
     fn refresh_heap_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
@@ -7518,10 +7600,7 @@ impl JsStepDispatch {
             .unwrap_or((std::ptr::null(), 0));
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
-        let (blocks, count) = vm.heap.native_object_mark_blocks();
-        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
-        let (values, len) = vm.heap.native_property_values();
-        (self.property_values, self.property_len) = (values as usize, len);
+        self.refresh_allocation_bases(vm);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());

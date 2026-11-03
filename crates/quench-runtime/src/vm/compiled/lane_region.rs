@@ -730,7 +730,8 @@ fn lower(
             Op::JumpBinaryFalse if nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
             Op::JumpBinaryFalse => {
                 let operands = [instruction.operand_b(), instruction.operand_c()];
-                if super::operations::equality_operator(instruction.binary_operator_field()).is_some()
+                if super::operations::NumberRelation::from_operator(instruction.binary_operator_field()).is_none()
+                    || super::operations::equality_operator(instruction.binary_operator_field()).is_some()
                     && !operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
                         && program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)
                             .and_then(Value::as_number).is_some()) { continue; }
@@ -1205,6 +1206,32 @@ impl Lowering<'_, '_> {
                 self.set_tagged(state, instruction.result_register(), value);
                 Some(true)
             }
+            // An outer capture of the caller's activation, by the lane's own lookup.
+            Op::LoadCapture if plain && matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
+                let exit = self.guard_exit(state, pc32);
+                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let depth = u64::from(crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()));
+                let slot = u64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+                let packed = self.ins().iconst(types::I64, (depth << u16::BITS | slot) as i64);
+                let value = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.capture_get, &[context, packed]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, hit, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+                Some(true)
+            }
+            // A capture's store, by the lane's own store; a binding it does not take leaves.
+            Op::StoreCapture if matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) => {
+                let exit = self.guard_exit(state, pc32);
+                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let depth = u64::from(crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()));
+                let slot = u64::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
+                let packed = self.ins().iconst(types::I64, (depth << u16::BITS | slot) as i64);
+                let value = self.tagged(state, instruction.register_a());
+                let stored = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.capture_set, &[context, packed, value]);
+                let stored = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+                emit_js_guard(&mut self.builder, stored, exit);
+                Some(true)
+            }
             Op::GetField if instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
             Op::GetIndex if plain && self.operand_supported(instruction.operand_b()) && self.operand_supported(instruction.operand_c()) => {
                 // A present dense element, the lane's own fast read (`Vm::direct_dense_element`).
@@ -1233,6 +1260,9 @@ impl Lowering<'_, '_> {
             op if op.js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.binary(state, pc, instruction)
             }
+            Op::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some() => self.typeof_test(state, pc, instruction),
+            Op::Construct if !instruction.is_super_construct()
+                && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             Op::IncDec if plain && instruction.numeric_local_target().is_none() => {
                 let decrement = instruction.boolean_flag();
                 decrement.map(|decrement| {
@@ -1305,7 +1335,7 @@ impl Lowering<'_, '_> {
                     self.branch(state, pc, target, taken);
                     return false;
                 }
-                if let Some(holds) = self.number_relation(state, pc32, operator, left, right) {
+                if let Some(holds) = self.relation(state, pc32, operator, left, right) {
                     let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
                     let target = instruction.jump_target() as usize;
                     if target <= pc {
@@ -1334,6 +1364,184 @@ impl Lowering<'_, '_> {
     /// Whether the numeric relation `operator` holds of `left` and `right`, as an `i8`: in
     /// int32 where both are proved int32, else in Float64, each operand proved a Number or
     /// leaving at `pc`; `None` for any other operator or operand.
+    /// A relation's predicate: `instanceof` by the prototype chain (`instance_of`), strict
+    /// (in)equality of operands not both Numbers by identity (`strict_equality`), every other
+    /// relation of Numbers.
+    fn relation(&mut self, state: &mut State, pc: u32, operator: u32,
+        left: Operand, right: Operand) -> Option<ir::Value> {
+        let numbers = [left, right].iter().all(|operand| super::facts::operand_type(
+            &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
+            .is_subtype(Type::NUMBER));
+        if operator == oxc_ast::ast::BinaryOperator::Instanceof as u32 {
+            return self.instance_of(state, pc, left, right);
+        }
+        match super::operations::equality_operator(operator) {
+            Some((true, negated)) if !numbers && self.operand_supported(left) && self.operand_supported(right) => {
+                let equal = self.strict_equality(state, pc, left, right)?;
+                Some(if negated { self.ins().bxor_imm_u(equal, 1) } else { equal })
+            }
+            _ => self.number_relation(state, pc, operator, left, right),
+        }
+    }
+
+    /// `new callee(...)` by the callee's construct plan (`compiled::lane_construct`): the
+    /// arguments pass in the body's registers, written back for the helper to read; a
+    /// construction the plan does not make leaves at the record, before any effect. The
+    /// allocation may move the property arena, whose base and length the body reloads, and
+    /// the slot addresses its proofs hold retire.
+    fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
+        let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
+            (false, _) if instruction.result_flags() == 0 => None,
+            (true, Some(super::lane_unit::Origin::Caller(record))) if instruction.result_flags() == crate::bytecode::RETURN_REGISTER => Some(record),
+            _ => return None,
+        };
+        // The body's register memory holds the caller's registers alone (`Lowering::call`).
+        if window.base + window.count > self.unit.caller_registers {
+            return None;
+        }
+        let exit = self.guard_exit(state, pc as u32);
+        let base = self.registers_base;
+        for register in window.base..window.base + window.count {
+            let bits = self.tagged(state, register);
+            self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+        }
+        let callee = self.tagged(state, instruction.register_b());
+        let arguments = self.ins().iadd_imm_u(base, i64::from(register_offset(window.base)));
+        let argc = self.ins().iconst(types::I64, i64::from(window.count));
+        let payload = self.payload;
+        let this = emit_lane_helper_call(&mut self.builder, payload, self.helpers.construct, &[payload, callee, arguments, argc]);
+        let built = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, built, exit);
+        let receiver = &self.entry.as_ref().expect("entry facts").receiver;
+        let (properties, properties_len) = (receiver.properties, receiver.properties_len);
+        let values = emit_js_payload_word(&mut self.builder, payload, std::mem::offset_of!(JsStepDispatch, property_values));
+        let len = emit_js_payload_word(&mut self.builder, payload, std::mem::offset_of!(JsStepDispatch, property_len));
+        self.builder.def_var(properties, values);
+        self.builder.def_var(properties_len, len);
+        state.layouts.clear();
+        if let Some(record) = completes {
+            self.return_value(record, this);
+            return Some(false);
+        }
+        self.set_tagged(state, instruction.result_register(), this);
+        Some(true)
+    }
+
+    /// A fused `typeof value === name` (`bytecode::typeof_test`): an immediate value's tag
+    /// decides it, as `Vm::typeof_test_value` would, and a heap value's cell the VM reads
+    /// (`lane_typeof_is`). A returning test completes the activation with its Boolean.
+    fn typeof_test(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        use crate::value::ValueLayout;
+        let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
+        let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
+            (false, _) if instruction.result_flags() == 0 => None,
+            (true, Some(super::lane_unit::Origin::Caller(record))) => Some(record),
+            _ => return None,
+        };
+        let value = self.tagged(state, instruction.register_b());
+        // The immediate classes whose name is the tested one, by the VM's own rule.
+        let named = |sample: Value| super::super::coercion::immediate_typeof_index(sample) == Some(index);
+        let mut immediate = self.ins().iconst(types::I8, 0);
+        if named(Value::number(0.0)) {
+            let field = self.ins().ushr_imm_u(value, i64::from(ValueLayout::TAG_SHIFT));
+            let offset = self.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+            let double = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+            let int = is_int_tagged(&mut self.builder, value);
+            let number = self.ins().bor(double, int);
+            immediate = self.ins().bor(immediate, number);
+        }
+        for sample in [Value::UNDEFINED, Value::DELETED, Value::NULL] {
+            if named(sample) {
+                let same = self.ins().icmp_imm_u(IntCC::Equal, value, sample.to_bits() as i64);
+                immediate = self.ins().bor(immediate, same);
+            }
+        }
+        if named(Value::TRUE) {
+            let tag = self.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+            let boolean = self.ins().icmp_imm_u(IntCC::Equal, tag, (Value::TRUE.to_bits() & ValueLayout::TAG_MASK) as i64);
+            immediate = self.ins().bor(immediate, boolean);
+        }
+        let tag = self.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
+        let heap = self.ins().icmp_imm_u(IntCC::Equal, tag, ValueLayout::HEAP_TAG as i64);
+        let (cell, join) = (self.builder.create_block(), self.builder.create_block());
+        let holds = self.builder.append_block_param(join, types::I8);
+        self.ins().brif(heap, cell, &[], join, &[ir::BlockArg::Value(immediate)]);
+        self.builder.switch_to_block(cell);
+        let tested = self.ins().iconst(types::I64, index as i64);
+        let is = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.typeof_is, &[value, tested]);
+        let is = self.ins().ireduce(types::I8, is);
+        self.ins().jump(join, &[ir::BlockArg::Value(is)]);
+        self.builder.switch_to_block(join);
+        let holds = if negated { self.ins().bxor_imm_u(holds, 1) } else { holds };
+        let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
+        let boolean = self.ins().select(holds, yes, no);
+        if let Some(record) = completes {
+            self.return_value(record, boolean);
+            return Some(false);
+        }
+        self.set_tagged(state, instruction.result_register(), boolean);
+        Some(true)
+    }
+
+    /// `value instanceof constructor` by the VM's steady case (`Vm::steady_instanceof`), which
+    /// calls nothing; a case only the full algorithm decides leaves at the test.
+    fn instance_of(&mut self, state: &mut State, pc: u32, value: Operand, constructor: Operand) -> Option<ir::Value> {
+        let exit = self.guard_exit(state, pc);
+        let (value, constructor) = (self.operand_tagged(state, value)?, self.operand_tagged(state, constructor)?);
+        let holds = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.instance_of, &[value, constructor]);
+        let decided = self.ins().icmp_imm_u(IntCC::NotEqual, holds, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, decided, exit);
+        Some(self.ins().ireduce(types::I8, holds))
+    }
+
+    /// `Vm::strict_equal` of two tagged operands: identical bits are equal unless NaN, two
+    /// Numbers compare as Numbers, a pair of strings or of legacy cells (BigInts) of one
+    /// family by contents (`lane_strict_equal_cells`), and every other pair is unequal.
+    fn strict_equality(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand) -> Option<ir::Value> {
+        use crate::value::ValueLayout;
+        let exit = self.guard_exit(state, pc);
+        let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+        let [identical, distinct, numbers, others, cells, join] = std::array::from_fn(|_| self.builder.create_block());
+        let equal = self.builder.append_block_param(join, types::I8);
+        let same = self.ins().icmp(IntCC::Equal, left, right);
+        self.ins().brif(same, identical, &[], distinct, &[]);
+        self.builder.switch_to_block(identical);
+        let ordered = self.ins().icmp_imm_u(IntCC::NotEqual, left, ValueLayout::CANONICAL_NAN as i64);
+        self.ins().jump(join, &[ir::BlockArg::Value(ordered)]);
+        self.builder.switch_to_block(distinct);
+        let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+            let field = builder.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
+            let offset = builder.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+            let double = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+            let int = is_int_tagged(builder, bits);
+            builder.ins().bor(double, int)
+        };
+        let (left_number, right_number) = (is_number(&mut self.builder, left), is_number(&mut self.builder, right));
+        let both = self.ins().band(left_number, right_number);
+        self.ins().brif(both, numbers, &[], others, &[]);
+        self.builder.switch_to_block(numbers);
+        let (left_value, right_value) = (emit_js_tagged_number(&mut self.builder, left, exit), emit_js_tagged_number(&mut self.builder, right, exit));
+        let number_equal = self.ins().fcmp(FloatCC::Equal, left_value, right_value);
+        self.ins().jump(join, &[ir::BlockArg::Value(number_equal)]);
+        self.builder.switch_to_block(others);
+        let family = self.ins().band_imm_u(left, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let right_family = self.ins().band_imm_u(right, ValueLayout::HEAP_FAMILY_MASK as i64);
+        let one_family = self.ins().icmp(IntCC::Equal, family, right_family);
+        let string = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_STRING_TAG as i64);
+        let legacy = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::HEAP_TAG as i64);
+        let contents = self.ins().bor(string, legacy);
+        let compared = self.ins().band(one_family, contents);
+        let unequal = self.ins().iconst(types::I8, 0);
+        self.ins().brif(compared, cells, &[], join, &[ir::BlockArg::Value(unequal)]);
+        self.builder.switch_to_block(cells);
+        let result = emit_lane_helper_call(&mut self.builder, self.payload, self.helpers.strict_equal, &[left, right]);
+        let cells_equal = self.ins().ireduce(types::I8, result);
+        self.ins().jump(join, &[ir::BlockArg::Value(cells_equal)]);
+        self.builder.switch_to_block(join);
+        Some(equal)
+    }
+
     fn number_relation(&mut self, state: &mut State, pc: u32, operator: u32,
         left: Operand, right: Operand) -> Option<ir::Value> {
         if super::operations::NumberRelation::from_operator(operator).is_none()
@@ -1401,8 +1609,9 @@ impl Lowering<'_, '_> {
     }
 
     /// The call marker of inlined `frame` (`lane_unit::unit`): its callee is the function
-    /// the call's cache linked and its receiver a direct object, which a plain call binds as
-    /// `this`; anything else leaves at the call, before its effects. The callee's parameters
+    /// the call's cache linked and, where the callee observes `this`, its receiver a direct
+    /// object, which a plain call binds as `this`; anything else leaves at the call, before
+    /// its effects. The callee's parameters
     /// take the call's arguments and its other registers `undefined`, as its activation
     /// would (`lane_push_passed`).
     fn inline_call(&mut self, state: &mut State, pc: usize, frame: usize) -> bool {
@@ -1421,10 +1630,13 @@ impl Lowering<'_, '_> {
             }
             None => emit_js_guard(&mut self.builder, same, exit),
         }
-        let receiver = self.tagged(state, inlined.receiver);
-        let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
-        let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
-        emit_js_guard(&mut self.builder, object, exit);
+        // A callee that observes no `this` takes any receiver: its binding is unobserved.
+        if inlined.observes_this {
+            let receiver = self.tagged(state, inlined.receiver);
+            let family = self.ins().band_imm_u(receiver, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
+            let object = self.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
+            emit_js_guard(&mut self.builder, object, exit);
+        }
         for register in 0..inlined.registers {
             let destination = inlined.base + register;
             let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
@@ -1515,12 +1727,21 @@ impl Lowering<'_, '_> {
         let callee_bits = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_b()));
         let same = self.ins().icmp_imm_u(IntCC::Equal, callee_bits, callee.callee.to_bits() as i64);
         let this = self.ins().load(types::I64, MemFlagsData::trusted(), base, register_offset(instruction.register_c()));
-        let admitted = if callee.sloppy {
-            // A sloppy callee binds an object receiver itself (`lane_receiver_this`).
-            let family = self.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
-            let object = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
-            self.ins().band(same, object)
-        } else { same };
+        // A sloppy callee binds an object receiver itself and an `undefined` or `null` one
+        // to the global object (`lane_receiver_this`); any other receiver takes the helper.
+        let (admitted, this) = match callee.sloppy {
+            Some(global) => {
+                let family = self.ins().band_imm_u(this, ValueLayout::HEAP_FAMILY_MASK as i64);
+                let object = self.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
+                let undefined = self.ins().icmp_imm_u(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
+                let null = self.ins().icmp_imm_u(IntCC::Equal, this, Value::NULL.to_bits() as i64);
+                let nullish = self.ins().bor(undefined, null);
+                let bound = self.ins().bor(object, nullish);
+                let global = self.ins().iconst(types::I64, global.to_bits() as i64);
+                (self.ins().band(same, bound), self.ins().select(object, this, global))
+            }
+            None => (same, this),
+        };
         let top = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let end = self.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(std::mem::offset_of!(JsStepDispatch, native_end)));
         let next = self.ins().iadd_imm_u(top, i64::from(callee.registers) * word);
@@ -2143,7 +2364,8 @@ impl Lowering<'_, '_> {
         let operator = instruction.binary_operator();
         let arithmetic = super::operations::NumberArithmetic::from_js_instruction(instruction.op(), operator);
         let bitwise = super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator);
-        if [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
+        // Arithmetic takes Number constants; a relation decides its own (`relation`).
+        if (arithmetic.is_some() || bitwise.is_some()) && [left, right].iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
             && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate).and_then(Value::as_number).is_none()) {
             return None;
         }
@@ -2258,7 +2480,7 @@ impl Lowering<'_, '_> {
             }
             // A relation's Boolean, from the predicate a branch on it would test.
             _ => {
-                let holds = self.number_relation(state, pc as u32, operator, left, right)?;
+                let holds = self.relation(state, pc as u32, operator, left, right)?;
                 let (yes, no) = (self.ins().iconst(types::I64, Value::TRUE.to_bits() as i64), self.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
                 let boolean = self.ins().select(holds, yes, no);
                 self.set_tagged(state, destination, boolean);
@@ -2317,7 +2539,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0, global_get: 0 }, &fields, &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa).unwrap();
+            &unit, LaneHelpers::default(), &fields, &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .filter(|&instruction| {
                 let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
@@ -2340,7 +2562,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
-            &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0, global_get: 0 }, &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
+            &unit, LaneHelpers::default(), &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
         let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();

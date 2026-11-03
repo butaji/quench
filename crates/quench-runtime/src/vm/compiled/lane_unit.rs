@@ -52,6 +52,9 @@ pub(crate) struct Frame {
     /// The unit PC of the call's next alternative's marker, where a callee other than this
     /// frame's goes; `None` for the last, which leaves at the call.
     pub(crate) alternative: Option<usize>,
+    /// Whether the callee observes its `this` (`observes_this`): only then does the call's
+    /// receiver need to be the object it binds.
+    pub(crate) observes_this: bool,
 }
 
 impl Frame {
@@ -119,9 +122,23 @@ fn inlinable(instruction: WideInstruction) -> bool {
             None => false,
         },
         Op::SetThisField | Op::SetThisFieldStrict | Op::SetField | Op::SetFieldStrict | Op::GetIndex | Op::SetIndex => plain,
+        // A fused `typeof` test (`Lowering::typeof_test`).
+        Op::Unary => plain && crate::bytecode::typeof_test(instruction.unary_operator()).is_some(),
         Op::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         op => plain && op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
+}
+
+/// Whether inlinable `code` (`inlinable`) observes its `this`: reads it, stores a field of it,
+/// or reads one through a lookup; a nested lookup's site may name it as its base.
+fn observes_this(code: &[WideInstruction]) -> bool {
+    code.iter().any(|instruction| matches!(instruction.op(), Op::LoadThis | Op::SetThisField | Op::SetThisFieldStrict)
+        || instruction.writes_current_this()
+        || match instruction.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) => base == crate::bytecode::FieldBase::THIS,
+            Some(FieldLookup::Site(_)) => true,
+            None => false,
+        })
 }
 
 /// Whether a call keeps its result in its register or returns it: the two a unit inlines.
@@ -350,6 +367,7 @@ impl Emitter {
                         base: callee_base,
                         registers: call.registers,
                         alternative: next,
+                        observes_this: observes_this(&call.plan.code),
                     };
                     self.unit.frames.push(frame_record);
                     // The marker: the call's guards and bindings (`Lowering::inline_call`); a

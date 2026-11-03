@@ -21494,6 +21494,236 @@ fn lane_global_reads_and_coercions_like_the_interpreter() {
 }
 
 #[test]
+fn lane_typeof_tests_decide_like_the_interpreter() {
+    // A lane body decides a fused `typeof` test natively: an immediate value by its tag, a
+    // heap value by its cell, negated or not, inlined into its caller or not.
+    let source = r#"
+      function isNumber(n) { return typeof n === "number"; }
+      function isString(s) { return typeof s === "string"; }
+      function notUndefined(v) { return typeof v !== "undefined"; }
+      function kinds(v) { let k = 0; if (typeof v === "object") k += 1; if (typeof v === "function") k += 2; if (typeof v === "boolean") k += 4; if (typeof v === "symbol") k += 8; if (typeof v === "bigint") k += 16; return k; }
+      function score(xs) { let t = 0; for (let i = 0; i < xs.length; i++) { const v = xs[i]; if (isNumber(v)) t += 1; if (isString(v)) t += 3; if (notUndefined(v)) t += 5; t += kinds(v) * 7; } return t; }
+      const values = [0, -0, 1.5, NaN, 2 ** 31, "s", "", undefined, null, true, false, {}, [], function () {}, class {}, Symbol("x"), 10n, new Number(3), new String("t"), Object.create(null)];
+      let total = 0;
+      for (let r = 0; r < 2000; r++) total += score(values) + r % 7;
+      globalThis.answer = (total);
+    "#;
+    let program = Engine::specialize(source, "lane-typeof.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(805995.0); 2]);
+}
+
+#[test]
+fn lane_constructions_build_like_the_interpreter() {
+    // A lane body constructs by the callee's plan: nested and returned constructions, a
+    // defaulted field, more fields than an object holds inline and a constructor whose
+    // result replaces the receiver build what the interpreter builds.
+    let source = r#"
+      function sc_Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+      function Point(x, y, z) { this.x = x; this.y = y; this.z = z === undefined ? 0 : z; }
+      function Wide(a, b, c, d, e, f, g, h, i) { this.a = a; this.b = b; this.c = c; this.d = d; this.e = e; this.f = f; this.g = g; this.h = h; this.i = i; }
+      function Odd(v) { if (v > 5) return { boxed: v }; this.v = v; }
+      function build(n) { let list = null; for (let i = 0; i < n; i++) list = new sc_Pair(new sc_Pair(i, i * 2), list); return list; }
+      function sum(list) { let t = 0; while (list !== null) { t += list.car.car + list.car.cdr; list = list.cdr; } return t; }
+      function points(n) { let t = 0; for (let i = 0; i < n; i++) { const p = new Point(i, i + 1); const q = new Point(i, 2, 3); const w = new Wide(i, 1, 2, 3, 4, 5, 6, 7, 8); t += p.x + p.y + p.z + q.z + w.i + w.a; } return t; }
+      function odd(n) { let t = 0; for (let i = 0; i < n; i++) { const o = new Odd(i % 10); t += o.v === undefined ? o.boxed : o.v; } return t; }
+      function make(i) { return new sc_Pair(i, null); }
+      let total = 0;
+      for (let r = 0; r < 40; r++) { total += sum(build(500)) + points(200) + odd(100) + make(r).car; }
+      globalThis.answer = (total);
+    "#;
+    let program = Engine::specialize(source, "lane-construct.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(17472780.0); 2]);
+}
+
+#[test]
+fn lane_capture_stores_write_like_the_interpreter() {
+    // A lane body stores to captures of enclosing scopes, and a callee it calls directly
+    // resolves its own captures in its closure's scope, not its caller's.
+    let source = r#"
+      function scopeB() {
+        let b = 100;
+        let hits = 0;
+        function g(x) { b = b + x; hits = hits + 1; if (x > 3) return g(x - 3) + b; return b + hits; }
+        return { g, read: () => b * 1000 + hits };
+      }
+      function scopeA(g) {
+        let a = 1;
+        let log = null;
+        function f(x) { log = { x, next: log }; a = a + (x & 1); return g(x) + a; }
+        return { f, size: () => { let n = 0; for (let l = log; l !== null; l = l.next) n++; return n + a; } };
+      }
+      const B = scopeB(), A = scopeA(B.g);
+      let total = 0;
+      for (let i = 0; i < 4000; i++) { total = (total + A.f(i % 13)) % 1000000007; }
+      globalThis.answer = (total * 7 + B.read() * 3 + A.size());
+    "#;
+    let program = Engine::specialize(source, "lane-capture-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1843176980.0); 2]);
+}
+
+#[test]
+fn lane_instanceof_decides_like_the_interpreter() {
+    // A lane body decides `instanceof` by the prototype chain: primitives, derived classes,
+    // `Object`, a constructor with its own `@@hasInstance` and a reassigned `prototype`
+    // answer as the interpreter answers them.
+    let source = r#"
+      function sc_Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+      function Other() { this.car = 1; }
+      class Base { constructor() { this.car = 2; } }
+      class Derived extends Base {}
+      function Hooked() {}
+      Object.defineProperty(Hooked, Symbol.hasInstance, { value: (v) => v === 7 });
+      function isPair(p) { return p instanceof sc_Pair; }
+      function count(xs, C) { let n = 0; for (let i = 0; i < xs.length; i++) { if (xs[i] instanceof C) n += i + 1; } return n; }
+      const values = [new sc_Pair(1, 2), new Other(), null, undefined, 3, "s", new Derived(), new Base(), [], {}, Object.create(sc_Pair.prototype), 7, function () {}];
+      let t = 0;
+      for (let r = 0; r < 2000; r++) {
+        for (let i = 0; i < values.length; i++) if (isPair(values[i])) t += i;
+        t += count(values, sc_Pair) + count(values, Base) * 3 + count(values, Object) * 5 + count(values, Hooked) * 7;
+        if (r === 1500) sc_Pair.prototype = { swapped: true };
+      }
+      globalThis.answer = t;
+    "#;
+    let program = Engine::specialize(source, "lane-instanceof.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(901022.0); 2]);
+}
+
+#[test]
+fn lane_strict_equality_decides_like_the_interpreter() {
+    // A lane body decides `===` and `!==` of any pair natively: NaN, signed zeros, an
+    // integer against its double, distinct strings and BigInts of equal contents, objects,
+    // symbols and mixed kinds compare as the interpreter compares them, and a loop that
+    // compares a non-Number keeps no Number proof of it past the comparison. Its body,
+    // entered at the loop header, returns its own value: the record it completed at ran.
+    let source = r#"
+      function Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+      Pair.prototype.same = function (x) { return this.car === x; };
+      Pair.prototype.differs = function (x) { if (this.car !== x) return 1; return 0; };
+      Pair.prototype.count = function (xs) {
+        let n = 0;
+        for (let i = 0; i < xs.length; i++) { if (this.car === xs[i]) n += i + 1; if (xs[i] !== this.cdr) n += 3; }
+        return n;
+      };
+      const o = {}, s1 = "ab" + String(1 + 1), big = 10n ** 20n;
+      const values = [0, -0, 1, 1.5, NaN, Infinity, "ab2", s1, "ab", "", null, undefined, true, false, o, {}, big, 10n ** 20n, 7n, Symbol.iterator, [], 2 ** 31, -(2 ** 31)];
+      let total = 0;
+      for (let round = 0; round < 300; round++) {
+        for (let i = 0; i < values.length; i++) {
+          const p = new Pair(values[i], values[(i + round) % values.length]);
+          for (let j = 0; j < values.length; j++) {
+            if (p.same(values[j])) total += (i + 1) * (j + 2);
+            total += p.differs(values[j]) * (j + 1);
+          }
+          total += p.count(values);
+        }
+      }
+      function sc_assq(o, al) {
+          while (al !== null) {
+      	if (al.car.car === o)
+      	    return al.car;
+      	al = al.cdr;
+          }
+          return false;
+      }
+      const keys = []; for (let i = 0; i < 40; i++) keys.push("ẜk" + i);
+      let al = null; for (let i = 0; i < 40; i++) al = new Pair(new Pair(keys[i], i), al);
+      let t = 0;
+      for (let n = 0; n < 20000; n++) { const r = sc_assq(keys[n % 45 < 40 ? n % 45 : 0] , al); if (r !== false) t += r.cdr; else t -= 1; }
+      globalThis.answer = total + t;
+    "#;
+    let program = Engine::specialize(source, "lane-strict-equality.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(4307110.0); 2]);
+}
+
+#[test]
+fn lane_outer_captures_read_like_the_interpreter() {
+    // A lane body reads a capture of an outer scope by the lane's own lookup, so a
+    // reassigned `var`, a `let` and a widened value read as the interpreter's.
+    let source = r#"
+      function outer() {
+        var scale = 3; let offset = 1; var total = 0;
+        function middle(k) {
+          function inner(x) { return (x * scale + offset) | 0; }
+          var s = 0; for (var i = 0; i < 5; i++) s = (s + inner(i + k)) | 0; return s;
+        }
+        for (var k = 0; k < 3000; k++) { total = (total + middle(k)) | 0; if (k % 500 == 0) { scale++; offset = offset * 2; } }
+        scale = 0.5;
+        for (var k = 0; k < 200; k++) total = (total + middle(k)) | 0;
+        return total;
+      }
+      globalThis.answer = outer();
+    "#;
+    let program = Engine::specialize(source, "lane-outer-captures.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(168662875.0); 2]);
+}
+
+#[test]
 fn lane_element_stores_append_like_the_interpreter() {
     // A lane store at an array's length appends where [[Set]] would add the index: a
     // prototype setter, a non-writable length, a non-extensible or frozen array take the

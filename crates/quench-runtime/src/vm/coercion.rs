@@ -488,6 +488,12 @@ pub(super) fn immediate_to_string(value: Value) -> Option<String> {
 /// for a heap value, whose kind its cell decides (`Vm::value_type`). None of these kinds is
 /// the `[[IsHTMLDDA]]` object's.
 #[inline(always)]
+/// The index in `bytecode::TYPEOF_NAMES` of `typeof value` for a value outside the heap,
+/// which its tag alone decides; `None` for a heap value.
+pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
+    immediate_value_type(value).map(typeof_name_index)
+}
+
 fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
     use crate::ValueType as T;
     Some(if value.is_undefined() || value.is_deleted() {
