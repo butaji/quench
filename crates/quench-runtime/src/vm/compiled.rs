@@ -7598,8 +7598,10 @@ impl JsStepDispatch {
         }
     }
 
-    /// The bases an allocation may move: the object mark blocks and the property arena.
+    /// The bases an allocation may move or make: the object records' reservation, the object
+    /// mark blocks and the property arena.
     fn refresh_allocation_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (values, len) = vm.heap.native_property_values();
@@ -7620,7 +7622,6 @@ impl JsStepDispatch {
             })
             .unwrap_or((std::ptr::null(), 0));
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
-        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.refresh_allocation_bases(vm);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
         let atoms = vm.method_cache_atoms.words();

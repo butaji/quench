@@ -22,11 +22,9 @@ impl ObjectHeader {
         let family = builder.ins().band_imm_u(bits, crate::value::ValueLayout::HEAP_FAMILY_MASK as i64);
         let object = builder.ins().icmp_imm_u(IntCC::Equal, family, crate::value::ValueLayout::DIRECT_OBJECT_TAG as i64);
         emit_js_guard(builder, object, miss);
+        // A direct object's id names a record of the reservation, which every native entry
+        // and allocating callout reads the base of (`JsStepDispatch::refresh_allocation_bases`).
         let id = builder.ins().ireduce(types::I32, bits);
-        let inside = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, id, layout.record_capacity as i64);
-        emit_js_guard(builder, inside, miss);
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-        emit_js_guard(builder, present, miss);
         let id = builder.ins().uextend(types::I64, id);
         let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
         let record = builder.ins().iadd(records, offset);
@@ -80,7 +78,26 @@ impl PackedValue {
 enum Slots {
     Packed(PackedValue),
     Arena(ir::Value),
+    /// Packed inline or in the arena, as the record's flag says; `arena` is the proved range's
+    /// address where the flag selects it (`arena_range`), zero where the object is inline.
     Dynamic { packed: PackedValue, inline: ir::Value, arena: ir::Value },
+}
+
+/// The address of the first arena slot of the object whose payload word is `payload`, its
+/// `storage_len` slots proved inside the arena of `base` and `length`; else `miss`.
+fn arena_range(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, length: ir::Value,
+    storage_len: usize, miss: ir::Block) -> ir::Value {
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let start = builder.ins().ireduce(types::I32, payload);
+    let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
+    let start = builder.ins().uextend(types::I64, start);
+    let end = builder.ins().iadd_imm_u(start, storage_len as i64);
+    let inside = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, length);
+    let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
+    let valid = builder.ins().band(inside, present);
+    emit_js_guard(builder, valid, miss);
+    let offset = builder.ins().imul_imm_u(start, layout.property_value_size as i64);
+    builder.ins().iadd(base, offset)
 }
 
 /// A projection for a guarded receiver and exact shape. It may only be reused
@@ -134,28 +151,23 @@ impl CheckedObject {
         let slots = if plan.storage == Some(PlainPropertyStorage::PackedInline) {
             emit_js_guard(builder, inline, miss);
             Slots::Packed(packed)
+        } else if plan.storage.is_none() && plan.storage_len <= layout.inline_property_count {
+            // The range is proved once, on the arena side of the flag only.
+            let (arena_block, join) = (builder.create_block(), builder.create_block());
+            let arena = builder.append_block_param(join, types::I64);
+            let none = builder.ins().iconst(types::I64, 0);
+            builder.ins().brif(inline, join, &[ir::BlockArg::Value(none)], arena_block, &[]);
+            builder.switch_to_block(arena_block);
+            builder.seal_block(arena_block);
+            let address = arena_range(builder, payload, base, length, plan.storage_len, miss);
+            builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+            builder.switch_to_block(join);
+            builder.seal_block(join);
+            Slots::Dynamic { packed, inline, arena }
         } else {
-            let start = builder.ins().ireduce(types::I32, payload);
-            let start = builder.ins().band_imm_u(start, layout.storage_start_mask as i64);
-            let start = builder.ins().uextend(types::I64, start);
-            let end = builder.ins().iadd_imm_u(start, plan.storage_len as i64);
-            let inside = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, length);
-            let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
-            let arena = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            let valid = builder.ins().band(inside, present);
-            let valid = builder.ins().band(valid, arena);
-            let valid = if plan.storage.is_none() && plan.storage_len <= layout.inline_property_count {
-                let is_packed = builder.ins().icmp_imm_u(IntCC::NotEqual, inline, 0);
-                builder.ins().bor(valid, is_packed)
-            } else { valid };
-            emit_js_guard(builder, valid, miss);
-            let offset = builder.ins().imul_imm_u(start, layout.property_value_size as i64);
-            let arena = builder.ins().iadd(base, offset);
-            if plan.storage == Some(PlainPropertyStorage::Arena) || plan.storage_len > layout.inline_property_count {
-                Slots::Arena(arena)
-            } else {
-                Slots::Dynamic { packed, inline, arena }
-            }
+            let flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+            emit_js_guard(builder, flat, miss);
+            Slots::Arena(arena_range(builder, payload, base, length, plan.storage_len, miss))
         };
         Some(Self { slots, storage_len: plan.storage_len })
     }
