@@ -441,7 +441,7 @@ impl NodeHost {
         let state = self.shared_state.borrow();
         state.exec_argv.is_empty() && state.initial_node_options.is_none()
             && !state.initial_pending_deprecation
-            && crate::host::startup_snapshot::native_bootstrap_environment_is_neutral()
+            && crate::host::startup_snapshot::native_bootstrap_environment_is_compatible()
     }
 
     pub fn new(argv: Vec<String>) -> Self {

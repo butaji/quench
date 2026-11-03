@@ -36,6 +36,9 @@ fn bootstrap_worker_residualizes_initialization_without_running_the_application(
 #[ignore = "explicit production SDK qualification of native bootstrap fresh inputs and configuration fallback"]
 fn native_bootstrap_keeps_process_inputs_fresh_after_source_removal() {
     use std::{fs, process::{Command, Stdio}, time::{SystemTime, UNIX_EPOCH}};
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Configuration { Neutral, Home, Options }
+    const CONFIGURATIONS: [Configuration; 3] = [Configuration::Neutral, Configuration::Home, Configuration::Options];
     let directory = std::env::temp_dir().join(format!("quench-native-bootstrap-inputs-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let directory = directory.canonicalize().unwrap();
@@ -51,14 +54,16 @@ console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid:
   attributes: [descriptor.writable, descriptor.enumerable, descriptor.configurable],
   paths: require('node:module').globalPaths}));
 "#;
-    let run = |binary: &Path, script: Option<&Path>, configured: bool| {
+    let run = |binary: &Path, script: Option<&Path>, configuration: Configuration| {
         let mut command = Command::new(binary);
         command.env_clear().env("TZ", "UTC").env("QUENCH_MEMORY_POLICY", "throughput")
             .env("QUENCH_BOOTSTRAP_TEST_MARKER", "fresh-runtime-value").current_dir(&cwd)
             .stdout(Stdio::piped()).stderr(Stdio::piped());
-        if configured {
-            command.env("HOME", directory.join("runtime-home"))
-                .env("NODE_OPTIONS", "--expose-gc --no-warnings");
+        if configuration != Configuration::Neutral {
+            command.env("HOME", directory.join("runtime-home"));
+        }
+        if configuration == Configuration::Options {
+            command.env("NODE_OPTIONS", "--expose-gc --no-warnings");
         }
         if let Some(script) = script { command.arg(script); }
         command.args(["fresh-argv", "λ"]);
@@ -75,7 +80,7 @@ console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid:
         assert_eq!(value["ppid"], std::process::id());
         assert!((before..=after).contains(&value["now"].as_f64().unwrap()));
         assert!((before..=after).contains(&value["origin"].as_f64().unwrap()), "{value}");
-        assert_eq!(value["gc"], if configured { "function" } else { "undefined" });
+        assert_eq!(value["gc"], if configuration == Configuration::Options { "function" } else { "undefined" });
         let executable = Path::new(value["execPath"].as_str().unwrap());
         let prefix = executable.parent().unwrap().parent().unwrap().join("lib").join("node");
         assert_eq!(value["paths"].as_array_mut().unwrap().pop().unwrap(), prefix.to_string_lossy().as_ref());
@@ -86,7 +91,7 @@ console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid:
     for extension in ["cjs", "cts"] {
         let entry = directory.join(format!("entry.{extension}"));
         fs::write(&entry, if extension == "cts" { format!("const typed: number = 1;\n{source}") } else { source.into() }).unwrap();
-        let expected = [run(Path::new(&oracle), Some(&entry), false), run(Path::new(&oracle), Some(&entry), true)];
+        let expected = CONFIGURATIONS.map(|configuration| run(Path::new(&oracle), Some(&entry), configuration));
         let binary = directory.join(format!("native-{extension}"));
         let report = directory.join(format!("native-{extension}.json"));
         let output = Command::new(env!("CARGO_BIN_EXE_quench-node"))
@@ -96,8 +101,8 @@ console.log(JSON.stringify({argv: process.argv.slice(1), pid: process.pid, ppid:
         let report: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
         assert_eq!(report["bootstrap"]["status"], "prepared");
         fs::remove_file(&entry).unwrap();
-        for (configured, expected) in [false, true].into_iter().zip(expected) {
-            assert_eq!(run(&binary, None, configured), expected, "{extension}, configured={configured}");
+        for (configuration, expected) in CONFIGURATIONS.into_iter().zip(expected) {
+            assert_eq!(run(&binary, None, configuration), expected, "{extension}, {configuration:?}");
         }
     }
     fs::remove_dir_all(directory).unwrap();

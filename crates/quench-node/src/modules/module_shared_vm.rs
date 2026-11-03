@@ -152,12 +152,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     ))?;
     set(context, module, "createRequire", create_require)?;
     set(context, module, "_nodeModulePaths", paths)?;
-    let global_paths = global_paths()
-        .iter()
-        .map(|path| context.string_rooted(&path.to_string_lossy()))
-        .collect::<Vec<_>>();
-    let global_paths = context.array_rooted(&global_paths)?;
-    set(context, module, "globalPaths", global_paths)?;
+    install_global_paths(context, module)?;
     let run_main = context.host_function(crate::host::shared_vm::operation!("moduleRunMain"))?;
     set(context, module, "runMain", run_main)?;
     set(context, module, "_stat", stat)?;
@@ -779,6 +774,15 @@ pub(crate) fn global_paths() -> Vec<PathBuf> {
     let prefix = executable.ancestors().nth(EXECUTABLE_PREFIX_DEPTH).unwrap_or(Path::new("/"));
     paths.push(prefix.join("lib").join("node"));
     paths
+}
+
+/// Bind the module facade to this process before guest code can observe it.
+pub(crate) fn install_global_paths(context: &mut NativeContext<'_, NodeHost>, module: RootId) -> Result<(), RootedError> {
+    let paths = global_paths().iter()
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
+        .collect::<Vec<_>>();
+    let paths = context.array_rooted(&paths)?;
+    set(context, module, "globalPaths", paths)
 }
 
 /// `$PREFIX/bin/node`: the prefix is the executable's second ancestor.

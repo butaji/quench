@@ -1596,6 +1596,22 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:zlib", BuiltinModule::Zlib),
 ];
 
+fn builtin_cache_key(builtin: BuiltinModule) -> Result<String, RootedError> {
+    let canonical = builtin.cache_key()
+        .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
+    Ok(format!("\0builtin:{canonical}"))
+}
+
+/// Rebind process-dependent state without loading an otherwise unused module.
+pub(super) fn refresh_module_paths(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let key = builtin_cache_key(BuiltinModule::Module)?;
+    let module = context.host_mut().shared_state().borrow().builtin_cache.get(&key).copied();
+    if let Some(module) = module {
+        crate::modules::module_shared_vm::install_global_paths(context, module)?;
+    }
+    Ok(())
+}
+
 fn cached_builtin(
     context: &mut Context<'_>,
     builtin: BuiltinModule,
@@ -1603,10 +1619,7 @@ fn cached_builtin(
     // Source-owned CommonJS modules keep their live exports on the module record.
     // Reentrant requires must observe module.exports reassignment during loading,
     // rather than a second cache retaining an earlier partial export object.
-    let canonical = builtin
-        .cache_key()
-        .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
-    let key = format!("\0builtin:{canonical}");
+    let key = builtin_cache_key(builtin)?;
     let roots = context.host_mut().shared_state();
     if let Some(module) = roots.borrow().builtin_cache.get(&key).copied() {
         return Ok(module);

@@ -11,6 +11,61 @@ mod tests {
     use quench_runtime::{Engine, Runtime};
 
     #[test]
+    fn restored_module_paths_use_the_receiving_process() {
+        use crate::host::startup_snapshot::SnapshotKind;
+        use std::{fs, process::Command};
+        const WORKER: &str = "QUENCH_TEST_MODULE_PATH_SNAPSHOT";
+        const SOURCE: &str = r#"
+const Module = require('node:module');
+const path = require('node:path');
+const home = process.env.HOME;
+const expected = home ? [path.resolve(home, '.node_modules'), path.resolve(home, '.node_libraries')] : [];
+expected.push(path.resolve(process.execPath, '..', '..', 'lib', 'node'));
+if (JSON.stringify(Module.globalPaths) !== JSON.stringify(expected)) throw new Error('stale module paths');
+const descriptor = Object.getOwnPropertyDescriptor(Module, 'globalPaths');
+if (!descriptor.writable || !descriptor.enumerable || !descriptor.configurable) throw new Error('path descriptor');
+if (Module !== require('module')) throw new Error('module identity');
+const before = Module.globalPaths;
+Module._initPaths();
+if (before === Module.globalPaths || JSON.stringify(before) !== JSON.stringify(Module.globalPaths)) throw new Error('initPaths copy');
+"#;
+        if let Some(directory) = std::env::var_os(WORKER) {
+            let directory = std::path::PathBuf::from(directory);
+            let program = Engine::specialize(SOURCE, "restored-paths.js").unwrap();
+            let building = std::env::var_os("QUENCH_TEST_BUILD_SNAPSHOT").is_some();
+            for (name, kind) in [("bootstrap", SnapshotKind::Bootstrap), ("preloaded", SnapshotKind::Preloaded)] {
+                let file = directory.join(name);
+                let mut host = NodeHost::new(vec!["quench".into()]);
+                if building { host.building_snapshot = Some(kind); }
+                let mut runtime = Runtime::new(host);
+                if building {
+                    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer)).unwrap();
+                    fs::write(file, bytes).unwrap();
+                } else {
+                    #[cfg(feature = "native-execution")]
+                    assert!(runtime.host_mut().accepts_native_bootstrap());
+                    let entry = runtime.restore_snapshot(Rc::new(fs::read(file).unwrap()), &program, |host, reader| host.read_snapshot(reader)).unwrap();
+                    runtime.execute_restored(&entry).unwrap();
+                }
+            }
+            return;
+        }
+        let directory = std::env::temp_dir().join(format!("quench-module-path-snapshot-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        for (building, home) in [(true, Some("/snapshot-builder-home")), (false, Some("/snapshot-receiver-home")), (false, Some("relative-home")), (false, Some("")), (false, None)] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command.env_clear().env(WORKER, &directory).env("RUST_MIN_STACK", "35651584")
+                .args(["--exact", "host::node_host::snapshot::tests::restored_module_paths_use_the_receiving_process", "--nocapture"]);
+            if building { command.env("QUENCH_TEST_BUILD_SNAPSHOT", "1"); }
+            if let Some(home) = home { command.env("HOME", home); }
+            let output = command.output().unwrap();
+            assert!(output.status.success(), "{building} {home:?}: {}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn incompatible_bootstrap_host_abi_is_rejected_before_host_state_is_read() {
         let program = Engine::specialize("", "host-abi.js").unwrap();
         let mut host = NodeHost::new(vec!["quench".into()]);
