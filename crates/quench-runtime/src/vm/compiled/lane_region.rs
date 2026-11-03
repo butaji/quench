@@ -24,11 +24,14 @@ use super::object_slots::{CheckedObject, ObjectHeader, ObjectRecord, PackedAcces
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
+use cranelift_codegen::entity::EntityRef;
 
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
 const INLINE_FIELD_BINDINGS: usize = 4;
+/// Common small effect frontiers stay inline; larger control-flow graphs spill normally.
+const INLINE_EFFECT_EDGES: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The executable memory a lane body may take: what a unit at its instruction bound
@@ -182,8 +185,9 @@ struct Lowering<'a, 'f> {
     /// An entry-bound poll page, or the ordinary atomic termination flag.
     interrupt: ir::Value,
     fault_poll: bool,
-    reentry: Reentry,
-    polls: smallvec::SmallVec<[ir::Inst; 4]>,
+    /// Callback completion edges can retire the native entry's interrupt ownership proof.
+    reentries: smallvec::SmallVec<[ir::Block; INLINE_EFFECT_EDGES]>,
+    polls: smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
@@ -905,7 +909,7 @@ pub(super) fn lower(
         fields,
         interrupt,
         fault_poll,
-        reentry: Reentry::Closed,
+        reentries: smallvec::SmallVec::new(),
         polls: smallvec::SmallVec::new(),
         global_reads,
         direct,
@@ -1201,17 +1205,42 @@ pub(super) fn lower(
     if !lowering.valid || (completion == Completion::StatusAndPc && !lowering.finishes) { return None; }
     let number_result = (completion == Completion::Number).then(|| lowering.finish_number_returns());
     let native_count = lowering.native;
-    let owner_proof = lowering.reentry == Reentry::Closed && fault_poll;
-    let polls = std::mem::take(&mut lowering.polls);
+    let mut polls = std::mem::take(&mut lowering.polls);
+    let reentries = std::mem::take(&mut lowering.reentries);
     let helpers = lowering.helpers;
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
-    if owner_proof && !polls.is_empty() { specialize_interrupt_owner(&mut native, helpers, context, &polls, isa); }
+    if fault_poll && !polls.is_empty() {
+        retain_closed_polls(&native, &reentries, &mut polls);
+        if !polls.is_empty() { specialize_interrupt_owner(&mut native, helpers, context, &polls, isa); }
+    }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result })
 }
 
+/// A callback retires ownership only on paths reachable from its completion. A callback
+/// after a closed loop cannot invalidate that loop's entry proof retroactively.
+fn retain_closed_polls(function: &ir::Function, reentries: &[ir::Block], polls: &mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>) {
+    if reentries.is_empty() { return; }
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
+    let mut possible: CompoundBitSet = CompoundBitSet::with_capacity(function.dfg.num_blocks());
+    let mut pending = smallvec::SmallVec::<[ir::Block; INLINE_EFFECT_EDGES]>::new();
+    for &block in reentries {
+        if possible.insert(block.index()) { pending.push(block); }
+    }
+    while let Some(block) = pending.pop() {
+        for successor in cfg.succ_iter(block) {
+            if possible.insert(successor.index()) { pending.push(successor); }
+        }
+    }
+    polls.retain(|poll| {
+        let block = function.layout.inst_block(*poll).expect("published poll block");
+        let effect = if possible.contains(block.index()) { Reentry::Possible } else { Reentry::Closed };
+        effect == Reentry::Closed
+    });
+}
+
 /// Bind the current owner's proof once, after helper binding and before guest execution.
-/// The closed effect type prevents a callback from exporting an interrupt during this run.
+/// Each selected poll lies before any reachable callback completion.
 fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers, context: ir::Value,
     polls: &[ir::Inst], isa: &dyn cranelift_codegen::isa::TargetIsa)
 {
@@ -2209,7 +2238,6 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
-        self.reentry = Reentry::Possible;
         let missed = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
         let caller_registers = self.unit.caller_registers;
@@ -2222,6 +2250,7 @@ impl Lowering<'_, '_> {
             self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
         }
         let completed = self.builder.create_block();
+        self.reentries.push(completed);
         let helper = self.builder.create_block();
         match self.direct.get(&pc).copied() {
             // SAFETY: the body owns the callee for as long as its code runs.
@@ -3218,6 +3247,38 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        for callback_returns_to_loop in [false, true] {
+            let mut function = ir::Function::new();
+            let mut context = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let blocks = [(); 4].map(|_| builder.create_block());
+            let mut polls = smallvec::SmallVec::<[ir::Inst; INLINE_EFFECT_EDGES]>::new();
+            for (index, block) in blocks.into_iter().enumerate() {
+                builder.switch_to_block(block);
+                let value = builder.ins().iconst(types::I8, 1);
+                let ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(value) else { unreachable!() };
+                polls.push(inst);
+                match index {
+                    0 => { builder.ins().jump(blocks[1], &[]); }
+                    1 => { builder.ins().brif(value, blocks[1], &[], blocks[2], &[]); }
+                    2 if callback_returns_to_loop => { builder.ins().brif(value, blocks[1], &[], blocks[3], &[]); }
+                    2 => { builder.ins().jump(blocks[3], &[]); }
+                    _ => { builder.ins().return_(&[]); }
+                }
+            }
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+            for (edge, kept) in [(blocks[0], 0), (blocks[2], if callback_returns_to_loop { 1 } else { 2 }), (blocks[3], 3)] {
+                let mut selected = polls.clone();
+                retain_closed_polls(&function, &[edge], &mut selected);
+                assert_eq!(selected.as_slice(), &polls[..kept]);
+            }
+        }
+    }
 
     #[test]
     fn osr_first_entry_bypasses_selected_header_proofs() {
