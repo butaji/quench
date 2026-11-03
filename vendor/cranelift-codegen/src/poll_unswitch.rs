@@ -72,7 +72,9 @@ impl Plan {
             }
         }
         let exit = exit?;
-        if cfg.pred_iter(exit).any(|edge| !inside.contains(edge.block.index())) { return None; }
+        // Explicit exit arguments already distinguish a zero-trip predecessor
+        // from either loop copy. Implicit escaping values still require the
+        // definition/exit dominance proofs below before adding join parameters.
         let mut escaping = CompoundBitSet::<usize>::with_capacity(f.dfg.num_values());
         for block in f.layout.blocks().filter(|block| !inside.contains(block.index())) {
             for inst in f.layout.block_insts(block) {

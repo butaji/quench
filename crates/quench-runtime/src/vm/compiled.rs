@@ -17526,14 +17526,17 @@ mod tests {
     #[cfg(feature = "aot")]
     #[test]
     fn conditional_integer_update_keeps_countdown_after_poll_unswitch() {
-        let program = crate::Engine::specialize(r#"
+        for body in [
+            "n|=0;x|=0;for(let i=0;i<n;i=(i+1)|0){if((x&1)===0)x=x>>1;else x=(x>>1)^feedback;}return x|0;",
+            "const state={count:n|0,control:x|0};while(state.count>0){state.count=(state.count-1)|0;if((state.control&1)===0)state.control=state.control>>1;else state.control=(state.control>>1)^feedback;}return state.control|0;",
+        ] {
+        let source = format!(r#"
             const feedback=7;
-            function fold(n,x){n|=0;x|=0;for(let i=0;i<n;i=(i+1)|0){
-                if((x&1)===0)x=x>>1;else x=(x>>1)^feedback;
-            }return x|0;}
+            function fold(n,x){{{body}}}
             if(fold(0,-1)!==-1||fold(-1,17)!==17||fold(1,-1)!==-8||fold(3,3)!==6)throw 'integer fold';
             throw 42;
-        "#, "conditional-countdown.cjs").unwrap();
+        "#);
+        let program = crate::Engine::specialize(&source, "conditional-countdown.cjs").unwrap();
         let module = crate::lower_native_js_module(&program, "conditional_countdown").unwrap();
         let isa = super::super::jit_backend::target_isa("speed").unwrap();
         let function = module.functions.into_iter().find_map(|function| match function {
@@ -17545,16 +17548,23 @@ mod tests {
             let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
             let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
             loops.compute(native, &cfg, &dom);
-            Ok(native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
-                .flat_map(|block| native.layout.block_insts(block))
-                .filter(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub).count())
+            Ok(loops.loops().filter(|&lp| {
+                let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
+                    .flat_map(|block| native.layout.block_insts(block)).collect();
+                hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
+                    && !hot.iter().any(|&inst| (FAULT_POLL_SUPPORTED && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
+                        || matches!(native.dfg.insts[inst], ir::InstructionData::IntCompare {
+                            cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual
+                                | IntCC::SignedGreaterThan | IntCC::SignedLessThanOrEqual, .. }))
+            }).count())
         }).unwrap();
-        assert!(counters > 0, "conditional update must retain its countdown after loop splitting");
+        assert!(counters > 0, "conditional update must retain a countdown without polls after loop splitting");
         let native = linked_optimized_test_program(program);
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         vm.set_execution_mode(ExecutionMode::NativeOnly);
         let error = vm.execute_native_program(&native, true).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
+        }
     }
 
     #[test]
@@ -17707,7 +17717,7 @@ mod tests {
             let max = if width == i64::BITS { i64::MAX } else { (1_i64 << (width - 1)) - 1 };
             let starts: Vec<_> = if ty == types::I8 { (min..=max).collect() }
                 else { vec![min, min + 1, -7, -1, 0, 1, max - 17, max - 1] };
-            for start in starts {
+            for step in [1_i64, -1] { for &start in &starts {
                 let mut signature = Signature::new(isa.default_call_conv());
                 signature.params.extend([AbiParam::new(types::I64); 3]);
                 signature.returns.push(AbiParam::new(types::I64));
@@ -17729,17 +17739,18 @@ mod tests {
                 let args = builder.block_params(entry).to_vec();
                 let bound = if ty == types::I64 { args[0] } else { builder.ins().ireduce(ty, args[0]) };
                 let initial = builder.ins().iconst(ty, start);
-                let enters = builder.ins().icmp(IntCC::SignedLessThan, initial, bound);
+                let condition = if step > 0 { IntCC::SignedLessThan } else { IntCC::SignedGreaterThan };
+                let enters = builder.ins().icmp(condition, initial, bound);
                 builder.ins().brif(enters, header, &[initial.into()], empty, &[]);
                 builder.switch_to_block(header);
                 let previous = builder.block_params(header)[0];
                 builder.set_val_label(previous, ir::ValueLabel::from_u32(PREVIOUS_LABEL));
-                let next = builder.ins().iadd_imm_u(previous, 1);
+                let next = builder.ins().iadd_imm_u(previous, step);
                 builder.set_val_label(next, ir::ValueLabel::from_u32(NEXT_LABEL));
                 let requested = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), args[1]);
                 builder.ins().brif(requested, interrupted, &[], comparison, &[]);
                 builder.switch_to_block(comparison);
-                let continues = builder.ins().icmp(IntCC::SignedLessThan, next, bound);
+                let continues = builder.ins().icmp(condition, next, bound);
                 builder.ins().brif(continues, backedge, &[], done, &[]);
                 builder.switch_to_block(backedge);
                 builder.ins().jump(header, &[next.into()]);
@@ -17785,11 +17796,12 @@ mod tests {
                 let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
                     .flat_map(|block| native.layout.block_insts(block)).collect();
                 let countdown = hot.iter().filter(|inst| native.dfg.insts[**inst].opcode() == ir::Opcode::Isub).count();
-                if start == 0 || start == min { assert_eq!(countdown, 1, "{native}"); }
+                if start == 0 || (step > 0 && start == min) { assert_eq!(countdown, 1, "{native}"); }
                 if countdown != 0 {
                     assert_eq!(countdown, 1, "{native}");
                     assert!(!hot.iter().any(|inst| matches!(native.dfg.insts[*inst], ir::InstructionData::IntCompare {
-                        cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual, .. })), "{native}");
+                        cond: IntCC::SignedLessThan | IntCC::SignedGreaterThanOrEqual
+                            | IntCC::SignedGreaterThan | IntCC::SignedLessThanOrEqual, .. })), "{native}");
                     optimized += 1;
                 }
                 // SAFETY: the verified ABI takes a word, a live atomic byte,
@@ -17797,26 +17809,26 @@ mod tests {
                 let run = unsafe { std::mem::transmute::<*mut u8,
                     unsafe extern "C" fn(u64, *const AtomicU8, *mut u64) -> u64>(memory.pointer()) };
                 let bounds: Vec<_> = if ty == types::I8 { (min..=max).collect() } else {
-                    [min, start.saturating_sub(1), start, start.saturating_add(1), start.saturating_add(2),
+                    [min, start.saturating_sub(17), start.saturating_sub(2), start.saturating_sub(1), start, start.saturating_add(1), start.saturating_add(2),
                         start.saturating_add(17), max].into_iter().filter(|bound| *bound >= min && *bound <= max).collect()
                 };
                 for bound in bounds { for requested in [0_u8, 1] {
-                    let enters = start < bound;
-                    let distance = (i128::from(bound) - i128::from(start)).max(0) as u128;
+                    let distance = ((i128::from(bound) - i128::from(start)) * i128::from(step)).max(0) as u128;
+                    let enters = distance != 0;
                     if requested == 0 && distance > MAX_EXECUTED_TRIPS { continue; }
-                    let expected = if !enters { start } else if requested != 0 { start + 1 } else { bound };
-                    let previous = if !enters || requested != 0 { start } else { bound - 1 };
+                    let expected = if !enters { start } else if requested != 0 { start + step } else { bound };
+                    let previous = if !enters || requested != 0 { start } else { bound - step };
                     let flag = AtomicU8::new(requested);
                     let mut cells = [0_u64; 2];
                     assert_eq!(unsafe { run(bound as u64 & mask, &flag, cells.as_mut_ptr()) }, expected as u64 & mask,
-                        "{ty} start{start} bound{bound} request{requested}");
+                        "{ty} start{start} bound{bound} step{step} request{requested}");
                     assert_eq!(cells, [previous as u64 & mask, expected as u64 & mask]);
                     executions += 1;
                 }}
-            }
+            }}
         }
-        assert!(executions >= (1_usize << u8::BITS) * (1_usize << u8::BITS) * 2);
-        assert!(optimized >= 2 * 4, "each width must optimize zero and signed-minimum starts");
+        assert!(executions >= (1_usize << u8::BITS) * (1_usize << u8::BITS) * 4);
+        assert!(optimized >= 3 * 4, "each width must optimize both directions from zero and increasing from signed minimum");
     }
 
     #[cfg(feature = "aot")]

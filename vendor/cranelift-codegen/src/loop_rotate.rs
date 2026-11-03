@@ -1,13 +1,13 @@
 //! Rotate a comparison-only loop header, retaining its original entry guard.
 //! Header values join separately at the body and exit; effects are never copied.
 use crate::{bitset::CompoundBitSet, dominator_tree::DominatorTree,
-    flowgraph::ControlFlowGraph, ir::{Block, Function, Inst, InstructionData, Value},
+    flowgraph::ControlFlowGraph, ir::{Block, Function, Inst, InstructionData, Opcode, Value},
     loop_analysis::{Loop, LoopAnalysis}};
 use alloc::vec::Vec;
 use cranelift_entity::{EntityRef, SecondaryMap};
 
 struct Plan {
-    header: Block, body: Block, exit: Block, comparison: Inst, branch: Inst,
+    header: Block, body: Block, exit: Block,
     backedge: Inst, blocks: Vec<Block>, inside: CompoundBitSet, escapes: Vec<Value>,
 }
 
@@ -16,7 +16,10 @@ impl Plan {
         // Until label joins are represented, retain the existing labeled graph.
         if f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty()) { return None; }
         let header = loops.loop_header(lp);
-        let mut instructions = f.layout.block_insts(header);
+        // Egraph rematerializes cheap constants beside their comparison. They
+        // are total and can be copied with the test without moving effects.
+        let mut instructions = f.layout.block_insts(header)
+            .skip_while(|inst| f.dfg.insts[*inst].opcode() == Opcode::Iconst);
         let comparison = instructions.next()?;
         let branch = instructions.next()?;
         if instructions.next().is_some() || !matches!(f.dfg.insts[comparison], InstructionData::IntCompare { .. }) { return None; }
@@ -56,7 +59,7 @@ impl Plan {
                 }
             }
         }}
-        Some(Self { header, body, exit, comparison, branch, backedge, blocks, inside,
+        Some(Self { header, body, exit, backedge, blocks, inside,
             escapes: escaping.iter().map(Value::new).collect() })
     }
 
@@ -104,7 +107,7 @@ impl Plan {
             let ty = f.dfg.value_type(value);
             latch_values[value] = Some(f.dfg.append_block_param(latch, ty));
         }
-        for inst in [self.comparison, self.branch] {
+        for inst in f.layout.block_insts(self.header).collect::<Vec<_>>() {
             let copy = f.dfg.clone_inst(inst);
             f.layout.append_inst(copy, latch);
             f.set_srcloc(copy, f.srcloc(inst));
