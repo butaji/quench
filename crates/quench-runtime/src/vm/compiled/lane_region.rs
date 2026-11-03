@@ -2926,10 +2926,18 @@ impl Lowering<'_, '_> {
             };
             let slow = self.builder.create_block();
             let done = self.builder.create_block();
+            let packed = self.builder.create_block();
+            let packed_address = self.builder.append_block_param(packed, types::I64);
             let result = self.builder.append_block_param(done, types::I64);
             let (address, _) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header);
+                JsFieldReceiver::Value(object), site, true, slow, Some(binding), header, Some(packed));
             let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+            self.ins().jump(done, &[ir::BlockArg::Value(value)]);
+            self.builder.switch_to_block(packed);
+            let narrow = self.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
+            let integer = self.ins().band_imm_u(narrow, i64::from(crate::value::NarrowLayout::INTEGER_FLAG));
+            emit_js_guard(&mut self.builder, integer, slow);
+            let value = emit_narrow_integer_read(&mut self.builder, narrow);
             self.ins().jump(done, &[ir::BlockArg::Value(value)]);
             self.builder.switch_to_block(slow);
             let value = self.field_probe_unbound(object, site, exit);
@@ -2987,7 +2995,7 @@ impl Lowering<'_, '_> {
         let dynamic_header = bound.then(|| self.object_header(state, register, exit));
         let field = self.fields.get(&site).and_then(|shapes| (shapes.len() == 1).then(|| shapes[0]));
         let Some(field) = field else {
-            self.store_helper(object_bits, atom, site, value, exit, dynamic_header);
+            self.store_helper(object_bits, atom, site, value, ty, exit, dynamic_header);
             return Some(());
         };
         let header = (!receiver).then(|| {
@@ -3045,7 +3053,7 @@ impl Lowering<'_, '_> {
         self.ins().store(MemFlagsData::trusted(), value, address, 0);
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(general);
-        self.store_helper(object_bits, atom, site, value, exit, dynamic_header);
+        self.store_helper(object_bits, atom, site, value, ty, exit, dynamic_header);
         self.ins().jump(done, &[]);
         if let Some(widen) = widen {
             self.builder.switch_to_block(widen);
@@ -3073,7 +3081,6 @@ impl Lowering<'_, '_> {
     fn store_narrow_int(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value,
         done: ir::Block, general: ir::Block) {
         use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-        use crate::value::NarrowLayout as NARROW;
         let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
         self.ins().brif(inline, packed, &[], arena, &[]);
         self.builder.switch_to_block(packed);
@@ -3081,13 +3088,7 @@ impl Lowering<'_, '_> {
         let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
         let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
         emit_js_guard(&mut self.builder, plain, general);
-        let int = self.ins().ireduce(types::I32, value);
-        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
-        let biased = self.ins().iadd_imm_s(int, half_range);
-        let fits = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
-        emit_js_guard(&mut self.builder, fits, general);
-        let shifted = self.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
-        let narrow = self.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG));
+        let narrow = emit_narrow_integer_write(&mut self.builder, value, general);
         let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
         self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
         self.ins().jump(done, &[]);
@@ -3106,18 +3107,29 @@ impl Lowering<'_, '_> {
     /// The lane's logged own-field store hit (`Vm::primary_own_field_store_hit`), barrier
     /// included, through the site's bound slot first where the entry bound one; anything
     /// else leaves through `exit`.
-    fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, exit: ir::Block, header: Option<ObjectHeader>) {
+    fn store_helper(&mut self, object: ir::Value, atom: Atom, site: u16, value: ir::Value, ty: Type, exit: ir::Block, header: Option<ObjectHeader>) {
         let bound = self.entry.as_ref().and_then(|entry| entry.fields.iter()
             .find_map(|(known, binding)| (*known == site).then_some(*binding)));
         if let Some(binding) = bound {
             let slow = self.builder.create_block();
             let done = self.builder.create_block();
+            let packed = self.builder.create_block();
+            let packed_address = self.builder.append_block_param(packed, types::I64);
             let allowed = self.store_atom_admitted(atom);
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
-                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header);
+                JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
             emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, slow);
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
+            self.ins().jump(done, &[]);
+            self.builder.switch_to_block(packed);
+            if !ty.is_subtype(Type::INT32) {
+                let integer = is_int_tagged(&mut self.builder, value);
+                emit_js_guard(&mut self.builder, integer, slow);
+            }
+            let narrow = emit_narrow_integer_write(&mut self.builder, value, slow);
+            // Immediate integers cannot introduce a heap edge or require a GC barrier.
+            self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);
             self.store_helper_unbound(object, atom, site, value, exit);

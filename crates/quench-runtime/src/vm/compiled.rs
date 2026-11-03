@@ -1617,6 +1617,9 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records, values, length }
 }
 
+// `packed_slot`, when requested, receives a proved own-slot address holding a narrow
+// u32. The ordinary return is always an arena address holding a tagged u64. Neither
+// projection survives an operation that can change storage or collect the object.
 fn emit_js_cached_field_slot(
     builder: &mut FunctionBuilder<'_>,
     arguments: ir::Value,
@@ -1627,6 +1630,7 @@ fn emit_js_cached_field_slot(
     fallback: ir::Block,
     binding: Option<FieldSlotBinding>,
     header: Option<object_slots::ObjectHeader>,
+    packed_slot: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
@@ -1655,8 +1659,32 @@ fn emit_js_cached_field_slot(
     // A holder read uses only the receiver's shape and prototype link. Its own
     // property representation is unrelated to the holder's slot address.
     let own_storage = |builder: &mut FunctionBuilder<'_>| {
-        let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-        emit_js_guard(builder, arena_storage, fallback);
+        if let Some(packed_slot) = packed_slot {
+            let packed = builder.create_block();
+            let arena = builder.create_block();
+            builder.ins().brif(inline, packed, &[], arena, &[]);
+            builder.switch_to_block(packed);
+            let storage = builder.ins().load(types::I64, MemFlagsData::trusted(), object,
+                OBJECT.payload_offset as i32);
+            let tag = builder.ins().band_imm_u(storage, OBJECT.extras_tag_mask as i64);
+            let plain = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+            emit_js_guard(builder, plain, fallback);
+            let slot = slot.read(builder);
+            let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot,
+                OBJECT.inline_property_count as i64);
+            emit_js_guard(builder, fits, fallback);
+            let offset = builder.ins().imul_imm_u(slot, std::mem::size_of::<u32>() as i64);
+            let address = builder.ins().iadd(object, offset);
+            let address = builder.ins().iadd_imm_s(address, OBJECT.payload_offset as i64);
+            builder.ins().jump(packed_slot, &[ir::BlockArg::Value(address)]);
+            builder.seal_block(packed);
+            builder.seal_block(arena);
+            builder.switch_to_block(arena);
+        }
+        if packed_slot.is_none() {
+            let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+            emit_js_guard(builder, arena_storage, fallback);
+        }
         // Plain storage has the arena start alone in the payload's lower half.
         let storage = builder.ins().load(
             types::I64,
@@ -1802,7 +1830,7 @@ fn emit_js_own_field_get(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
@@ -1822,7 +1850,7 @@ fn emit_js_own_field_return(
     exact: &JsExactFallback,
 ) {
     let fallback = builder.create_block();
-    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None);
+    let (address, _) = emit_js_cached_field_slot(builder, arguments, payload, receiver, site, true, fallback, None, None, None);
     let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
     emit_js_guarded_return(builder, value, result_pointer, exact.pc, fallback);
     exact.emit(builder, fallback);
@@ -1916,7 +1944,7 @@ fn emit_js_own_field_set(
     builder.switch_to_block(name_free);
     builder.seal_block(name_free);
     let (address, record_id) =
-        emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback, None, None);
+        emit_js_cached_field_slot(builder, arguments, payload, receiver, site, false, fallback, None, None, None);
     emit_unlogged_property_store_guard(builder, payload, record_id, value, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, address, 0);
     if let Some(destination) = result_destination {
@@ -2003,6 +2031,26 @@ struct LaneReceiver {
     properties_len: Variable,
 }
 
+/// Decode an already proved narrow integer without a process-local lookup table.
+fn emit_narrow_integer_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value) -> ir::Value {
+    let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
+    let value = builder.ins().uextend(types::I64, value);
+    builder.ins().bor_imm_u(value, crate::value::ValueLayout::INT_TAG as i64)
+}
+
+/// Encode a proved tagged int32; widening remains the shared store's responsibility.
+fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
+    fallback: ir::Block) -> ir::Value {
+    use crate::value::NarrowLayout as NARROW;
+    let int = builder.ins().ireduce(types::I32, value);
+    let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
+    let biased = builder.ins().iadd_imm_s(int, half_range);
+    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
+    emit_js_guard(builder, fits, fallback);
+    let shifted = builder.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
+    builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
+}
+
 /// Decode a packed property using the canonical NarrowLayout, transferring
 /// its tagged value to `join`'s sole parameter. Proof lifetimes belong to callers.
 fn emit_packed_object_slot_read(
@@ -2011,7 +2059,6 @@ fn emit_packed_object_slot_read(
     slot: u16,
     join: ir::Block,
 ) {
-    use crate::value::ValueLayout;
     debug_assert!(usize::from(slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count);
     let half = builder.ins().ushr_imm_u(payload, i64::from(slot) * i64::from(u32::BITS));
     let narrow = builder.ins().ireduce(types::I32, half);
@@ -2021,9 +2068,7 @@ fn emit_packed_object_slot_read(
     builder.ins().brif(integer, integer_block, &[], reference_block, &[]);
     builder.switch_to_block(integer_block);
     builder.seal_block(integer_block);
-    let value = builder.ins().sshr_imm_u(narrow, i64::from(crate::value::NarrowLayout::CODE_SHIFT));
-    let value = builder.ins().uextend(types::I64, value);
-    let encoded = builder.ins().bor_imm_u(value, ValueLayout::INT_TAG as i64);
+    let encoded = emit_narrow_integer_read(builder, narrow);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
     builder.switch_to_block(reference_block);
     builder.seal_block(reference_block);
@@ -2176,6 +2221,7 @@ const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
 
 #[cfg(test)]
 thread_local! {
+    static FIELD_HELPER_CALLS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }
@@ -2733,12 +2779,12 @@ pub(super) fn lower_js_general_dispatch(
         {
             let fallback = builder.create_block();
             let (address, _) = emit_js_cached_field_slot(
-                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None, None,
+                &mut builder, arguments, payload, receiver, site.first.1, true, fallback, None, None, None,
             );
             let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             if let Some((_, cache)) = site.second {
                 let (address, _) = emit_js_cached_field_slot(
-                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None, None,
+                    &mut builder, arguments, payload, JsFieldReceiver::Value(value), cache, true, fallback, None, None, None,
                 );
                 value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
             }
@@ -7342,6 +7388,7 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
 /// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
 /// leaves native code for the lane's full read.
 unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, site: u64) -> u64 {
+    #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
@@ -7354,6 +7401,7 @@ unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u
 /// A logged own-field store that preserves every native storage projection.
 /// Migration declines before writing, leaving the full store to the lane.
 unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
+    #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
     u64::from(vm.primary_own_field_store_hit::<true>(
@@ -18488,6 +18536,96 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
+    fn bound_packed_integer_fields_avoid_per_iteration_helpers() {
+        for (count, typescript) in [1000, 10000].into_iter()
+            .flat_map(|count| [false, true].map(move |typescript| (count, typescript))) {
+            let expected = (0..count).fold(123456789_i32, |value, _|
+                (value >> 1) ^ if value & 1 != 0 { 0xD008 } else { 0 });
+            let source = format!(r#"(function() {{
+                function advance(state) {{
+                    state.count = (state.count - 1) | 0;
+                    state.control = (state.control >> 1) ^ ((state.control & 1) ? 0xD008 : 0);
+                }}
+                function run(n, seed) {{
+                    const state = {{count: n | 0, control: seed | 0}};
+                    while(state.count > 0) advance(state);
+                    return state.control | 0;
+                }}
+                for(let i=0;i<64;i++) run(1,i);
+                if(run({count},123456789)!=={expected}) throw 'incorrect update';
+                throw 42;
+            }})();"#);
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-fields.cts") }
+                else { crate::Engine::specialize(&source, "packed-fields.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+            let [reads, writes] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
+            assert!(reads <= 2, "only entry misses may call the read helper: {reads}");
+            assert_eq!(writes, 0, "packed integer stores must stay native");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn bound_packed_fields_preserve_widening_and_exact_effects() {
+        let half_range = 1_i64 << (crate::value::NarrowLayout::INTEGER_BITS - 1);
+        let source = format!(r#"
+            function step(state, delta) {{
+                state.count = (state.count + 1) | 0;
+                state.value = state.value + delta;
+                return state.value;
+            }}
+            let s = {{count: 0, value: 0}};
+            for(let i=0;i<64;i++) step(s,1);
+            for(const start of [{half_range}-1, -{half_range}, 0.5, -0, 'x']) for(const delta of [-1,1]) {{
+                s = {{count: 0, value: start}};
+                if(step(s,delta)!==start+delta || s.count!==1) throw 'widening';
+                if(step(s,-delta)!==(start+delta)+(-delta) || s.count!==2) throw 'second write';
+            }}
+            let calls=0, marker={{}};
+            s={{count:0,value:{{valueOf(){{calls++;throw marker;}}}}}};
+            try {{step(s,1);throw 'missing throw';}} catch(e) {{if(e!==marker)throw e;}}
+            if(calls!==1 || s.count!==1) throw 'replayed prefix';
+            s={{count:0,value:7}};
+            let stored;
+            Object.defineProperty(s,'value',{{get(){{calls++;return 7;}},set(v){{stored=v;}},configurable:true}});
+            if(step(s,2)!==7 || stored!==9 || calls!==3 || s.count!==1) throw 'accessor';
+            delete s.value;
+            Object.setPrototypeOf(s,{{value:5}});
+            if(step(s,3)!==8 || s.value!==8 || s.count!==2) throw 'inherited';
+            s={{count:0,value:7}};
+            step(s,0);
+            Object.defineProperty(s,'value',{{writable:false}});
+            if(step(s,2)!==7 || s.count!==2) throw 'sloppy readonly';
+            function strictStep(state) {{
+                'use strict';
+                state.count = (state.count + 1) | 0;
+                state.value = state.value + 1;
+            }}
+            s={{count:0,value:0}};
+            for(let i=0;i<64;i++) strictStep(s);
+            Object.defineProperty(s,'value',{{writable:false}});
+            try {{strictStep(s);throw 'missing readonly throw';}} catch(e) {{if(!(e instanceof TypeError))throw e;}}
+            if(s.count!==65 || s.value!==64) throw 'strict readonly prefix';
+            throw 42;
+        "#);
+        for typescript in [false, true] {
+            let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-transitions.cts") }
+                else { crate::Engine::specialize(&source, "packed-transitions.cjs") }.unwrap();
+            let native = linked_optimized_test_program(program);
+            let mut vm = Vm::new(crate::test_host::TestHost::default());
+            vm.set_execution_mode(ExecutionMode::NativeOnly);
+            let error = vm.execute_native_program(&native, true).unwrap_err();
+            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
+        }
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
     fn captured_call_hints_share_native_inlining_and_exact_recovery() {
         let source = r#"
             function make(delta) {
@@ -18911,7 +19049,7 @@ mod tests {
         let miss = builder.create_block();
         let unused = builder.ins().iconst(types::I64, 0);
         let (address, _) = emit_js_cached_field_slot(&mut builder, unused, unused,
-            JsFieldReceiver::Value(parameters[3]), site, true, miss, Some(binding), None);
+            JsFieldReceiver::Value(parameters[3]), site, true, miss, Some(binding), None, None);
         let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
         builder.ins().return_(&[value]);
         builder.switch_to_block(miss);
