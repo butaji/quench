@@ -22095,6 +22095,77 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
 }
 
 #[test]
+fn lane_global_reads_and_coercions_like_the_interpreter() {
+    // A lane body reads a global as the lane does, so a reassigned, accessor or deleted
+    // global reads as the interpreter's; `j++` takes ToNumeric of its operand, a double or a
+    // string, and an element read of `null` takes the interpreter's TypeError.
+    let source = r#"
+      globalThis.SCALE = 3; var total = 0, caught = 0;
+      function step(x, n) { var s = 0; for (var i = 0; i < n; i++) { var j = x; j++; s = (s + j * SCALE) | 0; } return s; }
+      function index(a, k) { return a[k]; }
+      for (var k = 0; k < 3000; k++) total = (total + step(k & 7, 4)) | 0;
+      SCALE = 0.5;
+      for (var k = 0; k < 300; k++) total = (total + step(k + 0.25, 3)) | 0;
+      Object.defineProperty(globalThis, "SCALE", { get() { return 7; }, configurable: true });
+      for (var k = 0; k < 300; k++) total = (total + step("5", 2)) | 0;
+      for (var k = 0; k < 3000; k++) total = (total + index([k, 2], k & 1)) | 0;
+      for (var k = 0; k < 20; k++) { try { total = (total + index(null, 0)) | 0; } catch (e) { caught++; } }
+      delete globalThis.SCALE;
+      try { step(1, 1); } catch (e) { caught += 100; }
+      globalThis.answer = total + caught;
+    "#;
+    let program = Engine::specialize(source, "lane-global-reads.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(2506320.0); 2]);
+}
+
+#[test]
+fn lane_element_stores_append_like_the_interpreter() {
+    // A lane store at an array's length appends where [[Set]] would add the index: a
+    // prototype setter, a non-writable length, a non-extensible or frozen array take the
+    // interpreter's [[Set]], and an array two names share grows under both.
+    let source = r#"(function () {
+      function fill(r, n, v) { var k = 0; for (var i = 0; i < n; i++) r[k++] = v + i; return r.length + r[n - 1]; }
+      var total = 0, seen = 0;
+      for (var k = 0; k < 3000; k++) total = (total + fill([], 9, k) + fill(new Array(), 3, 1)) | 0;
+      Object.defineProperty(Array.prototype, 5, { set(v) { seen += v; }, get() { return -1; }, configurable: true });
+      for (var k = 0; k < 40; k++) total = (total + (fill([], 9, k) | 0)) | 0;
+      delete Array.prototype[5];
+      var fixed = [1, 2]; Object.defineProperty(fixed, "length", { writable: false });
+      for (var k = 0; k < 40; k++) { try { total = (total + (fill(fixed, 4, k) | 0)) | 0; } catch (e) { total = (total + 7) | 0; } }
+      var closed = Object.preventExtensions([0]);
+      for (var k = 0; k < 40; k++) total = (total + (fill(closed, 3, k) | 0)) | 0;
+      var frozen = Object.freeze([3, 4]);
+      for (var k = 0; k < 40; k++) total = (total + (fill(frozen, 3, k) | 0)) | 0;
+      var a = [], b = a; for (var k = 0; k < 40; k++) total = (total + fill(a, 5, k)) | 0;
+      globalThis.answer = (total + seen + b.length + fixed.length + closed.length + frozen[1]);
+    })();"#;
+    let program = Engine::specialize(source, "lane-append-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(4571092.0); 2]);
+}
+
+#[test]
 fn lane_element_stores_fill_holes_like_the_interpreter() {
     // A lane store fills a hole of an extensible array that owns its elements when no
     // prototype claims the index; a prototype setter, a non-extensible array and shared

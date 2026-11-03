@@ -587,7 +587,7 @@ pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, functio
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = super::jit_backend::target_isa("speed")?;
     let region = lane_region::lower(program, function_id, &unit,
-        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
+        LaneHelpers::Numeric, &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, &*isa,
         lane_region::Coverage::Full, lane_region::Completion::Number)?;
     let dump = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
@@ -2116,6 +2116,7 @@ lane_helper_inventory! { H;
     FunctionBinding => lane_function_binding::<H>,
     MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
+    GlobalGet => lane_global_get::<H>,
 }
 
 unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
@@ -2339,7 +2340,7 @@ pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id:
         let entry = coverage.entry();
         let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
         lane_region::lower(program, function_id, &unit, LaneHelpers::Linked(helper_symbol),
-            &std::collections::BTreeMap::new(), &std::collections::BTreeMap::new(), &[], None, isa,
+            &std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), &std::collections::BTreeMap::new(), &[], None, isa,
             coverage, lane_region::Completion::SourcePc).filter(|region| region.native != 0)
             .map(|mut region| {
                 region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, header);
@@ -7393,14 +7394,22 @@ fn guarded_call_instruction(instruction: WideInstruction) -> bool {
         && instruction.call_window().count == 0
 }
 
+/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED`
+/// for one the lane's own read would not take, which leaves the body at the read.
+unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
+    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
+    vm.lane_global_read(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
+}
+
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
-/// (`Vm::try_fill_record_hole`), whose miss changes nothing and leaves the body at the store.
+/// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
 unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
     // SAFETY: as `lane_field_get`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let (object, key, value) = (Value::from_bits(object), Value::from_bits(key), Value::from_bits(value));
-    u64::from(vm.try_replace_record_element(object, key, value) || vm.try_fill_record_hole(object, key, value))
+    u64::from(vm.try_replace_record_element(object, key, value) || vm.try_add_record_element(object, key, value))
 }
 
 /// Admit a depth-zero closure capture without walking, allocating or invoking
@@ -7419,6 +7428,41 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 }
 
 impl<H: Host> Vm<H> {
+    /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
+    /// (`dispatch_fast::lane_load_name_first`): in a function whose unresolved names are
+    /// global and resolve statically, a name no internal binding owns.
+    fn lane_global_reads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeSet<usize> {
+        let global = |function: u32| program.function_get(function as usize)
+            .is_some_and(|body| body.names_resolve_statically(program))
+            && self.programs.unresolved_names_are_global(self.active_program, function);
+        unit.instructions.iter().enumerate()
+            .filter(|(_, instruction)| matches!(instruction.op(), Op::LoadName | Op::LoadNameCall))
+            .filter(|(pc, instruction)| {
+                let atom = instruction.atom_index();
+                let function = match unit.origins[*pc] {
+                    lane_unit::Origin::Caller(_) => function,
+                    lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
+                };
+                global(function) && (!self.atom_class(atom).contains(super::object::AtomClass::INTERNAL)
+                    || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
+            })
+            .map(|(pc, _)| pc)
+            .collect()
+    }
+
+    /// The value a global read of `atom` through cache `site` takes as the lane's own read
+    /// does (`dispatch_fast::lane_load_global_name`): its global lexical binding's, else the
+    /// global object's cached data property; none for a binding in its TDZ or a miss.
+    pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
+        if self.realm.global_lexical_declarations.contains(&atom) {
+            return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted());
+        }
+        match self.cached_field_hit(code, self.realm.globals, site) {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            _ => None,
+        }
+    }
+
     /// The field cache sites `unit` reads or writes, each with the exact shapes and slots its
     /// entries prove now: a read's own or prototype-held (`Vm::native_field_read_descriptors`),
     /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
@@ -7507,6 +7551,7 @@ impl<H: Host> Vm<H> {
                     None => None,
                 };
                 let fields = self.lane_unit_fields(program, &unit);
+                let global_reads = self.lane_global_reads(program, function, &unit);
                 // The calls the unit still makes (none it inlines) whose callees have bodies.
                 // Each candidate owns one contiguous stable slice. A rejected candidate
                 // releases it; replanning keeps the original targets available.
@@ -7523,7 +7568,7 @@ impl<H: Host> Vm<H> {
                 let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
                     .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
                 let allow_first_entry = loop_header.is_none() || self.programs.js_jit_lane_methods_enabled();
-                match lane_region::compile(program, function, &unit, helpers, &fields, &direct_sites,
+                match lane_region::compile(program, function, &unit, helpers, &fields, &global_reads, &direct_sites,
                     &frame_captures, loop_entry, allow_first_entry) {
                     Ok(region) => break (unit, region, fields, direct, direct_sites),
                     Err(lane_region::LaneDecline::Rejected(reason))

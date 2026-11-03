@@ -171,6 +171,8 @@ struct Lowering<'a, 'f> {
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
+    global_reads: &'a BTreeSet<usize>,
     /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
     direct: &'a BTreeMap<usize, *const DirectCallee>,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
@@ -784,17 +786,18 @@ pub(super) fn compile(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    global_reads: &BTreeSet<usize>,
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
     allow_first_entry: bool,
 ) -> Result<LaneRegion, LaneDecline> {
     let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
-    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry).and_then(|header| lower(program, function_id, unit, helpers, fields, direct,
+    let osr = loop_entry.filter(|_| !unit.frames.is_empty() || allow_first_entry).and_then(|header| lower(program, function_id, unit, helpers, fields, global_reads, direct,
         frame_captures, None, &*isa, Coverage::Osr(header), Completion::StatusAndPc));
     let first_entry = osr.is_none();
     let region = osr.or_else(|| allow_first_entry.then(|| lower(program, function_id, unit, helpers, fields,
-        direct, frame_captures, loop_entry, &*isa, Coverage::Prefix, Completion::StatusAndPc)).flatten())
+        global_reads, direct, frame_captures, loop_entry, &*isa, Coverage::Prefix, Completion::StatusAndPc)).flatten())
         .ok_or(LaneDecline::Unlowered)?;
     let clif = native_dump_directory().map(|_| region.function.to_string());
     let code = compile_native_function(region.function, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
@@ -810,6 +813,7 @@ pub(super) fn lower(
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
     fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    global_reads: &BTreeSet<usize>,
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
@@ -903,6 +907,7 @@ pub(super) fn lower(
         fault_poll,
         reentry: Reentry::Closed,
         polls: smallvec::SmallVec::new(),
+        global_reads,
         direct,
         frame_captures,
         context,
@@ -1758,6 +1763,45 @@ impl Lowering<'_, '_> {
                 let hit = self.ins().icmp_imm_u(IntCC::NotEqual, result, Value::DELETED.to_bits() as i64);
                 emit_js_guard(&mut self.builder, hit, exit);
                 self.set_tagged(state, instruction.result_register(), result);
+                Some(true)
+            }
+            // ToNumeric of a Number is the Number: a typed operand is copied with its facts,
+            // and an untyped one is taken for an int, tested once, which leaves where it is not.
+            Op::ToNumeric if plain && instruction.register_b() < self.unit.registers => {
+                let source = instruction.register_b();
+                if !state.values[usize::from(source)].value.ty.is_subtype(Type::NUMBER) {
+                    let exit = self.guard_exit(state, pc as u32);
+                    self.int(state, source, exit);
+                }
+                self.copy(state, instruction.result_register(), source);
+                Some(true)
+            }
+            // Anything but `null` and `undefined` is coercible; those take the lane's TypeError.
+            Op::RequireObjectCoercible if plain && instruction.register_b() < self.unit.registers => {
+                let exit = self.guard_exit(state, pc as u32);
+                let bits = self.tagged(state, instruction.register_b());
+                let null = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::NULL.to_bits() as i64);
+                let undefined = self.ins().icmp_imm_u(IntCC::Equal, bits, Value::UNDEFINED.to_bits() as i64);
+                let nullish = self.ins().bor(null, undefined);
+                let coercible = self.ins().icmp_imm_u(IntCC::Equal, nullish, 0);
+                emit_js_guard(&mut self.builder, coercible, exit);
+                Some(true)
+            }
+            Op::LoadName | Op::LoadNameCall if plain && self.global_reads.contains(&pc) => {
+                let exit = self.guard_exit(state, pc as u32);
+                let atom = self.ins().iconst(types::I64, i64::from(instruction.atom_index()));
+                let site = self.ins().iconst(types::I64, i64::from(instruction.cache_site_index()));
+                let global_get = self.helpers.address(self.builder.ins(), LaneHelper::GlobalGet);
+                let value = emit_lane_helper_call(&mut self.builder, self.payload, global_get, &[atom, site]);
+                let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, hit, exit);
+                self.set_tagged(state, instruction.result_register(), value);
+                // A call's receiver is `undefined` for a binding of the global scope.
+                if instruction.op() == Op::LoadNameCall {
+                    let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
+                    self.define(state, instruction.register_b(), undefined,
+                        RegisterFact::definition(Type::immediate(Value::UNDEFINED), Representation::Tagged));
+                }
                 Some(true)
             }
             Op::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
@@ -3190,7 +3234,7 @@ mod tests {
         assert_ne!(header, 0);
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), &[], None,
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None,
             &*isa, Coverage::Osr(header), Completion::StatusAndPc).unwrap();
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -3219,7 +3263,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa,
+            &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa,
             Coverage::Full, Completion::Number).unwrap();
         assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
         for instruction in region.function.layout.blocks()
@@ -3277,7 +3321,7 @@ mod tests {
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let helpers = LaneHelpers::Process((*LaneHelper::addresses::<crate::test_host::TestHost>()).map(|address| address as usize));
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa, Coverage::Full, Completion::StatusAndPc).unwrap();
+        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa, Coverage::Full, Completion::StatusAndPc).unwrap();
         assert!(region.fault_poll);
         let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
         let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(code.pointer()) };
@@ -3314,7 +3358,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields,
+        let region = lower(&program, 1, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeSet::new(),
             &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
         let native = region.function;
         let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -3344,7 +3388,7 @@ mod tests {
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields,
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]), &fields, &BTreeSet::new(),
             &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc).unwrap();
         let native = region.function;
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -3369,7 +3413,7 @@ mod tests {
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
         let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Process([0; LaneHelper::COUNT]),
-            &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc).expect("typed Number residual");
+            &BTreeMap::new(), &BTreeSet::new(), &BTreeMap::new(), &[], None, &*isa, Coverage::Prefix, Completion::StatusAndPc).expect("typed Number residual");
         assert!(region.native > 0);
         let native = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
