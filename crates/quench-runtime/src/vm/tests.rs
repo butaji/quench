@@ -149,8 +149,11 @@ fn strict_assignment_retains_unresolvable_references_through_rhs_effects() {
     ] {
         for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
             let mut vm = Vm::new(TestHost::default());
-            vm.programs.enable_js_general_dispatch();
-            vm.programs.compile_general_baseline_when_hot();
+            #[cfg(not(quench_profiled))]
+            {
+                vm.programs.enable_js_general_dispatch();
+                vm.programs.compile_general_baseline_when_hot();
+            }
             vm.set_execution_mode(mode);
             vm.execute(&program).unwrap();
             #[cfg(not(quench_profiled))]
@@ -184,8 +187,11 @@ fn shorthand_assignment_captures_with_binding_without_reading_its_value() {
     ] {
         for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
             let mut vm = Vm::new(TestHost::default());
-            vm.programs.enable_js_general_dispatch();
-            vm.programs.compile_general_baseline_when_hot();
+            #[cfg(not(quench_profiled))]
+            {
+                vm.programs.enable_js_general_dispatch();
+                vm.programs.compile_general_baseline_when_hot();
+            }
             vm.set_execution_mode(mode);
             vm.execute(&program).unwrap();
             #[cfg(not(quench_profiled))]

@@ -746,7 +746,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Environment { slots, scope, .. } => {
                 slots.len() * size_of::<super::EnvironmentSlot>()
                     + scope.boxed_bytes()
-                    + scope.with_objects().len() * size_of::<Value>()
+                    + std::mem::size_of_val(scope.with_objects())
             }
             Cell::BigInt(value) => crate::bigint::magnitude_bytes(value),
             Cell::Error(value) => value.capacity(),
