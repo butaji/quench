@@ -1,5 +1,5 @@
 //! The unit a lane body specializes: one function with the callees its call sites' inline
-//! caches name spliced in, transitively, under one budget (R3, docs/v2/specialization.md).
+//! caches name spliced in, transitively, under one budget (R3, Linear TOD-1232).
 //!
 //! A call whose record links one script target (`LaneInstruction::call_link`), to a callee
 //! whose body the lane-body lowering runs entirely and every call of which is spliced in in

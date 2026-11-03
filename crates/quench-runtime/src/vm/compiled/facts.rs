@@ -1,4 +1,4 @@
-//! Typed facts: the first slice of the typed IR (TOD-1241, docs/v2/specialization.md).
+//! Typed facts: the first slice of the typed IR (TOD-1241, Linear TOD-1232).
 //!
 //! An abstract interpretation of one function's bytecode over a type lattice, run to a
 //! fixpoint across its control-flow graph before any code is lowered. It names, for every

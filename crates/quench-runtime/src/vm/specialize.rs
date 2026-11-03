@@ -12,7 +12,7 @@
 //! compile the residual shapes once per process (`native_stencil`).
 //!
 //! The contract, the division table and the plan live in
-//! `docs/v2/specialization.md`.
+//! `Linear TOD-1232`.
 
 use crate::bytecode::{BindingTime, ControlFlowLayout, Function, Op, ResidualProgram};
 

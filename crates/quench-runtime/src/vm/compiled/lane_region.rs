@@ -1,6 +1,6 @@
 //! The lane region specializer: Futamura's first projection of the interpreter onto one
 //! JavaScript function, run on the function's frameless lane activations under Ershov's
-//! online division (docs/v2/specialization.md).
+//! online division (Linear TOD-1232).
 //!
 //! What the division makes static is folded, and each dynamic fact is proved once:
 //!
