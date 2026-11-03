@@ -27,7 +27,8 @@ use std::collections::{BTreeMap, BTreeSet};
 const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// The executable memory a lane body may take: what a unit at its instruction bound
 /// (`lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS`) lowers to, at the bytes per instruction its
-/// guards and exits cost. A larger body declines, and its function runs in the lane.
+/// guards and exits cost. A larger body is planned again with less inlined
+/// (`Vm::compile_lane_method`).
 const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
 const LANE_BODY_MAX_CODE_BYTES: usize =
     super::lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS * LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
@@ -463,6 +464,12 @@ fn leaders(instructions: &[WideInstruction]) -> Vec<bool> {
     leaders
 }
 
+/// Why a unit has no lane body: it does not lower, or its machine code is rejected.
+pub(super) enum LaneDecline {
+    Unlowered,
+    Rejected(super::super::jit_backend::NativeCompileRejection),
+}
+
 /// Specializes `unit` (`lane_unit::unit`), whose PCs `fields` gives the folded receiver
 /// fields of.
 pub(super) fn compile(
@@ -474,12 +481,14 @@ pub(super) fn compile(
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     loop_entry: Option<usize>,
-) -> Option<LaneRegion> {
-    let isa = super::jit_backend::target_isa("speed")?;
-    let (native, count) = lower(program, function_id, unit, helpers, fields, direct, frame_captures, loop_entry, &*isa)?;
+) -> Result<LaneRegion, LaneDecline> {
+    let isa = super::jit_backend::target_isa("speed").ok_or(LaneDecline::Unlowered)?;
+    let (native, count) = lower(program, function_id, unit, helpers, fields, direct, frame_captures, loop_entry, &*isa)
+        .ok_or(LaneDecline::Unlowered)?;
     let clif = native_dump_directory().map(|_| native.to_string());
-    let code = compile_native_function(native, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec())).ok()?;
-    Some(LaneRegion { code, native: count, clif })
+    let code = compile_native_function(native, &*isa, LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
+        .map_err(LaneDecline::Rejected)?;
+    Ok(LaneRegion { code, native: count, clif })
 }
 
 /// Build the typed residual and validate every value/CFG edge before publication.
@@ -2004,7 +2013,7 @@ mod tests {
             } else { None }
         }).collect();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, _) = lower(&program, id as u32,
             &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &fields, &BTreeMap::new(), &[], None, &*isa).unwrap();
         let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
@@ -2027,7 +2036,7 @@ mod tests {
         let id = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
         let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
-        let unit = super::super::lane_unit::unit(id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
+        let unit = super::super::lane_unit::unit(id as u32, program.function(id), 0, &|_, _| Vec::new(), &|_| None).unwrap();
         let (native, count) = lower(&program, id as u32,
             &unit, LaneHelpers { field_get: 0, field_set: 0, call: 0, index_set: 0 }, &BTreeMap::new(), &BTreeMap::new(), &[], None, &*isa).expect("typed Number residual");
         assert!(count > 0);

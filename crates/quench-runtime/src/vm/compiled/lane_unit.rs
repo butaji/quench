@@ -411,16 +411,17 @@ impl Emitter {
 }
 
 /// `function` (`function_id`) with each call `targets` names (by function and PC), whose
-/// callee `body` gives and qualifies, spliced in, transitively. A unit with no inlined call
-/// is the function itself.
+/// callee `body` gives and qualifies, spliced in, transitively, up to `budget` inlined
+/// instructions. A unit with no inlined call is the function itself.
 pub(crate) fn unit<'f>(
     function_id: u32,
     function: &Function,
+    budget: usize,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { targets, body, registers: u32::from(caller_registers), budget: MAX_UNIT_INLINED_INSTRUCTIONS };
+    let mut planner = Planner { targets, body, registers: u32::from(caller_registers), budget };
     let plan = planner.plan(function_id, decoded(function), 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {
