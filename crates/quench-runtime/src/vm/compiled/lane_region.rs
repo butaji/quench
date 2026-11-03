@@ -188,6 +188,9 @@ struct Lowering<'a, 'f> {
     /// Callback completion edges can retire the native entry's interrupt ownership proof.
     reentries: smallvec::SmallVec<[ir::Block; INLINE_EFFECT_EDGES]>,
     polls: smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    /// Already-conforming backedges meet before their common fault poll.
+    poll_latches: super::SecondaryMap<ir::Block, Option<ir::Block>>,
+    shared_headers: CompoundBitSet,
     payload: ir::Value,
     registers_base: ir::Value,
     result: ir::Value,
@@ -869,6 +872,15 @@ pub(super) fn lower(
     let fault_poll = super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
         matches!(instruction.op().control_flow_layout(), ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump)
             && instruction.jump_target() as usize <= pc);
+    let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
+    let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
+    for (pc, instruction) in unit.instructions.iter().enumerate() {
+        if instruction.op() != Op::Jump { continue; }
+        let target = instruction.jump_target() as usize;
+        if target > pc { continue; }
+        if seen_headers.contains(target) { shared_headers.insert(target); }
+        seen_headers.insert(target);
+    }
     let interrupt = super::native_interrupt_pointer(&mut builder, context, fault_poll);
     #[cfg(feature = "aot")]
     let helpers = if let LaneHelpers::Linked(symbol) = helpers {
@@ -919,6 +931,8 @@ pub(super) fn lower(
         fault_poll,
         reentries: smallvec::SmallVec::new(),
         polls: smallvec::SmallVec::new(),
+        poll_latches: super::SecondaryMap::new(),
+        shared_headers,
         global_reads,
         direct,
         frame_captures,
@@ -1135,6 +1149,13 @@ pub(super) fn lower(
     }
     if reachable {
         lowering.exit(&mut state, instructions.len() as u32);
+    }
+    for (header, latch) in std::mem::take(&mut lowering.poll_latches).iter() {
+        if let Some(latch) = latch {
+            lowering.builder.switch_to_block(*latch);
+            lowering.emit_fault_poll();
+            lowering.builder.ins().jump(header, &[]);
+        }
     }
     if matches!(coverage, Coverage::PrefixFrom(_) | Coverage::Osr(_)) && !lowering.backedge { return None; }
     for (block, mut leaving, pc) in std::mem::take(&mut lowering.pending) {
@@ -1954,6 +1975,7 @@ impl Lowering<'_, '_> {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {
                     self.backedge |= target == self.coverage.entry();
+                    if self.shared_backedge(state, target) { return false; }
                     self.interrupt_check(state, pc32);
                     if let Some(header) = instructions.get(target).copied()
                         && matches!(header.op(), Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
@@ -2455,17 +2477,52 @@ impl Lowering<'_, '_> {
     }
 
     fn interrupt_check(&mut self, state: &State, pc: u32) {
-        let flag = self.interrupt;
-        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
         if self.fault_poll {
-            let ir::ValueDef::Result(inst, _) = self.builder.func.dfg.value_def(requested) else { unreachable!("poll instruction") };
-            self.polls.push(inst);
+            self.emit_fault_poll();
             return;
         }
+        let flag = self.interrupt;
+        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
         let exit = self.guard_exit(state, pc);
         let requested = self.ins().uextend(types::I32, requested);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
         emit_js_guard(&mut self.builder, clear, exit);
+    }
+
+    fn emit_fault_poll(&mut self) {
+        let flag = self.interrupt;
+        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
+        let ir::ValueDef::Result(inst, _) = self.builder.func.dfg.value_def(requested) else { unreachable!("poll instruction") };
+        self.polls.push(inst);
+    }
+
+    /// Joining edges must not move a guard, conversion or recovery across the
+    /// interrupt check. Only already-conforming SSA views may share this latch;
+    /// flag-based checks retain their exact-PC recovery on the original edge.
+    fn shared_backedge(&mut self, state: &State, target: usize) -> bool {
+        if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
+        let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
+        let Some(types) = self.facts.at(target) else { return false };
+        if !types.iter().copied().enumerate().all(|(index, ty)| {
+            if !self.is_live(target, index as Register) { return true; }
+            let fact = state.values[index];
+            fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
+                fact.value.representation == Representation::Int32
+            } else if ty == Type::NUMBER {
+                fact.value.representation == Representation::Float64
+            } else { fact.tagged_current }
+        }) { return false; }
+        let latch = match self.poll_latches[block] {
+            Some(latch) => latch,
+            None => {
+                let latch = self.builder.create_block();
+                self.poll_latches[block] = Some(latch);
+                latch
+            }
+        };
+        self.finishes = true;
+        self.ins().jump(latch, &[]);
+        true
     }
 
     fn branch(&mut self, state: &mut State, pc: usize, target: usize, taken: ir::Value) {
@@ -3264,6 +3321,39 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "aot")]
+    #[test]
+    fn typed_alternate_backedges_join_before_their_fault_poll() {
+        let program = crate::Engine::specialize(
+            "function subject(count,seed) { let n=count|0, x=seed|0; while(n>0) { n=(n-1)|0; if((x&1)===0) x=x>>1; else x=(x>>1)^13; } return x|0; }",
+            "typed-poll-latch.js",
+        ).unwrap();
+        let id = program.functions.iter().position(|body| body.header().name
+            .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
+        let isa = super::super::super::jit_backend::target_isa("speed").unwrap();
+        let region = super::super::lower_static_typed_regions(&program, id as u32, &[], &*isa, 0)
+            .into_iter().next().expect("typed loop region");
+        cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
+        if !super::super::FAULT_POLL_SUPPORTED { return; }
+        let native = region.function;
+        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
+        let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
+        dominators.compute(&native, &cfg);
+        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
+        loops.compute(&native, &cfg, &dominators);
+        assert_eq!(loops.loops().count(), 1, "{native}");
+        let polls: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some())
+            .flat_map(|block| native.layout.block_insts(block))
+            .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::AtomicLoad).collect();
+        assert_eq!(polls.len(), 1, "{native}");
+        let poll = native.layout.inst_block(polls[0]).unwrap();
+        assert!(native.layout.blocks().any(|block| {
+            loops.innermost_loop(block).is_some_and(|lp| loops.loop_header(lp) != block)
+                && cfg.pred_iter(block).count() == 2
+                && dominators.dominates(block, poll, &native.layout)
+        }), "both arithmetic arms must join before the poll: {native}");
+    }
+
     use super::*;
 
     #[test]
