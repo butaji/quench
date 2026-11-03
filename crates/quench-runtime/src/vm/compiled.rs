@@ -7583,10 +7583,9 @@ impl JsStepDispatch {
     /// which allocation between runs may move, every run; the program's own facts only when
     /// the running program changes.
     fn refresh_lane_bases<H: Host>(&mut self, vm: &Vm<H>, program: ProgramId, refreshed: &mut Option<ProgramId>) {
-        self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        // The mark blocks too: a store's barrier test reads them (`emit_unlogged_property_store_guard`).
+        self.refresh_allocation_bases(vm);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
-        let (values, len) = vm.heap.native_property_values();
-        (self.property_values, self.property_len) = (values as usize, len);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
         if *refreshed != Some(program) {
