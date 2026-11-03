@@ -21394,6 +21394,36 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
 }
 
 #[test]
+fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpreter() {
+    // Operands only their tags type compare as int32 where both are ints, else as Numbers:
+    // NaN, -0, the int32 bounds and doubles take the Number path.
+    let source = r#"(function () {
+      var STATE = 2;
+      function rank(o, b) { var a = o.v; if (a < b) return 1; if (a == STATE) return 2; if (a >= b) return 3; return 4; }
+      var xs = [1, 2, 3, 2.5, -0, 0, NaN, 2147483647, -2147483648, 1e300, 2.0000001];
+      var total = 0;
+      for (var k = 0; k < 4000; k++) {
+        var o = { v: xs[k % xs.length] };
+        total = (total * 5 + rank(o, xs[(k * 7) % xs.length])) % 1000003;
+      }
+      globalThis.answer = total;
+    })();"#;
+    let program = Engine::specialize(source, "lane-tagged-relations.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(61024.0); 2]);
+}
+
+#[test]
 fn lane_field_reads_speculate_on_slot_representations_like_the_interpreter() {
     // A slot that has held only int32 values is read as one; a lane store of a wider value
     // joins it, and a read the slot no longer matches leaves, so a field that widens to a

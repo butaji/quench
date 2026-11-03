@@ -1132,12 +1132,34 @@ impl Lowering<'_, '_> {
         let integer = [left, right].iter().all(|operand| super::facts::operand_type(
             &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
             .is_subtype(Type::INT32));
-        let (left, right, domain) = if integer {
-            (self.operand_int(state, left, exit)?, self.operand_int(state, right, exit)?, NumberRelationDomain::Int32)
-        } else {
-            (self.operand_number(state, left, exit)?, self.operand_number(state, right, exit)?, NumberRelationDomain::Float64)
-        };
-        emit_number_relation(&mut self.builder, operator, left, right, domain)
+        if integer {
+            let (left, right) = (self.operand_int(state, left, exit)?, self.operand_int(state, right, exit)?);
+            return emit_number_relation(&mut self.builder, operator, left, right, NumberRelationDomain::Int32);
+        }
+        // Operands only their tags type compare as int32 where both tags say so, else as
+        // Numbers; neither path proves a fact the other does not.
+        let tagged = |operand: &Operand| operand.register_index()
+            .is_none_or(|register| state.values[usize::from(register)].value.representation == Representation::Tagged);
+        if !(tagged(&left) && tagged(&right)) {
+            let (left, right) = (self.operand_number(state, left, exit)?, self.operand_number(state, right, exit)?);
+            return emit_number_relation(&mut self.builder, operator, left, right, NumberRelationDomain::Float64);
+        }
+        let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+        let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
+        let ints = self.ins().band(left_int, right_int);
+        let (int_block, number_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let holds = self.builder.append_block_param(join, types::I8);
+        self.ins().brif(ints, int_block, &[], number_block, &[]);
+        self.builder.switch_to_block(int_block);
+        let (left_bits, right_bits) = (self.ins().ireduce(types::I32, left), self.ins().ireduce(types::I32, right));
+        let int_holds = emit_number_relation(&mut self.builder, operator, left_bits, right_bits, NumberRelationDomain::Int32)?;
+        self.ins().jump(join, &[ir::BlockArg::Value(int_holds)]);
+        self.builder.switch_to_block(number_block);
+        let (left, right) = (emit_js_tagged_number(&mut self.builder, left, exit), emit_js_tagged_number(&mut self.builder, right, exit));
+        let number_holds = emit_number_relation(&mut self.builder, operator, left, right, NumberRelationDomain::Float64)?;
+        self.ins().jump(join, &[ir::BlockArg::Value(number_holds)]);
+        self.builder.switch_to_block(join);
+        Some(holds)
     }
 
     /// `source`'s value into `destination`, with every fact proved of it.
