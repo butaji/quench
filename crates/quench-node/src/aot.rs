@@ -85,6 +85,15 @@ pub fn execute_native(
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, NativeImageSupport::Static, None)
 }
 
+/// Execute a linked entry from canonical bootstrap state and release the runtime
+/// afterward, so an embedding process can run another independent entry.
+pub fn execute_native_with_bootstrap(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
+    support: NativeImageSupport, bootstrap: &'static [u8],
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    execute_native_with_teardown(host, program, crate::shared_run::Teardown::Free, support, Some(bootstrap))
+}
+
 pub fn execute_native_process_entry(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>,
 ) -> Result<crate::shared_run::SharedCompletion, String> {

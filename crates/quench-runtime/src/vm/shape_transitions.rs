@@ -14,10 +14,37 @@ pub(super) struct ShapeTransitionIndex {
     children: hashbrown::HashTable<u32>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vm::{DictionaryTrigger, DEFAULT_SHAPE_ATTRIBUTES, property_key::PropertyKey};
+
+    #[test]
+    fn restored_transition_admission_preserves_dictionary_origins() {
+        let mut shapes = Shape::table();
+        let parent = 0;
+        let key = PropertyKey::string(0);
+        let attributes = DEFAULT_SHAPE_ATTRIBUTES.data().unwrap();
+        let added = shapes.len() as u32;
+        shapes.push(Shape::child(Some(parent), ShapeTransition::Add { key, slot: 0, attributes },
+            1, None, shapes[parent as usize].facts));
+        let dictionary = shapes.len() as u32;
+        shapes.push(Shape::child(Some(added), ShapeTransition::Dictionary { trigger: DictionaryTrigger::PropertyCount },
+            1, Some(DictionaryTrigger::PropertyCount), shapes[added as usize].facts));
+        for child in [added, dictionary] {
+            let mut index = ShapeTransitionIndex::default();
+            assert!(!index.try_insert_child(&shapes, u32::MAX));
+            assert!(!index.try_insert_child(&shapes, parent));
+            assert!(index.try_insert_child(&shapes, child));
+            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::Add(key, attributes)), Some(child));
+            assert_eq!(index.get(&shapes, parent, ShapeTransitionKey::FunctionName(0)), None);
+        }
+    }
+}
+
 /// The shape whose parent and transition a cached child stands for: the child itself, or the
 /// add shape below it when a property-count dictionary transition followed that add.
-fn origin(shapes: &[Shape], child: u32) -> &Shape {
-    let shape = &shapes[child as usize];
+fn origin<'a>(shapes: &'a [Shape], shape: &'a Shape) -> &'a Shape {
     match (shape.transition, shape.parent()) {
         (ShapeTransition::Dictionary { .. }, Some(parent)) => &shapes[parent as usize],
         _ => shape,
@@ -32,7 +59,7 @@ fn hash(parent: u32, key: ShapeTransitionKey) -> u64 {
 
 /// The hash `child` is indexed under.
 fn child_hash(shapes: &[Shape], child: u32) -> u64 {
-    let origin = origin(shapes, child);
+    let origin = origin(shapes, &shapes[child as usize]);
     let key = origin
         .transition
         .cache_key()
@@ -43,7 +70,7 @@ fn child_hash(shapes: &[Shape], child: u32) -> u64 {
 /// Whether `child` is the cached transition from `parent` by `key`.
 #[inline]
 pub(super) fn is_transition(shapes: &[Shape], child: u32, parent: u32, key: ShapeTransitionKey) -> bool {
-    let origin = origin(shapes, child);
+    let origin = origin(shapes, &shapes[child as usize]);
     if origin.parent != parent {
         return false;
     }
@@ -96,10 +123,15 @@ impl ShapeTransitionIndex {
         Self { children: hashbrown::HashTable::with_capacity(capacity) }
     }
 
-    /// Records `child`, already in `shapes`, under the parent and key its shape names.
-    pub(super) fn insert_child(&mut self, shapes: &[Shape], child: u32) {
+    /// Admit a restored child and index it using the same origin/key derivation.
+    /// A missing child or a transition without a cache key is rejected.
+    pub(super) fn try_insert_child(&mut self, shapes: &[Shape], child: u32) -> bool {
+        let Some(shape) = shapes.get(child as usize) else { return false };
+        let origin = origin(shapes, shape);
+        let Some(key) = origin.transition.cache_key() else { return false };
         self.children
-            .insert_unique(child_hash(shapes, child), child, |&child| child_hash(shapes, child));
+            .insert_unique(hash(origin.parent, key), child, |&child| child_hash(shapes, child));
+        true
     }
 
     #[cfg(feature = "profile-memory")]

@@ -683,13 +683,9 @@ impl<H: Host> Vm<H> {
         let children = reader.u32s()?;
         self.transitions = shape_transitions::ShapeTransitionIndex::with_capacity(children.len());
         for child in children {
-            let indexed = self.shapes.get(child as usize).is_some_and(|shape| {
-                shape_transitions_origin_key(&self.shapes, shape).is_some()
-            });
-            if !indexed {
+            if !self.transitions.try_insert_child(&self.shapes, child) {
                 return Err(SnapshotError("snapshot transition names no cached shape".into()));
             }
-            self.transitions.insert_child(&self.shapes, child);
         }
         Ok(())
     }
@@ -753,14 +749,6 @@ impl<H: Host> Vm<H> {
                 }),
             }
         }
-    }
-}
-
-/// Whether `shape`'s transition is one the transition index caches.
-fn shape_transitions_origin_key(shapes: &[Shape], shape: &Shape) -> Option<ShapeTransitionKey> {
-    match (shape.transition, shape.parent()) {
-        (ShapeTransition::Dictionary { .. }, Some(parent)) => shapes[parent as usize].transition.cache_key(),
-        (transition, _) => transition.cache_key(),
     }
 }
 
