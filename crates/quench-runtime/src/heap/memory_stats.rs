@@ -70,6 +70,14 @@ pub struct HeapMemoryComposition {
 }
 
 impl Heap {
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_record_pages(&self, phase: &str) {
+        self.object_records.report_pages("object", phase);
+        self.array_records.report_pages("array", phase);
+        self.function_records.report_pages("function", phase);
+        self.string_records.report_pages("string", phase);
+    }
+
     pub(crate) fn memory_composition(&self) -> HeapMemoryComposition {
         let mut occupied_slots = 0;
         let mut direct_records = 0;

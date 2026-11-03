@@ -5,6 +5,8 @@ use super::pacing::{AgedFates, PromotionAge};
 mod primitive_bench;
 #[cfg(test)]
 mod vacancy_tests;
+#[cfg(feature = "profile-memory")]
+mod memory_profile;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::alloc::Layout;
