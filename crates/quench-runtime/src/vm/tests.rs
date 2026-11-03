@@ -54,7 +54,7 @@ fn default_osr_inlines_numeric_calls_without_replaying_initialization() {
 #[test]
 fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
     let source = r#"(function(){
-        function fraction(x){x=x+0.5;return x|0;}
+        function fraction(x){for(let k=0;k<1;k=(k+1)|0)x=x+1.5;return x|0;}
         const object={calls:0,leaf:fraction,outer(x){this.calls=this.calls+1;return this.leaf(x);}};
         let sum=0;
         for(let i=0;i<4000;i=(i+1)|0)sum=(sum+object.outer(i))|0;
@@ -81,7 +81,7 @@ fn default_osr_numeric_restart_keeps_original_arguments_and_parent_effects() {
         }
     }
     assert_eq!(answers[0], answers[1]);
-    assert_eq!(answers[1], (Value::integer(7_998_000), Value::integer(4000)));
+    assert_eq!(answers[1], (Value::integer(8_002_000), Value::integer(4000)));
 }
 
 #[test]
@@ -119,6 +119,69 @@ fn typed_osr_returns_ssa_values_from_a_vm_owned_frame() {
             assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
         }
     }
+}
+
+#[test]
+fn default_osr_integer_bound_admission_preserves_fractional_and_effectful_comparisons() {
+    let source = r#"
+        function pipe(){
+            const limit=globalThis.limit;
+            function step(x){for(let k=0;k<1;k=(k+1)|0)x=(x+1)|0;return x;}
+            let sum=0;
+            for(let i=0;i<limit;i=(i+1)|0)sum=step(sum);
+            return sum;
+        }
+        let comparisons=0;
+        for(const limit of [-1,0,1,0.5,1.5,2000.5,NaN,'2000.5',2000n,
+            {valueOf(){comparisons++;return 2000.5;}}]){
+            globalThis.limit=limit;
+            print(pipe());
+        }
+        print(comparisons);
+    "#;
+    let program = Engine::specialize(source, "osr-bound-edges.js").unwrap();
+    let mut results = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        results.push(output.borrow().clone());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[1], ["0", "0", "1", "1", "2", "2001", "0", "2001", "2000", "2001", "2002"]);
+}
+
+#[test]
+fn native_countdown_keeps_dynamic_starts_and_exit_values_exact() {
+    let source = r#"
+        function count(start,bound){
+            start=start|0;bound=bound|0;
+            let i=start,total=0;
+            for(;i<bound;i=(i+1)|0)total=(total+1)|0;
+            return total+':'+i;
+        }
+        for(let pass=0;pass<1000;pass++)count(7,2007);
+        for(const pair of [[-2147483648,-2147483645],[-2,2],[2147483644,2147483647],
+            [7,7],[8,7]])print(count(pair[0],pair[1]));
+    "#;
+    let program = Engine::specialize(source, "dynamic-countdown.js").unwrap();
+    let mut results = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.programs.enable_js_jit_diagnostics();
+        vm.execute(&program).unwrap();
+        if mode == crate::ExecutionMode::Compiled {
+            let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(1)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            assert!(view.osr_diagnostics().native_region_runs > 0, "the signed boundary cases need native execution");
+        }
+        results.push(output.borrow().clone());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[1], ["3:-2147483645", "4:2", "3:2147483647", "0:7", "0:8"]);
 }
 
 #[test]

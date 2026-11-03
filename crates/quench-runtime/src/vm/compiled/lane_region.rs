@@ -291,7 +291,7 @@ fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Valu
 }
 
 /// The registers an instruction writes, by its operand layouts.
-fn writes(instruction: WideInstruction) -> Vec<Register> {
+pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
     let mut written = Vec::new();
     for field in crate::bytecode::InstructionField::ALL {
         let layout = instruction.op().field_layout(*field);
@@ -610,7 +610,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
 /// after a jump.
-fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
+pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
     let mut leaders = CompoundBitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
@@ -664,6 +664,10 @@ pub(super) fn lower(
     coverage: Coverage,
     completion: Completion,
 ) -> Option<LoweredRegion> {
+    let residual = super::static_loops::specialize(program, unit, coverage.entry()).map(|instructions|
+        super::lane_unit::Unit { instructions, origins: unit.origins.clone(), frames: unit.frames.clone(),
+            markers: unit.markers.clone(), caller_registers: unit.caller_registers, registers: unit.registers, end: unit.end });
+    let unit = residual.as_ref().unwrap_or(unit);
     let function = program.function_get(function_id as usize)?;
     let numeric = completion == Completion::Number;
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
@@ -833,6 +837,11 @@ pub(super) fn lower(
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape);
     if coverage.selected_entry() {
+        lowering.written = CompoundBitSet::with_capacity(count);
+        for (pc, instruction) in instructions.iter().copied().enumerate() {
+            if !lowering.facts.reached(pc) { continue; }
+            for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
+        }
         // Backedge definitions choose a numeric entry signature. Conformance
         // proves the external input once; every subsequent edge carries the
         // same verified SSA view. This is an admission requirement, not a fact
@@ -844,13 +853,28 @@ pub(super) fn lower(
                 refined = true;
             }
         }
+        // An integer induction value can compare against an invariant integer
+        // input directly. This selects a checked entry contract; a fractional
+        // or wider bound resumes the original header with its value unchanged.
+        let instruction = instructions[entry_pc];
+        if !lowering.facts.backedge().is_empty() && instruction.op() == Op::JumpBinaryFalse
+            && matches!(super::operations::NumberRelation::from_operator(instruction.binary_operator_field()),
+                    Some(super::operations::NumberRelation::LessThan | super::operations::NumberRelation::LessEqual
+                        | super::operations::NumberRelation::GreaterThan | super::operations::NumberRelation::GreaterEqual)) {
+            let operands = [instruction.operand_b(), instruction.operand_c()];
+            if operands.iter().any(|operand| super::facts::operand_type(&program.constants, *operand,
+                |register| lowering.facts.backedge().get(usize::from(register)).copied().unwrap_or(Type::ANY)) == Type::INT32) {
+                for register in operands.into_iter().filter_map(Operand::register_index)
+                    .filter(|register| *register < unit.caller_registers && !lowering.written.contains(usize::from(*register))) {
+                    if initial[usize::from(register)] == Type::NUMBER {
+                        initial[usize::from(register)] = Type::INT32;
+                        refined = true;
+                    }
+                }
+            }
+        }
         if refined {
             lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape);
-        }
-        lowering.written = CompoundBitSet::with_capacity(count);
-        for (pc, instruction) in instructions.iter().copied().enumerate() {
-            if !lowering.facts.reached(pc) { continue; }
-            for register in writes(instruction) { lowering.written.insert(usize::from(register)); }
         }
     }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, start, loop_entry)); }
@@ -1838,11 +1862,8 @@ impl Lowering<'_, '_> {
             let undefined = self.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64);
             self.set_tagged(state, destination, undefined);
         }
-        for argument in 0..inlined.arguments.min(callee.params) {
-            if let Some(register) = callee.parameter_registers.map(|base| base + argument)
-                .or_else(|| callee.promoted_register(argument)) {
-                self.copy(state, inlined.base + register, inlined.window + argument);
-            }
+        for (destination, source) in inlined.passed_registers(callee) {
+            self.copy(state, destination, source);
         }
         true
     }
