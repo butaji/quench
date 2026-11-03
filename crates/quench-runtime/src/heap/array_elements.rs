@@ -307,8 +307,12 @@ impl From<Vec<Value>> for ArrayElements {
 impl Clone for ArrayElements {
     fn clone(&self) -> Self {
         if self.capacity() != 0 {
-            // An owner more makes in-place replacement reach another array.
-            super::array_proofs::retire_array_storage_proofs();
+            // Only losing unique ownership can falsify a writable proof. A shared
+            // backing already admits reads only; another owner changes neither its
+            // address nor its bounds.
+            if self.is_unique() {
+                super::array_proofs::retire_array_storage_proofs();
+            }
             let owners = self.header().owners.checked_add(1).expect("array backing owners overflow");
             // SAFETY: arrays are single-threaded; the header is live and only owners write it.
             unsafe { (*self.header.as_ptr()).owners = owners };

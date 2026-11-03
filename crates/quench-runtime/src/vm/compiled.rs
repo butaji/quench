@@ -17407,8 +17407,8 @@ mod tests {
                     let bytes = compiled.buffer.data();
                     if width >= u32::BITS && count == 17 {
                         let kind = if signed { ASR_KIND } else { LSR_KIND };
-                        assert!(bytes.chunks_exact(std::mem::size_of::<u32>()).any(|bytes| {
-                            let word = u32::from_le_bytes(bytes.try_into().unwrap());
+                        assert!(bytes.as_chunks::<{ std::mem::size_of::<u32>() }>().0.iter().any(|bytes| {
+                            let word = u32::from_le_bytes(*bytes);
                             word & LOGICAL_CLASS_MASK == LOGICAL_CLASS && word & SHIFT_KIND_MASK == kind
                         }), "right shift must fold: {ty} operation{operation:?} signed{signed} reversed{reversed}");
                     }
@@ -17476,7 +17476,7 @@ mod tests {
         let mut recorded = code.bb_edges.clone();
         recorded.sort_unstable(); recorded.dedup();
         assert_eq!(recorded, actual, "machine CFG must follow physical blocks: starts{:?}, bytes{:x?}, {:?}",
-            code.bb_starts, bytes.chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect::<Vec<_>>(), code.vcode);
+            code.bb_starts, bytes.as_chunks::<{ std::mem::size_of::<u32>() }>().0.iter().map(|word| u32::from_le_bytes(*word)).collect::<Vec<_>>(), code.vcode);
     }
 
     #[cfg(feature = "aot")]
