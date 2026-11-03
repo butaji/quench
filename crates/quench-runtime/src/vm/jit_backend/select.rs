@@ -1,4 +1,4 @@
-//! Predicate small diamonds of total integer operations after semantic lowering.
+//! Predicate small diamonds of total integer operations and bit representations.
 //! Memory, calls, traps and conversions with observable failure remain control flow.
 
 use cranelift_codegen::{flowgraph::ControlFlowGraph, ir::{self, InstBuilder}, cursor::{Cursor, FuncCursor}};
@@ -41,15 +41,16 @@ fn arm(function: &ir::Function, cfg: &ControlFlowGraph, mut block: ir::Block) ->
                 break;
             }
             let opcode = function.dfg.insts[inst].opcode();
-            if !matches!(opcode, ir::Opcode::Iconst | ir::Opcode::Ireduce | ir::Opcode::Iadd | ir::Opcode::Isub
+            let representation = matches!(opcode, ir::Opcode::Ireduce | ir::Opcode::Uextend | ir::Opcode::Sextend | ir::Opcode::Bitcast);
+            if !representation && !matches!(opcode, ir::Opcode::Iconst | ir::Opcode::Iadd | ir::Opcode::Isub
                 | ir::Opcode::Band | ir::Opcode::Bor | ir::Opcode::Bxor | ir::Opcode::Ishl | ir::Opcode::Ushr | ir::Opcode::Sshr) {
                 return None;
             }
             if !function.dfg.inst_results(inst).iter().all(|value| {
                 let ty = function.dfg.value_type(*value);
-                ty.is_int() && ty.bits() <= ir::types::I64.bits()
+                (ty.is_int() || (opcode == ir::Opcode::Bitcast && ty.is_float())) && ty.bits() <= ir::types::I64.bits()
             }) { return None; }
-            work += usize::from(!matches!(opcode, ir::Opcode::Iconst | ir::Opcode::Ireduce)
+            work += usize::from(opcode != ir::Opcode::Iconst && !representation
                 && !function.dfg.inst_args(inst).iter().all(|value| constant(function, *value)));
             if work > BRANCH_WORK { return None; }
             instructions.push(inst);
@@ -104,7 +105,7 @@ mod tests {
     use super::*;
     use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 
-    enum Operation { Bitwise, Division, Load }
+    enum Operation { Bitwise, RepresentedBitwise, NumericConversion, Division, Load }
 
     #[test]
     fn diamonds_require_total_integer_operations_and_preserve_verified_ssa() {
@@ -113,7 +114,7 @@ mod tests {
         #[cfg(not(feature = "jit"))]
         let publication = super::super::CodePublication::RelocatableObject;
         let isa = super::super::target_isa_for("speed", publication).unwrap();
-        for operation in [Operation::Bitwise, Operation::Division, Operation::Load] {
+        for operation in [Operation::Bitwise, Operation::RepresentedBitwise, Operation::NumericConversion, Operation::Division, Operation::Load] {
             let mut signature = ir::Signature::new(isa.default_call_conv());
             signature.params.push(ir::AbiParam::new(ir::types::I32));
             signature.returns.push(ir::AbiParam::new(ir::types::I32));
@@ -135,6 +136,17 @@ mod tests {
             builder.switch_to_block(right);
             let right_value = match operation {
                 Operation::Bitwise => builder.ins().bxor_imm_u(input, 1),
+                Operation::RepresentedBitwise => {
+                    let bits = builder.ins().bxor_imm_u(input, 1);
+                    let float = builder.ins().bitcast(ir::types::F32, ir::MemFlagsData::new(), bits);
+                    let bits = builder.ins().bitcast(ir::types::I32, ir::MemFlagsData::new(), float);
+                    let wide = builder.ins().sextend(ir::types::I64, bits);
+                    builder.ins().ireduce(ir::types::I32, wide)
+                }
+                Operation::NumericConversion => {
+                    let float = builder.ins().bitcast(ir::types::F32, ir::MemFlagsData::new(), input);
+                    builder.ins().fcvt_to_sint(ir::types::I32, float)
+                }
                 Operation::Division => {
                     let zero = builder.ins().iconst(ir::types::I32, 0);
                     builder.ins().sdiv(input, zero)
@@ -150,7 +162,7 @@ mod tests {
             builder.ins().return_(&[result]);
             builder.seal_all_blocks();
             builder.finalize(isa.frontend_config());
-            assert_eq!(convert(&mut function), usize::from(matches!(operation, Operation::Bitwise)));
+            assert_eq!(convert(&mut function), usize::from(matches!(operation, Operation::Bitwise | Operation::RepresentedBitwise)));
             cranelift_codegen::verify_function(&function, &*isa).unwrap();
         }
     }
