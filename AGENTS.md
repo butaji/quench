@@ -14,7 +14,7 @@ Quench implements JavaScript semantics and Node-compatible APIs.
 
 Futamura's projections and Ershov's mixed computation are the design: every native tier
 is the interpreter specialized to what is known, and each fact has a binding time
-(`docs/v2/specialization.md`).
+([specialization architecture](https://linear.app/todoxapp/document/quench-repository-docsv2specializationmd-7c38f4f2f78e)).
 
 1. Check once. A dynamic fact is proved at most once per lifetime of the value or region
    that carries it; every later use reads the proof (a type, a representation, a folded
@@ -84,8 +84,12 @@ review requirements, not optional style preferences.
 ## Work and evidence
 
 [The Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview) owns backlog, status, lane ownership and
-coordination; its overview holds the lanes and sync rules. Plans, handoffs,
-historical measurements and other progress artifacts live only in Linear.
+coordination; its overview holds the lanes and sync rules. Documentation, contracts,
+commands, plans, handoffs, historical measurements and progress artifacts live only
+in Linear. Do not create or restore local documentation; reconcile documentation
+brought in by merges with its existing Linear home before removing local copies.
+The [Linear document index](https://linear.app/todoxapp/document/quench-repository-document-index-11102c539c53)
+locates contracts, commands and design references.
 The repository holds code, executable tools, tests, fixtures and build inputs;
 do not add progress or evidence directories here.
 Online research is a required step before designing or implementing a task: survey

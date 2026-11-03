@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Layout step of the qualification binary (docs/README.md, "Wasm execution modes and link
+# Layout step of the qualification binary (the Linear command reference, "Wasm execution modes and link
 # order"): trains the static x86_64 link order and the BOLT profile on the binary being laid
 # out, relinks with the order, and rewrites the relinked binary's block layout with llvm-bolt.
 #
@@ -17,7 +17,7 @@
 #    (COMPILE_ONLY_MODULES), the Test262 tests tools/layout-corpus/test262.list names with
 #    their harness, the package workloads tools/layout-corpus/npm-*.js on the packages its
 #    package-lock.json pins (installed with `npm ci` under target/layout-packages), and the
-#    Wasm kernels' start-up. The Wasm ESM corpus (docs/README.md) is not part of it: laid out
+#    Wasm kernels' start-up. The Wasm ESM corpus (the Linear command reference) is not part of it: laid out
 #    `--late` it added 0.98 MB of hot text and raised V8-v7 max RSS (pinned, 2026-10-29:
 #    RegExp 4900 -> 5084 KiB, Richards 2288 -> 2364, DeltaBlue --jit 2684 -> 2732), failing
 #    the target on two of three boards. QUENCH_LAYOUT_HTTP_ROUNDS, when set, adds the plain
@@ -65,7 +65,7 @@ COMPILE_ONLY_MODULES=(
     internal/crypto/keys
 )
 # The interpreter's dispatch stays whole: a program reaches whichever of its blocks its code
-# needs (docs/README.md). The order keeps the lane dispatch whole; BOLT also keeps the general
+# needs (the Linear command reference). The order keeps the lane dispatch whole; BOLT also keeps the general
 # frame loop's blocks together.
 ORDER_DENSE_FUNCTIONS=(--dense 13dispatch_fast)
 BOLT_DENSE_FUNCTIONS=(--dense 13dispatch_fast --dense run_frame_general_until)
