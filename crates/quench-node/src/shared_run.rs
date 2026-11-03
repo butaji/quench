@@ -4,6 +4,15 @@ use crate::host::NodeHost;
 use quench_runtime::{ExecutionRequest, MemoryPolicy, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
+/// Observe startup before a VM exists, using the same opt-in allocator/code census
+/// as the runtime's later initialization boundaries.
+#[cfg(feature = "profile-memory")]
+fn profile_startup_boundary(phase: &str) {
+    if std::env::var_os("QUENCH_MEMORY").is_some() {
+        quench_runtime::report_allocator_memory(phase);
+    }
+}
+
 /// Initialize signal policy only at an executable's process boundary. Embedders
 /// using execute_shared retain ownership of their inherited signal dispositions.
 #[cfg(target_os = "linux")]
@@ -453,6 +462,8 @@ fn execute_shared_on_worker(
     let request = ExecutionRequest { source: &source, name: &name, kind };
     let in_worker = worker.is_some();
     let host = new_host(worker)?;
+    #[cfg(feature = "profile-memory")]
+    profile_startup_boundary("node_host_ready");
     // Start-up runs no compilation boundary before the bootstrap's first module: the host's
     // and the realm's set-up code leave here (`resident_pages::release_at_module_load`).
     crate::host::resident_pages::release_read_only_pages();
@@ -466,8 +477,12 @@ fn execute_shared_on_worker(
     let mut runtime = EntryRuntime::new(Runtime::new(host), teardown);
     runtime.set_execution_mode(mode);
     runtime.set_memory_policy(memory_policy);
+    #[cfg(feature = "profile-memory")]
+    profile_startup_boundary("node_vm_allocated");
     crate::host::resident_pages::release_read_only_pages();
     let mut program = runtime.compile_entry(request).map_err(|error| format!("{error:?}"))?;
+    #[cfg(feature = "profile-memory")]
+    profile_startup_boundary("node_entry_compiled");
     let mut restored = false;
     if let Some(snapshot) = snapshot {
         match runtime.restore_snapshot(snapshot, &program, |host, reader| host.read_snapshot(reader)) {
@@ -604,6 +619,8 @@ pub fn executable_path() -> std::io::Result<PathBuf> {
 /// Parse the development CLI's entry form and route it through `execute_shared`. The
 /// caller's process exits once this returns, so the entry's runtime is ended for that exit.
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
+    #[cfg(feature = "profile-memory")]
+    profile_startup_boundary("node_cli_entry");
     // A process started to build a startup snapshot builds it instead (`startup_snapshot`);
     // its bootstrap cannot read the environment, so the variable stays out of the snapshot.
     if let Some(path) = std::env::var_os(crate::host::startup_snapshot::BUILD_ENV) {
