@@ -21394,6 +21394,39 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
 }
 
 #[test]
+fn lane_int_stores_to_packed_objects_keep_their_narrow_form_like_the_interpreter() {
+    // An int32 stored to a packed object's inline slot is written as its narrow word; a
+    // value past the narrow range, an object with extras (a prototype) and a widened slot
+    // take the VM's store.
+    let source = r#"(function () {
+      function C(v) { this.count = v; this.step = 1; }
+      function bump(c, n, d) { for (var i = 0; i < n; i++) c.count = (c.count + d) | 0; return c.count; }
+      var a = new C(0), b = new C(536870900), proto = new C(-536870920), child = Object.create(proto), total = 0;
+      for (var k = 0; k < 2000; k++) {
+        total = (total + bump(a, 50, k & 1 ? 3 : -2) + bump(b, 3, 7) + bump(proto, 3, -5)) | 0;
+      }
+      total = (total + child.count) | 0;
+      a.count = 0.5;
+      for (var k = 0; k < 100; k++) total = (total + bump(a, 5, 1)) | 0;
+      globalThis.answer = total + a.count + b.count - proto.count;
+    })();"#;
+    let program = Engine::specialize(source, "lane-narrow-stores.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(vm.heap.unrepresented_slots(), 0);
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(598804650.0); 2]);
+}
+
+#[test]
 fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
     // A loop that only reads takes its invariant fields on its entry edge: the field may
     // change between runs, another shape or a non-object leaves at the header, a loop that

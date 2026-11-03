@@ -106,6 +106,7 @@ pub(crate) struct NarrowLayout;
 
 impl NarrowLayout {
     pub(crate) const INTEGER_FLAG: u32 = NARROW_INTEGER_FLAG;
+    pub(crate) const INTEGER_BITS: u32 = NARROW_INTEGER_BITS;
     pub(crate) const CODE_SHIFT: u32 = NARROW_CODE_SHIFT;
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;

@@ -1910,6 +1910,11 @@ impl Lowering<'_, '_> {
             let payload = self.payload;
             emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, general);
         }
+        // An int32 into a packed object's inline slot is its narrow word where it fits and
+        // the object has no extras (`Object::store_inline_narrow`); it needs no barrier.
+        if ty.is_subtype(Type::INT32) && usize::from(field.slot) < crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count {
+            self.store_narrow_int(object, inline, field.slot, value, done, general);
+        }
         let projection = match projection {
             Some(projection) => projection,
             None => {
@@ -1926,6 +1931,33 @@ impl Lowering<'_, '_> {
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(done);
         Some(())
+    }
+
+    /// Store the int32 `value` (tagged) into inline `slot` of the packed object `record` and
+    /// continue at `done`; an object with arena storage continues here, one with extras or a
+    /// value past the narrow range takes `general`.
+    fn store_narrow_int(&mut self, record: ir::Value, inline: ir::Value, slot: u16, value: ir::Value,
+        done: ir::Block, general: ir::Block) {
+        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+        use crate::value::NarrowLayout as NARROW;
+        let (packed, arena) = (self.builder.create_block(), self.builder.create_block());
+        self.ins().brif(inline, packed, &[], arena, &[]);
+        self.builder.switch_to_block(packed);
+        let payload = self.ins().load(types::I64, MemFlagsData::trusted(), record, OBJECT.payload_offset as i32);
+        let tag = self.ins().band_imm_u(payload, OBJECT.extras_tag_mask as i64);
+        let plain = self.ins().icmp_imm_u(IntCC::NotEqual, tag, OBJECT.extras_tag as i64);
+        emit_js_guard(&mut self.builder, plain, general);
+        let int = self.ins().ireduce(types::I32, value);
+        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
+        let biased = self.ins().iadd_imm_s(int, half_range);
+        let fits = self.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
+        emit_js_guard(&mut self.builder, fits, general);
+        let shifted = self.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
+        let narrow = self.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG));
+        let offset = OBJECT.payload_offset + usize::from(slot) * std::mem::size_of::<u32>();
+        self.ins().store(MemFlagsData::trusted(), narrow, record, offset as i32);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(arena);
     }
 
     /// Continue where the slot representation `representation` holds `value`, of type `ty`,
